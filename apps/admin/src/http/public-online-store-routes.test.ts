@@ -270,9 +270,28 @@ describe("public online-store routes (spec 1.10)", () => {
         expect(Object.keys(image).sort()).toEqual(["alt", "height", "url", "width"]);
         expect(image.url.startsWith("https://cdn.example.test/media/tenants/t-1/")).toBe(true);
       }
-      // A menu item's `href` is its public link, not an internal reference such as `imageRef`.
-      const keys = keysOf(body).filter((k) => k !== "href");
-      expect(keysOf(body)).toContain("href");
+      // A menu item's `href` is its public link, not an internal reference such as `imageRef`, so
+      // the menus are checked on their own (exact item keys) and the scan runs on the rest.
+      type Item = { children: Item[] };
+      const shellMenus = body as unknown as {
+        header: { menu: Item[] };
+        footer: { menu: Item[] };
+      };
+      const items = [...shellMenus.header.menu, ...shellMenus.footer.menu].flatMap((item) => [
+        item,
+        ...item.children,
+      ]);
+      expect(items.length).toBeGreaterThan(0);
+      for (const item of items) {
+        expect(Object.keys(item).sort()).toEqual(["children", "external", "href", "label"]);
+      }
+      const withoutMenus = JSON.parse(JSON.stringify(body)) as {
+        header: { menu?: unknown };
+        footer: { menu?: unknown };
+      };
+      delete withoutMenus.header.menu;
+      delete withoutMenus.footer.menu;
+      const keys = keysOf(withoutMenus);
       for (const internal of [/storage/i, /key$/i, /tenant/i, /ref$/i, /^id$/i]) {
         expect(
           keys.filter((k) => internal.test(k)),

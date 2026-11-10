@@ -136,6 +136,46 @@ describe("menus (spec 2.2, 2.6)", () => {
     expect(created.body).toMatchObject({ id: "00000000-0000-7000-8000-000000000001" });
   });
 
+  it("the limit counts custom menus only: saved defaults leave room for 50 (review M2)", async () => {
+    const { controller } = harness();
+    for (const handle of ["main-menu", "footer"]) {
+      expect(
+        await controller.updateMenu({
+          tenantId: T,
+          handle,
+          title: "D",
+          items: [],
+          expectedVersion: 0,
+        }),
+      ).toMatchObject({ status: 200 });
+    }
+    for (let n = 1; n <= 50; n += 1) {
+      const res = await controller.createMenu({
+        tenantId: T,
+        handle: `m-${n}`,
+        title: "M",
+        items: [],
+      });
+      expect(res.status).toBe(201);
+    }
+    expect(
+      await controller.createMenu({ tenantId: T, handle: "one-more", title: "M", items: [] }),
+    ).toMatchObject({ status: 409, body: { code: "MENU_LIMIT" } });
+  });
+
+  it("create counts menus and checks the handle without loading every menu (review M1)", async () => {
+    const { controller, repos } = harness();
+    await controller.createMenu({ tenantId: T, handle: "first", title: "F", items: [] });
+    const list = vi.spyOn(repos.menus, "list");
+    const count = vi.spyOn(repos.menus, "countCustom");
+    expect(
+      (await controller.createMenu({ tenantId: T, handle: "second", title: "S", items: [] }))
+        .status,
+    ).toBe(201);
+    expect(list).not.toHaveBeenCalled();
+    expect(count).toHaveBeenCalledWith(T);
+  });
+
   it("refuses bad handles, taken handles, defaults, the reserved handle and the 51st menu", async () => {
     const { controller } = harness();
     const make = (handle: string) =>
@@ -243,8 +283,8 @@ describe("menus (spec 2.2, 2.6)", () => {
   it("a create that loses the same-handle race is MENU_HANDLE_TAKEN, one row", async () => {
     const { controller, repos } = harness();
     await controller.createMenu({ tenantId: T, handle: "sale", title: "First", items: [] });
-    vi.spyOn(repos.menus, "list").mockResolvedValueOnce([]);
-    vi.spyOn(repos.menus, "get").mockResolvedValueOnce(null);
+    // Both reads miss the first row: the pre-check, then the re-check inside the unit of work.
+    vi.spyOn(repos.menus, "get").mockResolvedValueOnce(null).mockResolvedValueOnce(null);
     const lost = await controller.createMenu({
       tenantId: T,
       handle: "sale",

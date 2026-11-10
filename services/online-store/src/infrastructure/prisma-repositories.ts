@@ -1,5 +1,10 @@
 import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
-import { POLICY_TYPES, validateMenuItems, type PolicyType } from "@platform/storefront-content";
+import {
+  DEFAULT_MENU_HANDLES,
+  POLICY_TYPES,
+  validateMenuItems,
+  type PolicyType,
+} from "@platform/storefront-content";
 import { ConcurrencyError, logger } from "@platform/utils";
 import { menuNeedsId } from "../domain/errors";
 import { Menu } from "../domain/menu";
@@ -366,6 +371,14 @@ export class PrismaMenuRepository implements MenuRepository {
       client.onlineStoreMenu.findFirst({ where: { tenantId, handle } }),
     );
     return row === null ? null : menuOf(row);
+  }
+
+  async countCustom(tenantId: string, tx?: unknown): Promise<number> {
+    return read(this.deps.prisma, tenantId, tx, (client) =>
+      client.onlineStoreMenu.count({
+        where: { tenantId, handle: { notIn: [...DEFAULT_MENU_HANDLES] } },
+      }),
+    );
   }
 
   async save(menu: Menu, tenantId: string, tx: unknown): Promise<void> {

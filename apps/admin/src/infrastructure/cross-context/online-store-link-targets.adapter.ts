@@ -6,6 +6,7 @@ import type {
   LinkTargetsPort,
 } from "@platform/online-store";
 import { pageHandleOfPath, pickText, type LocalizedText } from "@platform/storefront-content";
+import { logger } from "@platform/utils";
 
 type Response = { readonly status: number; readonly body: unknown };
 
@@ -19,7 +20,11 @@ export interface LinkTargetReads {
   readonly listPages: (tenantId: string) => Promise<Response>;
 }
 
-/** Ids per by-ids read: Catalog's and Pages' by-ids reads look up at most 100 (Ruling 7). */
+/**
+ * Ids per by-ids read: this adapter's own bound, matching Pages' `PAGES_BY_IDS_MAX` and Catalog's
+ * `COLLECTIONS_BY_IDS_MAX` (100 each). Catalog's product by-ids read has no cap of its own, so
+ * this batch is what bounds the product reads too.
+ */
 export const LINK_TARGET_BATCH = 100;
 /** Ids of one kind a resolve looks up at all: the shell's two menus hold at most 150 items each. */
 export const LINK_TARGET_IDS_MAX = 300;
@@ -39,6 +44,10 @@ interface PageEntry extends Entry {
   /** What the picker's query matches: the name, both titles and the route path. */
   readonly searchText: string;
 }
+
+/** Why a row could not be read: a fixed phrase, never any of the row's content. */
+type Skip = { readonly skip: string };
+const skip = (reason: string): Skip => ({ skip: reason });
 
 function isRow(value: unknown): value is Row {
   return typeof value === "object" && value !== null;
@@ -61,15 +70,17 @@ function valueAt(row: Row, key: string): string | null {
 const segment = (value: string): string => encodeURIComponent(value);
 
 /** Ruling 11: a product is live when published or unlisted (reachable by its link). */
-function productEntry(raw: unknown): Entry | null {
-  if (!isRow(raw)) return null;
+function productEntry(raw: unknown): Entry | Skip {
+  if (!isRow(raw)) return skip("not an object");
   const [id, name, slug, status] = [
     valueAt(raw, "id"),
     textAt(raw, "name"),
     valueAt(raw, "slug"),
     valueAt(raw, "status"),
   ];
-  if (id === null || name === null || slug === null) return null;
+  if (id === null) return skip("missing id");
+  if (name === null) return skip("missing name");
+  if (slug === null) return skip("missing slug");
   const published = status === "published" || status === "unlisted";
   return {
     id,
@@ -78,15 +89,17 @@ function productEntry(raw: unknown): Entry | null {
 }
 
 /** Ruling 11: a collection is live when published. */
-function collectionEntry(raw: unknown): Entry | null {
-  if (!isRow(raw)) return null;
+function collectionEntry(raw: unknown): Entry | Skip {
+  if (!isRow(raw)) return skip("not an object");
   const [id, name, slug, status] = [
     valueAt(raw, "id"),
     textAt(raw, "name"),
     valueAt(raw, "slug"),
     valueAt(raw, "status"),
   ];
-  if (id === null || name === null || slug === null) return null;
+  if (id === null) return skip("missing id");
+  if (name === null) return skip("missing name");
+  if (slug === null) return skip("missing slug");
   return {
     id,
     target: {
@@ -109,15 +122,17 @@ function localizedAt(row: Row, key: string): LocalizedText {
  * Ruling 11: a page is live when published at `/pages/<handle>`. A page at any other route can
  * never be linked from the storefront, so it is never live (and the picker does not offer it).
  */
-function pageEntry(raw: unknown): PageEntry | null {
-  if (!isRow(raw)) return null;
+function pageEntry(raw: unknown): PageEntry | Skip {
+  if (!isRow(raw)) return skip("not an object");
   const [id, name, routePath, status] = [
     valueAt(raw, "id"),
     textAt(raw, "name"),
     valueAt(raw, "routePath"),
     valueAt(raw, "status"),
   ];
-  if (id === null || name === null || routePath === null) return null;
+  if (id === null) return skip("missing id");
+  if (name === null) return skip("missing name");
+  if (routePath === null) return skip("missing route path");
   const handle = pageHandleOfPath(routePath);
   const title = localizedAt(raw, "title");
   return {
@@ -140,6 +155,34 @@ function rowsOf(res: Response, what: string): readonly unknown[] {
   throw new Error(`link targets: the ${what} read answered an unexpected body`);
 }
 
+/**
+ * The rows that read as entries. Malformed ones are skipped, and logged once per kind with
+ * fixed reasons only: if a Catalog or Pages getter were renamed, every link of that kind would
+ * turn broken, and this is the run-time trace of why (review M3).
+ */
+function entriesOf<E extends Entry>(
+  kind: CatalogLinkType,
+  rows: readonly unknown[],
+  parse: (raw: unknown) => E | Skip,
+): E[] {
+  const entries: E[] = [];
+  const reasons: string[] = [];
+  let skipped = 0;
+  for (const raw of rows) {
+    const parsed = parse(raw);
+    if ("skip" in parsed) {
+      skipped += 1;
+      if (!reasons.includes(parsed.skip)) reasons.push(parsed.skip);
+    } else {
+      entries.push(parsed);
+    }
+  }
+  if (skipped > 0) {
+    logger.warn("online-store link targets: malformed rows skipped", { kind, skipped, reasons });
+  }
+  return entries;
+}
+
 function chunks(ids: readonly string[]): string[][] {
   const distinct = [...new Set(ids)].slice(0, LINK_TARGET_IDS_MAX);
   const out: string[][] = [];
@@ -157,7 +200,7 @@ function emptyMap(): Record<string, LinkTarget> {
 const KINDS: readonly {
   readonly kind: CatalogLinkType;
   readonly read: keyof Pick<LinkTargetReads, "products" | "collections" | "pages">;
-  readonly entry: (raw: unknown) => Entry | null;
+  readonly entry: (raw: unknown) => Entry | Skip;
 }[] = [
   { kind: "product", read: "products", entry: productEntry },
   { kind: "collection", read: "collections", entry: collectionEntry },
@@ -178,12 +221,8 @@ export function onlineStoreLinkTargets(reads: LinkTargetReads): LinkTargetsPort 
           // Only the kinds with ids are read; a large kind is split into bounded batches.
           const batches = chunks(ids[kind]);
           const answers = await Promise.all(batches.map((batch) => reads[read](batch, tenantId)));
-          for (const res of answers) {
-            for (const raw of rowsOf(res, read)) {
-              const found = entry(raw);
-              if (found !== null) map[kind][found.id] = found.target;
-            }
-          }
+          const rows = answers.flatMap((res) => rowsOf(res, read));
+          for (const found of entriesOf(kind, rows, entry)) map[kind][found.id] = found.target;
         }),
       );
       return map satisfies LinkTargetMap;
@@ -192,18 +231,15 @@ export function onlineStoreLinkTargets(reads: LinkTargetReads): LinkTargetsPort 
       let entries: Entry[];
       if (type === "page") {
         const needle = query.toLowerCase();
-        entries = rowsOf(await reads.listPages(tenantId), "pages")
-          .map(pageEntry)
-          .filter((page): page is PageEntry => page !== null && page.linkable)
+        entries = entriesOf("page", rowsOf(await reads.listPages(tenantId), "pages"), pageEntry)
+          .filter((page) => page.linkable)
           .filter((page) => page.searchText.toLowerCase().includes(needle));
       } else {
         const [read, entry] =
           type === "product"
             ? [reads.searchProducts, productEntry]
             : [reads.searchCollections, collectionEntry];
-        entries = rowsOf(await read(query, tenantId), `${type} search`)
-          .map(entry)
-          .filter((found): found is Entry => found !== null);
+        entries = entriesOf(type, rowsOf(await read(query, tenantId), `${type} search`), entry);
       }
       return entries.slice(0, SEARCH_MAX).map((found): LinkTargetChoice => ({
         id: found.id,

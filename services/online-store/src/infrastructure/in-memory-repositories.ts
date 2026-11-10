@@ -1,4 +1,4 @@
-import { POLICY_TYPES, type PolicyType } from "@platform/storefront-content";
+import { isDefaultMenuHandle, POLICY_TYPES, type PolicyType } from "@platform/storefront-content";
 import { ConcurrencyError } from "@platform/utils";
 import { menuNeedsId } from "../domain/errors";
 import { Menu, type MenuSnapshot } from "../domain/menu";
@@ -197,6 +197,10 @@ export class InMemoryMenuRepository implements MenuRepository {
   async get(handle: string, tenantId: string): Promise<Menu | null> {
     const row = this.rows.get(tenantId, handle);
     return row === undefined ? null : Menu.reconstitute(copyOf(row));
+  }
+
+  async countCustom(tenantId: string): Promise<number> {
+    return this.rows.all(tenantId).filter((row) => !isDefaultMenuHandle(row.handle)).length;
   }
 
   async save(menu: Menu, tenantId: string): Promise<void> {

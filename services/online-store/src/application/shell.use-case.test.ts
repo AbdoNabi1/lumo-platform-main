@@ -284,8 +284,21 @@ describe("the shell's menus (spec 2.2, 2.6)", () => {
 
   it("link targets down: only catalogue items are dropped, logged; the shell still answers (Review Focus 2)", async () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-    const options = { targets: TARGETS, linkTargetsFail: false };
+    const targets = {
+      [T]: {
+        ...TARGETS[T],
+        page: { "g-1": { href: "/pages/about", title: "About", published: true } },
+      },
+    };
+    const options = { targets, linkTargetsFail: false };
     const h = harness(options);
+    await h.controller.updatePolicy({
+      tenantId: T,
+      type: "terms",
+      by: "s",
+      expectedVersion: 0,
+      body: { en: "x" },
+    });
     await h.controller.updateMenu({
       tenantId: T,
       handle: "main-menu",
@@ -294,13 +307,45 @@ describe("the shell's menus (spec 2.2, 2.6)", () => {
       items: [
         { id: ID(1), label: { en: "Sale" }, link: { type: "collection", id: "c-1" }, children: [] },
         { id: ID(2), label: { en: "Home" }, link: { type: "home" }, children: [] },
+        { id: ID(3), label: { en: "About" }, link: { type: "page", id: "g-1" }, children: [] },
+        { id: ID(4), label: { en: "Find" }, link: { type: "search" }, children: [] },
+        {
+          id: ID(5),
+          label: { en: "Terms" },
+          link: { type: "policy", policy: "terms" },
+          children: [],
+        },
+        {
+          id: ID(6),
+          label: { en: "WhatsApp" },
+          link: { type: "url", url: "https://wa.me/20100" },
+          children: [],
+        },
       ],
     });
+    const healthy = (await h.controller.shell({ tenantId: T })).body as Doc;
+    expect(healthy.header.menu.map((i: { href: string }) => i.href)).toEqual([
+      "/collections/sale",
+      "/",
+      "/pages/about",
+      "/search",
+      "/policies/terms-of-service",
+      "https://wa.me/20100",
+    ]);
     options.linkTargetsFail = true; // read per call, as Part 1's ...Fails options
     const res = await h.controller.shell({ tenantId: T });
     expect(res.status).toBe(200);
+    // Only the collection and the page drop; home, search, policy and URL links stay (Ruling 26).
     expect((res.body as Doc).header.menu).toEqual([
       { label: { en: "Home" }, href: "/", external: false, children: [] },
+      { label: { en: "Find" }, href: "/search", external: false, children: [] },
+      {
+        label: { en: "Terms" },
+        href: "/policies/terms-of-service",
+        external: false,
+        children: [],
+      },
+      { label: { en: "WhatsApp" }, href: "https://wa.me/20100", external: true, children: [] },
     ]);
     expect(warn).toHaveBeenCalledWith("storefront shell: link targets unavailable", {
       tenantId: T,

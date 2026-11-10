@@ -1,4 +1,4 @@
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { TransactionClient } from "@platform/db";
 import { createFakePrisma } from "@platform/db/testing";
 import { tenantRowIsolationCases, type TenantRowStore } from "@platform/messaging/testing";
@@ -305,5 +305,32 @@ for (const layer of layers) {
         it(c.name, c.run);
       }
     }
+  });
+}
+
+for (const layer of layers) {
+  describe(`online-store menus countCustom — ${layer.name} (ADR-0014, review M1/M2)`, () => {
+    it("counts only this shop's custom menus: the saved defaults and other shops are not counted", async () => {
+      const { tx, repos } = layer.make();
+      let n = 0;
+      const save = (tenantId: string, handle: string) =>
+        repos.menus.save(
+          Menu.create({
+            id: `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
+            handle,
+            title: handle,
+            items: [],
+            now,
+          }),
+          tenantId,
+          tx,
+        );
+      expect(await repos.menus.countCustom("t-A")).toBe(0);
+      for (const handle of ["main-menu", "footer", "sale", "help"]) await save("t-A", handle);
+      for (const handle of ["main-menu", "sale", "x", "y", "z"]) await save("t-B", handle);
+      expect(await repos.menus.countCustom("t-A")).toBe(2);
+      expect(await repos.menus.countCustom("t-B", tx)).toBe(4);
+      expect(await repos.menus.countCustom("t-C")).toBe(0);
+    });
   });
 }

@@ -179,11 +179,16 @@ export class CreateMenu {
     if (isDefaultMenuHandle(handle)) return err(menuHandleTaken());
     const content = readMenuContent(input.title, input.items);
     if (!content.ok) return content;
-    const saved = await this.deps.menus.list(tenantId);
-    if (saved.some((menu) => menu.snapshot().handle === handle)) return err(menuHandleTaken());
+    // One row and one count, never every menu with its items (review M1).
+    const [existing, customMenus] = await Promise.all([
+      this.deps.menus.get(handle, tenantId),
+      this.deps.menus.countCustom(tenantId),
+    ]);
+    if (existing !== null) return err(menuHandleTaken());
+    // MENU_LIMIT caps custom menus: saving `main-menu` or `footer` never uses one up (review M2).
     // A soft cap: it counts outside the transaction, so two concurrent creates at 49 can both
-    // pass and leave 51 menus. One menu over a limit of 50 is harmless; a lock is not worth it.
-    if (saved.length >= MENU_LIMIT) return err(menuLimit());
+    // pass and leave 51 custom menus. One over a limit of 50 is harmless; a lock is not worth it.
+    if (customMenus >= MENU_LIMIT) return err(menuLimit());
     const [setPolicies, targets] = await Promise.all([
       setPoliciesOf(this.deps, tenantId),
       loadTargets(this.deps, content.value.items, tenantId),

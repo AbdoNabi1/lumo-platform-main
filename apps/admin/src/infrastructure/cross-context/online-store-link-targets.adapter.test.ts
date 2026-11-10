@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { logger } from "@platform/utils";
 import { wireCatalog } from "@platform/catalog";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wirePages } from "@platform/pages";
@@ -73,6 +74,10 @@ function readsOver(fixtures: Fixtures): LinkTargetReads & {
 const EMPTY: Fixtures = { products: [], collections: [], pages: [] };
 
 describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("maps catalogue and pages by id, with Ruling 11's published rules", async () => {
     const port = onlineStoreLinkTargets(
       readsOver({
@@ -155,7 +160,7 @@ describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
     expect(reads.calls).toEqual([{ kind: "collections", ids: ["c-1"], tenantId: "t-9" }]);
   });
 
-  it("splits a large kind into bounded batches (Ruling 7), never one unbounded read", async () => {
+  it("splits a large kind into this adapter's bounded batches, never one unbounded read", async () => {
     const reads = readsOver(EMPTY);
     const port = onlineStoreLinkTargets(reads);
     const ids = Array.from({ length: 2 * LINK_TARGET_BATCH + 5 }, (_, n) => `p-${n}`);
@@ -229,7 +234,8 @@ describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
     ]);
   });
 
-  it("search skips a malformed row instead of failing the picker", async () => {
+  it("search skips a malformed row instead of failing the picker, and says so", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
     const reads: LinkTargetReads = {
       ...readsOver(EMPTY),
       searchProducts: () =>
@@ -238,6 +244,63 @@ describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
     expect(await onlineStoreLinkTargets(reads).search("product", "", "t")).toEqual([
       { id: "p-1", title: "Lamp", subtitle: "/products/lamp" },
     ]);
+    expect(warn).toHaveBeenCalledWith("online-store link targets: malformed rows skipped", {
+      kind: "product",
+      skipped: 1,
+      reasons: ["missing id"],
+    });
+  });
+
+  it("resolve logs skipped malformed rows once per kind, with reasons and no content (review M3)", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    // A getter renamed upstream: the row still arrives, without a slug.
+    const renamed = {
+      id: { value: "c-2" },
+      name: "Secret name",
+      status: "published",
+      handle: { value: "secret" },
+    };
+    const reads: LinkTargetReads = {
+      ...readsOver(EMPTY),
+      collections: () =>
+        ok([
+          collection("c-1", "Sale", "sale", "published"),
+          { ...collection("c-3", "Hidden", "hidden", "draft"), slug: undefined },
+          renamed,
+          null,
+        ]),
+      pages: () => ok([{ id: { value: "g-1" }, name: "About", status: "published" }]),
+    };
+    const map = await onlineStoreLinkTargets(reads).resolve(
+      { product: [], collection: ["c-1", "c-2", "c-3"], page: ["g-1"] },
+      "t-1",
+    );
+    expect(Object.keys(map.collection)).toEqual(["c-1"]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith("online-store link targets: malformed rows skipped", {
+      kind: "collection",
+      skipped: 3,
+      reasons: ["missing slug", "not an object"],
+    });
+    expect(warn).toHaveBeenCalledWith("online-store link targets: malformed rows skipped", {
+      kind: "page",
+      skipped: 1,
+      reasons: ["missing route path"],
+    });
+    const logged = JSON.stringify(warn.mock.calls);
+    for (const content of ["Secret", "secret", "Hidden", "c-2", "c-3", "About", "g-1", "t-1"]) {
+      expect(logged).not.toContain(content);
+    }
+  });
+
+  it("a healthy resolve logs nothing", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const reads = readsOver({ ...EMPTY, products: [product("p-1", "Lamp", "lamp", "draft")] });
+    await onlineStoreLinkTargets(reads).resolve(
+      { product: ["p-1"], collection: [], page: [] },
+      "t",
+    );
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

@@ -46,6 +46,8 @@ export interface MenuRepository {
   /** Persisted menus only, ordered by handle. */
   list(tenantId: string, tx?: unknown): Promise<readonly Menu[]>;
   get(handle: string, tenantId: string, tx?: unknown): Promise<Menu | null>;
+  /** Saved menus other than `main-menu` and `footer` (what `MENU_LIMIT` caps); one count read. */
+  countCustom(tenantId: string, tx?: unknown): Promise<number>;
   /** First save inserts (a duplicate handle throws ConcurrencyError); later saves are version-guarded. */
   save(menu: Menu, tenantId: string, tx: unknown): Promise<void>;
   /** True when a row went. */

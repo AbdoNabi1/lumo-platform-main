@@ -1,6 +1,6 @@
 import { isDefaultMenuHandle, type MenuItem } from "@platform/storefront-content";
 
-/** Menus per shop, default menus included once saved (spec 2.2, Ruling 6). */
+/** Custom menus per shop (spec 2.2, Ruling 13); `main-menu` and `footer` never count, saved or not. */
 export const MENU_LIMIT = 50;
 
 export interface MenuSnapshot {
