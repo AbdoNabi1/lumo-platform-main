@@ -1,6 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MobileMenu } from "./mobile-menu";
+import type * as Navigation from "next/navigation";
+
+const route = vi.hoisted(() => ({ pathname: "/" }));
+vi.mock("next/navigation", async (original) => ({
+  ...(await original<typeof Navigation>()),
+  usePathname: () => route.pathname,
+}));
+const { MobileMenu } = await import("./mobile-menu");
 
 const entries = [
   { label: "Home", href: "/", external: false, children: [] },
@@ -194,5 +201,59 @@ describe("MobileMenu as a modal drawer (review I-1, I-2, M-1)", () => {
     } finally {
       document.body.style.overflow = "";
     }
+  });
+});
+
+describe("MobileMenu on route changes and cleanup order (re-review)", () => {
+  // A new element each time: rerendering the same element object would bail out of rendering.
+  const menu = () => (
+    <MobileMenu
+      entries={entries}
+      previewToken={null}
+      openLabel="Open"
+      closeLabel="Close"
+      title="Menu"
+    />
+  );
+
+  it("closes when the route changes another way (browser Back): page interactive, scroll back", () => {
+    route.pathname = "/";
+    document.body.style.overflow = "auto";
+    try {
+      const { container, rerender } = render(menu());
+      fireEvent.click(screen.getByRole("button", { name: "Open" }));
+      expect(container).toHaveAttribute("inert");
+      expect(document.body.style.overflow).toBe("hidden");
+      route.pathname = "/collections/sale";
+      rerender(menu());
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(screen.getByRole("button", { name: "Open" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      expect(container).not.toHaveAttribute("inert");
+      expect(document.body.style.overflow).toBe("auto");
+    } finally {
+      route.pathname = "/";
+      document.body.style.overflow = "";
+    }
+  });
+
+  it("restores focus to the trigger only once the page is no longer inert", () => {
+    const { container } = render(menu());
+    const trigger = screen.getByRole("button", { name: "Open" });
+    // jsdom does not refuse focus on an inert element, so record the page's state at each call.
+    const inertWhenFocused: boolean[] = [];
+    const focus = HTMLElement.prototype.focus;
+    vi.spyOn(trigger, "focus").mockImplementation(function (this: HTMLElement, options) {
+      inertWhenFocused.push(container.hasAttribute("inert"));
+      focus.call(this, options);
+    });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(inertWhenFocused).toEqual([false, false]);
+    expect(document.activeElement).toBe(trigger);
   });
 });

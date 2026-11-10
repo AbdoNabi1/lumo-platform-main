@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
+import { usePathname } from "next/navigation";
 import { ChevronDownIcon, MenuIcon, XIcon } from "lucide-react";
 import type { MenuEntry } from "@/lib/shell-menus";
 import { MenuLink } from "./menu-link";
@@ -64,6 +65,17 @@ export function MobileMenu({
   /** Whether closing hands focus back to the trigger (not after following a link). */
   const refocusTrigger = useRef(true);
   const titleId = useId();
+  const pathname = usePathname();
+
+  // Re-review: the header persists across client navigations, so any route change (a link outside
+  // the drawer, browser Back or Forward) closes it, lifting `inert` and the scroll lock. Focus is left
+  // to the navigation. Query-only changes are not watched: `useSearchParams` here would need a
+  // Suspense boundary around the header, and the only way to one with the drawer open is browser
+  // Back between two searches (the drawer's own links close it; the search form is a full load).
+  useEffect(() => {
+    refocusTrigger.current = false;
+    setOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
