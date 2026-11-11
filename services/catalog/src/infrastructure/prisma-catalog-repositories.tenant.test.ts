@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { TransactionClient } from "@platform/db";
 import { Money, UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -147,5 +147,43 @@ describe("PrismaProductRepository variant save — tenant isolation (G-76, close
 
     expect(variants).toHaveLength(1);
     expect(variants[0]).toMatchObject({ id: "variant-a", tenantId: "tenant-a", sku: "SKU-A-V1" });
+  });
+});
+
+describe("PrismaProductRepository.listNewestListed (Online Store Part 3)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  function newestRepo() {
+    const calls: Record<string, unknown>[] = [];
+    const client = {
+      product: {
+        findMany: async (args: Record<string, unknown>) => {
+          calls.push(args);
+          return [];
+        },
+      },
+    } as unknown as TransactionClient;
+    return { repo: wireRepo(monotonicIds()), client, calls };
+  }
+
+  it("reads only the tenant's listed, undeleted products, newest id first, with the clamped take", async () => {
+    const { repo, client, calls } = newestRepo();
+
+    await repo.listNewestListed(8, "tenant-a", client);
+    await repo.listNewestListed(0, "tenant-a", client);
+    await repo.listNewestListed(500, "tenant-a", client);
+
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.where).toEqual({
+        tenantId: "tenant-a",
+        deletedAt: null,
+        publishState: "published",
+      });
+      expect(call.orderBy).toEqual({ id: "desc" });
+    }
+    expect(calls.map((c) => c.take)).toEqual([8, 1, 50]);
   });
 });

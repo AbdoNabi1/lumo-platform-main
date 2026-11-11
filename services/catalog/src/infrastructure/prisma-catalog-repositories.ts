@@ -11,10 +11,12 @@ import type { CategoryRepository } from "../domain/category-repository";
 import type { Collection } from "../domain/collection";
 import type { CollectionRepository } from "../domain/collection-repository";
 import type { Product } from "../domain/product";
-import type {
-  ProductBatchReader,
-  ProductRepository,
-  VariantCurrencyRelabeler,
+import {
+  clampNewestLimit,
+  type NewestProductsReader,
+  type ProductBatchReader,
+  type ProductRepository,
+  type VariantCurrencyRelabeler,
 } from "../domain/product-repository";
 import {
   BrandMapper,
@@ -67,7 +69,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * Optimistic locking + same-transaction outbox per ADR-0003.
  */
 export class PrismaProductRepository
-  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader
+  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader, NewestProductsReader
 {
   private readonly deps: PrismaCatalogRepositoryDeps;
 
@@ -143,6 +145,24 @@ export class PrismaProductRepository
           row as unknown as ProductRow,
           row.variants as VariantRow[],
         );
+  }
+
+  async listNewestListed(
+    limit: number,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Product[]> {
+    const rows = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.product.findMany({
+        where: { tenantId, deletedAt: null, publishState: "published" },
+        include: { variants: true },
+        orderBy: { id: "desc" },
+        take: clampNewestLimit(limit),
+      }),
+    );
+    return rows.map((row) =>
+      ProductMapper.toDomain(row as unknown as ProductRow, row.variants as VariantRow[]),
+    );
   }
 
   async findByIds(

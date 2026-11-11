@@ -36,9 +36,60 @@ const pageQuery = z.object({
  * declares `query?: string` and `ListProducts.execute()` already delegates to a case-insensitive
  * substring search when it's present — this schema just lets the public route forward it.
  */
-const publicProductsQuery = pageQuery.extend({
-  query: z.string().min(1).optional(),
-});
+/** Online Store Part 3: `?ids=` takes at most this many product ids. */
+export const PUBLIC_PRODUCT_IDS_MAX = 50;
+/** Online Store Part 3: `?sort=newest` takes `first` 1-50 (default 8). */
+export const NEWEST_PRODUCTS_MAX = 50;
+const NEWEST_PRODUCTS_DEFAULT = 8;
+
+const PRODUCT_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * The distinct product ids of a `?ids=` value, in order (surrounding spaces and empty entries are
+ * dropped), or null when there are none, more than {@link PUBLIC_PRODUCT_IDS_MAX}, or one is malformed.
+ */
+export function parseProductIds(raw: string): readonly string[] | null {
+  const ids = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id !== ""),
+    ),
+  ];
+  if (ids.length === 0 || ids.length > PUBLIC_PRODUCT_IDS_MAX) return null;
+  return ids.every((id) => PRODUCT_ID_PATTERN.test(id)) ? ids : null;
+}
+
+const publicProductsQuery = pageQuery
+  .extend({
+    query: z.string().min(1).optional(),
+    ids: z.string().optional(),
+    sort: z.enum(["newest"]).optional(),
+  })
+  .superRefine((q, ctx) => {
+    if (q.ids !== undefined) {
+      const clashes = (["query", "after", "before", "first", "last", "sort"] as const).filter(
+        (key) => q[key] !== undefined,
+      );
+      if (parseProductIds(q.ids) === null) {
+        ctx.addIssue({ code: "custom", path: ["ids"], message: "INVALID_IDS" });
+      }
+      for (const key of clashes) {
+        ctx.addIssue({ code: "custom", path: [key], message: "NOT_WITH_IDS" });
+      }
+    }
+    if (q.sort !== undefined) {
+      for (const key of ["query", "after", "before", "last"] as const) {
+        if (q[key] !== undefined) {
+          ctx.addIssue({ code: "custom", path: [key], message: "NOT_WITH_SORT" });
+        }
+      }
+      if (q.first !== undefined && q.first > NEWEST_PRODUCTS_MAX) {
+        ctx.addIssue({ code: "custom", path: ["first"], message: "FIRST_TOO_LARGE" });
+      }
+    }
+  });
 
 const slugParams = z.object({ slug: z.string().min(1) });
 
@@ -331,22 +382,60 @@ export function publicCatalogRoutes(admin: WiredAdmin): readonly RouteDefinition
       permission: "products:read",
       public: true,
       summary:
-        "Public: list listed (published) products (cursor pagination, optional substring `query` search)",
+        "Public: list listed (published) products (cursor pagination, optional substring `query` search; `ids` reads up to 50 by id, `sort=newest` the newest)",
       schema: { querystring: publicProductsQuery },
       // ADR-0014: ListProductsInput now requires tenantId, from the already-verified
       // context.tenantId (packages/http's tenant-resolution chain) — this route is `public: true`
       // (no principal/authorization required) but still runs behind tenant resolution, per
       // packages/http/src/server.ts's "nothing below runs tenant-less, public routes included".
-      handle: async ({ query, context }) =>
-        mapProductPage(
-          admin,
-          context.tenantId,
-          listedProductsOnly(
-            await admin.publicReads.products.list({ ...query, tenantId: context.tenantId }),
-          ),
-          { perProduct: LIST_MEDIA, variants: true },
-          toProductDto,
-        ),
+      handle: async ({ query, context }) => {
+        const tenantId = context.tenantId;
+        const project = (response: PageResponse) =>
+          mapProductPage(
+            admin,
+            tenantId,
+            listedProductsOnly(response),
+            { perProduct: LIST_MEDIA, variants: true },
+            toProductDto,
+          );
+        // The controllers below answer a bare `Product[]`; wrap it as one page.
+        const asOnePage = (response: PageResponse): PageResponse =>
+          response.status < 200 || response.status >= 300
+            ? response
+            : {
+                status: 200,
+                body: {
+                  items: response.body as readonly Product[],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              };
+
+        if (query.ids !== undefined) {
+          const ids = parseProductIds(query.ids) ?? [];
+          const response = asOnePage(await admin.publicReads.products.getByIds({ ids, tenantId }));
+          if (response.status !== 200) return response;
+          // the read is unordered: answer in the order asked
+          const found = new Map(
+            (response.body as { items: readonly Product[] }).items.map((p) => [p.id.toString(), p]),
+          );
+          const items = ids.flatMap((id) => {
+            const product = found.get(id);
+            return product === undefined ? [] : [product];
+          });
+          return project({ ...response, body: { ...(response.body as object), items } });
+        }
+        if (query.sort === "newest") {
+          return project(
+            asOnePage(
+              await admin.publicReads.products.listNewest({
+                limit: query.first ?? NEWEST_PRODUCTS_DEFAULT,
+                tenantId,
+              }),
+            ),
+          );
+        }
+        return project(await admin.publicReads.products.list({ ...query, tenantId }));
+      },
     }),
     defineRoute({
       method: "GET",

@@ -1,11 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { wireCatalog, type WiredCatalog } from "@platform/catalog";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireInventory } from "@platform/inventory";
 import { wirePricing, type WiredPricing } from "@platform/pricing";
 import type { WiredAdmin } from "../composition";
-import { publicCatalogRoutes } from "./public-catalog-routes";
+import {
+  parseProductIds,
+  PUBLIC_PRODUCT_IDS_MAX,
+  publicCatalogRoutes,
+} from "./public-catalog-routes";
 
 /**
  * Regression guard for the public storefront read surface.
@@ -60,13 +64,14 @@ async function invoke(
   admin: WiredAdmin,
   path: string,
   params?: Record<string, string>,
+  query: Record<string, unknown> = {},
 ): Promise<{ status: number; body: unknown }> {
   const route = publicCatalogRoutes(admin).find((r) => r.path === path);
   if (route === undefined) throw new Error(`no public route at ${path}`);
   return (await route.handle({
     body: undefined,
     params: params ?? undefined,
-    query: {},
+    query,
     context: {
       tenantId: "tenant-local",
       principal: { id: "anon", kind: "staff", roles: [] },
@@ -722,5 +727,230 @@ describe("public stock per variant (Plan 2B-1)", () => {
       expect(Object.keys(variant)).not.toContain("tracksInventory");
       expect(Object.keys(variant)).not.toContain("inventoryPolicy");
     }
+  });
+});
+
+describe("GET /public/products — ids and newest (spec 3.4, Rulings 11–12)", () => {
+  const tenantId = "tenant-local";
+
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  /** Zero-padded ids, so the id order is the creation order (the newest-first rule orders by id). */
+  function orderedCatalog(): WiredCatalog {
+    let n = 0;
+    const idGenerator: IdGenerator = { generate: () => `id-${String((n += 1)).padStart(4, "0")}` };
+    return wireCatalog({ serializer: new InMemoryEventSerializer(), idGenerator, clock });
+  }
+
+  async function seed(
+    catalog: WiredCatalog,
+    slug: string,
+    state: "draft" | "published" | "unlisted" | "deleted",
+  ): Promise<string> {
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: `SKU-${slug}`,
+        name: `Product ${slug}`,
+        slug,
+        variants: [
+          {
+            sku: `SKU-${slug}-V`,
+            priceAmountMinor: 1000,
+            currency: "USD",
+            costAmountMinor: 400,
+            barcode: "6221234567890",
+          },
+        ],
+        tenantId,
+      }),
+      "create product",
+    );
+    if (state !== "draft") {
+      unwrap(await catalog.products.publish({ productId: created.id, tenantId }), "publish");
+    }
+    if (state === "unlisted") {
+      unwrap(await catalog.products.unlist({ productId: created.id, tenantId }), "unlist");
+    }
+    if (state === "deleted") {
+      unwrap(await catalog.products.delete({ productId: created.id, tenantId }), "delete");
+    }
+    return created.id;
+  }
+
+  /** Six products in id order: published, draft, published, unlisted, published, deleted-published. */
+  async function seedSix() {
+    const catalog = orderedCatalog();
+    const ids = [
+      await seed(catalog, "s1", "published"),
+      await seed(catalog, "s2", "draft"),
+      await seed(catalog, "s3", "published"),
+      await seed(catalog, "s4", "unlisted"),
+      await seed(catalog, "s5", "published"),
+      await seed(catalog, "s6", "deleted"),
+    ];
+    return { admin: stubAdmin(catalog), ids };
+  }
+
+  async function get(admin: WiredAdmin, query: Record<string, unknown>) {
+    return invoke(admin, "/public/products", undefined, query);
+  }
+
+  const idsOf = (res: { body: unknown }) =>
+    (res.body as { items: readonly { id: string }[] }).items.map((p) => p.id);
+
+  function querystring() {
+    const route = publicCatalogRoutes(stubAdmin(catalogFixture())).find(
+      (r) => r.path === "/public/products",
+    );
+    if (route === undefined) throw new Error("no /public/products route");
+    return route.schema.querystring as {
+      safeParse: (v: unknown) => { success: boolean };
+    };
+  }
+
+  it("?ids= returns listed products only, in request order, as one page", async () => {
+    const { admin, ids } = await seedSix();
+    const [p1, p2, p3, , , p6] = ids as [string, string, string, string, string, string];
+
+    const res = await get(admin, { ids: `${p3},${p2},${p1},${p3},${p6},missing` });
+
+    expect(res.status).toBe(200);
+    expect(idsOf(res)).toEqual([p3, p1]);
+    expect((res.body as { pageInfo: unknown }).pageInfo).toEqual({
+      hasNextPage: false,
+      endCursor: null,
+    });
+  });
+
+  it("more than 50 ids, a malformed id, or ids with query/after/before/first/last/sort is rejected by the query schema", () => {
+    const many = Array.from({ length: 51 }, (_, i) => `p${i}`).join(",");
+    const schema = querystring();
+    for (const q of [
+      { ids: many },
+      { ids: "a b" },
+      { ids: "a/b" },
+      { ids: ",," },
+      { ids: "p1", query: "x" },
+      { ids: "p1", after: "c" },
+      { ids: "p1", before: "c" },
+      { ids: "p1", first: "3" },
+      { ids: "p1", last: "3" },
+      { ids: "p1", sort: "newest" },
+    ]) {
+      expect(schema.safeParse(q).success, JSON.stringify(q)).toBe(false);
+    }
+    expect(schema.safeParse({ ids: "p1,p2" }).success).toBe(true);
+    const fifty = Array.from({ length: 50 }, (_, i) => `p${i}`).join(",");
+    expect(schema.safeParse({ ids: fifty }).success).toBe(true);
+  });
+
+  it("?sort=newest gives the newest listed products, first defaulting to 8 and capped at 50", async () => {
+    const { admin, ids } = await seedSix();
+    const [p1, , p3, , p5] = ids as [string, string, string, string, string, string];
+
+    const two = await get(admin, { sort: "newest", first: 2 }); // the shape after the schema's coercion
+    expect(two.status).toBe(200);
+    expect(idsOf(two)).toEqual([p5, p3]);
+    expect((two.body as { pageInfo: unknown }).pageInfo).toEqual({
+      hasNextPage: false,
+      endCursor: null,
+    });
+
+    // default first (8) shows every listed product, newest first; never a draft, unlisted or deleted one
+    const all = await get(admin, { sort: "newest" });
+    expect(all.status).toBe(200);
+    expect(idsOf(all)).toEqual([p5, p3, p1]);
+
+    const schema = querystring();
+    expect(schema.safeParse({ sort: "newest", first: "50" }).success).toBe(true);
+    expect(schema.safeParse({ sort: "newest", first: "51" }).success).toBe(false);
+    for (const extra of [{ query: "x" }, { after: "c" }, { before: "c" }, { last: "2" }]) {
+      expect(schema.safeParse({ sort: "newest", ...extra }).success, JSON.stringify(extra)).toBe(
+        false,
+      );
+    }
+    expect(schema.safeParse({ sort: "oldest" }).success).toBe(false);
+  });
+
+  it("?sort=newest answers 200 with items even though the controller returns a bare array", async () => {
+    const calls: unknown[] = [];
+    const admin = {
+      publicReads: {
+        products: {
+          listNewest: async (input: unknown) => {
+            calls.push(input);
+            return { status: 200, body: [] };
+          },
+        },
+      },
+      mediaImages: { execute: async () => new Map() },
+    } as unknown as WiredAdmin;
+
+    const res = await get(admin, { sort: "newest" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ items: [], pageInfo: { hasNextPage: false, endCursor: null } });
+    expect(calls).toEqual([{ limit: 8, tenantId }]);
+  });
+
+  it("never serves another tenant's products by ids or newest", async () => {
+    const catalog = orderedCatalog();
+    const mine = await seed(catalog, "mine", "published");
+    const created = unwrap<{ id: string }>(
+      await catalog.products.create({
+        sku: "SKU-theirs",
+        name: "Theirs",
+        slug: "theirs",
+        variants: [{ sku: "SKU-theirs-V", priceAmountMinor: 1000, currency: "USD" }],
+        tenantId: "tenant-other",
+      }),
+      "create other tenant product",
+    );
+    unwrap(
+      await catalog.products.publish({ productId: created.id, tenantId: "tenant-other" }),
+      "publish",
+    );
+    const admin = stubAdmin(catalog);
+
+    expect(idsOf(await get(admin, { ids: `${created.id},${mine}` }))).toEqual([mine]);
+    expect(idsOf(await get(admin, { sort: "newest" }))).toEqual([mine]);
+  });
+
+  it("the projection is the list's: no storage key, no cost, no tenant", async () => {
+    const { admin, ids } = await seedSix();
+
+    const res = await get(admin, { ids: ids[0] as string });
+
+    expect(res.status).toBe(200);
+    const [product] = (res.body as { items: Record<string, unknown>[] }).items;
+    expect(product).toBeDefined();
+    const variant = (product?.variants as Record<string, unknown>[])[0] ?? {};
+    for (const key of ["cost", "costAmountMinor", "barcode", "tenantId", "storageKey"]) {
+      expect(Object.keys(product ?? {}), `product leaks "${key}"`).not.toContain(key);
+      expect(Object.keys(variant), `variant leaks "${key}"`).not.toContain(key);
+    }
+    const wire = JSON.stringify(res.body);
+    expect(wire).not.toContain("6221234567890");
+    expect(wire).not.toContain("tenantId");
+    expect(wire).not.toContain("tenant-local");
+    expect(wire).not.toContain('"cost');
+    expect(wire).not.toContain("storageKey");
+    // the same keys as the same product from the plain list
+    const list = await get(admin, {});
+    const listed = (list.body as { items: Record<string, unknown>[] }).items[0] ?? {};
+    expect(Object.keys(product ?? {}).sort()).toEqual(Object.keys(listed).sort());
+  });
+
+  it("parseProductIds", () => {
+    expect(parseProductIds(" a, b ,a,,c")).toEqual(["a", "b", "c"]);
+    expect(parseProductIds("")).toBeNull();
+    expect(parseProductIds(",,")).toBeNull();
+    expect(parseProductIds("a/b")).toBeNull();
+    expect(parseProductIds("a b")).toBeNull();
+    const fifty = Array.from({ length: 50 }, (_, i) => `p${i}`).join(",");
+    expect(parseProductIds(fifty)).toHaveLength(PUBLIC_PRODUCT_IDS_MAX);
+    expect(parseProductIds(`${fifty},p50`)).toBeNull();
   });
 });
