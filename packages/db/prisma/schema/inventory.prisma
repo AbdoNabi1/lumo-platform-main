@@ -20,7 +20,7 @@ model InventoryItem {
 
   // Plan 2B-1: the migration declares this index NULLS NOT DISTINCT (as Plan 2A did for cart lines), so
   // one legacy (variant-less) row per product and warehouse stays unique. Prisma cannot express that.
-  @@unique([tenantId, productRef, variantRef, warehouseId])
+  @@unique([tenantId, productRef, variantRef, warehouseId], map: "inventory_items_tenant_id_product_ref_variant_ref_warehouse_id_")
   @@map("inventory_items")
   @@schema("inventory")
 }
