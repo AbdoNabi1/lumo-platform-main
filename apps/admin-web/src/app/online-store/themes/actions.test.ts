@@ -68,7 +68,7 @@ describe("theme actions", () => {
     ).toEqual({ status: "in_flight" });
   });
 
-  it("draft save reuses the caller's key, and replaces a malformed one (Ruling 2)", async () => {
+  it("draft save reuses the caller's key, mints one when absent, refuses a bad one (Ruling 2)", async () => {
     api.saveThemeDraft.mockResolvedValue({ outcome: "error", message: "x" });
     await actions.saveThemeDraftAction({
       document: {} as never,
@@ -79,11 +79,21 @@ describe("theme actions", () => {
     await actions.saveThemeDraftAction({
       document: {} as never,
       expectedVersion: 6,
-      idempotencyKey: "bad key\n",
+      idempotencyKey: undefined,
     });
     const [, , key] = api.saveThemeDraft.mock.lastCall as [unknown, number, string];
-    expect(key).not.toBe("bad key\n");
     expect(key).toMatch(/^[A-Za-z0-9-]{16,100}$/);
+    api.saveThemeDraft.mockClear();
+    for (const bad of ["bad key\n", "short", "a".repeat(101), 7, null, ""]) {
+      expect(
+        await actions.saveThemeDraftAction({
+          document: {} as never,
+          expectedVersion: 6,
+          idempotencyKey: bad as never,
+        }),
+      ).toEqual({ status: "error" });
+    }
+    expect(api.saveThemeDraft).not.toHaveBeenCalled();
   });
 
   it("publish: DRAFT_CHANGED and NOTHING_TO_PUBLISH are distinct; only success revalidates the storefront", async () => {

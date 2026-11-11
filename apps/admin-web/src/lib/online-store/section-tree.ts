@@ -52,7 +52,7 @@ const withSections = (doc: ThemeDocument, sections: readonly Section[]): ThemeDo
 });
 
 export function addSection(doc: ThemeDocument, type: SectionType, id: string): ThemeDocument {
-  if (canAddSection(doc, type) !== "ok") return doc;
+  if (canAddSection(doc, type) !== "ok" || findSection(doc, id) !== null) return doc;
   const section = newSection(type, id);
   if (type === "announcement_bar") {
     return { ...doc, header: { ...doc.header, announcement: section as AnnouncementSection } };
@@ -64,6 +64,7 @@ export function addSection(doc: ThemeDocument, type: SectionType, id: string): T
 export function duplicateSection(doc: ThemeDocument, id: string, newId: string): ThemeDocument {
   const found = findSection(doc, id);
   if (found === null || found.place === "announcement") return doc;
+  if (findSection(doc, newId) !== null) return doc;
   if (homepageBlock(doc.homepage.sections, found.section.type) !== "ok") return doc;
   const sections = [...doc.homepage.sections];
   sections.splice(found.place + 1, 0, { ...found.section, id: newId });

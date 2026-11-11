@@ -33,7 +33,10 @@ export interface MediaAssetDto {
   readonly storageKey: string;
   readonly folderRef: string | null;
   readonly status: string;
-  /** The resolved picture (spec 3.5, Ruling 19); null for a non-image or unresolvable asset. */
+  /**
+   * The resolved picture (spec 3.5, Ruling 19); null for a non-image or unresolvable asset. Only the
+   * list resolves it: the single GET /media/assets/:id always answers null.
+   */
   readonly image: LibraryImage | null;
 }
 

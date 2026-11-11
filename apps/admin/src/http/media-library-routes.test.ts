@@ -155,19 +155,19 @@ describe("media library list — image urls (Part 3, Ruling 19)", () => {
     return { admin, execute };
   }
 
-  it("resolves a page in one batched read and maps image only for image assets", async () => {
+  it("resolves a page in one batched read, maps image only for image assets, and null for an id the resolver omits", async () => {
     expect.hasAssertions();
     const { admin, execute } = fakeAdmin(
       [
         asset("a1", "image/png"),
         asset("a2", "application/pdf"),
         asset("a3", undefined),
-        asset("a4", "image/jpeg", "archived"),
+        asset("a4", "image/jpeg"),
       ],
       (ids) =>
         new Map(
           ids
-            .filter((id) => id !== "a4")
+            .filter((id) => id !== "a4") // the resolver omits a4 (as it does for an archived asset)
             .map((id) => [id, { id, url: `https://cdn/${id}`, alt: "x", width: 1, height: 2 }]),
         ),
     );

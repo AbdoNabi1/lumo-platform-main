@@ -66,11 +66,11 @@ export async function saveThemeDraftAction(input: {
   if (typeof document !== "object" || document === null || Array.isArray(document))
     return { status: "error" };
   if (!isVersion(input.expectedVersion)) return { status: "error" };
-  const result = await saveThemeDraft(
-    input.document,
-    input.expectedVersion,
-    keyOf(input.idempotencyKey),
-  );
+  // An absent key is minted; a present but malformed one is refused, never silently replaced.
+  const supplied: unknown = input.idempotencyKey;
+  if (supplied !== undefined && (typeof supplied !== "string" || !CLIENT_KEY.test(supplied)))
+    return { status: "error" };
+  const result = await saveThemeDraft(input.document, input.expectedVersion, keyOf(supplied));
   switch (result.outcome) {
     case "ok":
       return { status: "ok", ...result.data };

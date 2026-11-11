@@ -43,6 +43,15 @@ describe("section tree (spec 3.3, Ruling 22)", () => {
     expect(canAddSection(one, "announcement_bar")).toBe("ok");
   });
 
+  it("refuses an id that is already used, by add or duplicate", () => {
+    const base = doc([newSection("hero", ID1)], newSection("announcement_bar", ID2));
+    expect(addSection(base, "features", ID1)).toBe(base);
+    expect(addSection(base, "features", ID2)).toBe(base);
+    expect(duplicateSection(base, ID1, ID1)).toBe(base);
+    expect(duplicateSection(base, ID1, ID2)).toBe(base);
+    expect(ids(addSection(base, "features", ID3))).toEqual([ID1, ID3]);
+  });
+
   it("blocks the 26th section and the 4th hero", () => {
     const full = doc(Array.from({ length: 25 }, (_, i) => newSection("rich_text", uuid(i))));
     expect(canAddSection(full, "features")).toBe("limit");
