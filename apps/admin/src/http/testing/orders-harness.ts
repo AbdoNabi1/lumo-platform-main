@@ -1,7 +1,7 @@
 import { RoleTableAccessControl } from "@platform/auth";
 import type { DraftOrderCompletionPort } from "@platform/checkout";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
-import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { JsonEventSerializer } from "@platform/domain-events";
 import type { RouteDefinition } from "@platform/http";
 import { InMemoryStaffDirectory } from "@platform/orders";
 import { wireAdmin, type WiredAdmin } from "../../composition";
@@ -44,7 +44,7 @@ export function buildOrdersAdmin(
   };
   const clock: Clock = options.clock ?? { now: () => HARNESS_NOW };
   return wireAdmin({
-    serializer: new InMemoryEventSerializer(),
+    serializer: new JsonEventSerializer(),
     idGenerator,
     clock,
     tenantId: "tenant-local",
