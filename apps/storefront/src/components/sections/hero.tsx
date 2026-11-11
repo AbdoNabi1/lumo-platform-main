@@ -49,7 +49,7 @@ export function HeroSection({
     );
   return (
     <div
-      className={`relative flex w-full overflow-hidden rounded-lg ${HERO_HEIGHTS[s.height]} ${
+      className={`relative flex w-full overflow-hidden rounded-lg ${HERO_HEIGHTS[s.height] ?? HERO_HEIGHTS.medium} ${
         picture === null ? "bg-muted" : overlayClass(s.overlay)
       }`}
     >
@@ -95,8 +95,7 @@ function heroImage(
   });
   // Next 15 gives `priority` no fetchpriority attribute through getImageProps, so it is set here.
   // `style` is dropped: `next/image` adds fixed colour styles, and none may reach the page (F9).
-  const { style: _fixed, ...img } = props;
-  void _fixed;
+  const img = { ...props, style: undefined };
   return (
     // A plain <img> fed by getImageProps: art direction through <picture> (spec 3.6).
     <img

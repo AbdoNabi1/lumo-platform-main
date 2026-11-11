@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { pickText, type PublicSection } from "@platform/storefront-content";
+import { isWhatsAppDigits, pickText, type PublicSection } from "@platform/storefront-content";
 import type { AvailabilityBook } from "@/lib/catalog";
 import type { Locale } from "@/lib/i18n";
 import type { SectionData } from "@/lib/section-data";
@@ -161,7 +161,7 @@ export function Sections(props: SectionsProps) {
         if (failed && !preview) return null;
         const shown = failed ? NO_DATA : sectionData;
         // Preview keeps the frame of a failed section so the editor can still focus it.
-        const unfinished = failed || isEmptyPickedGrid(section, shown);
+        const unfinished = failed || isEmptyPickedGrid(section, shown) || isUnrenderable(section);
         if (unfinished && !preview) return null;
         return (
           <SectionFrame
@@ -178,5 +178,14 @@ export function Sections(props: SectionsProps) {
         );
       })}
     </>
+  );
+}
+
+/** A WhatsApp section whose digits fail the check: live drops it, preview says it is unfinished. */
+function isUnrenderable(section: PublicSection): boolean {
+  return (
+    section.type === "whatsapp_cta" &&
+    section.incomplete !== true &&
+    !isWhatsAppDigits(section.settings.phone)
   );
 }

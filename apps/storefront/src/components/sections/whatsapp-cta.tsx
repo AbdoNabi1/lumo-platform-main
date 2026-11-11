@@ -30,7 +30,7 @@ export function WhatsAppCtaSection({
   if (!isWhatsAppDigits(s.phone)) return null;
   const href = whatsAppHref(s.phone, pickText(s.message, locale));
   if (href === null) return null;
-  const label = pickText(s.buttonLabel, locale);
+  const label = pickText(s.buttonLabel, locale) ?? t.sections.whatsappDefault;
   const text = pickText(s.text, locale);
   return (
     <div className="border-border bg-card mx-auto flex w-full max-w-3xl flex-col items-center gap-3 rounded-lg border p-6 text-center">
@@ -40,17 +40,15 @@ export function WhatsAppCtaSection({
           {text}
         </p>
       )}
-      {label === null ? null : (
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className={BUTTON_CLASS.primary}
-        >
-          <bdi dir="auto">{label}</bdi>
-          <span className="sr-only">{t.sections.opensInNewTab}</span>
-        </a>
-      )}
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className={BUTTON_CLASS.primary}
+      >
+        <bdi dir="auto">{label}</bdi>
+        <span className="sr-only">{t.sections.opensInNewTab}</span>
+      </a>
     </div>
   );
 }

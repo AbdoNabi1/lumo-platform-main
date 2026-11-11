@@ -73,6 +73,7 @@ export const en = {
     rating: "Rated {rating} out of {max}",
     announcement: "Announcement",
     opensInNewTab: "Opens in a new tab",
+    whatsappDefault: "Message us on WhatsApp",
   },
   product: {
     unavailable: "This product isn't available right now.",

@@ -534,3 +534,84 @@ describe("Sections dispatch of the content types (T8 carry)", () => {
     expect(screen.queryByRole("link", { name: /WhatsApp/ })).toBeNull();
   });
 });
+
+describe("fix round 1", () => {
+  it("WhatsApp: an empty button label falls back to the default text in both locales", () => {
+    const empty = wa({ buttonLabel: {} });
+    const arView = render(<WhatsAppCtaSection section={empty} locale="ar" t={ar} />);
+    expect(screen.getByRole("link")).toHaveTextContent("راسلنا على واتساب");
+    arView.unmount();
+    render(<WhatsAppCtaSection section={empty} locale="en" t={en} />);
+    expect(screen.getByRole("link", { name: /Message us on WhatsApp/ })).toHaveAttribute(
+      "href",
+      "https://wa.me/201001234567",
+    );
+  });
+
+  it("WhatsApp: an Arabic-only label viewed in English falls back to the Arabic label", () => {
+    render(
+      <WhatsAppCtaSection section={wa({ buttonLabel: { ar: "تواصل" } })} locale="en" t={en} />,
+    );
+    expect(screen.getByRole("link")).toHaveTextContent("تواصل");
+  });
+
+  it("preview: an announcement with no text and a WhatsApp section with bad digits are placeholders; live drops them", () => {
+    const empty = { ...bar({ text: {} }) };
+    const view = render(
+      <AnnouncementBar section={empty} locale="en" previewToken="tok" t={en} preview />,
+    );
+    expect(view.container.querySelector(`[data-section-id="${ID}"]`)).toHaveTextContent(
+      en.sections.incompletePlaceholder,
+    );
+    view.unmount();
+    expect(
+      render(
+        <AnnouncementBar section={empty} locale="en" previewToken={null} t={en} preview={false} />,
+      ).container,
+    ).toBeEmptyDOMElement();
+
+    const sections = [wa({ phone: "12ab" })] as PublicSection[];
+    const props = {
+      sections,
+      data: new Map(),
+      availability: null,
+      t: en,
+      locale: "en" as const,
+      eagerHeroId: null,
+    };
+    const prev = render(<Sections {...props} previewToken="tok" mode="preview" />);
+    expect(prev.container.querySelector(`[data-section-id="${ID}"]`)).toHaveTextContent(
+      en.sections.incompletePlaceholder,
+    );
+    prev.unmount();
+    expect(
+      render(<Sections {...props} previewToken={null} mode="live" />).container,
+    ).toBeEmptyDOMElement();
+  });
+
+  it("class maps fall back instead of printing undefined", () => {
+    const h = render(
+      <HeroSection
+        section={hero({ height: "huge" as never })}
+        locale="en"
+        previewToken={null}
+        eager={false}
+        t={en}
+      />,
+    );
+    expect(h.container.innerHTML).toContain(HERO_HEIGHTS.medium);
+    expect(h.container.innerHTML).not.toContain("undefined");
+    h.unmount();
+    const a = render(
+      <AnnouncementBar
+        section={bar({ style: "neon" as never })}
+        locale="en"
+        previewToken={null}
+        t={en}
+        preview={false}
+      />,
+    );
+    expect(a.container.innerHTML).toContain(ANNOUNCEMENT_STYLES.accent);
+    expect(a.container.innerHTML).not.toContain("undefined");
+  });
+});

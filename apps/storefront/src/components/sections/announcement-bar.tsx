@@ -31,7 +31,7 @@ export function AnnouncementBar({
         role="region"
         aria-label={t.sections.announcement}
         className={`break-words px-4 py-2 text-center text-sm ${
-          ANNOUNCEMENT_STYLES[section.settings.style]
+          ANNOUNCEMENT_STYLES[section.settings.style] ?? ANNOUNCEMENT_STYLES.accent
         }`}
       >
         {section.settings.link === null ? (
@@ -52,7 +52,7 @@ export function AnnouncementBar({
     );
   if (!preview) return bar;
   return (
-    <SectionFrame id={section.id} hidden={hidden} preview t={t}>
+    <SectionFrame id={section.id} hidden={hidden} incomplete={text === null} preview t={t}>
       {bar}
     </SectionFrame>
   );

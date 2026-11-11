@@ -78,6 +78,7 @@ export const ar: Dictionary = {
     rating: "التقييم {rating} من {max}",
     announcement: "إعلان",
     opensInNewTab: "يفتح في نافذة جديدة",
+    whatsappDefault: "راسلنا على واتساب",
   },
   product: {
     unavailable: "هذا المنتج غير متاح حالياً.",
