@@ -127,6 +127,7 @@ describe("header navigation (spec 2.8)", () => {
     ...FALLBACK_SHELL,
     header: {
       sticky: false,
+      announcement: null,
       menu: [
         { label: { en: "Home", ar: "الرئيسية" }, href: "/", external: false, children: [] },
         {

@@ -77,7 +77,11 @@ const lockedShell = (over: Partial<StorefrontShell> = {}): StorefrontShell => ({
   ...FALLBACK_SHELL,
   storeName: "Nour",
   locked: true,
-  header: { sticky: false, menu: [item("Secret lamp", "/products/secret-lamp")] },
+  header: {
+    sticky: false,
+    menu: [item("Secret lamp", "/products/secret-lamp")],
+    announcement: null,
+  },
   footer: {
     ...FALLBACK_SHELL.footer,
     menu: [item("Hidden sale", "/collections/hidden")],

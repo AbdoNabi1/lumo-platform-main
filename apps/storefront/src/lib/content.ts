@@ -8,9 +8,9 @@ import {
   type LocalizedText,
   type PolicyType,
 } from "@platform/storefront-content";
-import { textOf } from "./online-store";
+import { textOf } from "./sanitize";
 import { currentShopId, RUNTIME_API_URL } from "./runtime-api";
-import { shellTag } from "./shell-tag";
+import { shellTag, STOREFRONT_CACHE_TTL_SECONDS } from "./shell-tag";
 
 /**
  * Online Store Part 2 (spec 2.8): the storefront's reads of store policies and `/pages/<handle>`
@@ -51,7 +51,6 @@ export interface PageListItem {
   readonly updatedAt: string | null;
 }
 
-const CONTENT_TTL_SECONDS = 60;
 const RUNTIME_TIMEOUT_MS = 3_000;
 /** `GET /public/pages` answers at most this many (spec 2.6). */
 const PAGE_LIST_MAX = 500;
@@ -78,15 +77,16 @@ function isoOrNull(value: unknown): string | null {
 
 /**
  * One public Runtime read for `shopId`. Never throws: a refused, failed or timed-out read is
- * `status: 0`, an unreadable body is `null`.
+ * `status: 0`, an unreadable body is `null`. `extraHeaders` never override the shop.
  */
 export async function fetchJson(
   shopId: string,
   path: string,
+  extraHeaders: Readonly<Record<string, string>> = {},
 ): Promise<{ status: number; body: unknown }> {
   try {
     const response = await fetch(`${RUNTIME_API_URL}/api/v1${path}`, {
-      headers: { "x-tenant-id": shopId },
+      headers: { ...extraHeaders, "x-tenant-id": shopId },
       cache: "no-store",
       signal: AbortSignal.timeout(RUNTIME_TIMEOUT_MS),
     });
@@ -146,7 +146,7 @@ export function readPolicy(shopId: string, type: PolicyType): Promise<ContentRea
     unstable_cache(
       () => readOrThrow(shopId, `/public/policies/${type}`, (body) => policyOf(type, body)),
       ["online-store", shopId, "policy", type],
-      { tags: [shellTag(shopId)], revalidate: CONTENT_TTL_SECONDS },
+      { tags: [shellTag(shopId)], revalidate: STOREFRONT_CACHE_TTL_SECONDS },
     ),
   );
 }
@@ -161,7 +161,7 @@ export async function readPage(shopId: string, handle: string): Promise<ContentR
           pageOf(handle, body),
         ),
       ["online-store", shopId, "page", handle],
-      { tags: [shellTag(shopId)], revalidate: CONTENT_TTL_SECONDS },
+      { tags: [shellTag(shopId)], revalidate: STOREFRONT_CACHE_TTL_SECONDS },
     ),
   );
 }

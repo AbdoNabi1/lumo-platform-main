@@ -174,6 +174,8 @@ export interface SectionDefinition<T extends SectionType = SectionType> {
 export const SECTION_ID_PATTERN = ITEM_ID_PATTERN;
 export const UNSUPPORTED_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
 export const HOMEPAGE_SECTIONS_MAX = 25;
+/** The `type` of the editor's `postMessage` that scrolls the preview to a section (Ruling 18). */
+export const SECTION_FOCUS_MESSAGE = "morbeh:focus-section";
 
 const L = SECTION_LIMITS;
 

@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import {
+  CATALOG_SLUG_PATTERN,
   PAGE_HANDLE_PATTERN,
   pickText,
   POLICY_TYPES,
@@ -31,8 +32,8 @@ export const SITEMAP_MAX_CALLS = 60;
 /** Preflight 9: past this the collector gives up (each read also times out after 3 s). */
 export const SITEMAP_BUDGET_MS = 20_000;
 const SITEMAP_TTL_SECONDS = 3_600;
-/** The catalog's slug rule: lower-case words joined by single hyphens. */
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** The catalog's slug rule (`@platform/storefront-content`, F5): lower-case words and hyphens. */
+const SLUG = CATALOG_SLUG_PATTERN;
 
 export interface SitemapPath {
   readonly path: string;

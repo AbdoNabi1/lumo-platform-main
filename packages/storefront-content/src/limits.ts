@@ -53,3 +53,12 @@ export const SECTION_LIMITS = Object.freeze({
 
 /** An image reference: an asset id, never a path or a URL. */
 export const IMAGE_REF_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
+/** The longest image alt text the storefront renders (the admin's own cap; F12). */
+export const IMAGE_ALT_MAX = 300;
+
+/** The catalog's slug rule: lower-case words joined by single hyphens (catalog `Slug`; F5). */
+export const CATALOG_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** The longest catalog slug or name the storefront accepts from the Runtime in a section (F12). */
+export const CATALOG_REF_TEXT_MAX = 200;

@@ -3,7 +3,6 @@ import { unstable_cache } from "next/cache";
 import {
   DEFAULT_THEME_DOCUMENT,
   FOOTER_NOTE_MAX,
-  normalizeLocalizedText,
   POLICY_TYPES,
   readBrandStyle,
   readResolvedMenu,
@@ -12,23 +11,24 @@ import {
   type Locale,
   type LocalizedText,
   type PolicyType,
+  type PublicAnnouncement,
   type ResolvedMenuItem,
   type ThemeBrand,
 } from "@platform/storefront-content";
+import { readPublicAnnouncement } from "./public-sections";
 import { currentShopId, RUNTIME_API_URL } from "./runtime-api";
-import { shellTag } from "./shell-tag";
+import { clip, imageOf, textOf } from "./sanitize";
+import { shellTag, STOREFRONT_CACHE_TTL_SECONDS } from "./shell-tag";
 
-export { shellTag };
+export { clip, imageOf, shellTag, textOf };
 
 /** Set ONLY by middleware (client-sent copies are stripped there). */
 export const PREVIEW_HEADER = "x-morbeh-preview";
-const SHELL_TTL_SECONDS = 60;
 /** The admin's own limits (home title 70, description 320, footer note 200, visitor message 500). */
 const HOME_TITLE_MAX = 70;
 const HOME_DESCRIPTION_MAX = 320;
 const VISITOR_MESSAGE_MAX = 500;
 const STORE_NAME_MAX = 120;
-const ALT_MAX = 300;
 /** A hung Runtime must not hang the layout: past this the read fails and the fallback renders. */
 const RUNTIME_TIMEOUT_MS = 3_000;
 
@@ -59,7 +59,12 @@ export interface StorefrontShell {
     readonly social: ThemeBrand["social"];
   };
   /** Spec 2.8: the header menu as the Runtime resolved it, every item re-validated here. */
-  readonly header: { readonly sticky: boolean; readonly menu: readonly ResolvedMenuItem[] };
+  readonly header: {
+    readonly sticky: boolean;
+    readonly menu: readonly ResolvedMenuItem[];
+    /** Part 3: the announcement bar, re-validated; null when there is none to show. */
+    readonly announcement: PublicAnnouncement | null;
+  };
   readonly footer: {
     readonly note: LocalizedText;
     readonly showSocial: boolean;
@@ -95,7 +100,7 @@ export const FALLBACK_SHELL: StorefrontShell = deepFreeze(
       style: readBrandStyle(DEFAULT_THEME_DOCUMENT.brand),
       social: {},
     },
-    header: { sticky: false, menu: [] },
+    header: { sticky: false, menu: [], announcement: null },
     footer: { note: {}, showSocial: true, menu: [], policies: [] },
     locked: false,
   } satisfies StorefrontShell),
@@ -104,53 +109,6 @@ export const FALLBACK_SHELL: StorefrontShell = deepFreeze(
 type Raw = Record<string, unknown>;
 const obj = (value: unknown): Raw =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Raw) : {};
-const size = (value: unknown): number | null =>
-  typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 100_000
-    ? value
-    : null;
-
-const isDevLocal = (url: URL): boolean =>
-  process.env.NODE_ENV === "development" &&
-  ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
-
-function imageOf(value: unknown): ShellImage | null {
-  const o = obj(value);
-  const url = o["url"];
-  if (typeof url !== "string") return null;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  // https only (an http image is mixed content), except local media in development.
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && isDevLocal(parsed)))
-    return null;
-  return {
-    url: parsed.toString(),
-    alt: typeof o["alt"] === "string" ? clip(o["alt"], ALT_MAX) : null,
-    width: size(o["width"]),
-    height: size(o["height"]),
-  };
-}
-
-/** Cut at `max` UTF-16 units (the admin's own measure) without leaving half a surrogate pair. */
-export function clip(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const cut = text.slice(0, max);
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
-}
-
-/** A hostile or buggy Runtime must not be able to bloat the cached entry, so every text is capped. */
-export function textOf(value: unknown, max: number, multiline = false): LocalizedText {
-  const found = normalizeLocalizedText(value, { path: "", max, multiline }, []);
-  return {
-    ...(found.ar === undefined ? {} : { ar: clip(found.ar, max) }),
-    ...(found.en === undefined ? {} : { en: clip(found.en, max) }),
-  };
-}
-
 /**
  * Spec 1.12 step 3: re-validate EVERYTHING received before it reaches CSS or markup. Null when the
  * body is not a usable shell of the requested mode: empty, not an object, without `brand` and
@@ -202,7 +160,12 @@ export function parseShell(raw: unknown, mode: "live" | "preview"): StorefrontSh
       social: readSocial(brand["social"]),
     },
     // Spec 2.8: the package reader keeps only safe, labelled items and recomputes `external`.
-    header: { sticky: header["sticky"] === true, menu: readResolvedMenu(header["menu"]) },
+    header: {
+      sticky: header["sticky"] === true,
+      menu: readResolvedMenu(header["menu"]),
+      // Part 3: the same re-check as a homepage section, in this body's mode (Ruling 25).
+      announcement: readPublicAnnouncement(header["announcement"], mode),
+    },
     footer: {
       note: textOf(footer["note"], FOOTER_NOTE_MAX, true),
       showSocial: footer["showSocial"] !== false,
@@ -253,7 +216,7 @@ function cachedLiveShell(shopId: string): Promise<StorefrontShell> {
       return shell;
     },
     ["online-store", shopId, "shell"],
-    { tags: [shellTag(shopId)], revalidate: SHELL_TTL_SECONDS },
+    { tags: [shellTag(shopId)], revalidate: STOREFRONT_CACHE_TTL_SECONDS },
   )();
 }
 

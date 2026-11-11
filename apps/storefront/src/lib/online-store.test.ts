@@ -69,6 +69,7 @@ const json = (status: number, body: unknown) =>
 type Init = RequestInit & { headers: Record<string, string> };
 
 beforeEach(() => {
+  expect.hasAssertions();
   cacheCalls.length = 0;
   cacheOutcomes.length = 0;
   requestHeaders.clear();
@@ -462,5 +463,77 @@ describe("textOf and clip (shared with content reads, preflight 16)", () => {
     expect(clip(`a${"\u{1F600}"}`, 2)).toBe("a");
     expect(textOf({ en: "x".repeat(10), ar: "ب".repeat(3) }, 4)).toEqual({ ar: "ببب", en: "xxxx" });
     expect(textOf({ en: 5 }, 4)).toEqual({});
+  });
+});
+
+describe("the announcement bar in the shell (Part 3, Rulings 7 and 25)", () => {
+  const BAR_ID = "00000000-0000-4000-8000-000000000301";
+  const bar = (over: Record<string, unknown> = {}) => ({
+    id: BAR_ID,
+    type: "announcement_bar",
+    settings: {
+      text: { en: "Free shipping" },
+      link: { href: "/search", external: true },
+      style: "dark",
+    },
+    ...over,
+  });
+  const withBar = (announcement: unknown, mode: "live" | "preview" = "live") => ({
+    ...liveBody,
+    mode,
+    header: { sticky: false, announcement },
+  });
+
+  it("the shell's announcement is read through readPublicSection(…, mode)", () => {
+    expect(parseShell(withBar(bar()), "live")?.header.announcement).toEqual({
+      id: BAR_ID,
+      type: "announcement_bar",
+      settings: {
+        text: { en: "Free shipping" },
+        link: { href: "/search", external: false },
+        style: "dark",
+      },
+    });
+    // Unsafe links go, the style is re-checked.
+    const hostile = bar({
+      settings: {
+        text: { en: "Hi" },
+        link: { href: "javascript:alert(1)", external: false },
+        style: "neon",
+      },
+    });
+    expect(parseShell(withBar(hostile), "live")?.header.announcement).toMatchObject({
+      settings: { link: null, style: "accent" },
+    });
+    // Preview keeps the hidden flag (the placeholder); live never shows a hidden bar.
+    expect(
+      parseShell(withBar(bar({ hidden: true }), "preview"), "preview")?.header.announcement,
+    ).toMatchObject({
+      hidden: true,
+    });
+    expect(parseShell(withBar(bar({ hidden: true })), "live")?.header.announcement).toBeNull();
+  });
+
+  it("anything else becomes null", () => {
+    for (const announcement of [
+      undefined,
+      null,
+      "bar",
+      [],
+      bar({ type: "hero" }),
+      bar({ id: "nope" }),
+      bar({ settings: { text: {}, link: null, style: "accent" } }),
+      { id: BAR_ID, type: "announcement_bar", hidden: false, incomplete: true },
+    ]) {
+      expect(
+        parseShell(withBar(announcement, "preview"), "preview")?.header.announcement,
+      ).toBeNull();
+      expect(parseShell(withBar(announcement), "live")?.header.announcement).toBeNull();
+    }
+    expect(parseShell(liveBody, "live")?.header.announcement).toBeNull();
+  });
+
+  it("FALLBACK_SHELL.header.announcement is null", () => {
+    expect(FALLBACK_SHELL.header.announcement).toBeNull();
   });
 });
