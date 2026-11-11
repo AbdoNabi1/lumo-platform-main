@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Badge, Input, Label, NativeSelect } from "@platform/ui";
 import { isPolicyType, POLICY_TITLES, type LinkRef } from "@platform/storefront-content";
 import { searchLinkTargetsAction } from "@/app/online-store/navigation/actions";
@@ -10,10 +10,12 @@ import { linkTargetText } from "@/lib/online-store/menu-copy";
 import type { Dictionary } from "@/messages/en";
 
 type Kind = LinkRef["type"];
+/** "none" is the section form's "No link" (a link field may be null); menus never offer it. */
+type ChosenKind = Kind | "none";
 const KINDS: readonly Kind[] = ["home", "search", "collection", "product", "page", "policy", "url"];
 const SEARCHABLE: readonly LinkTargetType[] = ["collection", "product", "page", "policy"];
 
-const searchableKind = (kind: Kind): LinkTargetType | null =>
+const searchableKind = (kind: ChosenKind): LinkTargetType | null =>
   SEARCHABLE.find((type) => type === kind) ?? null;
 
 /** A picked target as the link it stores: by id, never by path (a policy by its type). */
@@ -32,7 +34,8 @@ export const LINK_SEARCH_DEBOUNCE_MS = 250;
  * Results are a plain list of buttons (one tab stop each, `aria-pressed` on the chosen one), and
  * "no results" is announced from a live region beside the list. Policies are named in the admin's
  * language (`POLICY_TITLES`), not with the API's English title. `onChange(null)` means a searchable
- * kind is chosen and nothing is picked yet; a web address is typed in the dialog.
+ * kind is chosen and nothing is picked yet; a web address is typed by the caller. With `allowNone`
+ * (a section's optional link) a "No link" option comes first and `onChange(null)` means no link.
  */
 export function LinkPicker({
   t,
@@ -42,6 +45,8 @@ export function LinkPicker({
   disabled = false,
   invalid = false,
   describedBy,
+  allowNone = false,
+  label,
   onChange,
   onPick,
 }: {
@@ -54,12 +59,17 @@ export function LinkPicker({
   /** The dialog's link error: marks the kind select invalid and points it at the message. */
   readonly invalid?: boolean;
   readonly describedBy?: string;
+  /** Adds the "No link" option (a section link is optional). */
+  readonly allowNone?: boolean;
+  /** The field's own label (a section names its link "Button link"); default is the menu's. */
+  readonly label?: string;
   readonly onChange: (link: LinkRef | null) => void;
-  /** The picked target itself, so the editor can name it before the menu is saved. */
-  readonly onPick?: (target: LinkTargetDto) => void;
+  /** The picked target and its kind, so the editor can name it before the menu is saved. */
+  readonly onPick?: (target: LinkTargetDto, type: LinkTargetType) => void;
 }) {
   const n = t.onlineStoreNavigation;
-  const [kind, setKind] = useState<Kind>(value?.type ?? "home");
+  const selectId = useId();
+  const [kind, setKind] = useState<ChosenKind>(value?.type ?? (allowNone ? "none" : "home"));
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<readonly LinkTargetDto[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -104,7 +114,7 @@ export function LinkPicker({
     };
   }, [search, cancelPending]);
 
-  const chooseKind = (next: Kind) => {
+  const chooseKind = (next: ChosenKind) => {
     setKind(next);
     setQuery("");
     setResults([]);
@@ -116,6 +126,8 @@ export function LinkPicker({
     if (type !== null) {
       onChange(null);
       search(type, "");
+    } else if (next === "none") {
+      onChange(null);
     } else if (next === "url") {
       onChange({ type: "url", url: value?.type === "url" ? value.url : "" });
     } else if (next === "home" || next === "search") {
@@ -127,7 +139,7 @@ export function LinkPicker({
   const titleOf = (target: LinkTargetDto) =>
     type === "policy" && isPolicyType(target.id) ? POLICY_TITLES[target.id][locale] : target.title;
   const storedId =
-    value === null || value.type !== kind
+    value === null || kind === "none" || value.type !== kind
       ? null
       : value.type === "policy"
         ? value.policy
@@ -140,24 +152,28 @@ export function LinkPicker({
     type === null
       ? null
       : (picked?.title ??
-        (value !== null && value.type === kind
+        (value !== null && kind !== "none" && value.type === kind
           ? linkTargetText(t, locale, value, targetTitle)
           : null));
 
   return (
     <div className="flex flex-col gap-2">
-      <Label htmlFor="menu-item-link">{n.link}</Label>
+      <Label htmlFor={selectId}>
+        <bdi>{label ?? n.link}</bdi>
+      </Label>
       <NativeSelect
-        id="menu-item-link"
+        id={selectId}
         value={kind}
         disabled={disabled}
         aria-invalid={invalid ? true : undefined}
         aria-describedby={describedBy}
         onChange={(e) => {
-          const next = KINDS.find((k) => k === e.currentTarget.value);
+          const chosen = e.currentTarget.value;
+          const next = chosen === "none" && allowNone ? "none" : KINDS.find((k) => k === chosen);
           if (next !== undefined) chooseKind(next);
         }}
       >
+        {allowNone ? <option value="none">{t.onlineStoreSections.options.noLink}</option> : null}
         {KINDS.map((k) => (
           <option key={k} value={k}>
             {n.kinds[k]}
@@ -202,7 +218,7 @@ export function LinkPicker({
                       if (link === null) return;
                       setPicked({ id: target.id, title: titleOf(target) });
                       onChange(link);
-                      onPick?.({ ...target, title: titleOf(target) });
+                      onPick?.({ ...target, title: titleOf(target) }, type);
                     }}
                   >
                     <bdi dir="auto">{titleOf(target)}</bdi>

@@ -10,7 +10,8 @@ import type { Dictionary } from "@/messages/en";
  * ar/en tabs over ONE field (spec 1.11). Both inputs stay mounted (the hidden one too), so the form
  * always submits `<name>.ar` and `<name>.en`. Counters are formatted for the admin's locale.
  * `errors` is the form's field errors, keyed `<name>.ar` / `<name>.en` (or `<name>` for both).
- * The language switch is a full tabs pattern (each tab controls its panel). A changed `value` from
+ * The language switch is a full tabs pattern (each tab controls its panel). `layout="both"` (the
+ * section form, spec 3.5) drops the tabs: each language has its own label, input, counter and error. A changed `value` from
  * the server (a refresh after a save) replaces the text; the same text re-sent keeps what was typed.
  */
 export function LocalizedTextField({
@@ -21,6 +22,7 @@ export function LocalizedTextField({
   max,
   value,
   multiline = false,
+  layout = "tabs",
   disabled = false,
   errors = {},
   onChange,
@@ -32,6 +34,7 @@ export function LocalizedTextField({
   readonly max: number;
   readonly value: LocalizedText;
   readonly multiline?: boolean;
+  readonly layout?: "tabs" | "both";
   readonly disabled?: boolean;
   readonly errors?: Readonly<Record<string, string>>;
   readonly onChange?: (value: LocalizedText) => void;
@@ -61,6 +64,63 @@ export function LocalizedTextField({
     errors[`${name}.${key}`] ?? errors[name];
   const shownError = errorFor(tab);
   const errorId = `${name}-error`;
+  const counter = (key: "ar" | "en") => {
+    const text = t.onlineStorePreferences.counter
+      .replace("{count}", number.format(current[key].length))
+      .replace("{max}", number.format(max));
+    return text;
+  };
+  if (layout === "both") {
+    return (
+      <div className="flex flex-col gap-4">
+        {(["ar", "en"] as const).map((key) => {
+          const error = errorFor(key);
+          const invalid = error !== undefined;
+          const inputId = `${name}-${key}`;
+          const countId = `${inputId}-count`;
+          const errId = `${inputId}-error`;
+          const common = {
+            id: inputId,
+            name: `${name}.${key}`,
+            dir: "auto",
+            lang: key,
+            value: current[key],
+            disabled,
+            maxLength: max * 2,
+            "aria-invalid": invalid || undefined,
+            "aria-describedby": invalid ? `${countId} ${errId}` : countId,
+          };
+          return (
+            <div key={key} className="flex flex-col gap-1.5">
+              <Label htmlFor={inputId}>
+                <bdi>{`${label} (${key === "ar" ? t.onlineStorePreferences.arabic : t.onlineStorePreferences.english})`}</bdi>
+              </Label>
+              {multiline ? (
+                <Textarea {...common} onChange={(e) => set(key, e.currentTarget.value)} />
+              ) : (
+                <Input {...common} onChange={(e) => set(key, e.currentTarget.value)} />
+              )}
+              <p
+                id={countId}
+                className={
+                  current[key].length > max
+                    ? "text-destructive text-xs"
+                    : "text-muted-foreground text-xs"
+                }
+              >
+                {counter(key)}
+              </p>
+              {invalid ? (
+                <p id={errId} className="text-destructive text-xs">
+                  {error}
+                </p>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">

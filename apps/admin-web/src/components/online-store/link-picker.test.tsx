@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 
@@ -134,5 +134,62 @@ describe("LinkPicker (spec 2.7)", () => {
     );
     expect(screen.getByLabelText(n.link)).toHaveAccessibleDescription(n.invalidLink);
     expect(screen.getByLabelText(n.link)).toHaveAttribute("aria-invalid", "true");
+  });
+});
+
+describe("LinkPicker in a section (No link, field label, picked kind)", () => {
+  it("allowNone adds a first No link option; choosing it reports null and shows no search", () => {
+    const onChange = vi.fn();
+    render(
+      <LinkPicker
+        t={en}
+        locale="en"
+        value={{ type: "search" }}
+        allowNone
+        label="Button link"
+        onChange={onChange}
+      />,
+    );
+    const select = screen.getByLabelText("Button link");
+    expect(within(select).getAllByRole("option")[0]).toHaveTextContent(
+      en.onlineStoreSections.options.noLink,
+    );
+    fireEvent.change(select, { target: { value: "none" } });
+    expect(onChange).toHaveBeenLastCalledWith(null);
+    expect(select).toHaveValue("none");
+    expect(screen.queryByRole("searchbox")).toBeNull();
+  });
+
+  it("without allowNone there is no No link option (menus are unchanged)", () => {
+    render(<LinkPicker t={en} locale="en" value={{ type: "home" }} onChange={vi.fn()} />);
+    expect(
+      screen.queryByRole("option", { name: en.onlineStoreSections.options.noLink }),
+    ).toBeNull();
+  });
+
+  it("onPick also gets the kind that was searched", async () => {
+    actions.searchLinkTargetsAction.mockResolvedValue([
+      { id: "p-1", title: "Shirt", subtitle: "/products/shirt" },
+    ]);
+    const onPick = vi.fn();
+    render(
+      <LinkPicker t={en} locale="en" value={null} onChange={vi.fn()} onPick={onPick} allowNone />,
+    );
+    fireEvent.change(screen.getByLabelText(n.link), { target: { value: "product" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Shirt/ }));
+    expect(onPick).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "p-1", title: "Shirt" }),
+      "product",
+    );
+  });
+
+  it("two pickers on one page have different control ids", () => {
+    render(
+      <>
+        <LinkPicker t={en} locale="en" value={null} onChange={vi.fn()} label="A" />
+        <LinkPicker t={en} locale="en" value={null} onChange={vi.fn()} label="B" />
+      </>,
+    );
+    expect(screen.getByLabelText("A").id).not.toBe(screen.getByLabelText("B").id);
   });
 });
