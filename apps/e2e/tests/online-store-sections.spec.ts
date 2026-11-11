@@ -52,15 +52,20 @@ test.describe("online store sections", () => {
           .getByRole("dialog")
           .getByRole("button", { name: /Image banner/ })
           .click();
-        await page.locator('input[type="file"]').setInputFiles({
+        // Only the hero's own "Image" field: its group is named exactly, so "Mobile image", the
+        // Theme settings tab's logo and favicon inputs (force-mounted) never match.
+        const heroImage = page.getByRole("group", { name: "Image", exact: true });
+        await heroImage.locator('input[type="file"]').setInputFiles({
           name: "banner.png",
           mimeType: "image/png",
           buffer: solidPng(400),
         });
-        await expect(page.getByRole("button", { name: "Remove image" })).toBeVisible({
+        await expect(
+          heroImage.getByRole("button", { name: "Remove image", exact: true }),
+        ).toBeVisible({
           timeout: 30_000,
         });
-        await page.getByLabel("Heading (English)").fill(heroHeading);
+        await page.getByLabel("Heading (English)", { exact: true }).fill(heroHeading);
         await page.getByRole("button", { name: "Back to sections" }).click();
 
         await page.getByRole("button", { name: "Add section" }).click();
@@ -68,16 +73,16 @@ test.describe("online store sections", () => {
           .getByRole("dialog")
           .getByRole("button", { name: /Featured collection/ })
           .click();
-        await page.getByRole("searchbox").fill("Featured");
+        await page.getByRole("searchbox", { name: "Collection", exact: true }).fill("Featured");
         await page.getByRole("button", { name: new RegExp(COLLECTION_NAME) }).click();
-        await page.getByLabel("Heading (English)").fill(collectionHeading);
+        await page.getByLabel("Heading (English)", { exact: true }).fill(collectionHeading);
 
         await expect(page.getByRole("status").filter({ hasText: /^Saved/ })).toBeVisible({
           timeout: 15_000,
         });
         await expect(frame.getByText(heroHeading)).toBeVisible({ timeout: 30_000 });
         await expect(frame.getByText(collectionHeading)).toBeVisible({ timeout: 30_000 });
-        await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
+        await expect(page.getByRole("button", { name: "Publish", exact: true })).toBeDisabled();
       });
       await operator.context.close();
 
@@ -87,11 +92,17 @@ test.describe("online store sections", () => {
       adminContext = admin.context;
       adminPage = adminPageNow;
       await test.step("the admin publishes", async () => {
-        await adminPageNow.getByRole("button", { name: "Publish" }).click();
-        await adminPage!.getByRole("dialog").getByRole("button", { name: "Publish" }).click();
-        await expect(adminPageNow.getByRole("alert")).toContainText(/Published/i, {
-          timeout: 30_000,
-        });
+        await adminPageNow.getByRole("button", { name: "Publish", exact: true }).click();
+        await adminPageNow
+          .getByRole("dialog")
+          .getByRole("button", { name: "Publish", exact: true })
+          .click();
+        // Next's route announcer is also role=alert, so name the one that says "Published".
+        await expect(adminPageNow.getByRole("alert").filter({ hasText: /Published/i })).toBeVisible(
+          {
+            timeout: 30_000,
+          },
+        );
       });
 
       // 3. A fresh visitor sees both headings on the live homepage.
@@ -119,7 +130,7 @@ test.describe("online store sections", () => {
         await page.goto("/");
         await expect(page).toHaveURL(/\/password/, { timeout: 60_000 });
         await page.locator("#storefront-password").fill(STORE_PASSWORD);
-        await page.getByRole("button", { name: "Enter" }).click();
+        await page.getByRole("button", { name: "Enter", exact: true }).click();
         await expect(page.getByRole("heading", { name: heroHeading })).toBeVisible({
           timeout: 30_000,
         });
@@ -165,7 +176,7 @@ async function setLock(page: Page, baseURL: string, on: boolean): Promise<void> 
   if ((await lock.getAttribute("aria-checked")) !== String(on)) await lock.click();
   if (on) await page.locator("#storefront-password").fill(STORE_PASSWORD);
   await page.getByRole("button", { name: "Save" }).last().click();
-  await expect(page.getByText(/Saved/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/Saved/).first()).toBeVisible({ timeout: 30_000 });
 }
 
 /** A solid-colour PNG of `size` x `size` px, built here so the spec ships no binary fixture. */
