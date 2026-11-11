@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { safeImageSrc } from "./safe-image";
 
+const C = String.fromCharCode;
+
 beforeEach(() => {
   expect.hasAssertions();
 });
@@ -9,6 +11,19 @@ describe("safeImageSrc", () => {
   it("accepts http(s) addresses and same-site paths", () => {
     expect(safeImageSrc("https://cdn.example/a.png")).toBe("https://cdn.example/a.png");
     expect(safeImageSrc("/media/a.png")).toBe("/media/a.png");
+  });
+
+  it("refuses control characters, spaces and backslashes anywhere (browsers strip them)", () => {
+    const bad = [
+      "/" + C(9) + "/evil.example/x.png",
+      "/" + C(10) + "/evil.example/x.png",
+      "/" + C(13) + "/evil.example/x.png",
+      "/a b.png",
+      "/a" + C(92) + "b.png",
+      "https://cdn.example/a" + C(9) + ".png",
+      "/../../x.png",
+    ];
+    for (const url of bad) expect(safeImageSrc(url)).toBeNull();
   });
 
   it("refuses everything else", () => {

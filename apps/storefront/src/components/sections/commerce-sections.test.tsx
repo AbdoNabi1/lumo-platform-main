@@ -202,6 +202,20 @@ describe("featured_collection", () => {
   });
 });
 
+describe("featured_collection with no products", () => {
+  it("is omitted live and an incomplete placeholder in preview", () => {
+    const empty: SectionData = { kind: "products", products: [] };
+    const live = show(featuredCollection(), empty);
+    expect(live.container).toBeEmptyDOMElement();
+    live.unmount();
+    const { container } = show(featuredCollection(), empty, { mode: "preview" });
+    expect(container.querySelector(`[data-section-id="${id(2)}"]`)).toHaveTextContent(
+      ar.sections.incompletePlaceholder,
+    );
+    expect(screen.queryByText(ar.home.productsEmpty)).toBeNull();
+  });
+});
+
 describe("collection_list", () => {
   it("all with no collections shows the empty message", () => {
     show(collectionList({ source: "all", heading: lt("All"), columns: 2 }), {

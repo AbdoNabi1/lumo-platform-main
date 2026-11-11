@@ -68,6 +68,17 @@ describe("SectionFocusListener", () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("with an admin origin that is not an http(s) origin it neither posts nor accepts", () => {
+    frame(frameParent);
+    for (const bad of ["null", "file://", "ftp://x.test", ""]) {
+      const { unmount } = render(<SectionFocusListener adminOrigin={bad} />);
+      send(bad, focusMessage(ID_A));
+      expect(document.querySelector("[data-section-focused]")).toBeNull();
+      unmount();
+    }
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
   it("stops listening on unmount", () => {
     frame(frameParent);
     const { unmount } = render(<SectionFocusListener adminOrigin={ADMIN} />);

@@ -111,6 +111,22 @@ describe("Sections", () => {
     expect(screen.getByRole("heading", { name: "Grid 1" })).toBeInTheDocument();
   });
 
+  it("in preview a section whose data failed keeps its frame as a placeholder; live omits it", () => {
+    const failed = new Map<string, SectionData | "error">([[id(1), "error"]]);
+    const view = renderSections([newest(1)], failed, "preview");
+    const frame = view.container.querySelector(`[data-section-id="${id(1)}"]`);
+    expect(frame).toHaveTextContent(ar.sections.incompletePlaceholder);
+    view.unmount();
+    expect(renderSections([newest(1)], failed).container).toBeEmptyDOMElement();
+  });
+
+  it("labels a section by its heading", () => {
+    const { container } = renderSections([newest(1)], new Map([[id(1), productsData]]));
+    const labelled = container.querySelector("section");
+    expect(labelled).toHaveAttribute("aria-labelledby", `${id(1)}-heading`);
+    expect(container.querySelector(`#${CSS.escape(id(1))}-heading`)).not.toBeNull();
+  });
+
   it("in preview an incomplete section is a dashed placeholder that keeps data-section-id (F2)", () => {
     const { container } = renderSections(
       [incompleteSection(3)],

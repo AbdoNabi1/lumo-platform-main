@@ -10,6 +10,7 @@ export function SectionFrame({
   id,
   hidden,
   incomplete = false,
+  labelledBy,
   preview,
   t,
   children,
@@ -17,13 +18,17 @@ export function SectionFrame({
   readonly id: string;
   readonly hidden: boolean;
   readonly incomplete?: boolean;
+  /** The id of the heading that names this section, when it has one. */
+  readonly labelledBy?: string;
   readonly preview: boolean;
   readonly t: Dictionary;
   readonly children: ReactNode;
 }) {
   if (!preview) {
     return hidden || incomplete ? null : (
-      <section className="flex flex-col gap-3">{children}</section>
+      <section aria-labelledby={labelledBy} className="flex flex-col gap-3">
+        {children}
+      </section>
     );
   }
   const placeholder = hidden
@@ -32,7 +37,11 @@ export function SectionFrame({
       ? t.sections.incompletePlaceholder
       : null;
   return (
-    <section data-section-id={id} className="flex flex-col gap-3">
+    <section
+      data-section-id={id}
+      aria-labelledby={placeholder === null ? labelledBy : undefined}
+      className="flex flex-col gap-3"
+    >
       {placeholder === null ? (
         children
       ) : (

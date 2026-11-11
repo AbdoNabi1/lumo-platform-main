@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { PublicSection } from "@platform/storefront-content";
+import { pickText, type PublicSection } from "@platform/storefront-content";
 import type { AvailabilityBook } from "@/lib/catalog";
 import type { Locale } from "@/lib/i18n";
 import type { SectionData } from "@/lib/section-data";
@@ -72,17 +72,34 @@ function contentOf(section: PublicSection, data: SectionData, props: SectionsPro
 }
 
 /**
- * A manual products grid whose picks are all unlisted has nothing to show: live omits it, preview
- * says it is unfinished (T6 carry).
+ * A grid with nothing to show because of what the merchant picked: a manual products grid whose
+ * picks are all unlisted, or a featured collection with no published products. Live omits it,
+ * preview says it is unfinished (T6 carry). Shop-wide sources (newest, all collections) show their
+ * empty message instead (Ruling 14).
  */
-function isEmptyManualGrid(section: PublicSection, data: SectionData): boolean {
+function isEmptyPickedGrid(section: PublicSection, data: SectionData): boolean {
+  if (section.incomplete === true || data.kind !== "products" || data.products.length > 0) {
+    return false;
+  }
   return (
-    section.incomplete !== true &&
-    section.type === "featured_products" &&
-    section.settings.source === "manual" &&
-    data.kind === "products" &&
-    data.products.length === 0
+    section.type === "featured_collection" ||
+    (section.type === "featured_products" && section.settings.source === "manual")
   );
+}
+
+/** The id of the heading this section renders, if it renders one. */
+function headingIdOf(section: PublicSection, locale: Locale): string | undefined {
+  if (section.incomplete === true) return undefined;
+  switch (section.type) {
+    case "featured_products":
+    case "featured_collection":
+    case "collection_list":
+      return pickText(section.settings.heading, locale) === null
+        ? undefined
+        : `${section.id}-heading`;
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -97,19 +114,23 @@ export function Sections(props: SectionsProps) {
       {sections.map((section) => {
         if (!HANDLED.has(section.type)) return null;
         const sectionData = data.get(section.id) ?? NO_DATA;
-        if (sectionData === "error") return null;
-        const emptyManual = isEmptyManualGrid(section, sectionData);
-        if (emptyManual && !preview) return null;
+        const failed = sectionData === "error";
+        if (failed && !preview) return null;
+        const shown = failed ? NO_DATA : sectionData;
+        // Preview keeps the frame of a failed section so the editor can still focus it.
+        const unfinished = failed || isEmptyPickedGrid(section, shown);
+        if (unfinished && !preview) return null;
         return (
           <SectionFrame
             key={section.id}
             id={section.id}
             hidden={section.hidden === true}
-            incomplete={section.incomplete === true || emptyManual}
+            incomplete={section.incomplete === true || unfinished}
+            labelledBy={headingIdOf(section, props.locale)}
             preview={preview}
             t={t}
           >
-            {contentOf(section, sectionData, props)}
+            {contentOf(section, shown, props)}
           </SectionFrame>
         );
       })}

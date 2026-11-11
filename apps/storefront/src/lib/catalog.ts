@@ -65,8 +65,8 @@ export type CollectionLookupResult =
 
 /**
  * Published products matching a substring search `query` (T5.15). Same "published" trust
- * boundary as `listPublishedProducts` — `searchProducts` hits the same `GET /public/products`
- * route and returns every status, so a draft/scheduled/archived product must never leak into
+ * boundary as the section data reads: `searchProducts` hits `GET /public/products`
+ * and returns every status, so a draft/scheduled/archived product must never leak into
  * search results just because its name matched.
  */
 export async function searchPublishedProducts(query: string): Promise<ProductListResult> {
