@@ -108,3 +108,12 @@ auditConfig:
     # via micromatch <- fast-glob <- @next/eslint-plugin-next <- @platform/eslint-config: lint
     # tooling, no path into a built image. Revisit when braces publishes a fix.
     - GHSA-vfj7-8cjw-p6xm
+    # 2026-11-11: vite <=6.4.3 via launch-editor (Windows path check bypass). Reached only through
+    # vitest 2.x -> vite 5.4.x: the test runner, absent from the --prod graph and from every image.
+    # vite 5 has no patched release (fixes start at 6.4.4). Revisit with the vitest 3 upgrade.
+    - GHSA-587h-7wmj-h5pm
+    # 2026-11-11: zod <4.6.6 builds one issue per failing array element, so an unbounded array
+    # schema can use a lot of memory. Every patched release is zod 4; this repo is on zod 3, and
+    # moving is a major upgrade across every service. JSON request bodies stay under Fastify's
+    # default 1 MiB body limit, which bounds the array size. Revisit with the zod 4 upgrade.
+    - GHSA-mrhx-c7xc-m3w5
