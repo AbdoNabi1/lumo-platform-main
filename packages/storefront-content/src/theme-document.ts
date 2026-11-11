@@ -35,7 +35,7 @@ export const LOGO_WIDTH = { min: 60, max: 320, default: 140 } as const;
 export const FOOTER_NOTE_MAX = 200;
 export const SOCIAL_URL_MAX = 500;
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
-const IMAGE_REF = /^[A-Za-z0-9-]{1,64}$/;
+export const IMAGE_REF_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 const HTTPS_PREFIX = /^https:\/\//i;
 
 export interface ThemeBrand {
@@ -186,7 +186,7 @@ function policyLinksFallback(value: unknown, issues: ContentIssue[]): boolean {
 
 function imageRefAt(value: unknown, path: string, issues: ContentIssue[]): string | null {
   if (value === null) return null;
-  if (typeof value === "string" && IMAGE_REF.test(value)) return value;
+  if (typeof value === "string" && IMAGE_REF_PATTERN.test(value)) return value;
   if (value !== undefined) issues.push({ path, code: "INVALID_VALUE" });
   return null;
 }

@@ -36,7 +36,7 @@ export interface ResolvedMenuItem {
 
 const HANDLE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const ITEM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const LINK_TARGET_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const LINK_TARGET_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Format and length only; whether the handle is reserved or taken is the use case's call. */
 export function isMenuHandle(value: unknown): value is string {
@@ -124,7 +124,11 @@ const LINK_KEYS: Readonly<Record<string, readonly string[]>> = Object.assign(
 );
 
 /** The one place a menu link is checked. Returns the stored form, or null with issues pushed. */
-function validateLinkRef(raw: unknown, path: string, issues: ContentIssue[]): LinkRef | null {
+export function validateLinkRef(
+  raw: unknown,
+  path: string,
+  issues: ContentIssue[],
+): LinkRef | null {
   if (!isRecord(raw)) {
     issues.push({ path, code: "INVALID_VALUE" });
     return null;
@@ -147,7 +151,7 @@ function validateLinkRef(raw: unknown, path: string, issues: ContentIssue[]): Li
     case "product":
     case "page": {
       const id = own(raw, "id");
-      if (typeof id !== "string" || !LINK_TARGET_ID.test(id)) {
+      if (typeof id !== "string" || !LINK_TARGET_ID_PATTERN.test(id)) {
         issues.push({ path: `${path}.id`, code: "INVALID_VALUE" });
         return null;
       }
