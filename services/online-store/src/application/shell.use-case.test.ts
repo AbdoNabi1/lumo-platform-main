@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
 import { harness } from "../testing/fakes";
@@ -37,6 +37,7 @@ describe("GetStorefrontShell", () => {
           { label: { ar: "الرئيسية", en: "Home" }, href: "/", external: false, children: [] },
           { label: { ar: "البحث", en: "Search" }, href: "/search", external: false, children: [] },
         ],
+        announcement: null,
       },
       footer: {
         note: {},
@@ -462,5 +463,157 @@ describe("the shell's menus (spec 2.2, 2.6)", () => {
     });
     const body = (await h.controller.shell({ tenantId: T })).body as Doc;
     expect(body.header.menu).toEqual([]);
+  });
+});
+
+describe("the shell's announcement bar (spec 3.2, Ruling 25)", () => {
+  const BAR_ID = "00000000-0000-4000-8000-000000000a01";
+  const ID = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const TARGETS = {
+    [T]: {
+      collection: { "c-1": { href: "/collections/sale", title: "Sale", published: true } },
+      page: { "g-1": { href: "/pages/about", title: "About", published: true } },
+    },
+  };
+  const withBar = (bar: unknown) =>
+    JSON.parse(
+      JSON.stringify({
+        ...DEFAULT_THEME_DOCUMENT,
+        header: { ...DEFAULT_THEME_DOCUMENT.header, announcement: bar },
+      }),
+    );
+  const bar = (settings: Record<string, unknown>, hidden = false) => ({
+    id: BAR_ID,
+    type: "announcement_bar",
+    hidden,
+    settings: { text: { ar: "شحن مجاني" }, link: null, style: "accent", ...settings },
+  });
+  const tokenOf = async (h: ReturnType<typeof harness>) =>
+    (
+      (await h.controller.issuePreviewToken({ tenantId: T, createdBy: "s" })).body as {
+        token: string;
+      }
+    ).token;
+
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("is resolved, and its link joins the menus' single targets call", async () => {
+    const h = harness({ targets: TARGETS });
+    await h.controller.updateMenu({
+      tenantId: T,
+      handle: "main-menu",
+      title: "Main",
+      expectedVersion: 0,
+      items: [
+        { id: ID(1), label: { en: "Sale" }, link: { type: "collection", id: "c-1" }, children: [] },
+      ],
+    });
+    await h.save(withBar(bar({ link: { type: "page", id: "g-1" }, style: "dark" })), 0);
+    await h.controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    h.resolveCalls.splice(0);
+    const body = (await h.controller.shell({ tenantId: T })).body as Doc;
+    expect(body.header.announcement).toEqual({
+      id: BAR_ID,
+      type: "announcement_bar",
+      settings: {
+        text: { ar: "شحن مجاني" },
+        link: { href: "/pages/about", external: false },
+        style: "dark",
+      },
+    });
+    expect(body.header.menu).toEqual([
+      { label: { en: "Sale" }, href: "/collections/sale", external: false, children: [] },
+    ]);
+    expect(h.resolveCalls).toEqual([2]); // c-1 and g-1, one call
+  });
+
+  it("a policy link uses the menus' set policies; a broken link leaves the text", async () => {
+    const h = harness({ targets: TARGETS });
+    await h.controller.updatePolicy({
+      tenantId: T,
+      type: "refund",
+      by: "s",
+      expectedVersion: 0,
+      body: { en: "x" },
+    });
+    await h.save(withBar(bar({ link: { type: "policy", policy: "refund" } })), 0);
+    await h.controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    expect(
+      ((await h.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toMatchObject({
+      settings: { link: { href: "/policies/refund-policy", external: false } },
+    });
+    // A page deleted after it was linked: the bar keeps its text and loses its link.
+    const gone = harness({ targets: TARGETS });
+    gone.deleteTarget("page", "g-1");
+    await gone.seedThemeRow({
+      draft: DEFAULT_THEME_DOCUMENT,
+      published: withBar(bar({ link: { type: "page", id: "g-1" } })),
+      version: 1,
+    });
+    expect(
+      ((await gone.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toEqual({
+      id: BAR_ID,
+      type: "announcement_bar",
+      settings: { text: { ar: "شحن مجاني" }, link: null, style: "accent" },
+    });
+  });
+
+  it("a hidden bar is null live and flagged hidden in preview", async () => {
+    const h = harness();
+    await h.save(withBar(bar({}, true)), 0);
+    await h.controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    expect(
+      ((await h.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toBeNull();
+    const token = await tokenOf(h);
+    const preview = (await h.controller.shell({ tenantId: T, previewToken: token })).body as Doc;
+    expect(preview.header.announcement).toEqual({
+      id: BAR_ID,
+      type: "announcement_bar",
+      hidden: true,
+      settings: { text: { ar: "شحن مجاني" }, link: null, style: "accent" },
+    });
+  });
+
+  it("a draft bar shows only in preview; no bar is null", async () => {
+    const h = harness();
+    expect(
+      ((await h.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toBeNull();
+    await h.save(withBar(bar({})), 0);
+    expect(
+      ((await h.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toBeNull();
+    const token = await tokenOf(h);
+    const preview = (await h.controller.shell({ tenantId: T, previewToken: token })).body as Doc;
+    expect(preview.header.announcement).toMatchObject({ id: BAR_ID, hidden: false });
+  });
+
+  it("a bar without text is null live and in preview: the header has no placeholder", async () => {
+    const h = harness();
+    const empty = withBar(bar({ text: {} }));
+    await h.seedThemeRow({ draft: empty, published: empty, version: 1 });
+    expect(
+      ((await h.controller.shell({ tenantId: T })).body as Doc).header.announcement,
+    ).toBeNull();
+    const token = await tokenOf(h);
+    const preview = (await h.controller.shell({ tenantId: T, previewToken: token })).body as Doc;
+    expect(preview.header.announcement).toBeNull();
+  });
+
+  it("a hidden bar's link is not looked up live", async () => {
+    const h = harness({ targets: TARGETS });
+    await h.save(withBar(bar({ link: { type: "page", id: "g-1" } }, true)), 0);
+    await h.controller.publishTheme({ tenantId: T, expectedDraftRevision: 1, by: "a" });
+    h.resolveCalls.splice(0);
+    await h.controller.shell({ tenantId: T });
+    expect(h.resolveCalls).toEqual([]);
   });
 });

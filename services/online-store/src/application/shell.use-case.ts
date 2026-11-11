@@ -4,10 +4,12 @@ import {
   menuHandlesOf,
   POLICY_TYPES,
   readSocial,
+  type AnnouncementSection,
   type Locale,
   type LocalizedText,
   type MenuItem,
   type PolicyType,
+  type PublicAnnouncement,
   type ResolvedMenuItem,
   type ThemeBrand,
   type ThemeDocument,
@@ -18,6 +20,31 @@ import type { OnlineStoreDeps } from "./deps";
 import { emptyTargets, loadTargets, resolveItems } from "./menu-resolution";
 import type { ImageDto, LinkTargetMap } from "./ports";
 import type { ResolvePreviewToken } from "./preview.use-cases";
+import { resolveSection } from "./section-resolution";
+
+/**
+ * The bar as the storefront gets it (Ruling 25): complete only, in both modes, since the header
+ * has no placeholder. Live drops a hidden bar; preview keeps it, flagged `hidden`.
+ */
+function announcementOf(
+  bar: AnnouncementSection | null,
+  targets: LinkTargetMap,
+  setPolicies: ReadonlySet<PolicyType>,
+  mode: "live" | "preview",
+): PublicAnnouncement | null {
+  if (bar === null) return null;
+  const resolved = resolveSection(bar, { images: {}, targets, setPolicies }, mode);
+  return resolved !== null && resolved.type === "announcement_bar" && resolved.incomplete !== true
+    ? resolved
+    : null;
+}
+
+/** The bar's link as a one-item pseudo-menu, so it joins the menus' single targets read. */
+function barLinkItems(bar: AnnouncementSection | null): MenuItem[] {
+  return bar === null || bar.settings.link === null
+    ? []
+    : [{ id: bar.id, label: {}, link: bar.settings.link, children: [] }];
+}
 
 /**
  * Spec 1.10 `PublicShellDto` (+ `branded`, Ruling 6). No tenant, storage key, revision, hash or
@@ -45,7 +72,12 @@ export interface PublicShellView {
     readonly social: ThemeBrand["social"];
   };
   /** Spec 2.2: menus resolved live; only display fields and canonical safe hrefs. */
-  readonly header: { readonly sticky: boolean; readonly menu: readonly ResolvedMenuItem[] };
+  readonly header: {
+    readonly sticky: boolean;
+    readonly menu: readonly ResolvedMenuItem[];
+    /** Part 3: the announcement bar resolved; null when there is none to show. */
+    readonly announcement: PublicAnnouncement | null;
+  };
   readonly footer: {
     readonly note: LocalizedText;
     readonly showSocial: boolean;
@@ -86,15 +118,22 @@ export class GetStorefrontShell {
     const t = theme.snapshot();
     const doc = preview ? t.draft : (t.published ?? DEFAULT_THEME_DOCUMENT);
     const p = prefs.snapshot();
+    const mode = preview ? "preview" : "live";
+    // A hidden bar is never looked up live (Ruling 25).
+    const stored = doc.header.announcement;
+    const bar = stored !== null && (preview || !stored.hidden) ? stored : null;
     const ids = [doc.brand.logo.imageRef, doc.brand.favicon.imageRef, p.shareImageRef].filter(
       (id): id is string => id !== null,
     );
-    // Images and menus in parallel; the menus' link targets need the menus first.
+    // Images and menus in parallel; the link targets (menus and bar, one read) need the menus.
     const [images, { menus, targets }] = await Promise.all([
       this.imagesOf(ids, input.tenantId),
       this.menusOf(doc, input.tenantId).then(async (menus) => ({
         menus,
-        targets: await this.targetsOf([...menus.header, ...menus.footer], input.tenantId),
+        targets: await this.targetsOf(
+          [...menus.header, ...menus.footer, ...barLinkItems(bar)],
+          input.tenantId,
+        ),
       })),
     ]);
     const setPolicies = new Set(menus.setPolicies);
@@ -103,7 +142,7 @@ export class GetStorefrontShell {
     return {
       kind: "ok",
       shell: {
-        mode: preview ? "preview" : "live",
+        mode,
         previewExpiresAt: expiresAt === null ? null : expiresAt.toISOString(),
         branded: preview || t.published !== null,
         storeName,
@@ -124,6 +163,7 @@ export class GetStorefrontShell {
         header: {
           sticky: doc.header.sticky,
           menu: resolveItems(menus.header, targets, setPolicies),
+          announcement: announcementOf(bar, targets, setPolicies, mode),
         },
         footer: {
           note: doc.footer.note,

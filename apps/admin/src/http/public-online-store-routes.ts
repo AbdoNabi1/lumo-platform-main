@@ -86,6 +86,22 @@ export function publicOnlineStoreRoutes(
     }),
     defineRoute({
       method: "GET",
+      path: "/public/online-store/home",
+      version: 1,
+      permission: "online_store:read",
+      public: true,
+      summary:
+        "Public: the homepage sections, resolved (Part 3); the draft's, flagged, with x-preview-token",
+      schema: {},
+      handle: async ({ context }) => {
+        const header = context.headers?.["x-preview-token"];
+        // The shell's rule: a repeated header is a refused preview (""), never the live home.
+        const previewToken = Array.isArray(header) ? "" : header;
+        return uncached(await admin.publicReads.onlineStore.home(context.tenantId, previewToken));
+      },
+    }),
+    defineRoute({
+      method: "GET",
       path: "/public/online-store/access",
       version: 1,
       permission: "online_store:read",

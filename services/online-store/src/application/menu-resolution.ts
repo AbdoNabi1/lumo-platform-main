@@ -6,6 +6,7 @@ import {
   type LocalizedText,
   type MenuItem,
   type PolicyType,
+  type PublicLink,
   type ResolvedMenuItem,
 } from "@platform/storefront-content";
 import type { OnlineStoreDeps } from "./deps";
@@ -43,7 +44,11 @@ export async function loadTargets(
 }
 
 /** An OWN entry only: a link id may be `__proto__` or `constructor` (preflight 12). */
-function targetOf(targets: LinkTargetMap, kind: CatalogLinkType, id: string): LinkTarget | null {
+export function targetOf(
+  targets: LinkTargetMap,
+  kind: CatalogLinkType,
+  id: string,
+): LinkTarget | null {
   const byId = targets[kind];
   return Object.hasOwn(byId, id) ? (byId[id] ?? null) : null;
 }
@@ -100,6 +105,21 @@ function resolveLink(
     title: raw.title,
     live: raw.live && safe !== null,
   };
+}
+
+/**
+ * The storefront's form of one link (Part 3 sections): the live, canonical safe `{ href, external }`,
+ * else null. The menus' own resolution, narrowed: one link rule for menus and sections alike.
+ */
+export function resolveLinkRef(
+  link: LinkRef,
+  targets: LinkTargetMap,
+  setPolicies: ReadonlySet<PolicyType>,
+): PublicLink | null {
+  const resolved = resolveLink(link, targets, setPolicies);
+  return resolved.live && resolved.href !== null
+    ? { href: resolved.href, external: resolved.external }
+    : null;
 }
 
 /** The label's two locales, copied field by field; null when neither has text. */

@@ -31,6 +31,7 @@ import type {
   UpdateMenu,
   UpdateMenuInput,
 } from "../application/menus.use-cases";
+import type { GetStorefrontHome } from "../application/home.use-case";
 import type { IssuePreviewToken } from "../application/preview.use-cases";
 import type { GetStorefrontShell } from "../application/shell.use-case";
 import type {
@@ -61,6 +62,7 @@ export interface OnlineStoreControllerDeps {
   readonly restoreThemeRelease: RestoreThemeRelease;
   readonly issuePreviewToken: IssuePreviewToken;
   readonly getShell: GetStorefrontShell;
+  readonly getHome: GetStorefrontHome;
   readonly listPolicies: ListPolicies;
   readonly getPolicy: GetPolicy;
   readonly updatePolicy: UpdatePolicy;
@@ -168,6 +170,13 @@ export class OnlineStoreController {
     if (outcome.kind === "preview_invalid")
       return plainError(401, "PREVIEW_INVALID", "Preview link is invalid or expired");
     return { status: 200, body: outcome.shell };
+  }
+  /** Public: the homepage sections resolved (Part 3); a bad preview token is the shell's 401. */
+  async home(input: { readonly previewToken?: string } & Tenant): Promise<ControllerResponse> {
+    const outcome = await this.deps.getHome.execute(input);
+    if (outcome.kind === "preview_invalid")
+      return plainError(401, "PREVIEW_INVALID", "Preview link is invalid or expired");
+    return { status: 200, body: outcome.home };
   }
   /** Public: one policy as stored; 404 POLICY_NOT_FOUND when it is not set. */
   async publicPolicy(input: { readonly type: PolicyType } & Tenant): Promise<ControllerResponse> {

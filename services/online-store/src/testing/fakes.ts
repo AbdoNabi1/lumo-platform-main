@@ -198,12 +198,15 @@ export function harness(
         : Promise.resolve(options.names?.[t] ?? ""),
   };
   const ownedImages = fakeImageRefs(options.owned ?? {});
+  const imageResolveCalls: { readonly ids: readonly string[]; readonly tenantId: string }[] = [];
   const imageRefs: ImageRefsPort = {
     existingIds: (ids, tenantId) => ownedImages.existingIds(ids, tenantId),
-    resolve: (ids, tenantId) =>
-      options.imageResolveFails === true
+    resolve: (ids, tenantId) => {
+      imageResolveCalls.push({ ids: [...ids], tenantId });
+      return options.imageResolveFails === true
         ? Promise.reject(new Error("media down"))
-        : ownedImages.resolve(ids, tenantId),
+        : ownedImages.resolve(ids, tenantId);
+    },
   };
   const controller = buildOnlineStoreController(
     repos,
@@ -231,6 +234,8 @@ export function harness(
     hasher,
     recorded,
     resolveCalls,
+    /** Every `imageRefs.resolve` call: the ids asked for and the tenant asked with. */
+    imageResolveCalls,
     advance: (ms: number) => {
       now = new Date(now.getTime() + ms);
     },

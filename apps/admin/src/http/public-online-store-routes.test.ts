@@ -43,10 +43,11 @@ function keysOf(value: unknown): string[] {
 
 /** Spec 1.10, one row per route. Every one is public; none may replay from the response cache. */
 describe("the public online-store route table", () => {
-  it("is the three rows of spec 1.10: public, and never idempotent", () => {
+  it("is spec 1.10's three rows plus Part 3's home: public, and never idempotent", () => {
     const routes = publicOnlineStoreRoutes({} as WiredAdmin);
     expect(routes.map((r) => [r.method, r.path, r.public, r.idempotent ?? null])).toEqual([
       ["GET", "/public/online-store", true, null],
+      ["GET", "/public/online-store/home", true, null],
       ["GET", "/public/online-store/access", true, null],
       ["POST", "/public/online-store/unlock", true, null],
     ]);
@@ -102,6 +103,12 @@ describe("public online-store routes (spec 1.10)", () => {
       url: `/api/v1${url}`,
       headers: headersFor("admin", { "idempotency-key": `p-${(key += 1)}` }),
       payload,
+    });
+  const home = (tenant = "t-1", extra: Record<string, string | string[]> = {}) =>
+    app.inject({
+      method: "GET",
+      url: "/api/v1/public/online-store/home",
+      headers: anon(tenant, extra),
     });
   const shell = (tenant = "t-1", extra: Record<string, string | string[]> = {}) =>
     app.inject({
@@ -215,8 +222,11 @@ describe("public online-store routes (spec 1.10)", () => {
       ]);
       expect(Object.keys(body.brand.logo).sort()).toEqual(["image", "widthPx"]);
       // Part 2: an untouched shop serves the default menus, resolved; no policy is set yet.
+      // Part 3: the header lists exactly sticky, menu and announcement (no bar yet: null).
+      expect(Object.keys(body.header).sort()).toEqual(["announcement", "menu", "sticky"]);
       expect(body.header).toEqual({
         sticky: false,
+        announcement: null,
         menu: [
           { label: { ar: "الرئيسية", en: "Home" }, href: "/", external: false, children: [] },
           { label: { ar: "البحث", en: "Search" }, href: "/search", external: false, children: [] },
@@ -338,9 +348,125 @@ describe("public online-store routes (spec 1.10)", () => {
       await shell("t-1", { "x-preview-token": token }),
       await shell("t-1", { "x-preview-token": "nope" }),
       await access(),
+      await home(),
+      await home("t-1", { "x-preview-token": token }),
+      await home("t-1", { "x-preview-token": "nope" }),
     ]) {
       expect(res.headers["cache-control"]).toBe(NOT_STORED);
     }
+  });
+
+  describe("the home (Part 3, spec 3.4)", () => {
+    beforeEach(() => {
+      expect.hasAssertions();
+    });
+    const SECTION = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const richText = (n: number, heading: string, hidden = false) => ({
+      id: SECTION(n),
+      type: "rich_text",
+      hidden,
+      settings: {
+        heading: { en: heading },
+        body: {},
+        buttonLabel: {},
+        buttonLink: null,
+        align: "start",
+      },
+    });
+    const future = {
+      id: SECTION(9),
+      type: "countdown_timer",
+      hidden: false,
+      settings: { secret: "UNKNOWN-CONTENT", endsAt: "2027-01-01" },
+    };
+    const saveDraft = (sections: unknown[]) =>
+      admin("PUT", "/online-store/theme/draft", {
+        document: { ...DEFAULT_THEME_DOCUMENT, homepage: { sections } },
+        expectedVersion: 0,
+      });
+
+    it("serves the live home anonymously, listing exactly mode and sections", async () => {
+      const res = await home();
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["cache-control"]).toBe(NOT_STORED);
+      const body = res.json<{ mode: string; sections: { id: string; type: string }[] }>();
+      expect(Object.keys(body).sort()).toEqual(["mode", "sections"]);
+      expect(body.mode).toBe("live");
+      expect(body.sections.map((s) => [s.id, s.type])).toEqual([
+        ["00000000-0000-4000-8000-000000000101", "featured_products"],
+        ["00000000-0000-4000-8000-000000000102", "collection_list"],
+      ]);
+      for (const section of body.sections) {
+        expect(Object.keys(section).sort()).toEqual(["id", "settings", "type"]);
+      }
+    });
+
+    it("preview with a valid token serves the draft with hidden flags; live stays published", async () => {
+      expect(
+        (await saveDraft([richText(1, "Shown"), richText(2, "Tucked", true)])).statusCode,
+      ).toBe(200);
+      const { token } = await mintToken();
+      const preview = await home("t-1", { "x-preview-token": token });
+      expect(preview.statusCode).toBe(200);
+      expect(preview.json()).toMatchObject({
+        mode: "preview",
+        sections: [
+          { id: SECTION(1), hidden: false, settings: { heading: { en: "Shown" } } },
+          { id: SECTION(2), hidden: true, settings: { heading: { en: "Tucked" } } },
+        ],
+      });
+      expect(preview.body).not.toContain(token);
+      const live = await home();
+      expect(live.body).not.toMatch(/Shown|Tucked/);
+      expect(live.json<{ mode: string }>().mode).toBe("live");
+    });
+
+    it("a bad, foreign or repeated token is 401 PREVIEW_INVALID, never the live home", async () => {
+      await saveDraft([richText(1, "Secret draft")]);
+      const { token } = await mintToken();
+      for (const [tenant, bad] of [
+        ["t-1", "nope"],
+        ["t-1", ""],
+        ["t-1", "u".repeat(43)],
+        ["t-2", token],
+        ["t-1", [token, token]],
+      ] as const) {
+        const res = await home(tenant, { "x-preview-token": bad as string | string[] });
+        expect(res.statusCode, JSON.stringify(bad)).toBe(401);
+        expect(res.json()).toEqual({
+          code: "PREVIEW_INVALID",
+          message: "Preview link is invalid or expired",
+          retryable: false,
+          fields: [],
+        });
+        expect(res.body).not.toMatch(/Secret|sections/);
+      }
+    });
+
+    it("serves no tenant, image ref, storage key or unknown-type section (leak test)", async () => {
+      expect((await saveDraft([richText(1, "Visible"), future])).statusCode).toBe(200);
+      await admin("POST", "/online-store/theme/publish", { expectedDraftRevision: 1 });
+      const { token } = await mintToken();
+      for (const res of [await home(), await home("t-1", { "x-preview-token": token })]) {
+        expect(res.statusCode).toBe(200);
+        expect(res.json<{ sections: { id: string }[] }>().sections.map((s) => s.id)).toEqual([
+          SECTION(1),
+        ]);
+        for (const leak of [
+          "t-1",
+          "tenant",
+          "imageRef",
+          "storageKey",
+          "tenants/",
+          "countdown_timer",
+          "UNKNOWN-CONTENT",
+          SECTION(9),
+          token,
+        ]) {
+          expect(res.body, leak).not.toContain(leak);
+        }
+      }
+    });
   });
 
   describe("preview", () => {

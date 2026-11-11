@@ -42,6 +42,7 @@ import {
   ListPolicies,
   UpdatePolicy,
 } from "./application/policies.use-cases";
+import { GetStorefrontHome } from "./application/home.use-case";
 import { GetPreferences, UpdatePreferences } from "./application/preferences.use-cases";
 import { IssuePreviewToken, ResolvePreviewToken } from "./application/preview.use-cases";
 import { GetStorefrontShell } from "./application/shell.use-case";
@@ -106,6 +107,7 @@ export interface OnlineStoreRepos {
 /** Closures taking `tenantId` per call (spec "Composition"); nothing here holds a tenant. */
 export interface OnlineStorePublicReads {
   readonly shell: (tenantId: string, previewToken?: string) => Promise<ControllerResponse>;
+  readonly home: (tenantId: string, previewToken?: string) => Promise<ControllerResponse>;
   readonly access: (tenantId: string) => Promise<ControllerResponse>;
   readonly unlock: (tenantId: string, password: string) => Promise<ControllerResponse>;
   readonly policy: (tenantId: string, type: PolicyType) => Promise<ControllerResponse>;
@@ -169,6 +171,7 @@ export function buildOnlineStoreController(
     restoreThemeRelease: new RestoreThemeRelease(deps),
     issuePreviewToken: new IssuePreviewToken(deps),
     getShell: new GetStorefrontShell(deps, resolvePreview),
+    getHome: new GetStorefrontHome(deps, resolvePreview),
     listPolicies: new ListPolicies(deps),
     getPolicy: new GetPolicy(deps),
     updatePolicy: new UpdatePolicy(deps),
@@ -187,6 +190,8 @@ function publicReadsOf(controller: OnlineStoreController): OnlineStorePublicRead
   return {
     shell: (tenantId, previewToken) =>
       controller.shell({ tenantId, ...(previewToken === undefined ? {} : { previewToken }) }),
+    home: (tenantId, previewToken) =>
+      controller.home({ tenantId, ...(previewToken === undefined ? {} : { previewToken }) }),
     access: (tenantId) => controller.publicAccess({ tenantId }),
     unlock: (tenantId, password) => controller.unlock({ tenantId, password }),
     policy: (tenantId, type) => controller.publicPolicy({ tenantId, type }),

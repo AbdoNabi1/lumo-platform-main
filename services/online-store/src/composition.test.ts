@@ -101,6 +101,8 @@ describe("wireOnlineStore", () => {
     expect((await publicReads.access("t-2")).body).toMatchObject({ locked: false });
     expect((await publicReads.shell(T)).body).toMatchObject({ locked: true, storeName: "Nour" });
     expect((await publicReads.shell(T, "bad")).status).toBe(401);
+    expect((await publicReads.home(T)).body).toMatchObject({ mode: "live" });
+    expect((await publicReads.home(T, "bad")).status).toBe(401);
     expect((await publicReads.unlock(T, "1234")).status).toBe(200);
     expect((await publicReads.unlock("t-2", "1234")).status).toBe(401);
   });

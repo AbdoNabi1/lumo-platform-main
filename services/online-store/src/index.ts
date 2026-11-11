@@ -37,6 +37,7 @@ export type {
 } from "./application/policies.use-cases";
 export type { PolicyTemplateInputs } from "./domain/policy-templates/template-inputs";
 export type { PublicShellView } from "./application/shell.use-case";
+export type { PublicHomeView } from "./application/home.use-case";
 export { AccessChanged, PreferencesUpdated, ThemePublished } from "./domain/events";
 export { ONLINE_STORE_PUBLISHED_EVENTS } from "./infrastructure/event-translator";
 export { virtualDefaultMenu } from "./domain/default-menus";
