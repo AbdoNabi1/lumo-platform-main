@@ -26,6 +26,7 @@ const state = {
   publishedBy: null,
   hasUnpublishedChanges: true,
   images: {},
+  targets: null,
   version: 1,
 };
 

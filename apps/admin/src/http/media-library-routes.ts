@@ -33,16 +33,42 @@ export interface MediaAssetDto {
   readonly storageKey: string;
   readonly folderRef: string | null;
   readonly status: string;
+  /** The resolved picture (spec 3.5, Ruling 19); null for a non-image or unresolvable asset. */
+  readonly image: LibraryImage | null;
 }
 
-function toMediaAssetDto(asset: MediaAsset): MediaAssetDto {
+export interface LibraryImage {
+  readonly url: string;
+  readonly alt: string | null;
+  readonly width: number | null;
+  readonly height: number | null;
+}
+
+function toMediaAssetDto(asset: MediaAsset, image: LibraryImage | null = null): MediaAssetDto {
   return {
     id: asset.id.toString(),
     name: asset.name,
     storageKey: asset.storageKey,
     folderRef: asset.folderRef ?? null,
     status: asset.status.value,
+    image,
   };
+}
+
+/** Only an asset whose content type is an image gets a picture (F17); one batched read per page. */
+async function imagesOf(
+  admin: WiredAdmin,
+  tenantId: string,
+  assets: readonly MediaAsset[],
+): Promise<ReadonlyMap<string, LibraryImage>> {
+  const ids = assets
+    .filter((asset) => asset.contentType?.startsWith("image/") === true)
+    .map((asset) => asset.id.toString());
+  if (ids.length === 0) return new Map();
+  const resolved = await admin.mediaImages.execute({ ids, tenantId });
+  return new Map(
+    [...resolved].map(([id, { url, alt, width, height }]) => [id, { url, alt, width, height }]),
+  );
 }
 
 const createFolderBody = z.object({
@@ -217,14 +243,18 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       permission: "media_library:read",
       summary: "List media assets (cursor pagination)",
       schema: { querystring: pageQuery },
-      handle: async ({ query, context }) =>
-        mapPage(
-          await admin.mediaLibrary.listMediaAssets(context.principal, {
-            ...query,
-            tenantId: context.tenantId,
-          }),
-          toMediaAssetDto,
-        ),
+      handle: async ({ query, context }) => {
+        const response = await admin.mediaLibrary.listMediaAssets(context.principal, {
+          ...query,
+          tenantId: context.tenantId,
+        });
+        if (response.status < 200 || response.status >= 300) return response;
+        const assets = (response.body as { items: readonly MediaAsset[] }).items;
+        const images = await imagesOf(admin, context.tenantId, assets);
+        return mapPage(response, (asset: MediaAsset) =>
+          toMediaAssetDto(asset, images.get(asset.id.toString()) ?? null),
+        );
+      },
     }),
     defineRoute({
       method: "GET",

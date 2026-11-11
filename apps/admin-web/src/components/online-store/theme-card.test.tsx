@@ -29,6 +29,7 @@ const state = {
   publishedBy: "staff-1",
   hasUnpublishedChanges: true,
   images: {},
+  targets: null,
   version: 3,
 };
 

@@ -1,8 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { ContrastWarning, ThemeDocument } from "@platform/storefront-content";
+import { unstable_rethrow } from "next/navigation";
+import {
+  IMAGE_ALT_MAX,
+  IMAGE_REF_PATTERN,
+  type ContrastWarning,
+  type ThemeDocument,
+} from "@platform/storefront-content";
 import type { FieldIssue } from "@/lib/api/client";
+import { fetchLibraryImages, updateMediaAlt, type LibraryImageDto } from "@/lib/api/media";
 import { newIdempotencyKey } from "@/lib/api/mutation";
 import {
   discardThemeDraft,
@@ -11,6 +18,7 @@ import {
   restoreThemeRelease,
   saveThemeDraft,
 } from "@/lib/api/online-store";
+import { isVersion } from "@/lib/online-store/action-args";
 import { codeOf } from "@/lib/online-store/codes";
 import { revalidateStorefront } from "@/lib/storefront-revalidate";
 
@@ -53,6 +61,11 @@ export async function saveThemeDraftAction(input: {
   readonly expectedVersion: number;
   readonly idempotencyKey?: string;
 }): Promise<DraftSaveResult> {
+  // A server action is a public endpoint: the document must at least be an object.
+  const document: unknown = input.document;
+  if (typeof document !== "object" || document === null || Array.isArray(document))
+    return { status: "error" };
+  if (!isVersion(input.expectedVersion)) return { status: "error" };
   const result = await saveThemeDraft(
     input.document,
     input.expectedVersion,
@@ -166,4 +179,53 @@ export async function previewUrlAction(): Promise<
     expiresAt,
     ...lifetime,
   };
+}
+
+const AFTER_MAX = 200;
+
+/**
+ * One page of the image library (Ruling 19). `hasNextPage` is the API's, so a page that held no
+ * images is not read as the end of the library (F17).
+ */
+export async function listLibraryImagesAction(after: string | null): Promise<
+  | {
+      readonly status: "ok";
+      readonly items: readonly LibraryImageDto[];
+      readonly endCursor: string | null;
+      readonly hasNextPage: boolean;
+    }
+  | { readonly status: "error" }
+> {
+  if (after !== null && (typeof after !== "string" || after.length > AFTER_MAX || /\s/.test(after)))
+    return { status: "error" };
+  try {
+    const result = await fetchLibraryImages(after);
+    if (result.outcome !== "ok") return { status: "error" };
+    const { items, endCursor, hasNextPage } = result.data;
+    return { status: "ok", items, endCursor, hasNextPage };
+  } catch (error) {
+    unstable_rethrow(error);
+    return { status: "error" };
+  }
+}
+
+/** The alt text belongs to the asset, so it changes everywhere the image is used (spec 1.7). */
+export async function updateImageAltAction(
+  imageId: string,
+  alt: string,
+): Promise<{ readonly status: "ok" } | { readonly status: "error" }> {
+  if (typeof imageId !== "string" || !IMAGE_REF_PATTERN.test(imageId)) return { status: "error" };
+  if (typeof alt !== "string" || alt.length > IMAGE_ALT_MAX) return { status: "error" };
+  const trimmed = alt.trim();
+  try {
+    const result = await updateMediaAlt(
+      imageId,
+      trimmed === "" ? null : trimmed,
+      newIdempotencyKey(),
+    );
+    return result.outcome === "ok" ? { status: "ok" } : { status: "error" };
+  } catch (error) {
+    unstable_rethrow(error);
+    return { status: "error" };
+  }
 }

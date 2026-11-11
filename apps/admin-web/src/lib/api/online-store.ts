@@ -48,6 +48,16 @@ export interface AccessDto {
   readonly message: LocalizedText;
   readonly version: number;
 }
+/**
+ * What the draft's collection, product and page references point to (Ruling 21): id to its title and
+ * whether it is live. An id that is absent no longer exists. Look ids up with `Object.hasOwn`.
+ */
+export type ThemeTargetsDto = Readonly<
+  Record<
+    "collection" | "product" | "page",
+    Readonly<Record<string, { readonly title: string; readonly live: boolean }>>
+  >
+>;
 export interface ThemeStateDto {
   readonly draft: ThemeDocument;
   readonly published: ThemeDocument | null;
@@ -59,6 +69,8 @@ export interface ThemeStateDto {
   readonly publishedBy: string | null;
   readonly hasUnpublishedChanges: boolean;
   readonly images: Readonly<Record<string, OnlineStoreImageDto>>;
+  /** `null` when the API could not resolve them (or an older API sends none): no flags then. */
+  readonly targets: ThemeTargetsDto | null;
   readonly version: number;
 }
 export interface SaveDraftResultDto {
@@ -109,6 +121,25 @@ function isAccess(v: unknown): v is AccessDto {
     isNumber(v["version"])
   );
 }
+function isTargetBucket(v: unknown): boolean {
+  return (
+    isObject(v) &&
+    !Array.isArray(v) &&
+    Object.values(v).every(
+      (entry) =>
+        isObject(entry) && typeof entry["title"] === "string" && typeof entry["live"] === "boolean",
+    )
+  );
+}
+/** `null`, or the three buckets. An absent value is handled by the caller (F18). */
+function isTargets(v: unknown): v is ThemeTargetsDto {
+  return (
+    isObject(v) &&
+    isTargetBucket(v["collection"]) &&
+    isTargetBucket(v["product"]) &&
+    isTargetBucket(v["page"])
+  );
+}
 function isThemeState(v: unknown): v is ThemeStateDto {
   return (
     isObject(v) &&
@@ -116,7 +147,8 @@ function isThemeState(v: unknown): v is ThemeStateDto {
     isNumber(v["draftRevision"]) &&
     isNumber(v["version"]) &&
     typeof v["hasUnpublishedChanges"] === "boolean" &&
-    isObject(v["images"])
+    isObject(v["images"]) &&
+    (!("targets" in v) || v["targets"] === null || isTargets(v["targets"]))
   );
 }
 const isDraftRevision = (v: unknown): v is DraftRevisionDto =>
@@ -185,6 +217,7 @@ export async function fetchThemeState(): Promise<ApiResult<ThemeStateDto>> {
     outcome: "ok",
     data: {
       ...result.data,
+      targets: result.data.targets ?? null,
       draft: readThemeDocument(result.data.draft),
       published: result.data.published === null ? null : readThemeDocument(result.data.published),
     },

@@ -18,7 +18,6 @@ import {
   publishThemeAction,
   saveThemeDraftAction,
 } from "@/app/online-store/themes/actions";
-import type { FieldIssue } from "@/lib/api/client";
 import type { OnlineStoreImageDto, ThemeStateDto } from "@/lib/api/online-store";
 import {
   createAutosaver,
@@ -27,6 +26,7 @@ import {
   type AutosaveState,
   type SendAnswer,
 } from "@/lib/online-store/autosave";
+import { themeFieldErrors } from "@/lib/online-store/theme-field-errors";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import {
@@ -52,34 +52,6 @@ const PREVIEW_MIN_REFRESH_MS = 60 * 1000;
  */
 const PREVIEW_SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox";
-
-/**
- * The API's 422 codes as copy, keyed by document path; the path `""` is the whole document
- * (`DOCUMENT_TOO_LARGE`). Server text never reaches the page. Social links have their own wording
- * for the two codes that differ there (the encoded 500-character limit, Ruling 5).
- */
-function fieldErrorsOf(t: Dictionary, fields: readonly FieldIssue[]): Record<string, string> {
-  const c = t.onlineStoreCustomize;
-  const copyByCode: Readonly<Record<string, string>> = {
-    IMAGE_NOT_FOUND: t.onlineStorePreferences.imageNotFound,
-    INVALID_URL: t.onlineStoreErrors.invalidUrl,
-    TOO_LONG: t.onlineStorePreferences.tooLong,
-    INVALID_COLOR: t.onlineStoreErrors.invalidColor,
-    OUT_OF_RANGE: t.onlineStoreErrors.outOfRange,
-    CONTRAST_TOO_LOW: c.contrastBlocked,
-    DOCUMENT_TOO_LARGE: t.onlineStoreErrors.documentTooLarge,
-  };
-  const socialCopy: Readonly<Record<string, string>> = {
-    INVALID_URL: c.socialInvalid,
-    TOO_LONG: c.socialTooLong,
-  };
-  const errors: Record<string, string> = {};
-  for (const { field, message: code } of fields) {
-    const social = field.startsWith("brand.social.") ? socialCopy[code] : undefined;
-    errors[field] = social ?? copyByCode[code] ?? t.formErrors.invalid;
-  }
-  return errors;
-}
 
 /** The token lifetime left as this browser sees it; a skewed clock falls back to the full hour. */
 function lifetimeLeft(expiresAt: number): number | null {
@@ -157,7 +129,7 @@ export function CustomizeEditor({
             // Final: never retried on a timer, so a refused save cannot loop (Ruling 3).
             return {
               status: "invalid",
-              apply: () => setFieldErrors(fieldErrorsOf(t, result.fields)),
+              apply: () => setFieldErrors(themeFieldErrors(t, result.fields)),
             };
           default:
             return { status: "transient" }; // error or in_flight: the answer may still come

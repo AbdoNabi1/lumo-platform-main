@@ -7,8 +7,10 @@ const api = vi.hoisted(() => ({
   restoreThemeRelease: vi.fn(),
   issuePreviewToken: vi.fn(),
 }));
+const media = vi.hoisted(() => ({ fetchLibraryImages: vi.fn(), updateMediaAlt: vi.fn() }));
 const side = vi.hoisted(() => ({ revalidateStorefront: vi.fn(), revalidatePath: vi.fn() }));
 vi.mock("@/lib/api/online-store", () => api);
+vi.mock("@/lib/api/media", () => media);
 vi.mock("@/lib/storefront-revalidate", () => ({ revalidateStorefront: side.revalidateStorefront }));
 vi.mock("next/cache", () => ({ revalidatePath: side.revalidatePath }));
 const actions = await import("./actions");
@@ -16,7 +18,9 @@ const actions = await import("./actions");
 const KEY = "0123456789abcdef0123456789abcdef";
 
 beforeEach(() => {
+  expect.hasAssertions();
   for (const fn of Object.values(api)) fn.mockReset();
+  for (const fn of Object.values(media)) fn.mockReset();
   side.revalidateStorefront.mockReset().mockResolvedValue(true);
   side.revalidatePath.mockReset();
   vi.stubEnv("STOREFRONT_URL", "https://shop.example/");
@@ -205,5 +209,73 @@ describe("theme actions", () => {
       expiresInMs: 60 * 60_000,
     });
     vi.useRealTimers();
+  });
+});
+
+describe("section editor actions (Part 3)", () => {
+  const image = { id: "m1", url: "https://c/a", alt: null, width: 1, height: 1 };
+
+  it("lists the library page and passes the cursor on", async () => {
+    const page = {
+      items: [{ id: "m1", name: "a.png", image }],
+      endCursor: "c2",
+      hasNextPage: true,
+    };
+    media.fetchLibraryImages.mockResolvedValue({ outcome: "ok", data: page });
+    expect(await actions.listLibraryImagesAction("c1")).toEqual({ status: "ok", ...page });
+    expect(media.fetchLibraryImages).toHaveBeenLastCalledWith("c1");
+    await actions.listLibraryImagesAction(null);
+    expect(media.fetchLibraryImages).toHaveBeenLastCalledWith(null);
+    media.fetchLibraryImages.mockResolvedValue({ outcome: "error", message: "x" });
+    expect(await actions.listLibraryImagesAction(null)).toEqual({ status: "error" });
+  });
+
+  it("refuses a long or spaced cursor and a non-string one without a call", async () => {
+    expect(await actions.listLibraryImagesAction("a".repeat(5000))).toEqual({ status: "error" });
+    expect(await actions.listLibraryImagesAction("a b")).toEqual({ status: "error" });
+    expect(await actions.listLibraryImagesAction(7 as never)).toEqual({ status: "error" });
+    expect(media.fetchLibraryImages).not.toHaveBeenCalled();
+  });
+
+  it("a failing read is an error, not a throw", async () => {
+    media.fetchLibraryImages.mockRejectedValue(new Error("boom"));
+    expect(await actions.listLibraryImagesAction(null)).toEqual({ status: "error" });
+  });
+
+  it("alt: refuses a bad id or a non-string without a call; trims; blank is null", async () => {
+    expect(await actions.updateImageAltAction("../x", "a")).toEqual({ status: "error" });
+    expect(await actions.updateImageAltAction("m1", 7 as never)).toEqual({ status: "error" });
+    expect(await actions.updateImageAltAction("m1", "a".repeat(301))).toEqual({ status: "error" });
+    expect(media.updateMediaAlt).not.toHaveBeenCalled();
+    media.updateMediaAlt.mockResolvedValue({ outcome: "ok", data: {} });
+    expect(await actions.updateImageAltAction("m1", "  ")).toEqual({ status: "ok" });
+    expect(media.updateMediaAlt).toHaveBeenLastCalledWith("m1", null, expect.any(String));
+    await actions.updateImageAltAction("m1", "  Red shoe ");
+    expect(media.updateMediaAlt).toHaveBeenLastCalledWith("m1", "Red shoe", expect.any(String));
+    await actions.updateImageAltAction("m1", "a".repeat(300));
+    expect(media.updateMediaAlt).toHaveBeenCalledTimes(3);
+    const keys = media.updateMediaAlt.mock.calls.map((c) => c[2]);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it("alt: a failed patch is an error", async () => {
+    media.updateMediaAlt.mockResolvedValue({ outcome: "forbidden", message: "x" });
+    expect(await actions.updateImageAltAction("m1", "a")).toEqual({ status: "error" });
+    media.updateMediaAlt.mockRejectedValue(new Error("boom"));
+    expect(await actions.updateImageAltAction("m1", "a")).toEqual({ status: "error" });
+  });
+
+  it("draft save checks its arguments before any call", async () => {
+    const bad = [
+      { document: "x", expectedVersion: 1 },
+      { document: [], expectedVersion: 1 },
+      { document: null, expectedVersion: 1 },
+      { document: {}, expectedVersion: -1 },
+      { document: {}, expectedVersion: 1.5 },
+    ];
+    for (const input of bad) {
+      expect(await actions.saveThemeDraftAction(input as never)).toEqual({ status: "error" });
+    }
+    expect(api.saveThemeDraft).not.toHaveBeenCalled();
   });
 });

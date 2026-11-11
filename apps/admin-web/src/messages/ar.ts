@@ -3735,6 +3735,21 @@ export const ar: Dictionary = {
     invalidColor: "اكتب لون زي #1a2b3c.",
     outOfRange: "القيمة دي برّه الحدود المسموحة.",
   },
+  onlineStoreSections: {
+    errors: {
+      targetNotFound: "العنصر ده مبقاش موجود في متجرك.",
+      imageNotFound: "الصورة دي مبقتش موجودة في متجرك.",
+      tooManySections: "الصفحة الرئيسية تشيل لحد 25 سكشن.",
+      tooManyOfType: "ضفت أكتر عدد مسموح من السكشن ده.",
+      notAllowedHere: "السكشن ده مينفعش يتحط هنا.",
+      duplicateSection: "فيه سكشنين بنفس المعرّف. اعمل ريلود للصفحة.",
+      invalidPhone: "اكتب رقم واتساب من 8 لـ 15 رقم.",
+      tooFewItems: "لازم يفضل عنصر واحد على الأقل.",
+      tooManyItems: "ضفت أكتر عدد عناصر السكشن ده يشيله.",
+      duplicateValue: "المنتج ده موجود في القايمة أصلًا.",
+      invalidLink: "اختار اللينك ده يروح فين.",
+    },
+  },
   formErrors: {
     unauthorized: "سجّل الدخول للمتابعة.",
     forbidden: "حسابك لا يملك صلاحية القيام بهذا.",

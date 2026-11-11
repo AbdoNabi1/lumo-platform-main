@@ -3943,6 +3943,23 @@ export const en = {
     invalidColor: "Use a colour like #1a2b3c.",
     outOfRange: "This value is outside the allowed range.",
   },
+  /** Home page sections (Part 3). */
+  onlineStoreSections: {
+    /** Save codes for a section's fields, shown beside the field. */
+    errors: {
+      targetNotFound: "This item no longer exists in your store.",
+      imageNotFound: "This image no longer exists in your store.",
+      tooManySections: "A home page holds up to 25 sections.",
+      tooManyOfType: "You've added the most of this section you can.",
+      notAllowedHere: "This section can't go here.",
+      duplicateSection: "Two sections share an id. Reload the page.",
+      invalidPhone: "Enter a WhatsApp number of 8 to 15 digits.",
+      tooFewItems: "Keep at least one item.",
+      tooManyItems: "You've added the most items this section holds.",
+      duplicateValue: "This product is already in the list.",
+      invalidLink: "Choose where this link goes.",
+    },
+  },
   /** Generic, form-agnostic messages `toFormState` (`lib/api/mutation.ts`) renders from a `MutationResult`. Every write form shares these. */
   formErrors: {
     unauthorized: "Sign in to continue.",

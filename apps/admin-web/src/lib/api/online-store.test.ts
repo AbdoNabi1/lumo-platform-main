@@ -27,6 +27,73 @@ const preferences = {
   version: 4,
 };
 
+const themeBody = (extra: Record<string, unknown>) => ({
+  draft: {},
+  published: null,
+  draftRevision: 0,
+  draftSavedAt: null,
+  publishedDraftRevision: null,
+  releaseNumber: 0,
+  publishedAt: null,
+  publishedBy: null,
+  hasUnpublishedChanges: false,
+  images: {},
+  version: 0,
+  ...extra,
+});
+
+describe("theme targets (Part 3, Ruling 21)", () => {
+  const read = async (body: unknown) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => json(200, body)),
+    );
+    return api.fetchThemeState();
+  };
+
+  it("accepts null, the record, and an absent targets as null (F18)", async () => {
+    expect.hasAssertions();
+    const targets = {
+      collection: { c1: { title: "Shoes", live: true } },
+      product: {},
+      page: { p1: { title: "About", live: false } },
+    };
+    const withTargets = await read(themeBody({ targets }));
+    expect(withTargets.outcome === "ok" && withTargets.data.targets).toEqual(targets);
+    const nulled = await read(themeBody({ targets: null }));
+    expect(nulled.outcome === "ok" && nulled.data.targets).toBeNull();
+    const absent = await read(themeBody({}));
+    expect(absent.outcome).toBe("ok");
+    expect(absent.outcome === "ok" && absent.data.targets).toBeNull();
+  });
+
+  it("fails the guard on a malformed targets", async () => {
+    expect.hasAssertions();
+    expect((await read(themeBody({ targets: "x" }))).outcome).toBe("error");
+    expect((await read(themeBody({ targets: { collection: {}, product: {} } }))).outcome).toBe(
+      "error",
+    );
+    expect(
+      (
+        await read(
+          themeBody({
+            targets: { collection: { c: { title: 1, live: true } }, product: {}, page: {} },
+          }),
+        )
+      ).outcome,
+    ).toBe("error");
+    expect(
+      (
+        await read(
+          themeBody({
+            targets: { collection: { c: { title: "t" } }, product: {}, page: {} },
+          }),
+        )
+      ).outcome,
+    ).toBe("error");
+  });
+});
+
 describe("online-store API client", () => {
   it("reads the theme state and canonicalises both documents", async () => {
     vi.stubGlobal(
