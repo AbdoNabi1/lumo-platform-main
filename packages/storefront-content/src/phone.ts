@@ -38,7 +38,8 @@ const EGYPT_CODE = "20";
 
 /**
  * Normalises what a merchant typed into WhatsApp digits, or null; never guesses a country.
- * - `+` or `00` marks an international number; a single trunk 0 after the calling code is dropped.
+ * - `+` or `00` marks an international number. A single trunk 0 is dropped only straight after the
+ *   `callingCode` (default `20`, Egypt): `+20 0100...` works, but `+966 0501...` keeps its 0.
  * - A leading `0` (national format) is completed with `callingCode`.
  * - Bare digits: 11 or more are taken as already country-coded; with the default code a bare
  *   Egyptian mobile (10 digits) gets `20`; any other shorter bare number is refused, because wa.me

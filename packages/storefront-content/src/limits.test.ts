@@ -8,6 +8,7 @@ import {
   PAGE_TITLE_MAX,
   POLICY_TEMPLATE_LIMITS,
   SECTION_FOCUS_MESSAGE,
+  SECTION_PREVIEW_READY_MESSAGE,
 } from "./index";
 
 describe("shared limits", () => {
@@ -31,6 +32,7 @@ describe("shared storefront constants (F5, F12)", () => {
   it("keeps one copy of the alt cap, the focus message and the catalog ref cap", () => {
     expect(IMAGE_ALT_MAX).toBe(300);
     expect(SECTION_FOCUS_MESSAGE).toBe("morbeh:focus-section");
+    expect(SECTION_PREVIEW_READY_MESSAGE).toBe("morbeh:preview-ready");
     expect(CATALOG_REF_TEXT_MAX).toBe(200);
   });
 

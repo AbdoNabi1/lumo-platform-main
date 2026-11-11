@@ -176,6 +176,8 @@ export const UNSUPPORTED_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
 export const HOMEPAGE_SECTIONS_MAX = 25;
 /** The `type` of the editor's `postMessage` that scrolls the preview to a section (Ruling 18). */
 export const SECTION_FOCUS_MESSAGE = "morbeh:focus-section";
+/** The `type` of the message a framed preview posts to its parent when it can take focus messages. */
+export const SECTION_PREVIEW_READY_MESSAGE = "morbeh:preview-ready";
 
 const L = SECTION_LIMITS;
 
@@ -574,16 +576,17 @@ export function readSection(raw: unknown, placement: SectionPlacement): Section 
   const definition = sectionDefinition(type);
   if (definition !== null) {
     if (definition.placement !== placement || !isRecord(settings)) return null;
-    return {
-      id,
-      type,
-      hidden,
-      settings: readFields(
-        definition.fields,
-        settings,
-        definition.defaults() as unknown as Readonly<Record<string, unknown>>,
-      ),
-    };
+    const read = readFields(
+      definition.fields,
+      settings,
+      definition.defaults() as unknown as Readonly<Record<string, unknown>>,
+    );
+    // What this read returns must pass the strict write. A bad field became its default above, but
+    // a list below its minimum (testimonials/features with too few items) has no default that
+    // helps, so that section is unreadable and dropped like any other.
+    const strict: ContentIssue[] = [];
+    if (definition.validate(read, "", strict) === null || strict.length > 0) return null;
+    return { id, type, hidden, settings: read };
   }
   if (placement === "header" || !UNSUPPORTED_TYPE_PATTERN.test(type) || !isRecord(settings)) {
     return null;

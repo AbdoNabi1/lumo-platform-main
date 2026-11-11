@@ -591,6 +591,15 @@ describe("a lenient read always passes the strict write (fix round 1)", () => {
     expect(read.homepage.sections.map((s) => s.id)).toEqual([id(1), id(2), id(3)]);
   });
 
+  it("a testimonials or features section below its items minimum is dropped", () => {
+    for (const type of ["testimonials", "features"] as const) {
+      const base = newSection(type, id(1));
+      const empty = { ...base, settings: { ...base.settings, items: [] } };
+      const read = roundTrips(v2([empty, newSection("rich_text", id(2))]));
+      expect(read.homepage.sections.map((s) => s.id)).toEqual([id(2)]);
+    }
+  });
+
   it("3 WhatsApp sections keep the first 2", () => {
     const wa = Array.from({ length: 3 }, (_, i) => newSection("whatsapp_cta", id(i + 1)));
     const read = roundTrips(v2(wa));
