@@ -3,7 +3,7 @@ import { normalizeLocalizedText, normalizePlainText, type ContentIssue } from ".
 import { LINK_TARGET_ID_PATTERN, validateLinkRef } from "./menus";
 import { toWhatsAppDigits } from "./phone";
 import { validateRichText } from "./rich-text";
-import { IMAGE_REF_PATTERN } from "./theme-document";
+import { IMAGE_REF_PATTERN } from "./limits";
 
 export type FieldDescriptor =
   | { readonly kind: "localizedText"; readonly key: string; readonly max: number }

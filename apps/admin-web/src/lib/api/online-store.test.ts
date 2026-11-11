@@ -49,7 +49,7 @@ describe("online-store API client", () => {
     );
     const result = await api.fetchThemeState();
     expect(result.outcome).toBe("ok");
-    if (result.outcome === "ok") expect(result.data.draft.schemaVersion).toBe(1);
+    if (result.outcome === "ok") expect(result.data.draft.schemaVersion).toBe(2);
   });
 
   it("mints a preview token WITHOUT an idempotency key", async () => {

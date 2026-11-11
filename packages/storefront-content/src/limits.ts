@@ -50,3 +50,6 @@ export const SECTION_LIMITS = Object.freeze({
   heroPerPage: 3,
   whatsAppPerPage: 2,
 } as const);
+
+/** An image reference: an asset id, never a path or a URL. */
+export const IMAGE_REF_PATTERN = /^[A-Za-z0-9-]{1,64}$/;

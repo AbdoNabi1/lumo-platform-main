@@ -627,7 +627,7 @@ describe("CustomizeEditor", () => {
   it("saving an unrelated header or footer field keeps menuHandle and showPolicyLinks", async () => {
     const draft: ThemeDocument = {
       ...DEFAULT_THEME_DOCUMENT,
-      header: { sticky: false, menuHandle: "sale" },
+      header: { sticky: false, menuHandle: "sale", announcement: null },
       footer: { ...DEFAULT_THEME_DOCUMENT.footer, menuHandle: "sale", showPolicyLinks: false },
     };
     renderEditor("admin", { ...state, draft });
@@ -636,7 +636,7 @@ describe("CustomizeEditor", () => {
     fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.stickyHeader));
     await tick(1000);
     const doc = saveArg(0).document;
-    expect(doc.header).toEqual({ sticky: true, menuHandle: "sale" });
+    expect(doc.header).toEqual({ sticky: true, menuHandle: "sale", announcement: null });
     expect(doc.footer).toEqual({
       ...DEFAULT_THEME_DOCUMENT.footer,
       showSocial: false,

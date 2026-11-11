@@ -4,7 +4,19 @@ import { isFontKey, type FontKey } from "./fonts";
 import { MAX_ISSUES, pathSegment } from "./issues";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 import { URL_CONTROLS, URL_INVISIBLES } from "./links";
+import { IMAGE_REF_PATTERN } from "./limits";
 import { isMenuHandle } from "./menus";
+import {
+  DEFAULT_HOMEPAGE_SECTIONS,
+  HOMEPAGE_SECTIONS_MAX,
+  readSection,
+  sectionDefinition,
+  sectionRefsOf,
+  validateSection,
+  type AnnouncementSection,
+  type Section,
+} from "./sections";
+import { emptySectionRefs, type SectionRefs } from "./section-fields";
 import type { ValidationOutcome } from "./validation";
 
 export const SOCIAL_NETWORKS = [
@@ -35,7 +47,7 @@ export const LOGO_WIDTH = { min: 60, max: 320, default: 140 } as const;
 export const FOOTER_NOTE_MAX = 200;
 export const SOCIAL_URL_MAX = 500;
 export const MAX_DOCUMENT_BYTES = 256 * 1024;
-export const IMAGE_REF_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+export const THEME_SCHEMA_VERSION = 2;
 const HTTPS_PREFIX = /^https:\/\//i;
 
 export interface ThemeBrand {
@@ -52,18 +64,21 @@ export interface ThemeBrand {
 }
 
 export interface ThemeDocument {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly brand: ThemeBrand;
-  /** Part 3 adds `announcement`. */
-  readonly header: { readonly sticky: boolean; readonly menuHandle: string };
+  readonly header: {
+    readonly sticky: boolean;
+    readonly menuHandle: string;
+    readonly announcement: AnnouncementSection | null;
+  };
   readonly footer: {
     readonly note: LocalizedText;
     readonly showSocial: boolean;
     readonly menuHandle: string;
     readonly showPolicyLinks: boolean;
   };
-  /** Part 3 types the sections; Part 1 accepts only `[]` on write and never renders them. */
-  readonly homepage: { readonly sections: readonly unknown[] };
+  /** Version 1 documents read as the default sections; version 2 stores them literally. */
+  readonly homepage: { readonly sections: readonly Section[] };
 }
 
 export type BrandStyle = Pick<ThemeBrand, "colors" | "typography" | "corners">;
@@ -87,7 +102,7 @@ function deepFreeze<T>(value: T): T {
 
 /** The current light palette, Plex for both fonts, medium, rounded, no logo: today's storefront. */
 export const DEFAULT_THEME_DOCUMENT: ThemeDocument = deepFreeze({
-  schemaVersion: 1,
+  schemaVersion: 2,
   brand: {
     logo: { imageRef: null, widthPx: LOGO_WIDTH.default },
     favicon: { imageRef: null },
@@ -107,9 +122,9 @@ export const DEFAULT_THEME_DOCUMENT: ThemeDocument = deepFreeze({
     corners: "rounded",
     social: {},
   },
-  header: { sticky: false, menuHandle: "main-menu" },
+  header: { sticky: false, menuHandle: "main-menu", announcement: null },
   footer: { note: {}, showSocial: true, menuHandle: "footer", showPolicyLinks: true },
-  homepage: { sections: [] },
+  homepage: { sections: DEFAULT_HOMEPAGE_SECTIONS },
 });
 
 type Raw = Record<string, unknown>;
@@ -354,24 +369,55 @@ function readBrandAt(raw: unknown, path: string, issues: ContentIssue[]): ThemeB
   }, issues);
 }
 
+type HeaderBase = Pick<ThemeDocument["header"], "sticky" | "menuHandle">;
+
 /**
  * `lenient` (the read path): a bad optional menu reference resets only that field, so the
- * rest of the section survives; the write path reports it.
+ * rest of the section survives; the write path reports it. The announcement is parsed apart
+ * (see `announcementWriteAt`), so a corrupt bar never resets `sticky` or `menuHandle`.
+ * `announcement` is a known key in version 2 and on the read path; in a version 1 write it is unknown.
  */
 function readHeaderAt(
   raw: unknown,
   issues: ContentIssue[],
   lenient = false,
-): ThemeDocument["header"] | null {
+  withAnnouncement = true,
+): HeaderBase | null {
   return section((found) => {
     const optionalSink = lenient ? [] : found;
-    const obj = objectAt(raw, "header", ["sticky", "menuHandle"], found, ["menuHandle"]);
+    const obj = objectAt(
+      raw,
+      "header",
+      withAnnouncement ? ["sticky", "menuHandle", "announcement"] : ["sticky", "menuHandle"],
+      found,
+      ["menuHandle", "announcement"],
+    );
     if (obj === null) return null;
     return {
       sticky: booleanAt(obj["sticky"], "header.sticky", found),
       menuHandle: menuHandleAt(obj["menuHandle"], "header.menuHandle", "main-menu", optionalSink),
     };
   }, issues);
+}
+
+function isRecord(value: unknown): value is Raw {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Write path: null or absent is no bar; anything else must be a valid announcement bar. */
+function announcementWriteAt(raw: unknown, issues: ContentIssue[]): AnnouncementSection | null {
+  if (!isRecord(raw) || !Object.hasOwn(raw, "announcement")) return null;
+  const value = raw["announcement"];
+  if (value === null || value === undefined) return null;
+  const read = validateSection(value, "header.announcement", issues, "header");
+  return read !== null && read.type === "announcement_bar" ? (read as AnnouncementSection) : null;
+}
+
+/** Read path: an announcement bar this build understands, else null. Never throws. */
+function announcementReadAt(raw: unknown): AnnouncementSection | null {
+  if (!isRecord(raw) || !Object.hasOwn(raw, "announcement")) return null;
+  const read = readSection(raw["announcement"], "header");
+  return read !== null && read.type === "announcement_bar" ? (read as AnnouncementSection) : null;
 }
 
 function readFooterAt(
@@ -417,36 +463,97 @@ function byteLength(raw: unknown): number {
   }
 }
 
-/** The write-path validator (API, editor): strict, every issue reported with a path and a code. */
+/** Per-type caps (maxPerPage) in document order, and unique ids across the header and the page. */
+function checkPlacement(
+  sections: readonly (Section | null)[],
+  announcement: AnnouncementSection | null,
+  issues: ContentIssue[],
+): void {
+  const counts = new Map<string, number>();
+  const seen = new Set<string>();
+  if (announcement !== null) seen.add(announcement.id.toLowerCase());
+  for (const [index, entry] of sections.entries()) {
+    if (entry === null) continue;
+    const at = `homepage.sections.${index}`;
+    const max = sectionDefinition(entry.type)?.maxPerPage ?? null;
+    const count = (counts.get(entry.type) ?? 0) + 1;
+    counts.set(entry.type, count);
+    if (max !== null && count > max) issues.push({ path: `${at}.type`, code: "TOO_MANY_OF_TYPE" });
+    const key = entry.id.toLowerCase();
+    if (seen.has(key)) issues.push({ path: `${at}.id`, code: "DUPLICATE_SECTION_ID" });
+    seen.add(key);
+  }
+}
+
+/**
+ * The write-path validator (API, editor): strict, every issue reported with a path and a code.
+ * Version 1 (the Part 1 shape) is upcast to the default homepage; version 2 stores sections literally.
+ */
 export function validateThemeDocument(raw: unknown): ValidationOutcome<ThemeDocument> {
   if (byteLength(raw) > MAX_DOCUMENT_BYTES)
     return { ok: false, issues: [{ path: "", code: "DOCUMENT_TOO_LARGE" }] };
   const issues: ContentIssue[] = [];
   const obj = objectAt(raw, "", ["schemaVersion", "brand", "header", "footer", "homepage"], issues);
   if (obj === null) return { ok: false, issues };
-  if (obj["schemaVersion"] !== undefined && obj["schemaVersion"] !== 1)
+  const version = obj["schemaVersion"];
+  // An absent version is reported MISSING by objectAt and an unsupported one below; either way the
+  // rest is checked as version 2, so a bad version adds no cascade of unknown-key issues.
+  if (version !== undefined && version !== 1 && version !== 2)
     issues.push({ path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION" });
+  const isV1 = version === 1;
   const brand = readBrandAt(obj["brand"], "brand", issues);
-  const header = readHeaderAt(obj["header"], issues);
+  const headerBase = readHeaderAt(obj["header"], issues, false, !isV1);
+  const announcement = isV1 ? null : announcementWriteAt(obj["header"], issues);
   const footer = readFooterAt(obj["footer"], issues);
   const homepage = objectAt(obj["homepage"], "homepage", ["sections"], issues);
+  let sections: readonly Section[] | null = null;
   if (homepage !== null) {
-    const sections = homepage["sections"];
-    if (sections === undefined) {
+    const raws = homepage["sections"];
+    if (raws === undefined) {
       // reported MISSING by objectAt
-    } else if (!Array.isArray(sections))
+    } else if (!Array.isArray(raws)) {
       issues.push({ path: "homepage.sections", code: "INVALID_VALUE" });
-    else if (sections.length > 0)
-      issues.push({ path: "homepage.sections", code: "SECTIONS_NOT_SUPPORTED" });
+    } else if (isV1) {
+      if (raws.length > 0)
+        issues.push({ path: "homepage.sections", code: "SECTIONS_NOT_SUPPORTED" });
+      else sections = readDefaultSections();
+    } else if (raws.length > HOMEPAGE_SECTIONS_MAX) {
+      issues.push({ path: "homepage.sections", code: "TOO_MANY_SECTIONS" });
+    } else {
+      const read = raws.map((entry, index) =>
+        validateSection(entry, `homepage.sections.${index}`, issues, "homepage"),
+      );
+      checkPlacement(read, announcement, issues);
+      if (!read.includes(null)) sections = read as Section[];
+    }
   }
   // Issues are reported in document order: top-level unknown keys first (objectAt above), then fields.
   issues.sort((a, b) => order(a.path) - order(b.path));
-  if (issues.length > 0 || brand === null || header === null || footer === null)
+  if (
+    issues.length > 0 ||
+    brand === null ||
+    headerBase === null ||
+    footer === null ||
+    sections === null
+  )
     return { ok: false, issues: issues.slice(0, MAX_ISSUES) };
   return {
     ok: true,
-    value: { schemaVersion: 1, brand, header, footer, homepage: { sections: [] } },
+    value: {
+      schemaVersion: 2,
+      brand,
+      header: { sticky: headerBase.sticky, menuHandle: headerBase.menuHandle, announcement },
+      footer,
+      homepage: { sections },
+    },
   };
+}
+
+/** The upcast of a version 1 document: the default sections, read like any stored section. */
+function readDefaultSections(): Section[] {
+  return DEFAULT_HOMEPAGE_SECTIONS.map((entry) => readSection(entry, "homepage")).filter(
+    (entry): entry is Section => entry !== null,
+  );
 }
 
 const TOP_ORDER = ["", "schemaVersion", "brand", "header", "footer", "homepage"];
@@ -456,23 +563,42 @@ function order(path: string): number {
   return index === -1 ? -1 : index;
 }
 
+/** Version 2 stores sections literally: skips what cannot be read, keeps the first of a repeated id. */
+function readStoredSections(raw: unknown): Section[] | null {
+  if (!isRecord(raw) || !Object.hasOwn(raw, "sections")) return null;
+  const list = raw["sections"];
+  if (!Array.isArray(list)) return null;
+  const kept: Section[] = [];
+  const seen = new Set<string>();
+  for (const entry of list) {
+    if (kept.length >= HOMEPAGE_SECTIONS_MAX) break;
+    const read = readSection(entry, "homepage");
+    if (read === null || seen.has(read.id.toLowerCase())) continue;
+    seen.add(read.id.toLowerCase());
+    kept.push(read);
+  }
+  return kept;
+}
+
 /** The read-path reader (storefront, admin reads, upcasting): never throws, falls back per section. */
 export function readThemeDocument(raw: unknown): ThemeDocument {
   const ignored: ContentIssue[] = [];
-  const obj = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Raw) : {};
-  const homepage = obj["homepage"];
-  const sections =
-    typeof homepage === "object" &&
-    homepage !== null &&
-    Array.isArray((homepage as Raw)["sections"])
-      ? ((homepage as Raw)["sections"] as unknown[])
-      : [];
+  const obj = isRecord(raw) ? raw : {};
+  const version = obj["schemaVersion"];
+  const stored =
+    typeof version === "number" && version >= 2 ? readStoredSections(obj["homepage"]) : null;
+  const headerRaw = obj["header"];
+  const headerBase = readHeaderAt(headerRaw, ignored, true) ?? DEFAULT_THEME_DOCUMENT.header;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     brand: readBrandAt(obj["brand"], "brand", ignored) ?? readPartialBrand(obj["brand"]),
-    header: readHeaderAt(obj["header"], ignored, true) ?? DEFAULT_THEME_DOCUMENT.header,
+    header: {
+      sticky: headerBase.sticky,
+      menuHandle: headerBase.menuHandle,
+      announcement: announcementReadAt(headerRaw),
+    },
     footer: readFooterAt(obj["footer"], ignored, true) ?? DEFAULT_THEME_DOCUMENT.footer,
-    homepage: { sections },
+    homepage: { sections: stored ?? readDefaultSections() },
   };
 }
 
@@ -510,10 +636,30 @@ export function menuHandlesOf(doc: ThemeDocument): readonly string[] {
   return [...new Set([doc.header.menuHandle, doc.footer.menuHandle])];
 }
 
+/** Every reference a document makes, each with its dotted path (brand, header bar, sections). */
+export function documentRefsOf(doc: ThemeDocument): SectionRefs {
+  const refs = emptySectionRefs();
+  if (doc.brand.logo.imageRef !== null)
+    refs.image.push({ path: "brand.logo.imageRef", id: doc.brand.logo.imageRef });
+  if (doc.brand.favicon.imageRef !== null)
+    refs.image.push({ path: "brand.favicon.imageRef", id: doc.brand.favicon.imageRef });
+  const link = doc.header.announcement?.settings.link ?? null;
+  if (
+    link !== null &&
+    (link.type === "page" || link.type === "collection" || link.type === "product")
+  )
+    refs[link.type].push({ path: "header.announcement.settings.link.id", id: link.id });
+  const fromSections = sectionRefsOf(doc.homepage.sections, "homepage.sections");
+  refs.image.push(...fromSections.image);
+  refs.collection.push(...fromSections.collection);
+  refs.product.push(...fromSections.product);
+  refs.page.push(...fromSections.page);
+  return refs;
+}
+
+/** The distinct image ids a document names. */
 export function imageRefsOf(doc: ThemeDocument): string[] {
-  return [doc.brand.logo.imageRef, doc.brand.favicon.imageRef].filter(
-    (id): id is string => id !== null,
-  );
+  return [...new Set(documentRefsOf(doc).image.map((ref) => ref.id))];
 }
 
 /** Stable JSON for equality: the reader rebuilds keys in one order whatever the storage did. */

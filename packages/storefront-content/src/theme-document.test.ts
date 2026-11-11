@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_HOMEPAGE_SECTIONS, newSection } from "./sections";
 import {
   canonicalDocumentJson,
   DEFAULT_THEME_DOCUMENT,
+  documentRefsOf,
   imageRefsOf,
   menuHandlesOf,
   MAX_DOCUMENT_BYTES,
@@ -11,6 +13,7 @@ import {
   type ThemeDocument,
 } from "./theme-document";
 
+type Doc = ReturnType<typeof JSON.parse>;
 const clone = () => JSON.parse(JSON.stringify(DEFAULT_THEME_DOCUMENT));
 const issuesOf = (raw: unknown) => {
   const outcome = validateThemeDocument(raw);
@@ -35,7 +38,9 @@ describe("DEFAULT_THEME_DOCUMENT", () => {
     expect(DEFAULT_THEME_DOCUMENT.brand.corners).toBe("rounded");
     expect(DEFAULT_THEME_DOCUMENT.brand.logo).toEqual({ imageRef: null, widthPx: 140 });
     expect(DEFAULT_THEME_DOCUMENT.brand.social).toEqual({});
-    expect(DEFAULT_THEME_DOCUMENT.homepage.sections).toEqual([]);
+    expect(DEFAULT_THEME_DOCUMENT.schemaVersion).toBe(2);
+    expect(DEFAULT_THEME_DOCUMENT.header.announcement).toBeNull();
+    expect(DEFAULT_THEME_DOCUMENT.homepage.sections).toBe(DEFAULT_HOMEPAGE_SECTIONS);
   });
 
   it("passes its own validator", () => {
@@ -132,14 +137,10 @@ describe("validateThemeDocument", () => {
     expect(issuesOf(raw)).toEqual([{ path: "footer.note.en", code: "TOO_LONG" }]);
   });
 
-  it("refuses homepage sections until Part 3, and an unknown schema version", () => {
+  it("refuses an unknown schema version", () => {
     const raw = clone();
-    raw.homepage.sections = [{ type: "hero" }];
-    raw.schemaVersion = 2;
-    expect(issuesOf(raw)).toEqual([
-      { path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION" },
-      { path: "homepage.sections", code: "SECTIONS_NOT_SUPPORTED" },
-    ]);
+    raw.schemaVersion = 3;
+    expect(issuesOf(raw)).toEqual([{ path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION" }]);
   });
 
   it("refuses a document over 256 KB before reading it", () => {
@@ -167,9 +168,15 @@ describe("readThemeDocument (tolerant reader)", () => {
   it("never throws on garbage and keeps an unknown homepage array as it is", () => {
     expect(readThemeDocument("garbage")).toEqual(DEFAULT_THEME_DOCUMENT);
     const raw = clone();
-    raw.homepage.sections = [{ type: "from-a-newer-build" }];
+    const future = {
+      id: "6f1b2c3d-4e5f-4a6b-8c7d-000000000009",
+      type: "from_a_newer_build",
+      hidden: false,
+      settings: {},
+    };
+    raw.homepage.sections = [future];
     raw.schemaVersion = 2;
-    expect(readThemeDocument(raw).homepage.sections).toEqual([{ type: "from-a-newer-build" }]);
+    expect(readThemeDocument(raw).homepage.sections).toEqual([future]);
   });
 
   it("readBrandStyle falls back field group by field group", () => {
@@ -211,7 +218,7 @@ describe("Part 2 menu fields (Ruling 2, Review Focus 3)", () => {
 
   it("a Part 1 document reads, validates and canonicalises as before", () => {
     const read = readThemeDocument(partOne());
-    expect(read.header).toEqual({ sticky: true, menuHandle: "main-menu" });
+    expect(read.header).toEqual({ sticky: true, menuHandle: "main-menu", announcement: null });
     expect(read.footer).toEqual({
       note: { ar: "أهلاً" },
       showSocial: false,
@@ -229,7 +236,7 @@ describe("Part 2 menu fields (Ruling 2, Review Focus 3)", () => {
     a.header = { menuHandle: "x", sticky: false };
     a.footer = { showPolicyLinks: false, menuHandle: "y", showSocial: true, note: {} };
     const json = canonicalDocumentJson(a);
-    expect(json).toContain('"header":{"sticky":false,"menuHandle":"x"}');
+    expect(json).toContain('"header":{"sticky":false,"menuHandle":"x","announcement":null}');
     expect(json).toContain(
       '"footer":{"note":{},"showSocial":true,"menuHandle":"y","showPolicyLinks":false}',
     );
@@ -277,7 +284,7 @@ describe("a bad menu reference on read resets only that field (fix round 1)", ()
         showPolicyLinks: "yes",
       },
     });
-    expect(doc.header).toEqual({ sticky: true, menuHandle: "main-menu" });
+    expect(doc.header).toEqual({ sticky: true, menuHandle: "main-menu", announcement: null });
     expect(doc.footer).toEqual({
       note: { en: "hi" },
       showSocial: false,
@@ -289,5 +296,284 @@ describe("a bad menu reference on read resets only that field (fix round 1)", ()
     const raw = JSON.parse(JSON.stringify(DEFAULT_THEME_DOCUMENT));
     raw.footer.menuHandle = "BAD";
     expect(validateThemeDocument(raw).ok).toBe(false);
+  });
+});
+
+// ---- schema version 2 (Part 3, Ruling 2) ----
+
+const PART1_FIXTURE = {
+  schemaVersion: 1,
+  brand: structuredClone(DEFAULT_THEME_DOCUMENT.brand),
+  header: { sticky: false },
+  footer: { note: {}, showSocial: true },
+  homepage: { sections: [] },
+};
+const v1Doc = () => structuredClone(PART1_FIXTURE) as Doc;
+const id = (n: number) => `6f1b2c3d-4e5f-4a6b-8c7d-${String(n).padStart(12, "0")}`;
+const v2 = (sections: unknown[], announcement: unknown = null) => ({
+  ...structuredClone(DEFAULT_THEME_DOCUMENT),
+  header: { ...DEFAULT_THEME_DOCUMENT.header, announcement },
+  homepage: { sections },
+});
+
+describe("schema version 2 (Ruling 2)", () => {
+  it("a version-1 document reads as the default homepage and canonicalises like it (Review Focus 1)", () => {
+    const read = readThemeDocument(v1Doc());
+    expect(read.schemaVersion).toBe(2);
+    expect(read.homepage.sections).toEqual(DEFAULT_HOMEPAGE_SECTIONS);
+    expect(read.header.announcement).toBeNull();
+    expect(canonicalDocumentJson(v1Doc())).toBe(canonicalDocumentJson(DEFAULT_THEME_DOCUMENT));
+  });
+
+  it("canonical JSON of a v1 document equals that of the same document upcast and re-read, key order included", () => {
+    const upcast = readThemeDocument(v1Doc());
+    // an upcast document is stored as JSON, then read again
+    const stored = JSON.parse(JSON.stringify(upcast));
+    expect(canonicalDocumentJson(stored)).toBe(canonicalDocumentJson(v1Doc()));
+    // v1 goes through readSection, so the key order is the descriptor order, not defaults()
+    const v1Json = JSON.stringify(readThemeDocument(v1Doc()).homepage.sections);
+    const v2Json = JSON.stringify(
+      readThemeDocument(v2([...DEFAULT_HOMEPAGE_SECTIONS])).homepage.sections,
+    );
+    expect(v1Json).toBe(v2Json);
+    const reversed = JSON.parse(JSON.stringify(DEFAULT_HOMEPAGE_SECTIONS)).map(
+      (s: { settings: object }) => ({
+        ...s,
+        settings: Object.fromEntries(Object.entries(s.settings).reverse()),
+      }),
+    );
+    expect(JSON.stringify(readThemeDocument(v2(reversed)).homepage.sections)).toBe(v1Json);
+    expect(readThemeDocument(v1Doc()).homepage.sections.map((s) => s.type)).toEqual([
+      "featured_products",
+      "collection_list",
+    ]);
+  });
+
+  it("a version-1 write with [] is upcast; with sections it is still SECTIONS_NOT_SUPPORTED", () => {
+    const ok = validateThemeDocument(v1Doc());
+    expect(ok.ok && ok.value.homepage.sections).toEqual(DEFAULT_HOMEPAGE_SECTIONS);
+    expect(ok.ok && ok.value.schemaVersion).toBe(2);
+    const bad = validateThemeDocument({
+      ...v1Doc(),
+      homepage: { sections: [newSection("hero", id(1))] },
+    });
+    expect(bad).toEqual({
+      ok: false,
+      issues: [{ path: "homepage.sections", code: "SECTIONS_NOT_SUPPORTED" }],
+    });
+  });
+
+  it("a version-1 write with an announcement is an unknown key", () => {
+    const doc = v1Doc();
+    doc.header = { sticky: false, announcement: null };
+    expect(issuesOf(doc)).toEqual([{ path: "header.announcement", code: "UNKNOWN_KEY" }]);
+  });
+
+  it("version 2 stores sections literally: an empty homepage stays empty", () => {
+    const out = validateThemeDocument(v2([]));
+    expect(out.ok && out.value.homepage.sections).toEqual([]);
+    expect(readThemeDocument(v2([])).homepage.sections).toEqual([]);
+  });
+
+  it("a newer version reads as 2 with unknown sections kept; the write path refuses it", () => {
+    const future = { id: id(9), type: "countdown_timer", hidden: false, settings: { endsAt: "x" } };
+    expect(readThemeDocument({ ...v2([future]), schemaVersion: 3 }).homepage.sections).toEqual([
+      future,
+    ]);
+    expect(validateThemeDocument({ ...v2([]), schemaVersion: 3 })).toMatchObject({
+      ok: false,
+      issues: [{ path: "schemaVersion", code: "UNSUPPORTED_SCHEMA_VERSION" }],
+    });
+  });
+
+  it("issue paths are dotted, down to the locale (Ruling 4)", () => {
+    const hero = newSection("hero", id(1));
+    const doc = v2([
+      newSection("rich_text", id(2)),
+      { ...hero, settings: { ...hero.settings, heading: { ar: "x".repeat(81) } } },
+    ]);
+    expect(validateThemeDocument(doc)).toEqual({
+      ok: false,
+      issues: [{ path: "homepage.sections.1.settings.heading.ar", code: "TOO_LONG" }],
+    });
+  });
+
+  it("an unknown type is kept unchanged on write (Ruling 7)", () => {
+    const future = { id: id(9), type: "countdown_timer", hidden: true, settings: { a: [1] } };
+    const out = validateThemeDocument(v2([future]));
+    expect(out.ok && out.value.homepage.sections).toEqual([future]);
+  });
+
+  it("a bad source reads as newest; a strict save refuses it (Ruling 7)", () => {
+    const fp = newSection("featured_products", id(1));
+    const bad = v2([{ ...fp, settings: { ...fp.settings, source: "bogus" } }]);
+    expect(issuesOf(bad)).toEqual([
+      { path: "homepage.sections.0.settings.source", code: "INVALID_VALUE" },
+    ]);
+    const read = readThemeDocument(bad).homepage.sections[0] as { settings: { source: string } };
+    expect(read.settings.source).toBe("newest");
+  });
+
+  describe("limits, each at N and N+1", () => {
+    const rich = (n: number) =>
+      Array.from({ length: n }, (_, i) => newSection("rich_text", id(i + 1)));
+    const ofType = (type: "hero" | "whatsapp_cta", n: number) =>
+      Array.from({ length: n }, (_, i) => newSection(type, id(i + 1)));
+
+    it("25 sections pass, 26 are TOO_MANY_SECTIONS at homepage.sections only", () => {
+      expect(validateThemeDocument(v2(rich(25))).ok).toBe(true);
+      expect(validateThemeDocument(v2(rich(26)))).toEqual({
+        ok: false,
+        issues: [{ path: "homepage.sections", code: "TOO_MANY_SECTIONS" }],
+      });
+    });
+
+    it("3 heroes pass, the 4th is TOO_MANY_OF_TYPE at its type", () => {
+      expect(validateThemeDocument(v2(ofType("hero", 3))).ok).toBe(true);
+      expect(validateThemeDocument(v2(ofType("hero", 4)))).toEqual({
+        ok: false,
+        issues: [{ path: "homepage.sections.3.type", code: "TOO_MANY_OF_TYPE" }],
+      });
+    });
+
+    it("2 WhatsApp buttons pass, the 3rd is TOO_MANY_OF_TYPE", () => {
+      expect(validateThemeDocument(v2(ofType("whatsapp_cta", 2))).ok).toBe(true);
+      expect(validateThemeDocument(v2(ofType("whatsapp_cta", 3)))).toEqual({
+        ok: false,
+        issues: [{ path: "homepage.sections.2.type", code: "TOO_MANY_OF_TYPE" }],
+      });
+    });
+
+    it("every section past the limit is flagged, in index order", () => {
+      expect(validateThemeDocument(v2(ofType("hero", 5)))).toEqual({
+        ok: false,
+        issues: [
+          { path: "homepage.sections.3.type", code: "TOO_MANY_OF_TYPE" },
+          { path: "homepage.sections.4.type", code: "TOO_MANY_OF_TYPE" },
+        ],
+      });
+    });
+
+    it("one announcement bar in the header passes; a bar in the page is not allowed there", () => {
+      expect(validateThemeDocument(v2([], newSection("announcement_bar", id(1)))).ok).toBe(true);
+      expect(validateThemeDocument(v2([newSection("announcement_bar", id(1))]))).toEqual({
+        ok: false,
+        issues: [{ path: "homepage.sections.0.type", code: "SECTION_NOT_ALLOWED_HERE" }],
+      });
+    });
+  });
+
+  it("ids are unique across the header and the page, case-insensitively", () => {
+    const bar = newSection("announcement_bar", id(1));
+    expect(validateThemeDocument(v2([newSection("rich_text", id(1))], bar))).toEqual({
+      ok: false,
+      issues: [{ path: "homepage.sections.0.id", code: "DUPLICATE_SECTION_ID" }],
+    });
+    const upper = { ...newSection("rich_text", id(2)), id: id(2).toUpperCase() };
+    expect(validateThemeDocument(v2([newSection("hero", id(2)), upper]))).toEqual({
+      ok: false,
+      issues: [{ path: "homepage.sections.1.id", code: "DUPLICATE_SECTION_ID" }],
+    });
+  });
+
+  it("issues keep the header before the homepage", () => {
+    const hero = newSection("hero", id(1));
+    const out = validateThemeDocument(v2([{ ...hero, hidden: "x" }], newSection("hero", id(2))));
+    expect(!out.ok && out.issues.map((i) => i.path)).toEqual([
+      "header.announcement.type",
+      "homepage.sections.0.hidden",
+    ]);
+  });
+
+  it("the announcement slot takes an announcement bar or null; absent is null", () => {
+    const bar = newSection("announcement_bar", id(1));
+    const ok = validateThemeDocument(v2([], bar));
+    expect(ok.ok && ok.value.header.announcement).toEqual(bar);
+    const { announcement: _a, ...headerWithout } = v2([]).header;
+    const absent = validateThemeDocument({ ...v2([]), header: headerWithout });
+    expect(absent.ok && absent.value.header.announcement).toBeNull();
+    expect(validateThemeDocument(v2([], newSection("hero", id(2))))).toMatchObject({
+      ok: false,
+      issues: [{ path: "header.announcement.type", code: "SECTION_NOT_ALLOWED_HERE" }],
+    });
+  });
+
+  it("a corrupt stored announcement reads as null and keeps sticky and menuHandle (F10)", () => {
+    const doc = v2([]);
+    doc.header = { sticky: true, menuHandle: "sale", announcement: { id: "bad" } } as never;
+    expect(readThemeDocument(doc).header).toEqual({
+      sticky: true,
+      menuHandle: "sale",
+      announcement: null,
+    });
+    const hero = { ...doc, header: { ...doc.header, announcement: newSection("hero", id(1)) } };
+    expect(readThemeDocument(hero).header).toEqual({
+      sticky: true,
+      menuHandle: "sale",
+      announcement: null,
+    });
+  });
+
+  it("a corrupt stored section is skipped on read; a duplicate id keeps the first", () => {
+    const good = newSection("rich_text", id(1));
+    const read = readThemeDocument(v2([good, { id: "bad" }, { ...newSection("features", id(1)) }]));
+    expect(read.homepage.sections).toEqual([good]);
+  });
+
+  it("a read keeps the first 25 sections", () => {
+    const many = Array.from({ length: 30 }, (_, i) => newSection("rich_text", id(i + 1)));
+    expect(readThemeDocument(v2(many)).homepage.sections).toHaveLength(25);
+  });
+
+  it("the 256 KB cap still holds with sections", () => {
+    const big = newSection("rich_text", id(1));
+    const doc = v2(
+      Array.from({ length: 25 }, (_, i) => ({
+        ...big,
+        id: id(i + 1),
+        settings: { ...big.settings, body: { ar: "س".repeat(5000), en: "x".repeat(5000) } },
+      })),
+    );
+    expect(validateThemeDocument(doc)).toEqual({
+      ok: false,
+      issues: [{ path: "", code: "DOCUMENT_TOO_LARGE" }],
+    });
+  });
+
+  it("documentRefsOf names brand images, the bar link target and every section ref, with paths", () => {
+    const barBase = newSection("announcement_bar", id(1));
+    const bar = {
+      ...barBase,
+      settings: { ...barBase.settings, link: { type: "page", id: "pg1" } },
+    };
+    const refs = documentRefsOf(
+      readThemeDocument({
+        ...v2([], bar),
+        brand: {
+          ...DEFAULT_THEME_DOCUMENT.brand,
+          logo: { imageRef: "logo1", widthPx: 140 },
+          favicon: { imageRef: "fav1" },
+        },
+      }),
+    );
+    expect(refs.image).toEqual([
+      { path: "brand.logo.imageRef", id: "logo1" },
+      { path: "brand.favicon.imageRef", id: "fav1" },
+    ]);
+    expect(refs.page).toEqual([{ path: "header.announcement.settings.link.id", id: "pg1" }]);
+    expect(refs.collection).toEqual([]);
+  });
+
+  it("imageRefsOf lists the distinct ids, section images included", () => {
+    const hero = newSection("hero", id(1));
+    const doc = readThemeDocument({
+      ...v2([{ ...hero, settings: { ...hero.settings, image: "same" } }]),
+      brand: { ...DEFAULT_THEME_DOCUMENT.brand, logo: { imageRef: "same", widthPx: 140 } },
+    });
+    expect(documentRefsOf(doc).image).toEqual([
+      { path: "brand.logo.imageRef", id: "same" },
+      { path: "homepage.sections.0.settings.image", id: "same" },
+    ]);
+    expect(imageRefsOf(doc)).toEqual(["same"]);
   });
 });

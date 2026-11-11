@@ -198,3 +198,40 @@ describe("limits", () => {
     for (const issue of issues) expect(issue.path.length).toBeLessThanOrEqual(80);
   });
 });
+
+describe("version 2 sections and the announcement slot", () => {
+  const sectionOf = (extra: string) =>
+    JSON.parse(
+      `{${extra}"id":"6f1b2c3d-4e5f-4a6b-8c7d-000000000001","type":"rich_text","hidden":false,` +
+        `"settings":${JSON.stringify(DEFAULT_THEME_DOCUMENT.homepage.sections[0]?.settings ?? {})}}`,
+    );
+
+  it("a __proto__ key on a section is an unknown key and pollutes nothing", () => {
+    const raw = clone();
+    raw.homepage.sections = [sectionOf('"__proto__":{"polluted":true},')];
+    const issues = issuesOf(raw);
+    expect(issues).toContainEqual({ path: "homepage.sections.0.__proto__", code: "UNKNOWN_KEY" });
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+  });
+
+  it("a non-object homepage is one INVALID_VALUE, and a non-array sections list too", () => {
+    const raw = clone();
+    raw.homepage = "x";
+    expect(issuesOf(raw)).toEqual([{ path: "homepage", code: "INVALID_VALUE" }]);
+    raw.homepage = { sections: {} };
+    expect(issuesOf(raw)).toEqual([{ path: "homepage.sections", code: "INVALID_VALUE" }]);
+  });
+
+  it("a non-object announcement is INVALID_VALUE on write and null on read", () => {
+    const raw = clone();
+    raw.header.announcement = "x";
+    expect(issuesOf(raw)).toEqual([{ path: "header.announcement", code: "INVALID_VALUE" }]);
+    expect(readThemeDocument(raw).header.announcement).toBeNull();
+  });
+
+  it("the read path never throws on hostile sections", () => {
+    const raw = clone();
+    raw.homepage.sections = [null, 1, "x", [], { __proto__: 1 }, { id: {}, type: [] }];
+    expect(readThemeDocument(raw).homepage.sections).toEqual([]);
+  });
+});
