@@ -8,7 +8,7 @@ beforeEach(() => {
 });
 
 describe("safeImageSrc", () => {
-  it("accepts http(s) addresses and same-site paths", () => {
+  it("accepts https addresses and same-site paths", () => {
     expect(safeImageSrc("https://cdn.example/a.png")).toBe("https://cdn.example/a.png");
     expect(safeImageSrc("/media/a.png")).toBe("/media/a.png");
   });
@@ -24,6 +24,18 @@ describe("safeImageSrc", () => {
       "/../../x.png",
     ];
     for (const url of bad) expect(safeImageSrc(url)).toBeNull();
+  });
+
+  it("refuses http and credentialed urls: only https without userinfo", () => {
+    for (const bad of [
+      "http://cdn.example/a.png",
+      "HTTP://cdn.example/a.png",
+      "https://user:pass@cdn.example/a.png",
+      "https://user@cdn.example/a.png",
+      "https://:pass@cdn.example/a.png",
+    ]) {
+      expect(safeImageSrc(bad), bad).toBeNull();
+    }
   });
 
   it("refuses everything else", () => {

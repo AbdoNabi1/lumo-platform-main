@@ -39,7 +39,7 @@ export function CollectionCard({
           </div>
         )}
         <CardHeader>
-          <CardTitle as="h3" className="text-base">
+          <CardTitle as="h3" dir="auto" className="text-base">
             {collection.name}
           </CardTitle>
         </CardHeader>

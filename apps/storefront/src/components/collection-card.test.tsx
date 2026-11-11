@@ -25,6 +25,11 @@ describe("CollectionCard", () => {
     );
   });
 
+  it("sets the merchant-typed name to dir=auto", () => {
+    render(<CollectionCard collection={collection} t={en} locale="en" />);
+    expect(screen.getByText("Featured Toys")).toHaveAttribute("dir", "auto");
+  });
+
   it("shows the real member count, never a fabricated number", () => {
     render(<CollectionCard collection={collection} t={en} locale="en" />);
     expect(screen.getByText("3 products")).toBeInTheDocument();
