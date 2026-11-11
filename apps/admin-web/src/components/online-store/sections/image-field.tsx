@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button, Input, Label } from "@platform/ui";
 import { IMAGE_ALT_MAX } from "@platform/storefront-content";
 import { updateImageAltAction } from "@/app/online-store/themes/actions";
@@ -35,19 +35,33 @@ function AltText({
   const c = t.onlineStoreSections.image;
   const [text, setText] = useState(image.alt ?? "");
   const [failed, setFailed] = useState(false);
-  const [pending, start] = useTransition();
+  const [, start] = useTransition();
+  // What the server has, what the merchant wants, and whether a save is running. A blur during a
+  // save is not dropped: the running save loops until the latest text is stored (latest wins).
+  const saved = useRef((image.alt ?? "").trim());
+  const wanted = useRef(saved.current);
+  const running = useRef(false);
   const save = () => {
-    const next = text.trim();
-    if (next === (image.alt ?? "").trim() || pending) return;
+    wanted.current = text.trim();
+    if (running.current || wanted.current === saved.current) return;
+    running.current = true;
     start(async () => {
-      const result = await settleAction(() => updateImageAltAction(image.id, next), {
-        status: "error",
-      } as const);
-      if (result.status === "ok") {
-        setFailed(false);
-        onImage({ ...image, alt: next === "" ? null : next });
-      } else {
-        setFailed(true);
+      try {
+        while (wanted.current !== saved.current) {
+          const next = wanted.current;
+          const result = await settleAction(() => updateImageAltAction(image.id, next), {
+            status: "error",
+          } as const);
+          if (result.status !== "ok") {
+            setFailed(true);
+            return;
+          }
+          saved.current = next;
+          setFailed(false);
+          onImage({ ...image, alt: next === "" ? null : next });
+        }
+      } finally {
+        running.current = false;
       }
     });
   };

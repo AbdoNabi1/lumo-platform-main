@@ -30,7 +30,7 @@ export function Harness({
   targets = null,
   t = en,
   locale = "en",
-  path,
+  path = "homepage.sections.0",
   onChange = vi.fn(),
   onImage = vi.fn(),
   onTarget = vi.fn(),
@@ -45,7 +45,7 @@ export function Harness({
       targets={targets}
       errors={errors}
       disabled={false}
-      {...(path === undefined ? {} : { path })}
+      path={path}
       onChange={(settings) => {
         onChange(settings);
         setSection({ ...section, settings } as unknown as KnownSection);

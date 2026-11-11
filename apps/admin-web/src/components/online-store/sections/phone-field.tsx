@@ -9,9 +9,9 @@ const show = (digits: string) => (digits === "" ? "" : `+${digits}`);
 
 /**
  * A WhatsApp number. What is typed is kept as typed; a number the shared rule accepts is stored as
- * its digits straight away, and on blur the box shows the normalised `+<digits>`. A number the rule
- * refuses is flagged inline on blur and not stored (the draft keeps the last good number), never
- * for an empty box (an empty phone is allowed; the storefront just drops the button).
+ * its digits straight away, and on blur the box shows the normalised `+<digits>`. Anything else is
+ * stored exactly as typed (trimmed), so the save reports INVALID_PHONE at this field, and is also
+ * flagged inline on blur; never for an empty box (an empty phone is allowed).
  */
 export function PhoneField({
   id,
@@ -38,7 +38,7 @@ export function PhoneField({
   // A value that arrives from outside (a reload) replaces the text; our own echo does not.
   if (synced !== value) {
     setSynced(value);
-    if (toWhatsAppDigits(text) !== value) {
+    if (text.trim() !== value && toWhatsAppDigits(text) !== value) {
       setText(show(value));
       setBad(false);
     }
@@ -64,8 +64,9 @@ export function PhoneField({
           setBad(false);
           if (raw.trim() === "") onChange("");
           else {
-            const digits = toWhatsAppDigits(raw);
-            if (digits !== null) onChange(digits);
+            // A number the rule accepts is stored normalised; anything else exactly as typed, so
+            // the save answers INVALID_PHONE at this field with the real reason.
+            onChange(toWhatsAppDigits(raw) ?? raw.trim());
           }
         }}
         onBlur={() => {
@@ -76,6 +77,7 @@ export function PhoneField({
           const digits = toWhatsAppDigits(text);
           if (digits === null) {
             setBad(true);
+            if (text.trim() !== value) onChange(text.trim());
             return;
           }
           setBad(false);

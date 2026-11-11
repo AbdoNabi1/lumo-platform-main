@@ -5,7 +5,6 @@ import { XIcon } from "lucide-react";
 import { Input, Label } from "@platform/ui";
 import { searchLinkTargetsAction } from "@/app/online-store/navigation/actions";
 import type { LinkTargetDto, ThemeTargetsDto } from "@/lib/api/online-store";
-import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { LINK_SEARCH_DEBOUNCE_MS } from "../link-picker";
 import { errorAria, FieldError } from "./field-shared";
@@ -32,8 +31,6 @@ export function ResourcePicker({
   onTarget,
 }: {
   readonly t: Dictionary;
-  /** Kept for the callers' symmetry with the other pickers; titles come from the API as is. */
-  readonly locale?: Locale;
   readonly id: string;
   readonly label: string;
   readonly kind: "collection" | "product";

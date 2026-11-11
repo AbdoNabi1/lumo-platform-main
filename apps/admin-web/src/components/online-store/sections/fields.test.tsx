@@ -214,6 +214,27 @@ describe("generated fields", () => {
     expect(screen.getByText(en.onlineStoreSections.phone.hint)).toBeInTheDocument();
   });
 
+  it("an invalid typed number is stored as typed (trimmed), so the save can say why", () => {
+    const onChange = vi.fn();
+    render(<Harness section={newSection("whatsapp_cta", ID)} onChange={onChange} />);
+    const box = screen.getByLabelText(f.phone);
+    type(box, " 12 ");
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ phone: "12" }));
+    leave(box);
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ phone: "12" }));
+    // The echoed value does not reset what is typed.
+    expect(box).toHaveValue(" 12 ");
+  });
+
+  it("clearing the phone stores an empty string", () => {
+    const onChange = vi.fn();
+    const section = withSettings(newSection("whatsapp_cta", ID), { phone: "201001234567" });
+    render(<Harness section={section} onChange={onChange} />);
+    expect(screen.getByLabelText(f.phone)).toHaveValue("+201001234567");
+    type(screen.getByLabelText(f.phone), "");
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ phone: "" }));
+  });
+
   it("a number typed out of range is clamped on blur", async () => {
     const onChange = vi.fn();
     render(<Harness section={newSection("hero", ID)} onChange={onChange} />);
@@ -259,6 +280,33 @@ describe("generated fields", () => {
   it("renders in Arabic from the same dictionary", () => {
     render(<Harness section={newSection("hero", ID)} t={ar} locale="ar" />);
     expect(screen.getByLabelText(ar.onlineStoreSections.fields.overlay)).toBeInTheDocument();
+  });
+});
+
+describe("hidden fields", () => {
+  it("a hidden field with an error is shown so it can be fixed", () => {
+    render(
+      <Harness
+        section={newSection("featured_products", ID)}
+        errors={{ "homepage.sections.0.settings.products.1": "dup" }}
+      />,
+    );
+    expect(screen.getByLabelText(f.products)).toBeInTheDocument();
+    expect(screen.getByText("dup")).toBeInTheDocument();
+  });
+
+  it("a hidden field the section flags as removed is shown", () => {
+    const section = withSettings(newSection("featured_products", ID), { products: ["p-gone"] });
+    render(<Harness section={section} targets={{ collection: {}, product: {}, page: {} }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      en.onlineStoreSections.problems.removed_product,
+    );
+    expect(screen.getByLabelText(f.products)).toBeInTheDocument();
+  });
+
+  it("without errors or problems a hidden field stays hidden", () => {
+    render(<Harness section={newSection("featured_products", ID)} />);
+    expect(screen.queryByLabelText(f.products)).toBeNull();
   });
 });
 
@@ -334,6 +382,26 @@ describe("image field", () => {
     expect(actions.updateImageAltAction).toHaveBeenCalledWith("img-1", "A dog");
     await act(async () => {});
     expect(onImage).toHaveBeenCalledWith({ ...stored, alt: "A dog" });
+  });
+
+  it("an edit blurred while a save is pending is saved after it; the latest wins", async () => {
+    let finishFirst: (v: unknown) => void = () => undefined;
+    actions.updateImageAltAction
+      .mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)))
+      .mockResolvedValue({ status: "ok" });
+    render(<Harness section={hero} images={{ "img-1": stored }} />);
+    const alt = screen.getAllByLabelText(img.alt)[0]!;
+    type(alt, "One");
+    leave(alt);
+    expect(actions.updateImageAltAction).toHaveBeenCalledTimes(1);
+    type(alt, "Two");
+    leave(alt);
+    expect(actions.updateImageAltAction).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      finishFirst({ status: "ok" });
+    });
+    expect(actions.updateImageAltAction).toHaveBeenCalledTimes(2);
+    expect(actions.updateImageAltAction).toHaveBeenLastCalledWith("img-1", "Two");
   });
 
   it("does not save an unchanged alt text", async () => {

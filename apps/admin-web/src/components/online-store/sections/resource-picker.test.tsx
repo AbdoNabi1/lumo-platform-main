@@ -48,7 +48,6 @@ function Stateful({
   return (
     <ResourcePicker
       t={en}
-      locale="en"
       id="rp"
       label="Products"
       kind={kind}

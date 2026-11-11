@@ -212,7 +212,6 @@ export function FieldControl({
       return (
         <ResourcePicker
           t={t}
-          locale={locale}
           id={id}
           label={label}
           kind="collection"
@@ -231,7 +230,6 @@ export function FieldControl({
       return (
         <ResourcePicker
           t={t}
-          locale={locale}
           id={id}
           label={label}
           kind="product"

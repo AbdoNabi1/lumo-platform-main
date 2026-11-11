@@ -53,6 +53,7 @@ describe("SectionSettingsForm", () => {
     render(
       <Harness
         section={newSection("announcement_bar", ID) as KnownSection}
+        path="header.announcement"
         errors={{ "header.announcement.settings.text.ar": "too long" }}
       />,
     );
