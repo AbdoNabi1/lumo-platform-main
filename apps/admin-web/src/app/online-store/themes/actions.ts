@@ -92,7 +92,11 @@ export async function publishThemeAction(
   expectedDraftRevision: number,
   idempotencyKey?: string,
 ): Promise<PublishActionResult> {
-  const result = await publishTheme(expectedDraftRevision, keyOf(idempotencyKey));
+  // An absent key is minted; a present but malformed one is refused, never silently replaced.
+  const supplied: unknown = idempotencyKey;
+  if (supplied !== undefined && (typeof supplied !== "string" || !CLIENT_KEY.test(supplied)))
+    return { status: "error" };
+  const result = await publishTheme(expectedDraftRevision, keyOf(supplied));
   if (result.outcome === "ok") {
     revalidatePath("/online-store/themes");
     const live = await revalidateStorefront();

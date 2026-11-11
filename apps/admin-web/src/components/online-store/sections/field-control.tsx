@@ -168,7 +168,6 @@ export function FieldControl({
           label={label}
           max={field.max}
           layout="both"
-          multiline={field.max > 100}
           value={asLocalized(value)}
           disabled={disabled}
           errors={errors}

@@ -1,10 +1,10 @@
-import { SECTION_FOCUS_MESSAGE } from "@platform/storefront-content";
+import { SECTION_FOCUS_MESSAGE, SECTION_PREVIEW_READY_MESSAGE } from "@platform/storefront-content";
 
 /**
  * What the storefront's focus listener posts to its parent when it is framed and ready (Task 8).
  * The editor answers it with the current selection (F3).
  */
-export const PREVIEW_READY_MESSAGE = "morbeh:preview-ready";
+export const PREVIEW_READY_MESSAGE = SECTION_PREVIEW_READY_MESSAGE;
 
 /** The origin of a preview url; null for anything that is not an http(s) url. Never a token. */
 export function previewOrigin(url: string): string | null {

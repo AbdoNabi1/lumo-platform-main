@@ -148,6 +148,18 @@ describe("theme actions", () => {
     expect(side.revalidatePath).toHaveBeenCalledWith("/online-store/themes");
   });
 
+  it("publish mints an absent key and refuses a present but malformed one, with no API call", async () => {
+    api.publishTheme.mockResolvedValue({ outcome: "error", message: "x" });
+    await actions.publishThemeAction(9);
+    const [, minted] = api.publishTheme.mock.lastCall as [number, string];
+    expect(minted).toMatch(/^[A-Za-z0-9-]{16,100}$/);
+    api.publishTheme.mockClear();
+    for (const bad of ["bad key\n", "short", "a".repeat(101), 7, null, ""]) {
+      expect(await actions.publishThemeAction(9, bad as never)).toEqual({ status: "error" });
+    }
+    expect(api.publishTheme).not.toHaveBeenCalled();
+  });
+
   it("restore goes to the draft only: no storefront revalidation; 404 is not_found", async () => {
     api.restoreThemeRelease.mockResolvedValueOnce({
       outcome: "ok",

@@ -226,6 +226,26 @@ describe("generated fields", () => {
     expect(box).toHaveValue(" 12 ");
   });
 
+  it("reopening with an invalid stored number shows it as stored, without a plus", () => {
+    const section = withSettings(newSection("whatsapp_cta", ID), { phone: "0123" });
+    render(<Harness section={section} />);
+    expect(screen.getByLabelText(f.phone)).toHaveValue("0123");
+  });
+
+  it("single-line localized text renders as an input, never a textarea", () => {
+    for (const [type, label] of [
+      ["announcement_bar", f.text],
+      ["whatsapp_cta", f.message],
+      ["hero", f.subheading],
+    ] as const) {
+      const { unmount } = render(<Harness section={newSection(type, ID)} />);
+      const boxes = screen.getAllByLabelText(new RegExp(`${label}.*\\(English\\)`));
+      expect(boxes.length, type).toBeGreaterThan(0);
+      for (const box of boxes) expect(box.tagName, type).toBe("INPUT");
+      unmount();
+    }
+  });
+
   it("clearing the phone stores an empty string", () => {
     const onChange = vi.fn();
     const section = withSettings(newSection("whatsapp_cta", ID), { phone: "201001234567" });
