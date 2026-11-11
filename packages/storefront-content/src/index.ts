@@ -11,3 +11,5 @@ export * from "./menus";
 export * from "./limits";
 export * from "./phone";
 export * from "./section-fields";
+export * from "./sections";
+export * from "./public-sections";
