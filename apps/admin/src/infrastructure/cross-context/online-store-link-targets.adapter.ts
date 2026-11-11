@@ -26,8 +26,12 @@ export interface LinkTargetReads {
  * this batch is what bounds the product reads too.
  */
 export const LINK_TARGET_BATCH = 100;
-/** Ids of one kind a resolve looks up at all: the shell's two menus hold at most 150 items each. */
-export const LINK_TARGET_IDS_MAX = 300;
+/**
+ * Ids of one kind a resolve looks up at all. Two callers bound it: the shell's two menus (2 × 150
+ * items) and the theme's homepage sections (25 sections × 12 products + 26 links, one per section
+ * and the announcement bar). Ids past it are dropped, never an unbounded read.
+ */
+export const LINK_TARGET_IDS_MAX = 400;
 /** The link picker shows at most 20 choices (spec 2.2). */
 const SEARCH_MAX = 20;
 
@@ -84,7 +88,7 @@ function productEntry(raw: unknown): Entry | Skip {
   const published = status === "published" || status === "unlisted";
   return {
     id,
-    target: { href: `/products/${segment(slug)}`, title: name, published },
+    target: { href: `/products/${segment(slug)}`, title: name, published, slug },
   };
 }
 
@@ -106,6 +110,7 @@ function collectionEntry(raw: unknown): Entry | Skip {
       href: `/collections/${segment(slug)}`,
       title: name,
       published: status === "published",
+      slug,
     },
   };
 }

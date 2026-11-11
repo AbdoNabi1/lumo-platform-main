@@ -43,6 +43,8 @@ export interface LinkTarget {
   readonly href: string;
   readonly title: string;
   readonly published: boolean;
+  /** The raw (unencoded) catalog slug of a collection or product; absent for pages. */
+  readonly slug?: string;
 }
 
 export interface LinkTargetChoice {

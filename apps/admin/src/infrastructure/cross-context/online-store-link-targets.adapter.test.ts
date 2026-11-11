@@ -5,6 +5,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wirePages } from "@platform/pages";
 import {
   LINK_TARGET_BATCH,
+  LINK_TARGET_IDS_MAX,
   onlineStoreLinkTargets,
   type LinkTargetReads,
 } from "./online-store-link-targets.adapter";
@@ -101,19 +102,21 @@ describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
       "t-1",
     );
     expect(map.product).toEqual({
-      "p-1": { href: "/products/lamp", title: "Lamp", published: true },
-      "p-2": { href: "/products/hidden", title: "Hidden", published: true },
-      "p-3": { href: "/products/soon", title: "Soon", published: false },
+      "p-1": { href: "/products/lamp", title: "Lamp", published: true, slug: "lamp" },
+      "p-2": { href: "/products/hidden", title: "Hidden", published: true, slug: "hidden" },
+      "p-3": { href: "/products/soon", title: "Soon", published: false, slug: "soon" },
     });
     expect(map.collection["c-1"]).toEqual({
       href: "/collections/sale",
       title: "Sale",
       published: true,
+      slug: "sale",
     });
     expect(map.collection["c-2"]).toEqual({
       href: "/collections/new",
       title: "New",
       published: false,
+      slug: "new",
     });
     expect(map.page["g-1"]).toEqual({ href: "/pages/about", title: "من نحن", published: true });
     expect(map.page["g-2"]).toMatchObject({ published: false });
@@ -147,6 +150,38 @@ describe("onlineStoreLinkTargets (menu links by id, Ruling 11)", () => {
     );
     const map = await port.resolve({ product: ["p-1"], collection: [], page: [] }, "t");
     expect(map.product["p-1"]?.href).toBe("/products/a%20b%3Fc");
+  });
+
+  it("collection and product targets carry the raw slug, the href stays encoded; pages have none", async () => {
+    const port = onlineStoreLinkTargets(
+      readsOver({
+        products: [product("p-1", "Lamp", "مصباح", "published")],
+        collections: [collection("c-1", "Offers", "عروض", "published")],
+        pages: [page("g-1", "About", "/pages/about", "published", { en: "About" })],
+      }),
+    );
+    const map = await port.resolve({ product: ["p-1"], collection: ["c-1"], page: ["g-1"] }, "t");
+    expect(map.collection["c-1"]).toEqual({
+      href: `/collections/${encodeURIComponent("عروض")}`,
+      title: "Offers",
+      published: true,
+      slug: "عروض",
+    });
+    expect(map.product["p-1"]?.slug).toBe("مصباح");
+    expect(map.product["p-1"]?.href).toBe(`/products/${encodeURIComponent("مصباح")}`);
+    expect(Object.hasOwn(map.page["g-1"] ?? {}, "slug")).toBe(false);
+  });
+
+  it("looks up 400 distinct ids of one kind, every one reaching the port (menus and sections)", async () => {
+    const reads = readsOver(EMPTY);
+    const port = onlineStoreLinkTargets(reads);
+    const ids = Array.from({ length: 401 }, (_, n) => `p-${n}`);
+    await port.resolve({ product: ids, collection: [], page: [] }, "t");
+    expect(LINK_TARGET_IDS_MAX).toBe(400);
+    const asked = reads.calls.flatMap((c) => c.ids ?? []);
+    expect(asked).toEqual(ids.slice(0, 400));
+    expect(new Set(asked).size).toBe(400);
+    expect(reads.calls.map((c) => c.ids?.length)).toEqual([100, 100, 100, 100]);
   });
 
   it("reads only the kinds that have ids, in parallel, with the tenant of the call", async () => {
@@ -366,9 +401,15 @@ describe("onlineStoreLinkTargets over the real Catalog and Pages controllers", (
       href: "/collections/sale",
       title: "Sale",
       published: true,
+      slug: "sale",
     });
     expect(map.collection[draft]).toMatchObject({ published: false });
-    expect(map.product[lamp]).toEqual({ href: "/products/lamp", title: "Lamp", published: true });
+    expect(map.product[lamp]).toEqual({
+      href: "/products/lamp",
+      title: "Lamp",
+      published: true,
+      slug: "lamp",
+    });
     expect(map.page[about]).toEqual({ href: "/pages/about", title: "من نحن", published: true });
     // Another shop sees none of them.
     expect(

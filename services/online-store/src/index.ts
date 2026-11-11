@@ -25,6 +25,7 @@ export type {
   UpdateMenuInput,
 } from "./application/menus.use-cases";
 export type { MenuItemView } from "./application/menu-resolution";
+export type { ThemeStateView, ThemeTargetsView } from "./application/theme.use-cases";
 export type { SearchLinkTargetsInput } from "./application/link-targets.use-case";
 export type { UpdateAccessInput } from "./application/access.use-cases";
 export type { UpdatePreferencesInput } from "./application/preferences.use-cases";

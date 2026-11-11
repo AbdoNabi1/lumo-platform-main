@@ -19,6 +19,15 @@ export const imageNotFound = (field: string) =>
   new ValidationError("IMAGE_NOT_FOUND: The image does not exist in this store.", [
     { field, message: "IMAGE_NOT_FOUND" },
   ]);
+/**
+ * Ruling 6: references the save found missing, each at its path (images first). The top code is
+ * the first issue's, so a single kind of miss reads as that code.
+ */
+export const referencesNotFound = (issues: readonly ContentIssue[]) =>
+  new ValidationError(
+    `${issues[0]?.code ?? "TARGET_NOT_FOUND"}: The highlighted item no longer exists in this store.`,
+    issues.map((issue) => ({ field: issue.path, message: issue.code })),
+  );
 export const invalidContent = (issues: readonly ContentIssue[]) => {
   const top = issues.find((issue) => issue.path === "");
   const code = top?.code ?? "INVALID_CONTENT";

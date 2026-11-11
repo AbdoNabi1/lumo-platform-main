@@ -1,3 +1,4 @@
+export { MAX_ISSUES } from "./issues";
 export * from "./locale";
 export * from "./color";
 export * from "./fonts";

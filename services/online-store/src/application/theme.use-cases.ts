@@ -1,18 +1,37 @@
 import {
   checkBrandContrast,
+  DEFAULT_THEME_DOCUMENT,
+  documentRefsOf,
   imageRefsOf,
+  MAX_ISSUES,
   validateThemeDocument,
+  type ContentIssue,
   type ContrastWarning,
+  type SectionRef,
+  type SectionRefs,
   type ThemeDocument,
 } from "@platform/storefront-content";
 import { err, ok, type Result } from "@platform/types";
-import type { DomainError } from "@platform/utils";
-import { imageNotFound, invalidContent, releaseNotFound, versionConflict } from "../domain/errors";
+import { logger, type DomainError } from "@platform/utils";
+import {
+  invalidContent,
+  referencesNotFound,
+  releaseNotFound,
+  versionConflict,
+} from "../domain/errors";
 import { ThemePublished } from "../domain/events";
 import { RELEASES_KEPT, type StorefrontTheme } from "../domain/storefront-theme";
 import type { OnlineStoreDeps } from "./deps";
 import { eventProps, inUnitOfWork, iso } from "./guarded";
-import type { ImageDto } from "./ports";
+import type { CatalogLinkType, ImageDto, LinkTargetMap } from "./ports";
+
+/** What the editor knows of each collection, product and page the draft names (Ruling 21). */
+export type ThemeTargetsView = Readonly<
+  Record<
+    CatalogLinkType,
+    Readonly<Record<string, { readonly title: string; readonly live: boolean }>>
+  >
+>;
 
 export interface ThemeStateView {
   readonly draft: ThemeDocument;
@@ -25,6 +44,8 @@ export interface ThemeStateView {
   readonly publishedBy: string | null;
   readonly hasUnpublishedChanges: boolean;
   readonly images: Readonly<Record<string, ImageDto>>;
+  /** `null` when the targets read failed: the editor then flags nothing as removed. */
+  readonly targets: ThemeTargetsView | null;
   readonly version: number;
 }
 export interface SaveDraftView {
@@ -48,7 +69,36 @@ export interface ReleasesView {
   }[];
 }
 
-const IMAGE_PATHS = { logo: "brand.logo.imageRef", favicon: "brand.favicon.imageRef" } as const;
+const LINK_KINDS: readonly CatalogLinkType[] = ["collection", "product", "page"];
+
+const distinctIds = (refs: readonly SectionRef[]): string[] => [
+  ...new Set(refs.map((ref) => ref.id)),
+];
+
+const linkIdsOf = (refs: SectionRefs): Record<CatalogLinkType, string[]> => ({
+  collection: distinctIds(refs.collection),
+  product: distinctIds(refs.product),
+  page: distinctIds(refs.page),
+});
+
+const hasLinkIds = (ids: Readonly<Record<CatalogLinkType, readonly string[]>>): boolean =>
+  LINK_KINDS.some((kind) => ids[kind].length > 0);
+
+/** The references in `doc` whose id no `known` document names, per kind, in document order. */
+function freshRefs(doc: ThemeDocument, known: readonly ThemeDocument[]): SectionRefs {
+  const refs = documentRefsOf(doc);
+  const knownRefs = known.map(documentRefsOf);
+  const fresh = (kind: keyof SectionRefs): SectionRef[] => {
+    const ids = new Set(knownRefs.flatMap((k) => k[kind].map((ref) => ref.id)));
+    return refs[kind].filter((ref) => !ids.has(ref.id));
+  };
+  return {
+    image: fresh("image"),
+    collection: fresh("collection"),
+    product: fresh("product"),
+    page: fresh("page"),
+  };
+}
 
 export class GetTheme {
   constructor(private readonly deps: OnlineStoreDeps) {}
@@ -63,7 +113,11 @@ export class GetTheme {
         ...(s.published === null ? [] : imageRefsOf(s.published)),
       ]),
     ];
-    const images = ids.length === 0 ? {} : await this.deps.imageRefs.resolve(ids, input.tenantId);
+    // In parallel: `targetsOf` never throws, so a failed image read fails the read as before.
+    const [images, targets] = await Promise.all([
+      ids.length === 0 ? {} : this.deps.imageRefs.resolve(ids, input.tenantId),
+      this.targetsOf(s.draft, input.tenantId),
+    ]);
     return ok({
       draft: s.draft,
       published: s.published,
@@ -75,12 +129,52 @@ export class GetTheme {
       publishedBy: s.publishedBy,
       hasUnpublishedChanges: theme.hasUnpublishedChanges(),
       images,
+      targets,
       version: s.version,
     });
   }
+
+  /**
+   * One batched resolve of the draft's collections, products and pages (none when it names none).
+   * A failed read is `null`, logged with the tenant and the message only, so a catalogue blip
+   * never shows a reference as removed.
+   */
+  private async targetsOf(
+    draft: ThemeDocument,
+    tenantId: string,
+  ): Promise<ThemeTargetsView | null> {
+    const ids = linkIdsOf(documentRefsOf(draft));
+    let resolved: LinkTargetMap;
+    try {
+      resolved = hasLinkIds(ids)
+        ? await this.deps.linkTargets.resolve(ids, tenantId)
+        : { collection: {}, product: {}, page: {} };
+    } catch (error) {
+      logger.warn("online-store theme: link targets unavailable", {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    // `Object.fromEntries` defines own keys, so an id such as `__proto__` stays a plain entry.
+    const view = (kind: CatalogLinkType) =>
+      Object.fromEntries(
+        ids[kind].flatMap((id) => {
+          const target = Object.hasOwn(resolved[kind], id) ? resolved[kind][id] : undefined;
+          return target === undefined
+            ? []
+            : [[id, { title: target.title, live: target.published }]];
+        }),
+      );
+    return { collection: view("collection"), product: view("product"), page: view("page") };
+  }
 }
 
-/** Validate (document, contrast, image ownership) → then one unit of work with the version check. */
+/**
+ * Validate the document and contrast → read the row and check the version → check only the NEW
+ * references (Ruling 6) → one unit of work that re-checks the version. Every refusal comes before
+ * the first write, because the unit of work commits on an `err` Result.
+ */
 export class SaveThemeDraft {
   constructor(private readonly deps: OnlineStoreDeps) {}
   async execute(input: {
@@ -93,14 +187,13 @@ export class SaveThemeDraft {
     const doc = validated.value;
     const contrast = checkBrandContrast(doc.brand.colors);
     if (contrast.blocking.length > 0) return err(invalidContent(contrast.blocking));
-    const refs = imageRefsOf(doc);
-    if (refs.length > 0) {
-      const owned = await this.deps.imageRefs.existingIds(refs, input.tenantId);
-      if (doc.brand.logo.imageRef !== null && !owned.includes(doc.brand.logo.imageRef))
-        return err(imageNotFound(IMAGE_PATHS.logo));
-      if (doc.brand.favicon.imageRef !== null && !owned.includes(doc.brand.favicon.imageRef))
-        return err(imageNotFound(IMAGE_PATHS.favicon));
-    }
+    // A stale tab answers before any reference read. The known references come from this same
+    // row, which the unit of work below re-checks by version.
+    const current = (await this.deps.themes.get(input.tenantId)).snapshot();
+    if (current.version !== input.expectedVersion) return err(versionConflict());
+    const fresh = freshRefs(doc, [current.draft, current.published ?? DEFAULT_THEME_DOCUMENT]);
+    const missing = await this.missingRefs(fresh, input.tenantId);
+    if (missing.length > 0) return err(referencesNotFound(missing));
     return inUnitOfWork(this.deps, async (tx) => {
       const theme = await this.deps.themes.get(input.tenantId, tx);
       if (theme.snapshot().version !== input.expectedVersion) return err(versionConflict());
@@ -113,6 +206,30 @@ export class SaveThemeDraft {
         warnings: contrast.warnings,
       });
     });
+  }
+
+  /**
+   * Fresh images through Media's ownership read, fresh links through one batched resolve (an id
+   * absent from the map is not this shop's). Images first, then collections, products and pages,
+   * each in document order. A failed read throws: a 500 that autosave retries, never a 422.
+   */
+  private async missingRefs(fresh: SectionRefs, tenantId: string): Promise<ContentIssue[]> {
+    const issues: ContentIssue[] = [];
+    const imageIds = distinctIds(fresh.image);
+    if (imageIds.length > 0) {
+      const owned = new Set(await this.deps.imageRefs.existingIds(imageIds, tenantId));
+      for (const ref of fresh.image)
+        if (!owned.has(ref.id)) issues.push({ path: ref.path, code: "IMAGE_NOT_FOUND" });
+    }
+    const linkIds = linkIdsOf(fresh);
+    if (hasLinkIds(linkIds)) {
+      const found = await this.deps.linkTargets.resolve(linkIds, tenantId);
+      for (const kind of LINK_KINDS)
+        for (const ref of fresh[kind])
+          if (!Object.hasOwn(found[kind], ref.id))
+            issues.push({ path: ref.path, code: "TARGET_NOT_FOUND" });
+    }
+    return issues.slice(0, MAX_ISSUES);
   }
 }
 

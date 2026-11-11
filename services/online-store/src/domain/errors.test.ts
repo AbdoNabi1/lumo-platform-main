@@ -13,6 +13,7 @@ import {
   menuProtected,
   nothingToPublish,
   passwordRequired,
+  referencesNotFound,
   releaseNotFound,
   titleRequired,
   versionConflict,
@@ -61,5 +62,22 @@ describe("online-store errors (Ruling 9: the code is the message prefix)", () =>
     ]);
     const plain = invalidContent([{ path: "footer.note.ar", code: "TOO_LONG" }]);
     expect(CODE_PATTERN.exec(plain.message)?.[1]).toBe("INVALID_CONTENT");
+  });
+
+  it("referencesNotFound puts the first code first and keeps every field", () => {
+    const error = referencesNotFound([
+      { path: "homepage.sections.0.settings.image", code: "IMAGE_NOT_FOUND" },
+      { path: "homepage.sections.1.settings.collection", code: "TARGET_NOT_FOUND" },
+    ]);
+    expect(error).toBeInstanceOf(ValidationError);
+    expect(error.message).toBe(
+      "IMAGE_NOT_FOUND: The highlighted item no longer exists in this store.",
+    );
+    expect(error.fields).toEqual([
+      { field: "homepage.sections.0.settings.image", message: "IMAGE_NOT_FOUND" },
+      { field: "homepage.sections.1.settings.collection", message: "TARGET_NOT_FOUND" },
+    ]);
+    const targets = referencesNotFound([{ path: "a.b", code: "TARGET_NOT_FOUND" }]);
+    expect(CODE_PATTERN.exec(targets.message)?.[1]).toBe("TARGET_NOT_FOUND");
   });
 });

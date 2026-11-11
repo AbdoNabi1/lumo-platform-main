@@ -23,6 +23,8 @@ import {
   InMemoryThemeRepository,
 } from "../infrastructure/in-memory-repositories";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
+import { documentOf } from "../infrastructure/rows";
+import { StorefrontTheme } from "../domain/storefront-theme";
 
 /** Media fake: each shop owns the listed ids; a foreign or unknown id resolves to nothing. */
 export function fakeImageRefs(owned: Readonly<Record<string, readonly string[]>>): ImageRefsPort {
@@ -139,17 +141,36 @@ export function harness(
   const idGenerator: IdGenerator = {
     generate: () => `00000000-0000-7000-8000-${String((id += 1)).padStart(12, "0")}`,
   };
+  // `writes()` counts the use cases' theme saves; `seedThemeRow` writes past the counter.
+  const themes = new InMemoryThemeRepository();
+  const storeTheme = themes.save.bind(themes);
+  let themeWrites = 0;
+  themes.save = (theme, tenantId) => {
+    themeWrites += 1;
+    return storeTheme(theme, tenantId);
+  };
   const repos: OnlineStoreRepos = {
     preferences: new InMemoryPreferencesRepository(),
     access: new InMemoryAccessRepository(),
-    themes: new InMemoryThemeRepository(),
+    themes,
     releases: new InMemoryThemeReleaseRepository(),
     previewTokens: new InMemoryPreviewTokenRepository(),
     policies: new InMemoryPolicyRepository(),
     menus: new InMemoryMenuRepository(),
   };
   const resolveCalls: number[] = [];
-  const linkTargets = fakeLinkTargets(options, resolveCalls);
+  // Copied per shop on write, so `deleteTarget` never edits the caller's object; the `...Fails`
+  // flag stays a getter, read per call like the others.
+  const targets: Record<string, ShopTargets[string]> = { ...options.targets };
+  const linkTargets = fakeLinkTargets(
+    {
+      targets,
+      get linkTargetsFail() {
+        return options.linkTargetsFail;
+      },
+    },
+    resolveCalls,
+  );
   let openUnitsOfWork = 0;
   const memoryUnitOfWork = new InMemoryUnitOfWork();
   const unitOfWork: TransactionalUnitOfWork<unknown> = {
@@ -213,5 +234,54 @@ export function harness(
     advance: (ms: number) => {
       now = new Date(now.getTime() + ms);
     },
+    /** Saves `t-1`'s theme draft through the controller. */
+    save: (document: unknown, expectedVersion: number) =>
+      controller.saveThemeDraft({ tenantId: HARNESS_TENANT, document, expectedVersion }),
+    /** How many times a use case wrote the theme row (`seedThemeRow` is not counted). */
+    writes: () => themeWrites,
+    /** Removes one of `t-1`'s link targets, as if the merchant deleted it after linking it. */
+    deleteTarget: (kind: CatalogLinkType, targetId: string) => {
+      const shop = targets[HARNESS_TENANT] ?? {};
+      const remaining = Object.fromEntries(
+        Object.entries(shop[kind] ?? {}).filter(([key]) => key !== targetId),
+      );
+      targets[HARNESS_TENANT] = { ...shop, [kind]: remaining };
+    },
+    /**
+     * Stores `t-1`'s theme row as Prisma reads it back: each document through `documentOf` (the
+     * v1 → v2 upgrade), at `version`. A non-null `published` is release 1 of draft revision 1.
+     */
+    seedThemeRow: async (row: {
+      readonly draft: unknown;
+      readonly published: unknown;
+      readonly version: number;
+    }) => {
+      const at = new Date("2026-10-01T10:00:00.000Z");
+      const published = row.published === null ? null : documentOf(row.published);
+      const stored = {
+        draft: documentOf(row.draft),
+        draftRevision: 1,
+        draftSavedAt: at,
+        published,
+        publishedDraftRevision: published === null ? null : 1,
+        releaseNumber: published === null ? 0 : 1,
+        publishedAt: published === null ? null : at,
+        publishedBy: published === null ? null : "admin-1",
+      };
+      // The in-memory row is inserted at version 1 and bumped once per guarded update.
+      await storeTheme(
+        StorefrontTheme.reconstitute({ ...stored, version: 0, persisted: false }),
+        HARNESS_TENANT,
+      );
+      for (let version = 1; version < row.version; version += 1) {
+        await storeTheme(
+          StorefrontTheme.reconstitute({ ...stored, version, persisted: true }),
+          HARNESS_TENANT,
+        );
+      }
+    },
   };
 }
+
+/** The shop the harness helpers (`save`, `deleteTarget`, `seedThemeRow`) act for. */
+export const HARNESS_TENANT = "t-1";
