@@ -4,8 +4,10 @@ import type { ResolvePreviewToken } from "./preview.use-cases";
 import { loadResolutionContext, resolveSections } from "./section-resolution";
 
 /**
- * Spec 3.4: the homepage's sections, references resolved (Ruling 13). No tenant, image ref,
- * storage key, revision or removed id; an unknown section type is never served.
+ * Spec 3.4: the homepage's sections, references resolved (Ruling 13). The view has no `tenantId`
+ * field, image ref, storage-key field, revision or removed id; an unknown section type is never
+ * served. An image `url` is the public CDN url, whose path does hold `tenants/<id>/...` (the
+ * accepted shell and product-image precedent), so the key is in the url and nowhere else.
  */
 export interface PublicHomeView {
   readonly mode: "live" | "preview";

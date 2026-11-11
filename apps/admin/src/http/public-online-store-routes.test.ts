@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type { RequestContext } from "@platform/http";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { DEFAULT_THEME_DOCUMENT } from "@platform/storefront-content";
+import { DEFAULT_THEME_DOCUMENT, newSection } from "@platform/storefront-content";
 import { logger } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { publicOnlineStoreRoutes } from "./public-online-store-routes";
@@ -444,14 +444,24 @@ describe("public online-store routes (spec 1.10)", () => {
     });
 
     it("serves no tenant, image ref, storage key or unknown-type section (leak test)", async () => {
-      expect((await saveDraft([richText(1, "Visible"), future])).statusCode).toBe(200);
+      // A section WITH an image: the checks below are about a real image, not an image-free page.
+      const image = await uploadImage("section_image", png(640, 320));
+      const hero = newSection("hero", SECTION(2));
+      const withImage = { ...hero, settings: { ...hero.settings, image } };
+      expect((await saveDraft([richText(1, "Visible"), withImage, future])).statusCode).toBe(200);
       await admin("POST", "/online-store/theme/publish", { expectedDraftRevision: 1 });
       const { token } = await mintToken();
       for (const res of [await home(), await home("t-1", { "x-preview-token": token })]) {
         expect(res.statusCode).toBe(200);
-        expect(res.json<{ sections: { id: string }[] }>().sections.map((s) => s.id)).toEqual([
-          SECTION(1),
-        ]);
+        const sections = res.json<{ sections: { id: string; settings: { image: unknown } }[] }>()
+          .sections;
+        expect(sections.map((s) => s.id)).toEqual([SECTION(1), SECTION(2)]);
+        // The image is exactly url, alt, width and height; its url (the public CDN path, which
+        // holds tenants/<id>/ as for the shell and product images) is the only place a key may be.
+        const shown = sections[1]!.settings.image as Record<string, string>;
+        expect(Object.keys(shown).sort()).toEqual(["alt", "height", "url", "width"]);
+        expect(shown["url"]!.startsWith("https://cdn.example.test/media/tenants/t-1/")).toBe(true);
+        const outsideUrl = res.body.replace(shown["url"]!, "");
         for (const leak of [
           "t-1",
           "tenant",
@@ -460,10 +470,11 @@ describe("public online-store routes (spec 1.10)", () => {
           "tenants/",
           "countdown_timer",
           "UNKNOWN-CONTENT",
+          image,
           SECTION(9),
           token,
         ]) {
-          expect(res.body, leak).not.toContain(leak);
+          expect(outsideUrl, leak).not.toContain(leak);
         }
       }
     });
