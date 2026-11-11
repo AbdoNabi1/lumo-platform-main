@@ -16,7 +16,7 @@ import {
   type AnnouncementSection,
   type Section,
 } from "./sections";
-import { emptySectionRefs, type SectionRefs } from "./section-fields";
+import { collectFieldRefs, emptySectionRefs, type SectionRefs } from "./section-fields";
 import type { ValidationOutcome } from "./validation";
 
 export const SOCIAL_NETWORKS = [
@@ -463,25 +463,36 @@ function byteLength(raw: unknown): number {
   }
 }
 
-/** Per-type caps (maxPerPage) in document order, and unique ids across the header and the page. */
+/**
+ * Per-type caps (maxPerPage) in document order, and unique ids across the header and the page.
+ * Counted from the raw entry when its type and id are well-formed, so these issues arrive in the
+ * same round as a section's own.
+ */
 function checkPlacement(
-  sections: readonly (Section | null)[],
+  raws: readonly unknown[],
   announcement: AnnouncementSection | null,
   issues: ContentIssue[],
 ): void {
   const counts = new Map<string, number>();
   const seen = new Set<string>();
   if (announcement !== null) seen.add(announcement.id.toLowerCase());
-  for (const [index, entry] of sections.entries()) {
-    if (entry === null) continue;
+  for (const [index, entry] of raws.entries()) {
+    if (!isRecord(entry)) continue;
+    const type = Object.hasOwn(entry, "type") ? entry["type"] : undefined;
+    const entryId = Object.hasOwn(entry, "id") ? entry["id"] : undefined;
     const at = `homepage.sections.${index}`;
-    const max = sectionDefinition(entry.type)?.maxPerPage ?? null;
-    const count = (counts.get(entry.type) ?? 0) + 1;
-    counts.set(entry.type, count);
-    if (max !== null && count > max) issues.push({ path: `${at}.type`, code: "TOO_MANY_OF_TYPE" });
-    const key = entry.id.toLowerCase();
-    if (seen.has(key)) issues.push({ path: `${at}.id`, code: "DUPLICATE_SECTION_ID" });
-    seen.add(key);
+    if (typeof type === "string") {
+      const max = sectionDefinition(type)?.maxPerPage ?? null;
+      const count = (counts.get(type) ?? 0) + 1;
+      counts.set(type, count);
+      if (max !== null && count > max)
+        issues.push({ path: `${at}.type`, code: "TOO_MANY_OF_TYPE" });
+    }
+    if (typeof entryId === "string") {
+      const key = entryId.toLowerCase();
+      if (seen.has(key)) issues.push({ path: `${at}.id`, code: "DUPLICATE_SECTION_ID" });
+      seen.add(key);
+    }
   }
 }
 
@@ -523,7 +534,7 @@ export function validateThemeDocument(raw: unknown): ValidationOutcome<ThemeDocu
       const read = raws.map((entry, index) =>
         validateSection(entry, `homepage.sections.${index}`, issues, "homepage"),
       );
-      checkPlacement(read, announcement, issues);
+      checkPlacement(raws, announcement, issues);
       if (!read.includes(null)) sections = read as Section[];
     }
   }
@@ -540,7 +551,7 @@ export function validateThemeDocument(raw: unknown): ValidationOutcome<ThemeDocu
   return {
     ok: true,
     value: {
-      schemaVersion: 2,
+      schemaVersion: THEME_SCHEMA_VERSION,
       brand,
       header: { sticky: headerBase.sticky, menuHandle: headerBase.menuHandle, announcement },
       footer,
@@ -564,16 +575,22 @@ function order(path: string): number {
 }
 
 /** Version 2 stores sections literally: skips what cannot be read, keeps the first of a repeated id. */
-function readStoredSections(raw: unknown): Section[] | null {
+function readStoredSections(raw: unknown, announcementId: string | null): Section[] | null {
   if (!isRecord(raw) || !Object.hasOwn(raw, "sections")) return null;
   const list = raw["sections"];
   if (!Array.isArray(list)) return null;
   const kept: Section[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>(announcementId === null ? [] : [announcementId.toLowerCase()]);
+  const counts = new Map<string, number>();
   for (const entry of list) {
     if (kept.length >= HOMEPAGE_SECTIONS_MAX) break;
     const read = readSection(entry, "homepage");
     if (read === null || seen.has(read.id.toLowerCase())) continue;
+    // maxPerPage too, so what is read back is always saveable.
+    const max = sectionDefinition(read.type)?.maxPerPage ?? null;
+    const count = (counts.get(read.type) ?? 0) + 1;
+    if (max !== null && count > max) continue;
+    counts.set(read.type, count);
     seen.add(read.id.toLowerCase());
     kept.push(read);
   }
@@ -585,17 +602,20 @@ export function readThemeDocument(raw: unknown): ThemeDocument {
   const ignored: ContentIssue[] = [];
   const obj = isRecord(raw) ? raw : {};
   const version = obj["schemaVersion"];
-  const stored =
-    typeof version === "number" && version >= 2 ? readStoredSections(obj["homepage"]) : null;
   const headerRaw = obj["header"];
+  const announcement = announcementReadAt(headerRaw);
+  const stored =
+    typeof version === "number" && version >= THEME_SCHEMA_VERSION
+      ? readStoredSections(obj["homepage"], announcement?.id ?? null)
+      : null;
   const headerBase = readHeaderAt(headerRaw, ignored, true) ?? DEFAULT_THEME_DOCUMENT.header;
   return {
-    schemaVersion: 2,
+    schemaVersion: THEME_SCHEMA_VERSION,
     brand: readBrandAt(obj["brand"], "brand", ignored) ?? readPartialBrand(obj["brand"]),
     header: {
       sticky: headerBase.sticky,
       menuHandle: headerBase.menuHandle,
-      announcement: announcementReadAt(headerRaw),
+      announcement,
     },
     footer: readFooterAt(obj["footer"], ignored, true) ?? DEFAULT_THEME_DOCUMENT.footer,
     homepage: { sections: stored ?? readDefaultSections() },
@@ -643,12 +663,15 @@ export function documentRefsOf(doc: ThemeDocument): SectionRefs {
     refs.image.push({ path: "brand.logo.imageRef", id: doc.brand.logo.imageRef });
   if (doc.brand.favicon.imageRef !== null)
     refs.image.push({ path: "brand.favicon.imageRef", id: doc.brand.favicon.imageRef });
-  const link = doc.header.announcement?.settings.link ?? null;
-  if (
-    link !== null &&
-    (link.type === "page" || link.type === "collection" || link.type === "product")
-  )
-    refs[link.type].push({ path: "header.announcement.settings.link.id", id: link.id });
+  const bar = doc.header.announcement;
+  const barDefinition = bar === null ? null : sectionDefinition(bar.type);
+  if (bar !== null && barDefinition !== null)
+    collectFieldRefs(
+      barDefinition.fields,
+      bar.settings as unknown as Readonly<Record<string, unknown>>,
+      "header.announcement.settings",
+      refs,
+    );
   const fromSections = sectionRefsOf(doc.homepage.sections, "homepage.sections");
   refs.image.push(...fromSections.image);
   refs.collection.push(...fromSections.collection);

@@ -586,8 +586,8 @@ export function readSection(raw: unknown, placement: SectionPlacement): Section 
   if (placement === "header" || !UNSUPPORTED_TYPE_PATTERN.test(type) || !isRecord(settings)) {
     return null;
   }
-  // Verbatim, unknown envelope keys and key order included.
-  return { ...raw } as unknown as UnsupportedSection;
+  // Settings verbatim; only the four envelope keys survive, so the read always passes the write.
+  return { id, type, hidden, settings };
 }
 
 export function newSection<T extends SectionType>(

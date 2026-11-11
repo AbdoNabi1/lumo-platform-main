@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { newSection } from "./sections";
 import {
   canonicalDocumentJson,
   DEFAULT_THEME_DOCUMENT,
@@ -203,14 +204,23 @@ describe("version 2 sections and the announcement slot", () => {
   const sectionOf = (extra: string) =>
     JSON.parse(
       `{${extra}"id":"6f1b2c3d-4e5f-4a6b-8c7d-000000000001","type":"rich_text","hidden":false,` +
-        `"settings":${JSON.stringify(DEFAULT_THEME_DOCUMENT.homepage.sections[0]?.settings ?? {})}}`,
+        `"settings":${JSON.stringify(newSection("rich_text", "x").settings)}}`,
     );
 
   it("a __proto__ key on a section is an unknown key and pollutes nothing", () => {
     const raw = clone();
     raw.homepage.sections = [sectionOf('"__proto__":{"polluted":true},')];
-    const issues = issuesOf(raw);
-    expect(issues).toContainEqual({ path: "homepage.sections.0.__proto__", code: "UNKNOWN_KEY" });
+    expect(issuesOf(raw)).toEqual([{ path: "homepage.sections.0.__proto__", code: "UNKNOWN_KEY" }]);
+    // the read drops the section's extra key and the document is saveable again
+    const read = readThemeDocument(raw);
+    expect(read.homepage.sections).toHaveLength(1);
+    expect(Object.keys(read.homepage.sections[0] ?? {})).toEqual([
+      "id",
+      "type",
+      "hidden",
+      "settings",
+    ]);
+    expect(validateThemeDocument(read).ok).toBe(true);
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
   });
 

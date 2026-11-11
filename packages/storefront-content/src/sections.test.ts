@@ -292,15 +292,15 @@ describe("section library v1 (spec 3.2)", () => {
     ).toBeNull();
   });
 
-  it("an unknown type is kept exactly on read, extra envelope keys and order included (M-4, M-5)", () => {
+  it("an unknown type keeps only the four envelope keys, in order, with settings verbatim", () => {
     const future = {
       id: ID,
       type: "countdown_timer",
       hidden: false,
       settings: { endsAt: "2027-01-01", nested: { a: [1] } },
-      locked: true,
     };
-    expect(JSON.stringify(readSection(future, "homepage"))).toBe(JSON.stringify(future));
+    const withExtra = { locked: true, ...future, extra: 1 };
+    expect(JSON.stringify(readSection(withExtra, "homepage"))).toBe(JSON.stringify(future));
     const plain = { id: ID, type: "countdown_timer", hidden: false, settings: { b: 1, a: 2 } };
     expect(JSON.stringify(run(plain).section)).toBe(JSON.stringify(plain));
     expect(JSON.stringify(readSection(plain, "homepage"))).toBe(JSON.stringify(plain));

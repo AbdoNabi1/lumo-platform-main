@@ -577,3 +577,55 @@ describe("schema version 2 (Ruling 2)", () => {
     expect(imageRefsOf(doc)).toEqual(["same"]);
   });
 });
+
+describe("a lenient read always passes the strict write (fix round 1)", () => {
+  const roundTrips = (raw: unknown) => {
+    const read = readThemeDocument(raw);
+    expect(validateThemeDocument(read)).toEqual({ ok: true, value: read });
+    return read;
+  };
+
+  it("4 heroes keep the first 3, in document order", () => {
+    const heroes = Array.from({ length: 4 }, (_, i) => newSection("hero", id(i + 1)));
+    const read = roundTrips(v2(heroes));
+    expect(read.homepage.sections.map((s) => s.id)).toEqual([id(1), id(2), id(3)]);
+  });
+
+  it("3 WhatsApp sections keep the first 2", () => {
+    const wa = Array.from({ length: 3 }, (_, i) => newSection("whatsapp_cta", id(i + 1)));
+    const read = roundTrips(v2(wa));
+    expect(read.homepage.sections.map((s) => s.id)).toEqual([id(1), id(2)]);
+  });
+
+  it("a section that shares the announcement id is dropped", () => {
+    const bar = newSection("announcement_bar", id(1));
+    const read = roundTrips(
+      v2([newSection("rich_text", id(1).toUpperCase()), newSection("rich_text", id(2))], bar),
+    );
+    expect(read.homepage.sections.map((s) => s.id)).toEqual([id(2)]);
+  });
+
+  it("an unknown type with an extra envelope key round-trips", () => {
+    const future = { id: id(9), type: "countdown_timer", hidden: false, settings: { a: 1 } };
+    const read = roundTrips(v2([{ ...future, locked: true }]));
+    expect(JSON.stringify(read.homepage.sections)).toBe(JSON.stringify([future]));
+  });
+
+  it("TOO_MANY_OF_TYPE is reported in the same round as other issues", () => {
+    const heroes = Array.from({ length: 4 }, (_, i) => newSection("hero", id(i + 1)));
+    const broken = [{ ...heroes[0], hidden: "x" }, heroes[1], heroes[2], heroes[3]];
+    const out = validateThemeDocument(v2(broken));
+    expect(!out.ok && out.issues).toEqual([
+      { path: "homepage.sections.0.hidden", code: "INVALID_VALUE" },
+      { path: "homepage.sections.3.type", code: "TOO_MANY_OF_TYPE" },
+    ]);
+  });
+
+  it("a bar link to a collection is a ref, through the same descriptors", () => {
+    const base = newSection("announcement_bar", id(1));
+    const bar = { ...base, settings: { ...base.settings, link: { type: "collection", id: "c1" } } };
+    expect(documentRefsOf(readThemeDocument(v2([], bar))).collection).toEqual([
+      { path: "header.announcement.settings.link.id", id: "c1" },
+    ]);
+  });
+});
