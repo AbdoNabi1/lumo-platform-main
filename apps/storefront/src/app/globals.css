@@ -40,3 +40,9 @@
     font-family: var(--font-heading, var(--font-sans));
   }
 }
+
+/* The section the editor is pointing at in a preview: a fixed rule, no merchant value. */
+[data-section-focused="true"] {
+  outline: 2px dashed var(--primary);
+  outline-offset: 4px;
+}

@@ -87,7 +87,7 @@ export const getHomepage = cache(async (previewToken: string | null): Promise<St
     }
   };
   if (previewToken === null) return live();
-  const res = await fetchJson(shopId, HOME_PATH, { "x-preview-token": previewToken });
+  const res = await fetchJson(shopId, HOME_PATH, { previewToken });
   const preview = res.status === 200 ? parseHome(res.body, "preview") : null;
   return preview ?? live();
 });

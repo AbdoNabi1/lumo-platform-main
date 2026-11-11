@@ -292,4 +292,16 @@ describe("shop-explicit reads for the sitemap (preflight 1)", () => {
     );
     expect(await fetchJson("shop-z", "/public/pages")).toEqual({ status: 0, body: null });
   });
+  it("fetchJson: a caller cannot override the tenant header or add other headers (T7 Minor 1)", async () => {
+    const fetchSpy = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const hostile = { "X-Tenant-Id": "shop-evil", host: "evil.example", previewToken: "tok" };
+    await fetchJson("shop-z", "/public/pages", hostile as never);
+    const headers = (
+      fetchSpy.mock.calls[0] as unknown as [string, { headers: Record<string, string> }]
+    )[1].headers;
+    expect(Object.keys(headers).sort()).toEqual(["x-preview-token", "x-tenant-id"]);
+    expect(headers["x-tenant-id"]).toBe("shop-z");
+    expect(headers["x-preview-token"]).toBe("tok");
+  });
 });

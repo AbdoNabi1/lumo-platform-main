@@ -73,13 +73,6 @@ export interface ProductSummary {
   readonly hoverImage?: ProductImageSummary | null;
 }
 
-export interface CategorySummary {
-  readonly id: string;
-  readonly name: string;
-  readonly slug: string;
-  readonly parentId: string | null;
-}
-
 export interface CollectionSummary {
   readonly id: string;
   readonly name: string;
@@ -398,18 +391,6 @@ export async function getProductBySlug(slug: string): Promise<ProductSummary | n
     `/api/v1/public/products/${encodeURIComponent(slug)}`,
   );
   return body;
-}
-
-/** Categories — Catalog (`GET /public/categories`, Phase 9). */
-export function getCategories(): Promise<readonly CategorySummary[] | null> {
-  return fetchList<CategorySummary>("/api/v1/public/categories");
-}
-
-/** Collections — Catalog (`GET /public/collections`, Phase 9). */
-export function getCollections(
-  first: number = MAX_PAGE_SIZE,
-): Promise<readonly CollectionSummary[] | null> {
-  return fetchList<CollectionSummary>("/api/v1/public/collections", { first });
 }
 
 /** One collection by slug (`GET /public/collections/:slug`). */

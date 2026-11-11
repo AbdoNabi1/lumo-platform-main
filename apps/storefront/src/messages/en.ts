@@ -63,15 +63,13 @@ export const en = {
   },
   home: {
     title: "Shop",
-    subtitle: "Browse products and collections.",
-    productsTitle: "Products",
     productsEmpty: "No products are available yet.",
-    productsError: "Couldn't load products. Try refreshing the page.",
-    categoriesTitle: "Categories",
-    categoriesEmpty: "No categories are available yet.",
-    collectionsTitle: "Collections",
     collectionsEmpty: "No collections are available yet.",
-    collectionsError: "Couldn't load collections. Try refreshing the page.",
+  },
+  sections: {
+    hiddenPlaceholder: "Hidden section",
+    incompletePlaceholder: "Finish setting up this section",
+    viewAll: "View all",
   },
   product: {
     unavailable: "This product isn't available right now.",

@@ -68,15 +68,13 @@ export const ar: Dictionary = {
   },
   home: {
     title: "المتجر",
-    subtitle: "تصفّح المنتجات والمجموعات.",
-    productsTitle: "المنتجات",
     productsEmpty: "لا توجد منتجات متاحة حتى الآن.",
-    productsError: "تعذّر تحميل المنتجات. حاول تحديث الصفحة.",
-    categoriesTitle: "الفئات",
-    categoriesEmpty: "لا توجد فئات متاحة حتى الآن.",
-    collectionsTitle: "المجموعات",
     collectionsEmpty: "لا توجد مجموعات متاحة حتى الآن.",
-    collectionsError: "تعذّر تحميل المجموعات. حاول تحديث الصفحة.",
+  },
+  sections: {
+    hiddenPlaceholder: "قسم مخفي",
+    incompletePlaceholder: "أكمل إعداد هذا القسم",
+    viewAll: "عرض الكل",
   },
   product: {
     unavailable: "هذا المنتج غير متاح حالياً.",

@@ -1,10 +1,8 @@
 import {
   getCollectionBySlug,
   getCollectionProducts,
-  getCollections,
   getInventory,
   getProductBySlug,
-  getProducts,
   searchProducts,
   type CollectionSummary,
   type CursorPageInfo,
@@ -65,13 +63,6 @@ export type CollectionLookupResult =
   | { readonly status: "not-found" }
   | { readonly status: "error" };
 
-/** Every published product, degrading to `"error"` only when the API call itself failed. */
-export async function listPublishedProducts(): Promise<ProductListResult> {
-  const products = await getProducts();
-  if (products === null) return { status: "error" };
-  return { status: "ok", products: products.filter(isPublishedProduct) };
-}
-
 /**
  * Published products matching a substring search `query` (T5.15). Same "published" trust
  * boundary as `listPublishedProducts` — `searchProducts` hits the same `GET /public/products`
@@ -82,16 +73,6 @@ export async function searchPublishedProducts(query: string): Promise<ProductLis
   const products = await searchProducts(query);
   if (products === null) return { status: "error" };
   return { status: "ok", products: products.filter(isPublishedProduct) };
-}
-
-/** Every published collection. */
-export async function listPublishedCollections(): Promise<
-  | { readonly status: "ok"; readonly collections: readonly PublishedCollection[] }
-  | { readonly status: "error" }
-> {
-  const collections = await getCollections();
-  if (collections === null) return { status: "error" };
-  return { status: "ok", collections: collections.filter(isPublishedCollection) };
 }
 
 /**

@@ -77,16 +77,19 @@ function isoOrNull(value: unknown): string | null {
 
 /**
  * One public Runtime read for `shopId`. Never throws: a refused, failed or timed-out read is
- * `status: 0`, an unreadable body is `null`. `extraHeaders` never override the shop.
+ * `status: 0`, an unreadable body is `null`. The only option is the preview token (sent as
+ * `x-preview-token`): no other header can be added, and the shop header is always `shopId`.
  */
 export async function fetchJson(
   shopId: string,
   path: string,
-  extraHeaders: Readonly<Record<string, string>> = {},
+  options: { readonly previewToken?: string } = {},
 ): Promise<{ status: number; body: unknown }> {
   try {
+    const headers: Record<string, string> = { "x-tenant-id": shopId };
+    if (options.previewToken !== undefined) headers["x-preview-token"] = options.previewToken;
     const response = await fetch(`${RUNTIME_API_URL}/api/v1${path}`, {
-      headers: { ...extraHeaders, "x-tenant-id": shopId },
+      headers,
       cache: "no-store",
       signal: AbortSignal.timeout(RUNTIME_TIMEOUT_MS),
     });

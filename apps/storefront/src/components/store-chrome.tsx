@@ -2,9 +2,11 @@ import type { ReactNode } from "react";
 import { cn } from "@platform/ui";
 import { dictionaryFor, type Locale } from "@/lib/i18n";
 import type { StorefrontShell } from "@/lib/online-store";
+import { storefrontSecrets } from "@/lib/storefront-env";
 import { PreviewBanner } from "./preview-banner";
 import { PreviewLinkKeeper } from "./preview-link-keeper";
 import { PreviewModeProvider } from "./preview-mode";
+import { SectionFocusListener } from "./sections/section-focus-listener";
 import { SiteFooter } from "./site-footer";
 import { SiteHeader } from "./site-header";
 
@@ -27,6 +29,8 @@ export function StoreChrome({
   readonly children: ReactNode;
 }) {
   const t = dictionaryFor(locale);
+  // The editor frames the preview from the admin origin: it can only be talked to when that is set.
+  const adminOrigin = previewToken === null ? null : storefrontSecrets().adminOrigin;
   return (
     <PreviewModeProvider token={previewToken}>
       <div className="flex min-h-dvh flex-col">
@@ -52,6 +56,7 @@ export function StoreChrome({
         <SiteFooter t={t} locale={locale} shell={shell} previewToken={previewToken} />
       </div>
       {previewToken === null ? null : <PreviewLinkKeeper token={previewToken} />}
+      {adminOrigin === null ? null : <SectionFocusListener adminOrigin={adminOrigin} />}
     </PreviewModeProvider>
   );
 }
