@@ -1,4 +1,5 @@
 import { MAX_ISSUES, pathSegment } from "./issues";
+import { ITEM_ID_PATTERN } from "./limits";
 import { LINK_URL_MAX, normalizeExternalUrl, safeHref } from "./links";
 import { normalizeLocalizedText, type ContentIssue, type LocalizedText } from "./locale";
 import { isPolicyType, type PolicyType } from "./policies";
@@ -35,7 +36,7 @@ export interface ResolvedMenuItem {
 }
 
 const HANDLE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-const ITEM_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ITEM_ID = ITEM_ID_PATTERN;
 export const LINK_TARGET_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** Format and length only; whether the handle is reserved or taken is the use case's call. */

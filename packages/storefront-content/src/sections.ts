@@ -1,5 +1,6 @@
 import { MAX_ISSUES, pathSegment } from "./issues";
 import { pickText, type ContentIssue, type Locale, type LocalizedText } from "./locale";
+import { ITEM_ID_PATTERN, SECTION_LIMITS } from "./limits";
 import type { LinkRef } from "./menus";
 import { RICH_TEXT_MAX } from "./rich-text";
 import {
@@ -170,34 +171,9 @@ export interface SectionDefinition<T extends SectionType = SectionType> {
 }
 
 /** The menu item id rule. */
-export const SECTION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const SECTION_ID_PATTERN = ITEM_ID_PATTERN;
 export const UNSUPPORTED_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,39}$/;
 export const HOMEPAGE_SECTIONS_MAX = 25;
-
-/** Spec 3.2 limits, in one place so the API, the editor and the storefront share them. */
-export const SECTION_LIMITS = Object.freeze({
-  heading: 80,
-  announcementText: 120,
-  heroSubheading: 200,
-  buttonLabel: 30,
-  imageWithTextBody: 2_000,
-  quote: 400,
-  author: 60,
-  featureTitle: 40,
-  featureText: 140,
-  ctaText: 300,
-  ctaMessage: 300,
-  products: 12,
-  collectionItems: 8,
-  testimonials: Object.freeze({ min: 1, max: 8 }),
-  features: Object.freeze({ min: 1, max: 6 }),
-  count: Object.freeze({ min: 2, max: 12 }),
-  columns: Object.freeze({ min: 2, max: 4 }),
-  overlay: Object.freeze({ min: 0, max: 80, step: 10 }),
-  rating: Object.freeze({ min: 0, max: 5 }),
-  heroPerPage: 3,
-  whatsAppPerPage: 2,
-} as const);
 
 const L = SECTION_LIMITS;
 
@@ -595,7 +571,7 @@ export function readSection(raw: unknown, placement: SectionPlacement): Section 
   if (typeof hidden !== "boolean" || typeof type !== "string") return null;
   const definition = sectionDefinition(type);
   if (definition !== null) {
-    if (definition.placement !== placement) return null;
+    if (definition.placement !== placement || !isRecord(settings)) return null;
     return {
       id,
       type,
@@ -610,7 +586,8 @@ export function readSection(raw: unknown, placement: SectionPlacement): Section 
   if (placement === "header" || !UNSUPPORTED_TYPE_PATTERN.test(type) || !isRecord(settings)) {
     return null;
   }
-  return { id, type, hidden, settings };
+  // Verbatim, unknown envelope keys and key order included.
+  return { ...raw } as unknown as UnsupportedSection;
 }
 
 export function newSection<T extends SectionType>(

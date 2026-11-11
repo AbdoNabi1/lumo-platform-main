@@ -22,3 +22,31 @@ export const POLICY_TEMPLATE_LIMITS = Object.freeze({
   deliveryMin: Object.freeze([1, 60] as const),
   deliveryMaxCap: 90,
 });
+
+/** The id rule for menu items and sections: a UUID, any case. */
+export const ITEM_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Spec 3.2 limits, in one place so the API, the editor and the storefront share them. */
+export const SECTION_LIMITS = Object.freeze({
+  heading: 80,
+  announcementText: 120,
+  heroSubheading: 200,
+  buttonLabel: 30,
+  imageWithTextBody: 2_000,
+  quote: 400,
+  author: 60,
+  featureTitle: 40,
+  featureText: 140,
+  ctaText: 300,
+  ctaMessage: 300,
+  products: 12,
+  collectionItems: 8,
+  testimonials: Object.freeze({ min: 1, max: 8 }),
+  features: Object.freeze({ min: 1, max: 6 }),
+  count: Object.freeze({ min: 2, max: 12 }),
+  columns: Object.freeze({ min: 2, max: 4 }),
+  overlay: Object.freeze({ min: 0, max: 80, step: 10 }),
+  rating: Object.freeze({ min: 0, max: 5 }),
+  heroPerPage: 3,
+  whatsAppPerPage: 2,
+} as const);

@@ -80,24 +80,30 @@ export interface PublicSettingsByType {
   whatsapp_cta: { heading: LT; text: LT; buttonLabel: LT; phone: string; message: LT };
 }
 
-/**
- * `hidden` is present only in preview (Ruling 13). `incomplete` is preview only too (F2): a known
- * section the live rules would drop, kept as a placeholder so the editor can say what is missing.
- */
-export type PublicSection =
-  | {
-      [T in SectionType]: {
-        readonly id: string;
-        readonly type: T;
-        readonly hidden?: boolean;
-        readonly settings: PublicSettingsByType[T];
-      };
-    }[SectionType]
-  | {
-      readonly id: string;
-      readonly type: SectionType;
-      readonly hidden?: boolean;
-      readonly incomplete: true;
-    };
+type PublicBase<T extends SectionType> = {
+  readonly id: string;
+  readonly type: T;
+  /** Present only in preview (Ruling 13). */
+  readonly hidden?: boolean;
+};
 
-export type PublicAnnouncement = Extract<PublicSection, { type: "announcement_bar" }>;
+/** A section with everything it needs: what the live page renders. */
+export type CompletePublicSection = {
+  [T in SectionType]: PublicBase<T> & {
+    readonly settings: PublicSettingsByType[T];
+    readonly incomplete?: never;
+  };
+}[SectionType];
+
+/**
+ * Preview only (F2): a known section the live rules would drop, kept as a placeholder so the editor
+ * can say what is missing. Per type, so `switch (s.type)` narrows to both variants of that type.
+ */
+export type IncompletePublicSection = {
+  [T in SectionType]: PublicBase<T> & { readonly incomplete: true; readonly settings?: never };
+}[SectionType];
+
+export type PublicSection = CompletePublicSection | IncompletePublicSection;
+
+/** The header has no placeholder: complete only. */
+export type PublicAnnouncement = Extract<CompletePublicSection, { type: "announcement_bar" }>;

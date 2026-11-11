@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import type { ContentIssue } from "./locale";
-import type { PublicSection } from "./public-sections";
+import { ITEM_ID_PATTERN, SECTION_LIMITS } from "./limits";
+import type { CompletePublicSection, PublicAnnouncement, PublicSection } from "./public-sections";
 import {
   DEFAULT_HOMEPAGE_SECTIONS,
   HOMEPAGE_SECTIONS_MAX,
   newSection,
   readSection,
   SECTION_DEFINITIONS,
+  SECTION_ID_PATTERN,
   SECTION_TYPES,
   sectionDefinition,
   sectionHeading,
@@ -275,5 +277,119 @@ describe("section library v1 (spec 3.2)", () => {
   it("PublicSection admits the preview-only incomplete variant (F2)", () => {
     const placeholder: PublicSection = { id: ID, type: "hero", hidden: true, incomplete: true };
     expect(placeholder.incomplete).toBe(true);
+  });
+
+  it("readSection of a known type with missing or non-object settings is null (I-1)", () => {
+    for (const type of ["hero", "collection_list", "rich_text"] as const) {
+      const base = { id: ID, type, hidden: false };
+      expect(readSection({ ...base, settings: "junk" }, "homepage")).toBeNull();
+      expect(readSection({ ...base, settings: null }, "homepage")).toBeNull();
+      expect(readSection({ ...base, settings: [] }, "homepage")).toBeNull();
+      expect(readSection(base, "homepage")).toBeNull();
+    }
+    expect(
+      readSection({ id: ID, type: "announcement_bar", hidden: false, settings: "junk" }, "header"),
+    ).toBeNull();
+  });
+
+  it("an unknown type is kept exactly on read, extra envelope keys and order included (M-4, M-5)", () => {
+    const future = {
+      id: ID,
+      type: "countdown_timer",
+      hidden: false,
+      settings: { endsAt: "2027-01-01", nested: { a: [1] } },
+      locked: true,
+    };
+    expect(JSON.stringify(readSection(future, "homepage"))).toBe(JSON.stringify(future));
+    const plain = { id: ID, type: "countdown_timer", hidden: false, settings: { b: 1, a: 2 } };
+    expect(JSON.stringify(run(plain).section)).toBe(JSON.stringify(plain));
+    expect(JSON.stringify(readSection(plain, "homepage"))).toBe(JSON.stringify(plain));
+  });
+
+  it("every section limit is pinned (M-2)", () => {
+    expect(SECTION_LIMITS).toEqual({
+      heading: 80,
+      announcementText: 120,
+      heroSubheading: 200,
+      buttonLabel: 30,
+      imageWithTextBody: 2000,
+      quote: 400,
+      author: 60,
+      featureTitle: 40,
+      featureText: 140,
+      ctaText: 300,
+      ctaMessage: 300,
+      products: 12,
+      collectionItems: 8,
+      testimonials: { min: 1, max: 8 },
+      features: { min: 1, max: 6 },
+      count: { min: 2, max: 12 },
+      columns: { min: 2, max: 4 },
+      overlay: { min: 0, max: 80, step: 10 },
+      rating: { min: 0, max: 5 },
+      heroPerPage: 3,
+      whatsAppPerPage: 2,
+    });
+  });
+
+  it("the limits bite at their boundaries through the validators (M-2)", () => {
+    const hero = newSection("hero", ID);
+    const withHero = (patch: Record<string, unknown>) =>
+      run({ ...hero, settings: { ...hero.settings, ...patch } }).issues;
+    expect(withHero({ heading: { en: "a".repeat(80) } })).toEqual([]);
+    expect(withHero({ heading: { en: "a".repeat(81) } })).toEqual([
+      { path: "x.settings.heading.en", code: "TOO_LONG" },
+    ]);
+    expect(withHero({ overlay: 80 })).toEqual([]);
+    expect(withHero({ overlay: 90 })).toEqual([
+      { path: "x.settings.overlay", code: "OUT_OF_RANGE" },
+    ]);
+    const t = newSection("testimonials", ID);
+    const item = (quote: string) => ({ quote: { en: quote }, author: "", rating: 5 });
+    const withT = (quote: string) =>
+      run({ ...t, settings: { ...t.settings, items: [item(quote)] } }).issues;
+    expect(withT("a".repeat(400))).toEqual([]);
+    expect(withT("a".repeat(401))).toEqual([
+      { path: "x.settings.items.0.quote.en", code: "TOO_LONG" },
+    ]);
+  });
+
+  it("all ten admin labels are pinned (M-2)", () => {
+    expect(Object.fromEntries(SECTION_DEFINITIONS.map((d) => [d.type, d.labels]))).toEqual({
+      announcement_bar: { en: "Announcement bar", ar: "شريط إعلانات" },
+      hero: { en: "Image banner", ar: "بانر بصورة" },
+      featured_collection: { en: "Featured collection", ar: "مجموعة مميزة" },
+      featured_products: { en: "Products", ar: "منتجات" },
+      collection_list: { en: "Collection list", ar: "قائمة المجموعات" },
+      image_with_text: { en: "Image with text", ar: "صورة مع نص" },
+      rich_text: { en: "Rich text", ar: "نص" },
+      testimonials: { en: "Testimonials", ar: "آراء العملاء" },
+      features: { en: "Store highlights", ar: "مميزات المتجر" },
+      whatsapp_cta: { en: "WhatsApp button", ar: "زرار واتساب" },
+    });
+  });
+
+  it("the section id rule is the menu item id rule", () => {
+    expect(SECTION_ID_PATTERN).toBe(ITEM_ID_PATTERN);
+  });
+
+  it("PublicSection narrows by type to settings on complete sections (I-2)", () => {
+    const overlay = (s: PublicSection): number | null => {
+      switch (s.type) {
+        case "hero":
+          if (s.incomplete) {
+            expectTypeOf(s.settings).toEqualTypeOf<undefined>();
+            return null;
+          }
+          return s.settings.overlay;
+        default:
+          return null;
+      }
+    };
+    expect(overlay({ id: ID, type: "hero", incomplete: true })).toBeNull();
+    expectTypeOf<PublicAnnouncement>().toEqualTypeOf<
+      Extract<CompletePublicSection, { type: "announcement_bar" }>
+    >();
+    expectTypeOf<PublicAnnouncement["incomplete"]>().toEqualTypeOf<undefined>();
   });
 });
