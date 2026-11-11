@@ -156,12 +156,15 @@ function checkItems(
   if (raw.length > field.max) return fail(issues, path, "TOO_MANY_ITEMS");
   const before = issues.length;
   const items: Record<string, unknown>[] = [];
+  let failed = false;
   for (const [index, entry] of raw.entries()) {
     if (issues.length >= MAX_ISSUES) break;
     const item = validateFields(field.fields, entry, `${path}.${index}`, issues);
-    if (item !== null) items.push(item);
+    if (item === null) failed = true;
+    else items.push(item);
   }
-  return issues.length > before ? FAIL : good(items);
+  // A null item is a failure even when the shared budget kept its issues from being reported.
+  return failed || issues.length > before ? FAIL : good(items);
 }
 
 /** One validator per kind. Pushes issues and returns FAIL, or returns the stored value. */
@@ -224,38 +227,55 @@ function checkField(
   }
 }
 
-/** Strict: an object with exactly the fields' keys; returns the stored values or null (issues pushed). */
+/**
+ * Strict: an object with exactly the fields' keys; returns the stored values or null (issues pushed).
+ * Validity is tracked apart from the issue list: the shared budget (MAX_ISSUES, one for the whole
+ * call chain) caps only how many issues are reported, never whether a value is rejected.
+ */
 export function validateFields(
   fields: readonly FieldDescriptor[],
   raw: unknown,
   path: string,
   issues: ContentIssue[],
 ): Record<string, unknown> | null {
+  const found: ContentIssue[] = [];
+  const values = checkObject(fields, raw, path, found);
+  const room = Math.max(0, MAX_ISSUES - issues.length);
+  for (const issue of found.slice(0, room)) issues.push(issue);
+  return values;
+}
+
+function checkObject(
+  fields: readonly FieldDescriptor[],
+  raw: unknown,
+  path: string,
+  found: ContentIssue[],
+): Record<string, unknown> | null {
   if (!isRecord(raw)) {
-    if (issues.length < MAX_ISSUES) issues.push({ path, code: "INVALID_VALUE" });
+    found.push({ path, code: "INVALID_VALUE" });
     return null;
   }
-  const start = issues.length;
   const known = new Set(fields.map((field) => field.key));
   for (const key of Object.keys(raw)) {
-    if (issues.length >= MAX_ISSUES) break;
-    if (!known.has(key)) issues.push({ path: `${path}.${pathSegment(key)}`, code: "UNKNOWN_KEY" });
+    if (found.length >= MAX_ISSUES) break;
+    if (!known.has(key)) found.push({ path: `${path}.${pathSegment(key)}`, code: "UNKNOWN_KEY" });
   }
   const values: Record<string, unknown> = {};
+  let failed = found.length > 0;
   for (const field of fields) {
-    if (issues.length >= MAX_ISSUES) break;
+    if (found.length >= MAX_ISSUES) break;
     const fieldPath = `${path}.${field.key}`;
     const value = own(raw, field.key);
     if (value === undefined) {
-      issues.push({ path: fieldPath, code: "MISSING" });
+      found.push({ path: fieldPath, code: "MISSING" });
+      failed = true;
       continue;
     }
-    const checked = checkField(field, value, fieldPath, issues);
+    const checked = checkField(field, value, fieldPath, found);
     if (checked.ok) values[field.key] = checked.value;
+    else failed = true;
   }
-  // One budget for the whole call, nested items included: a validator may push a few past it.
-  if (issues.length > MAX_ISSUES) issues.length = MAX_ISSUES;
-  return issues.length > start ? null : values;
+  return failed || found.length > 0 ? null : values;
 }
 
 function readField(field: FieldDescriptor, raw: unknown, fallback: unknown): unknown {

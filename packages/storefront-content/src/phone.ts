@@ -31,20 +31,46 @@ function toAsciiDigits(value: string): string {
   return out;
 }
 
+const CALLING_CODE = /^[1-9][0-9]{0,2}$/;
+// An Egyptian mobile without its leading 0: 1[0125] plus 8 digits.
+const EGYPT_MOBILE = /^1[0125][0-9]{8}$/;
+const EGYPT_CODE = "20";
+
 /**
- * Normalises what a merchant typed into WhatsApp digits, or null. A leading `0` (national format)
- * is completed with `callingCode`; `+` or `00` marks an international number.
+ * Normalises what a merchant typed into WhatsApp digits, or null; never guesses a country.
+ * - `+` or `00` marks an international number; a single trunk 0 after the calling code is dropped.
+ * - A leading `0` (national format) is completed with `callingCode`.
+ * - Bare digits: 11 or more are taken as already country-coded; with the default code a bare
+ *   Egyptian mobile (10 digits) gets `20`; any other shorter bare number is refused, because wa.me
+ *   would read it as another country's code.
+ * - Letters are refused, not stripped. `callingCode` is programmer input: a bad one throws.
  */
 export function toWhatsAppDigits(
   raw: unknown,
   callingCode: string = DEFAULT_CALLING_CODE,
 ): string | null {
+  if (!CALLING_CODE.test(callingCode))
+    throw new Error("callingCode must be 1-3 digits, no leading 0");
   if (typeof raw !== "string") return null;
   const trimmed = toAsciiDigits(raw).trim();
+  if (/\p{L}/u.test(trimmed)) return null;
   const international = trimmed.startsWith("+");
-  let digits = trimmed.replace(/\D/g, "");
-  if (!international && digits.startsWith("00")) digits = digits.slice(2);
-  else if (!international && digits.startsWith("0")) digits = `${callingCode}${digits.slice(1)}`;
+  let digits = trimmed.replace(/[^0-9]/g, "");
+  let countryCoded = international;
+  if (!international && digits.startsWith("00")) {
+    digits = digits.slice(2);
+    countryCoded = true;
+  } else if (!international && digits.startsWith("0")) {
+    digits = `${callingCode}${digits.slice(1)}`;
+  } else if (!international) {
+    if (digits.length >= WHATSAPP_DIGITS_MIN + 3) countryCoded = true;
+    else if (callingCode === EGYPT_CODE && EGYPT_MOBILE.test(digits))
+      digits = `${callingCode}${digits}`;
+    else return null;
+  }
+  if (countryCoded && digits.startsWith(`${callingCode}0`)) {
+    digits = `${callingCode}${digits.slice(callingCode.length + 1)}`;
+  }
   return isWhatsAppDigits(digits) ? digits : null;
 }
 

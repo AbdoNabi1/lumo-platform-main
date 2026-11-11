@@ -83,7 +83,7 @@ describe("validateFields — one test per descriptor kind (spec 3.2)", () => {
     const f = { kind: "number", key: "overlay", min: 0, max: 80, step: 10 } as const;
     expect(check(f, 0).value).toBe(0);
     expect(check(f, 80).value).toBe(80);
-    for (const bad of [85, 90, -10, 10.5]) {
+    for (const bad of [15, 85, 90, -10, 10.5]) {
       expect(codes(check(f, bad).issues)).toEqual(["s.overlay:OUT_OF_RANGE"]);
     }
     expect(codes(check(f, "10").issues)).toEqual(["s.overlay:INVALID_VALUE"]);
@@ -168,6 +168,40 @@ describe("validateFields — one test per descriptor kind (spec 3.2)", () => {
     );
     expect(validateFields(fields, { items }, "s", flood)).toBeNull();
     expect(flood.length).toBe(50);
+  });
+
+  it("fails closed: a spent issue budget never turns a bad value into a valid one", () => {
+    const fields = [{ kind: "boolean", key: "a" }] as const;
+    for (const prior of [50, 60]) {
+      const issues: ContentIssue[] = Array.from({ length: prior }, (_, i) => ({
+        path: `p${i}`,
+        code: "X",
+      }));
+      expect(validateFields(fields, { a: "notbool" }, "s", issues)).toBeNull();
+      expect(issues.length).toBe(prior); // never shortened, never grown past the budget
+      expect(validateFields(fields, { a: true }, "s", issues)).toEqual({ a: true });
+    }
+    const items = [
+      { kind: "items", key: "items", min: 0, max: 2, fields: [{ kind: "boolean", key: "a" }] },
+    ] as const;
+    const full: ContentIssue[] = Array.from({ length: 50 }, () => ({ path: "p", code: "X" }));
+    expect(validateFields(items, { items: [{ a: "no" }] }, "s", full)).toBeNull();
+  });
+
+  it("the budget caps what is reported when several fields each push many issues", () => {
+    const fields = ["x", "y", "z"].map((key) => ({ kind: "localizedText", key, max: 5 }) as const);
+    const unknown = Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`k${i}`, "v"]));
+    const flood: ContentIssue[] = [];
+    expect(validateFields(fields, { x: unknown, y: unknown, z: unknown }, "s", flood)).toBeNull();
+    expect(flood.length).toBe(50);
+  });
+
+  it("a descriptor keyed like an Object.prototype member is MISSING, not inherited", () => {
+    const fields = [{ kind: "boolean", key: "constructor" }] as const;
+    const issues: ContentIssue[] = [];
+    expect(validateFields(fields, {}, "s", issues)).toBeNull();
+    expect(codes(issues)).toEqual(["s.constructor:MISSING"]);
+    expect(readFields(fields, {}, {})).toEqual({ constructor: false });
   });
 
   it("a non-object is refused, and an own __proto__ key is an unknown key", () => {
