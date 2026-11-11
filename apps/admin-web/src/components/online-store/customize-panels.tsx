@@ -499,12 +499,12 @@ function MenuSelect({
 }
 
 /**
- * Header & footer. Every change spreads the stored header/footer object, so a change to one field
- * keeps the others (`menuHandle`, `showPolicyLinks`): the save sends the whole object.
+ * The Header group's settings (Ruling 23): the sticky switch and the header menu. The announcement
+ * slot is a row of the section tree, not a field here. Every change spreads the stored header, so
+ * one field keeps the others (`announcement`, `menuHandle`): the save sends the whole object.
  */
-export function FooterPanel({
+export function HeaderPanel({
   t,
-  locale,
   doc,
   update,
   disabled,
@@ -531,29 +531,27 @@ export function FooterPanel({
         />
         {c.stickyHeader}
       </label>
-      {/* `name` is the document path, so the API's `footer.note.ar` errors land on their tab. */}
-      <LocalizedTextField
-        t={t}
-        locale={locale}
-        name="footer.note"
-        label={c.footerNote}
-        max={200}
-        multiline
-        value={doc.footer.note}
-        disabled={disabled}
-        errors={errors}
-        onChange={(note) => update((d) => ({ ...d, footer: { ...d.footer, note } }))}
-      />
-      <label className="flex items-center gap-3 text-sm">
-        <Switch
-          checked={doc.footer.showSocial}
-          disabled={disabled}
-          onCheckedChange={(showSocial) =>
-            update((d) => ({ ...d, footer: { ...d.footer, showSocial } }))
-          }
-        />
-        {c.showSocial}
-      </label>
+    </section>
+  );
+}
+
+/**
+ * The Footer group's settings (Ruling 23): the footer menu, policy links, social links and the
+ * note. Every change spreads the stored footer, so the others are kept. The social link URLs stay
+ * in the Theme settings tab.
+ */
+export function FooterPanel({
+  t,
+  locale,
+  doc,
+  update,
+  disabled,
+  errors,
+  menus,
+}: PanelProps & { readonly menus: readonly MenuChoice[] }) {
+  const c = t.onlineStoreCustomize;
+  return (
+    <section className="flex flex-col gap-4">
       <MenuSelect
         id="footer.menuHandle"
         label={c.footerMenu}
@@ -573,6 +571,29 @@ export function FooterPanel({
         />
         {c.showPolicyLinks}
       </label>
+      <label className="flex items-center gap-3 text-sm">
+        <Switch
+          checked={doc.footer.showSocial}
+          disabled={disabled}
+          onCheckedChange={(showSocial) =>
+            update((d) => ({ ...d, footer: { ...d.footer, showSocial } }))
+          }
+        />
+        {c.showSocial}
+      </label>
+      {/* `name` is the document path, so the API's `footer.note.ar` errors land on their tab. */}
+      <LocalizedTextField
+        t={t}
+        locale={locale}
+        name="footer.note"
+        label={c.footerNote}
+        max={200}
+        multiline
+        value={doc.footer.note}
+        disabled={disabled}
+        errors={errors}
+        onChange={(note) => update((d) => ({ ...d, footer: { ...d.footer, note } }))}
+      />
     </section>
   );
 }

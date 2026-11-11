@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MonitorIcon, SmartphoneIcon } from "lucide-react";
+import { ArrowLeftIcon, MonitorIcon, SmartphoneIcon } from "lucide-react";
 import {
   Button,
   Dialog,
@@ -11,14 +11,18 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
 } from "@platform/ui";
-import type { ThemeDocument } from "@platform/storefront-content";
+import { isKnownSection, type ThemeDocument } from "@platform/storefront-content";
 import {
   previewUrlAction,
   publishThemeAction,
   saveThemeDraftAction,
 } from "@/app/online-store/themes/actions";
-import type { OnlineStoreImageDto, ThemeStateDto } from "@/lib/api/online-store";
+import type { OnlineStoreImageDto, ThemeStateDto, ThemeTargetsDto } from "@/lib/api/online-store";
 import {
   createAutosaver,
   createReplayingSender,
@@ -26,19 +30,26 @@ import {
   type AutosaveState,
   type SendAnswer,
 } from "@/lib/online-store/autosave";
+import { postFocus, PREVIEW_READY_MESSAGE, previewOrigin } from "@/lib/online-store/preview-focus";
+import { findSection, updateSectionSettings } from "@/lib/online-store/section-tree";
 import { themeFieldErrors } from "@/lib/online-store/theme-field-errors";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import {
   ColorsPanel,
   CornersPanel,
-  FooterPanel,
   LogoPanel,
   SocialPanel,
   TypographyPanel,
   type FieldErrors,
   type MenuChoice,
 } from "./customize-panels";
+import { SectionSettingsForm } from "./sections/section-settings-form";
+import {
+  SectionTreePanel,
+  sectionTitle,
+  type SectionTreeHandle,
+} from "./sections/section-tree-panel";
 import { openPreview, publishMessage, type StaffRole } from "./theme-card";
 
 const AUTOSAVE_DELAY_MS = 1000;
@@ -90,6 +101,15 @@ export function CustomizeEditor({
   const revisionRef = useRef(state.draftRevision);
   const publishKeys = useRef(createRequestKey());
   const [images, setImages] = useState<Record<string, OnlineStoreImageDto>>({ ...state.images });
+  // Ruling 21 + F4: what the draft's references point to. `null` (the read failed) stays null until
+  // the first pick, which starts the map; each pick is merged as live so it shows no false flag.
+  const [targets, setTargets] = useState<ThemeTargetsDto | null>(state.targets);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedRef = useRef<string | null>(null);
+  selectedRef.current = selectedId;
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const treeRef = useRef<SectionTreeHandle>(null);
+  const backTo = useRef<string | null>(null);
   const [saveState, setSaveState] = useState<AutosaveState>("idle");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [socialInvalid, setSocialInvalid] = useState(false);
@@ -235,6 +255,38 @@ export function CustomizeEditor({
     };
   }, [preview, loadPreview]);
 
+  // Ruling 18: the preview scrolls to the section being edited, on selection and after a reload.
+  const previewUrl = preview?.url ?? null;
+  useEffect(() => {
+    if (selectedId === null || previewUrl === null) return;
+    postFocus(frameRef.current, previewUrl, selectedId);
+  }, [selectedId, previewUrl]);
+
+  // F3: the storefront says when its listener is ready; answer with the current selection. Only
+  // the preview's own origin and its own frame are believed.
+  useEffect(() => {
+    if (previewUrl === null) return;
+    const origin = previewOrigin(previewUrl);
+    const onMessage = (event: MessageEvent) => {
+      const data: unknown = event.data;
+      if (typeof data !== "object" || data === null) return;
+      if ((data as { type?: unknown }).type !== PREVIEW_READY_MESSAGE) return;
+      const frame = frameRef.current;
+      if (origin === null || event.origin !== origin) return;
+      if (frame === null || event.source !== frame.contentWindow) return;
+      if (selectedRef.current !== null) postFocus(frame, previewUrl, selectedRef.current);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [previewUrl]);
+
+  // "Back to sections" hides the form and shows the tree again: focus returns to the row.
+  useEffect(() => {
+    if (selectedId !== null || backTo.current === null) return;
+    treeRef.current?.focusRow(backTo.current);
+    backTo.current = null;
+  }, [selectedId]);
+
   const locked = saveState === "conflict";
   const update = (change: (d: ThemeDocument) => ThemeDocument) => {
     if (!canEdit || locked) return;
@@ -292,6 +344,19 @@ export function CustomizeEditor({
           ? c.saveError
           : null;
   const panels = { t, locale, doc, update, disabled: !canEdit || locked, errors: fieldErrors };
+  const s = t.onlineStoreSections;
+  const selected = selectedId === null ? null : findSection(doc, selectedId);
+  const selectedPath =
+    selected === null
+      ? null
+      : selected.place === "announcement"
+        ? "header.announcement"
+        : `homepage.sections.${selected.place}`;
+  const onTarget = (kind: keyof ThemeTargetsDto, id: string, title: string) =>
+    setTargets((previous) => {
+      const base: ThemeTargetsDto = previous ?? { collection: {}, product: {}, page: {} };
+      return { ...base, [kind]: { ...base[kind], [id]: { title, live: true } } };
+    });
 
   return (
     <div className="bg-background flex h-dvh flex-col">
@@ -382,38 +447,107 @@ export function CustomizeEditor({
         </div>
       )}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <aside className="border-border max-h-[45dvh] w-full shrink-0 overflow-y-auto border-b p-4 md:max-h-none md:w-80 md:border-b-0 md:border-e">
+        <aside
+          data-testid="sections-aside"
+          className="border-border max-h-[45dvh] w-full shrink-0 overflow-y-auto border-b p-4 md:max-h-none md:w-80 md:border-b-0 md:border-e xl:w-auto"
+        >
           {fieldErrors[""] === undefined ? null : (
             <p className="text-destructive mb-3 text-sm">{fieldErrors[""]}</p>
           )}
-          <details open className="mb-4">
-            <summary className="mb-2 font-medium">{c.logoPanel}</summary>
-            <LogoPanel
-              {...panels}
-              images={images}
-              onImage={(image) => setImages((m) => ({ ...m, [image.id]: image }))}
-            />
-          </details>
-          <details open className="mb-4">
-            <summary className="mb-2 font-medium">{c.colorsPanel}</summary>
-            <ColorsPanel {...panels} />
-          </details>
-          <details className="mb-4">
-            <summary className="mb-2 font-medium">{c.typographyPanel}</summary>
-            <TypographyPanel {...panels} />
-          </details>
-          <details className="mb-4">
-            <summary className="mb-2 font-medium">{c.cornersPanel}</summary>
-            <CornersPanel {...panels} />
-          </details>
-          <details className="mb-4">
-            <summary className="mb-2 font-medium">{c.socialPanel}</summary>
-            <SocialPanel {...panels} onLocalErrors={setSocialInvalid} />
-          </details>
-          <details className="mb-4">
-            <summary className="mb-2 font-medium">{c.footerPanel}</summary>
-            <FooterPanel {...panels} menus={menus} />
-          </details>
+          <Tabs defaultValue="sections">
+            <TabsList className="mb-2 w-full">
+              <TabsTrigger value="sections">{s.tabSections}</TabsTrigger>
+              <TabsTrigger value="theme">{s.tabTheme}</TabsTrigger>
+            </TabsList>
+            <TabsContent value="sections">
+              {/* One form instance in either layout: below xl the tree is swapped for it, at xl it
+                  is the second column (pure CSS; Task 11 allows no hidden copy). */}
+              <div className="xl:grid xl:grid-cols-[20rem_22rem] xl:items-start xl:gap-6">
+                <div className={selected === null ? undefined : "hidden xl:block"}>
+                  <SectionTreePanel
+                    t={t}
+                    locale={locale}
+                    doc={doc}
+                    targets={targets}
+                    images={images}
+                    errors={fieldErrors}
+                    selectedId={selectedId}
+                    disabled={!canEdit || locked}
+                    menus={menus}
+                    handleRef={treeRef}
+                    onSelect={setSelectedId}
+                    onUpdate={update}
+                  />
+                </div>
+                {selected === null || selectedPath === null ? null : (
+                  <div className="flex flex-col gap-4">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="self-start xl:hidden"
+                      onClick={() => {
+                        backTo.current = selectedId;
+                        setSelectedId(null);
+                      }}
+                    >
+                      <ArrowLeftIcon aria-hidden="true" className="rtl:rotate-180" />
+                      {s.back}
+                    </Button>
+                    <h3 className="text-sm font-semibold">
+                      <bdi dir="auto">{sectionTitle(t, locale, selected.section)}</bdi>
+                    </h3>
+                    {isKnownSection(selected.section) ? (
+                      <SectionSettingsForm
+                        t={t}
+                        locale={locale}
+                        section={selected.section}
+                        path={selectedPath}
+                        images={images}
+                        targets={targets}
+                        errors={fieldErrors}
+                        disabled={!canEdit || locked}
+                        onChange={(settings) =>
+                          update((d) => updateSectionSettings(d, selected.section.id, settings))
+                        }
+                        onImage={(image) => setImages((m) => ({ ...m, [image.id]: image }))}
+                        onTarget={onTarget}
+                      />
+                    ) : (
+                      <p className="text-muted-foreground text-sm">{s.unsupportedBody}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+            {/* Kept mounted: a social link typed but not yet valid keeps its state across tabs. */}
+            <TabsContent value="theme" forceMount className="data-[state=inactive]:hidden">
+              <details open className="mb-4">
+                <summary className="mb-2 font-medium">{c.logoPanel}</summary>
+                <LogoPanel
+                  {...panels}
+                  images={images}
+                  onImage={(image) => setImages((m) => ({ ...m, [image.id]: image }))}
+                />
+              </details>
+              <details open className="mb-4">
+                <summary className="mb-2 font-medium">{c.colorsPanel}</summary>
+                <ColorsPanel {...panels} />
+              </details>
+              <details className="mb-4">
+                <summary className="mb-2 font-medium">{c.typographyPanel}</summary>
+                <TypographyPanel {...panels} />
+              </details>
+              <details className="mb-4">
+                <summary className="mb-2 font-medium">{c.cornersPanel}</summary>
+                <CornersPanel {...panels} />
+              </details>
+              <details className="mb-4">
+                <summary className="mb-2 font-medium">{c.socialPanel}</summary>
+                <SocialPanel {...panels} onLocalErrors={setSocialInvalid} />
+              </details>
+            </TabsContent>
+          </Tabs>
         </aside>
         <main className="bg-surface flex min-h-0 min-w-0 flex-1 justify-center overflow-auto p-4">
           {previewProblem !== null ? (
@@ -433,9 +567,15 @@ export function CustomizeEditor({
               </Button>
             </div>
           ) : frameSrc === undefined ? null : (
-            // Ruling 17: no scroll restore across reloads in Part 1.
+            // Ruling 18: the reload after a save returns to the selected section (a focus message).
             <iframe
               key={frameVersion}
+              ref={frameRef}
+              onLoad={() => {
+                if (selectedRef.current !== null) {
+                  postFocus(frameRef.current, preview?.url ?? "", selectedRef.current);
+                }
+              }}
               title={c.previewTitle}
               src={frameSrc}
               sandbox={PREVIEW_SANDBOX}

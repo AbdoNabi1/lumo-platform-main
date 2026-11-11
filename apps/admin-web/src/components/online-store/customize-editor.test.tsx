@@ -1,7 +1,15 @@
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { DEFAULT_THEME_DOCUMENT, type ThemeDocument } from "@platform/storefront-content";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  DEFAULT_THEME_DOCUMENT,
+  newSection,
+  SECTION_FOCUS_MESSAGE,
+  sectionHeading,
+  type Section,
+  type ThemeDocument,
+} from "@platform/storefront-content";
+import type { ThemeTargetsDto } from "@/lib/api/online-store";
 import { en } from "@/messages/en";
 
 const actions = vi.hoisted(() => ({
@@ -11,9 +19,16 @@ const actions = vi.hoisted(() => ({
   discardThemeDraftAction: vi.fn(),
   restoreReleaseAction: vi.fn(),
 }));
-vi.mock("@/app/online-store/themes/actions", () => actions);
+vi.mock("@/app/online-store/themes/actions", () => ({
+  ...actions,
+  listLibraryImagesAction: vi.fn(),
+  updateImageAltAction: vi.fn(),
+}));
+const navigation = vi.hoisted(() => ({ searchLinkTargetsAction: vi.fn() }));
+vi.mock("@/app/online-store/navigation/actions", () => navigation);
 vi.mock("@/app/online-store/actions", () => ({ uploadOnlineStoreImageAction: vi.fn() }));
 const { CustomizeEditor } = await import("./customize-editor");
+const { LINK_SEARCH_DEBOUNCE_MS } = await import("./link-picker");
 
 const state = {
   draft: DEFAULT_THEME_DOCUMENT,
@@ -26,11 +41,12 @@ const state = {
   publishedBy: null,
   hasUnpublishedChanges: true,
   images: {},
-  targets: null,
+  targets: null as ThemeTargetsDto | null,
   version: 1,
 };
 
 beforeEach(() => {
+  expect.hasAssertions();
   vi.useFakeTimers();
   actions.previewUrlAction.mockResolvedValue({
     status: "ok",
@@ -44,12 +60,16 @@ beforeEach(() => {
     warnings: [],
   });
 });
-afterEach(() => {
+afterEach(async () => {
   // Unmount first: the editor saves a pending (or failed) change on unmount (F19), and that call
-  // must land before the mocks are reset, not in the next test.
+  // must land before the mocks are reset, not in the next test. Its answer may arm a retry timer;
+  // let that happen under the fake clock, which is dropped below. Armed after `useRealTimers` it
+  // would be a real 2 s timer that fires inside a later test and calls its mock.
   cleanup();
+  await vi.advanceTimersByTimeAsync(0);
   vi.useRealTimers();
   for (const fn of Object.values(actions)) fn.mockReset();
+  navigation.searchLinkTargetsAction.mockReset();
 });
 
 const menus = [
@@ -661,5 +681,348 @@ describe("CustomizeEditor", () => {
       "sale",
       "old-links",
     ]);
+  });
+});
+
+// ---- Part 3: the section editor ------------------------------------------------------------
+
+const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const SID1 = uuid(1);
+const SID2 = uuid(2);
+const richSection = (id: string, heading: string): Section => {
+  const base = newSection("rich_text", id);
+  return { ...base, settings: { ...base.settings, heading: { ar: heading, en: heading } } };
+};
+const stateWith = (
+  sections: readonly Section[],
+  extra: Partial<typeof state> = {},
+): typeof state => ({
+  ...state,
+  draft: {
+    ...DEFAULT_THEME_DOCUMENT,
+    homepage: { ...DEFAULT_THEME_DOCUMENT.homepage, sections },
+  },
+  ...extra,
+});
+const rowButton = (title: string) =>
+  screen
+    .getAllByRole("button")
+    .find(
+      (b) => b.closest("[data-section-row]") && b.querySelector("bdi")?.textContent === title,
+    ) as HTMLElement;
+const PREVIEW_URL = "https://shop.example/?preview=tok";
+const frame = () => screen.getByTitle(en.onlineStoreCustomize.previewTitle) as HTMLIFrameElement;
+const spyPost = (el: HTMLIFrameElement) =>
+  vi.spyOn(el.contentWindow as Window, "postMessage").mockImplementation(() => undefined);
+const ready = (init: MessageEventInit) =>
+  act(async () => {
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "morbeh:preview-ready" }, ...init }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+  });
+const focusMessage = (id: string) => ({ type: SECTION_FOCUS_MESSAGE, id });
+const headingLabel = `${en.onlineStoreSections.fields.heading} (${en.onlineStorePreferences.english})`;
+const hideButton = (name: string) =>
+  screen.getByRole("button", { name: en.onlineStoreSections.hide.replace("{name}", name) });
+
+describe("CustomizeEditor — the section editor (Part 3)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  it("has the Sections and Theme settings tabs, and the Theme tab still holds the Part 1 panels", async () => {
+    renderEditor();
+    await tick();
+    const sectionsTab = screen.getByRole("tab", { name: en.onlineStoreSections.tabSections });
+    const themeTab = screen.getByRole("tab", { name: en.onlineStoreSections.tabTheme });
+    expect(sectionsTab).toHaveAttribute("data-state", "active");
+    expect(
+      screen.getByRole("heading", { name: en.onlineStoreSections.template }),
+    ).toBeInTheDocument();
+    const panel = () => document.getElementById(themeTab.getAttribute("aria-controls")!)!;
+    expect(panel()).toHaveAttribute("data-state", "inactive");
+    fireEvent.mouseDown(themeTab, { button: 0 });
+    expect(panel()).toHaveAttribute("data-state", "active");
+    for (const name of [
+      en.onlineStoreCustomize.logoPanel,
+      en.onlineStoreCustomize.colorsPanel,
+      en.onlineStoreCustomize.typographyPanel,
+      en.onlineStoreCustomize.cornersPanel,
+      en.onlineStoreCustomize.socialPanel,
+    ]) {
+      expect(within(panel()).getByText(name)).toBeInTheDocument();
+    }
+    // The footer menu and note moved out of the Theme tab into the tree's Footer group.
+    expect(within(panel()).queryByLabelText(en.onlineStoreCustomize.footerMenu)).toBeNull();
+  });
+
+  it("focus posts to the preview origin, again after each reload (Review Focus 3)", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A"), richSection(SID2, "B")]));
+    await tick();
+    const first = frame();
+    const post = spyPost(first);
+    fireEvent.click(rowButton("A"));
+    expect(post).toHaveBeenCalledWith(focusMessage(SID1), "https://shop.example");
+    post.mockClear();
+    fireEvent.load(first);
+    expect(post).toHaveBeenCalledWith(focusMessage(SID1), "https://shop.example");
+    expect(post.mock.calls.every((call) => (call as unknown[])[1] !== "*")).toBe(true);
+
+    // A save reloads the frame (a new element): its load posts the selection again.
+    fireEvent.click(hideButton("A"));
+    await tick(1000);
+    const second = frame();
+    expect(second).not.toBe(first);
+    const next = spyPost(second);
+    fireEvent.load(second);
+    expect(next).toHaveBeenCalledWith(focusMessage(SID1), "https://shop.example");
+  });
+
+  it("nothing is posted on load while no section is selected", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    const post = spyPost(frame());
+    fireEvent.load(frame());
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("a ready message from the frame itself, at the preview origin, posts the selection (F3)", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    const el = frame();
+    const post = spyPost(el);
+    fireEvent.click(rowButton("A"));
+    post.mockClear();
+    await ready({ origin: "https://shop.example", source: el.contentWindow });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith(focusMessage(SID1), "https://shop.example");
+  });
+
+  it("a ready message from another origin, or from another window, posts nothing (F3)", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    const el = frame();
+    const post = spyPost(el);
+    fireEvent.click(rowButton("A"));
+    post.mockClear();
+    await ready({ origin: "https://evil.example", source: el.contentWindow });
+    await ready({ origin: "https://shop.example", source: window });
+    await ready({ origin: "https://shop.example", source: null });
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "something-else" },
+        origin: "https://shop.example",
+        source: el.contentWindow,
+      }),
+    );
+    window.dispatchEvent(
+      new MessageEvent("message", { data: "morbeh:preview-ready", origin: "https://shop.example" }),
+    );
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("a ready message with nothing selected posts nothing, and the listener goes on unmount (F3)", async () => {
+    const { unmount } = renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    const el = frame();
+    const post = spyPost(el);
+    await ready({ origin: "https://shop.example", source: el.contentWindow });
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(rowButton("A"));
+    post.mockClear();
+    const remove = vi.spyOn(window, "removeEventListener");
+    unmount();
+    expect(remove.mock.calls.some(([type]) => type === "message")).toBe(true);
+    await ready({ origin: "https://shop.example", source: el.contentWindow });
+    expect(post).not.toHaveBeenCalled();
+    remove.mockRestore();
+  });
+
+  it("adding a section autosaves the draft with it, and the second save carries the first save's version", async () => {
+    actions.saveThemeDraftAction.mockResolvedValueOnce({
+      status: "ok",
+      version: 9,
+      draftRevision: 4,
+      warnings: [],
+    });
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStoreSections.addSection }));
+    const hero = screen.getByRole("dialog").querySelector('button[data-section-type="hero"]')!;
+    fireEvent.click(hero);
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+    expect(saveArg(0).expectedVersion).toBe(1);
+    const types = saveArg(0).document.homepage.sections.map((section) => section.type);
+    expect(types).toEqual(["rich_text", "hero"]);
+    expect(frame()).toHaveAttribute("src", `${PREVIEW_URL}&v=4`);
+
+    // The new hero is selected; hide it from the tree (the eye toggle of the second row).
+    const heroTitle = sectionHeading(saveArg(0).document.homepage.sections[1]!, "en")!;
+    fireEvent.click(hideButton(heroTitle));
+    await tick(1000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(2);
+    expect(saveArg(1).expectedVersion).toBe(9);
+    expect(saveArg(1).document.homepage.sections[1]!.hidden).toBe(true);
+    expect(saveArg(1).idempotencyKey).not.toBe(saveArg(0).idempotencyKey);
+  });
+
+  it("selecting a section opens its settings form with the generated fields", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(rowButton("A"));
+    expect(screen.getByRole("button", { name: en.onlineStoreSections.back })).toBeInTheDocument();
+    expect(screen.getByLabelText(headingLabel)).toHaveValue("A");
+  });
+
+  it("an edit in the form autosaves the section's settings", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(rowButton("A"));
+    fireEvent.change(screen.getByLabelText(headingLabel), { target: { value: "Our story" } });
+    await tick(1000);
+    const section = saveArg(0).document.homepage.sections[0]!;
+    expect(JSON.stringify(section.settings)).toContain("Our story");
+    expect(section.id).toBe(SID1);
+  });
+
+  it("Back to sections shows the tree again and returns focus to the row", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(rowButton("A"));
+    fireEvent.click(screen.getByRole("button", { name: en.onlineStoreSections.back }));
+    expect(screen.queryByRole("button", { name: en.onlineStoreSections.back })).toBeNull();
+    expect(document.activeElement).toBe(rowButton("A"));
+  });
+
+  it("an unsupported section is named and has no settings form", async () => {
+    const future = { id: SID2, type: "countdown_timer", hidden: false, settings: { x: 1 } };
+    renderEditor("operator", stateWith([richSection(SID1, "A"), future]));
+    await tick();
+    fireEvent.click(rowButton(en.onlineStoreSections.unsupported));
+    expect(screen.getByText(en.onlineStoreSections.unsupportedBody)).toBeInTheDocument();
+    expect(screen.queryByLabelText(headingLabel)).toBeNull();
+  });
+
+  it("an invalid save puts the copy on the collection field and the dot on its row", async () => {
+    const collection = newSection("featured_collection", SID1);
+    const picked = {
+      ...collection,
+      settings: { ...collection.settings, collection: uuid(50) },
+    } as unknown as Section;
+    actions.saveThemeDraftAction.mockResolvedValueOnce({
+      status: "invalid",
+      fields: [{ field: "homepage.sections.0.settings.collection", message: "TARGET_NOT_FOUND" }],
+    });
+    const targets = {
+      collection: { [uuid(50)]: { title: "Sale", live: true } },
+      product: {},
+      page: {},
+    };
+    renderEditor("operator", stateWith([picked], { targets }));
+    await tick();
+    expect(screen.queryByRole("img", { name: en.onlineStoreSections.hasProblem })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Hide / }));
+    await tick(1000);
+    expect(
+      screen.getByRole("img", { name: en.onlineStoreSections.hasProblem }),
+    ).toBeInTheDocument();
+    fireEvent.click(rowButton("Featured collection"));
+    expect(screen.getByText(en.onlineStoreSections.errors.targetNotFound)).toBeInTheDocument();
+  });
+
+  it("a removed collection flags its row, and picking a collection shows no problem dot (F4)", async () => {
+    navigation.searchLinkTargetsAction.mockResolvedValue([
+      { id: uuid(60), title: "Summer", subtitle: "/collections/summer" },
+    ]);
+    const collection = newSection("featured_collection", SID1);
+    const removed = {
+      ...collection,
+      settings: { ...collection.settings, collection: uuid(61) },
+    } as unknown as Section;
+    const empty = { collection: {}, product: {}, page: {} };
+    renderEditor("operator", stateWith([removed], { targets: empty }));
+    await tick();
+    expect(
+      screen.getByRole("img", { name: en.onlineStoreSections.hasProblem }),
+    ).toBeInTheDocument();
+    fireEvent.click(rowButton("Featured collection"));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "sum" } });
+    await tick(LINK_SEARCH_DEBOUNCE_MS);
+    fireEvent.click(screen.getByRole("button", { name: /Summer/ }));
+    // The pick replaced the removed reference and is merged as live: no dot.
+    expect(screen.queryByRole("img", { name: en.onlineStoreSections.hasProblem })).toBeNull();
+  });
+
+  it("a 409 on a section edit stops autosave and shows the reload alert", async () => {
+    actions.saveThemeDraftAction.mockResolvedValue({ status: "conflict" });
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(hideButton("A"));
+    await tick(1000);
+    expect(screen.getByRole("alert")).toHaveTextContent(en.onlineStoreCustomize.conflict);
+    expect(
+      screen.getByRole("button", { name: en.onlineStoreSections.show.replace("{name}", "A") }),
+    ).toBeDisabled();
+    await tick(5000);
+    expect(actions.saveThemeDraftAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("beforeunload is prevented while a section edit is unsaved", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(hideButton("A"));
+    const leaving = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(true);
+    await tick(1000);
+    const after = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(false);
+  });
+
+  it("Publish stays disabled for an operator with the admin-only title", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    const publish = screen.getByRole("button", { name: en.onlineStoreCustomize.publish });
+    expect(publish).toBeDisabled();
+    expect(publish).toHaveAttribute("title", en.onlineStoreThemes.adminOnlyPublish);
+  });
+
+  it("the Header and Footer groups write the header and footer settings (the Part 2 cases)", async () => {
+    renderEditor();
+    await tick();
+    fireEvent.change(screen.getByLabelText(en.onlineStoreCustomize.headerMenu), {
+      target: { value: "sale" },
+    });
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.stickyHeader));
+    fireEvent.change(screen.getByLabelText(en.onlineStoreCustomize.footerMenu), {
+      target: { value: "main-menu" },
+    });
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.showPolicyLinks));
+    fireEvent.click(screen.getByLabelText(en.onlineStoreCustomize.showSocial));
+    await tick(1000);
+    const doc = saveArg(0).document;
+    expect(doc.header).toEqual({
+      ...DEFAULT_THEME_DOCUMENT.header,
+      menuHandle: "sale",
+      sticky: !DEFAULT_THEME_DOCUMENT.header.sticky,
+    });
+    expect(doc.footer).toEqual({
+      ...DEFAULT_THEME_DOCUMENT.footer,
+      menuHandle: "main-menu",
+      showPolicyLinks: !DEFAULT_THEME_DOCUMENT.footer.showPolicyLinks,
+      showSocial: !DEFAULT_THEME_DOCUMENT.footer.showSocial,
+    });
+  });
+
+  it("the footer note is written under footer.note", async () => {
+    renderEditor();
+    await tick();
+    const notes = screen.getAllByLabelText(new RegExp(en.onlineStoreCustomize.footerNote));
+    fireEvent.change(notes[0] as HTMLTextAreaElement, { target: { value: "Thank you" } });
+    await tick(1000);
+    expect(JSON.stringify(saveArg(0).document.footer.note)).toContain("Thank you");
   });
 });

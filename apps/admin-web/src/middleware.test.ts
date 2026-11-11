@@ -133,6 +133,18 @@ describe("middleware", () => {
     ).toBeNull();
   });
 
+  it("the section editor stays operator-only (Part 3 adds no route)", async () => {
+    const path = "/online-store/themes/customize";
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    const denied = await middleware(requestFor(path, "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    for (const role of ["operator", "admin"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const allowed = await middleware(requestFor(path, "good.token"));
+      expect(allowed.headers.get("location"), role).toBeNull();
+    }
+  });
+
   it("Online Store → Navigation: viewers read menus; a new menu needs an operator (Part 2)", async () => {
     const { ONLINE_STORE_NAV } = await import("@/components/navigation");
     expect((ONLINE_STORE_NAV.children ?? []).map((c) => c.href)).toContain(
