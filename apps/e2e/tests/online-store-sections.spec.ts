@@ -72,7 +72,9 @@ test.describe("online store sections", () => {
         await page.getByRole("button", { name: new RegExp(COLLECTION_NAME) }).click();
         await page.getByLabel("Heading (English)").fill(collectionHeading);
 
-        await expect(page.getByText("Saved")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByRole("status").filter({ hasText: /^Saved/ })).toBeVisible({
+          timeout: 15_000,
+        });
         await expect(frame.getByText(heroHeading)).toBeVisible({ timeout: 30_000 });
         await expect(frame.getByText(collectionHeading)).toBeVisible({ timeout: 30_000 });
         await expect(page.getByRole("button", { name: "Publish" })).toBeDisabled();
@@ -133,6 +135,7 @@ test.describe("online store sections", () => {
         await visitor.close();
       });
     } finally {
+      // Unlock again whatever happened above (a locked store implies an open admin page).
       if (locked && adminPage !== null) await setLock(adminPage, adminURL, false);
       if (adminContext !== null) await adminContext.close();
     }

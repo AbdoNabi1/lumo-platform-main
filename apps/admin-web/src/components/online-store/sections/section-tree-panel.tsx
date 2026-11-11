@@ -75,6 +75,8 @@ export interface SectionTreePanelProps {
   readonly onSelect: (id: string | null) => void;
   readonly onUpdate: (change: (doc: ThemeDocument) => ThemeDocument) => void;
   readonly handleRef?: Ref<SectionTreeHandle>;
+  /** Called with a duplicate's id; true when the caller moves focus itself (the row is hidden). */
+  readonly onCopied?: (id: string) => boolean;
 }
 
 const fill = (template: string, name: string) => template.replace("{name}", name);
@@ -186,6 +188,7 @@ export function SectionTreePanel({
   onSelect,
   onUpdate,
   handleRef,
+  onCopied,
 }: SectionTreePanelProps) {
   const s = t.onlineStoreSections;
   const idBase = useId();
@@ -242,7 +245,7 @@ export function SectionTreePanel({
   const duplicate = (id: string) => {
     const copyId = newItemId();
     if (duplicateSection(doc, id, copyId) === doc) return;
-    pendingFocus.current = { row: copyId };
+    pendingFocus.current = onCopied?.(copyId) === true ? null : { row: copyId };
     onUpdate((d) => duplicateSection(d, id, copyId));
     onSelect(copyId);
   };

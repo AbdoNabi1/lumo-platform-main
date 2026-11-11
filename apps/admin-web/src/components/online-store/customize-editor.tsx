@@ -101,9 +101,19 @@ export function CustomizeEditor({
   const revisionRef = useRef(state.draftRevision);
   const publishKeys = useRef(createRequestKey());
   const [images, setImages] = useState<Record<string, OnlineStoreImageDto>>({ ...state.images });
-  // Ruling 21 + F4: what the draft's references point to. `null` (the read failed) stays null until
-  // the first pick, which starts the map; each pick is merged as live so it shows no false flag.
-  const [targets, setTargets] = useState<ThemeTargetsDto | null>(state.targets);
+  // Ruling 21: what the draft's references point to. `null` (the read failed) stays null for the
+  // problem flags, whatever is picked; picks are kept apart and merged as live into a loaded map.
+  const [picked, setPicked] = useState<ThemeTargetsDto>({ collection: {}, product: {}, page: {} });
+  const targets: ThemeTargetsDto | null =
+    state.targets === null
+      ? null
+      : {
+          collection: { ...state.targets.collection, ...picked.collection },
+          product: { ...state.targets.product, ...picked.product },
+          page: { ...state.targets.page, ...picked.page },
+        };
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusHeading = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
@@ -281,6 +291,16 @@ export function CustomizeEditor({
   }, [previewUrl]);
 
   // "Back to sections" hides the form and shows the tree again: focus returns to the row.
+  // A duplicate below xl hides the tree: focus goes to the copy's form heading instead.
+  useEffect(() => {
+    if (selectedId === null || !focusHeading.current) return;
+    focusHeading.current = false;
+    headingRef.current?.focus();
+    // The closing row menu may still hold focus for one more tick.
+    const later = setTimeout(() => headingRef.current?.focus(), 0);
+    return () => clearTimeout(later);
+  }, [selectedId]);
+
   useEffect(() => {
     if (selectedId !== null || backTo.current === null) return;
     treeRef.current?.focusRow(backTo.current);
@@ -353,10 +373,7 @@ export function CustomizeEditor({
         ? "header.announcement"
         : `homepage.sections.${selected.place}`;
   const onTarget = (kind: keyof ThemeTargetsDto, id: string, title: string) =>
-    setTargets((previous) => {
-      const base: ThemeTargetsDto = previous ?? { collection: {}, product: {}, page: {} };
-      return { ...base, [kind]: { ...base[kind], [id]: { title, live: true } } };
-    });
+    setPicked((base) => ({ ...base, [kind]: { ...base[kind], [id]: { title, live: true } } }));
 
   return (
     <div className="bg-background flex h-dvh flex-col">
@@ -476,6 +493,11 @@ export function CustomizeEditor({
                     menus={menus}
                     handleRef={treeRef}
                     onSelect={setSelectedId}
+                    onCopied={() => {
+                      const wide = window.matchMedia?.("(min-width: 1280px)").matches === true;
+                      focusHeading.current = !wide;
+                      return !wide;
+                    }}
                     onUpdate={update}
                   />
                 </div>
@@ -494,7 +516,7 @@ export function CustomizeEditor({
                       <ArrowLeftIcon aria-hidden="true" className="rtl:rotate-180" />
                       {s.back}
                     </Button>
-                    <h3 className="text-sm font-semibold">
+                    <h3 ref={headingRef} tabIndex={-1} className="text-sm font-semibold">
                       <bdi dir="auto">{sectionTitle(t, locale, selected.section)}</bdi>
                     </h3>
                     {isKnownSection(selected.section) ? (

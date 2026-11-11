@@ -3801,7 +3801,6 @@ export const en = {
     socialInvalid: "Use a full https:// link.",
     socialTooLong:
       "This link is too long once encoded (over 500 characters). Each Arabic letter counts as 6.",
-    footerPanel: "Header & footer",
     stickyHeader: "Keep the header visible when scrolling",
     footerNote: "Footer note",
     showSocial: "Show social links in the footer",

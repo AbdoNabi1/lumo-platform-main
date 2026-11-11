@@ -955,6 +955,63 @@ describe("CustomizeEditor — the section editor (Part 3)", () => {
     expect(screen.queryByRole("img", { name: en.onlineStoreSections.hasProblem })).toBeNull();
   });
 
+  it("loaded targets null stay null for the flags: a pick shows no removed dot anywhere (F4 fix)", async () => {
+    navigation.searchLinkTargetsAction.mockResolvedValue([
+      { id: uuid(60), title: "Summer", subtitle: "/collections/summer" },
+    ]);
+    const collection = newSection("featured_collection", SID1);
+    const other = {
+      ...collection,
+      id: SID2,
+      settings: { ...collection.settings, collection: uuid(61) },
+    } as unknown as Section;
+    renderEditor("operator", stateWith([collection, other], { targets: null }));
+    await tick();
+    expect(screen.queryByRole("img", { name: en.onlineStoreSections.hasProblem })).toBeNull();
+    fireEvent.click(rowButton("Featured collection"));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "sum" } });
+    await tick(LINK_SEARCH_DEBOUNCE_MS);
+    fireEvent.click(screen.getByRole("button", { name: /Summer/ }));
+    // The other section's reference is not known to be removed just because something was picked.
+    expect(screen.queryByRole("img", { name: en.onlineStoreSections.hasProblem })).toBeNull();
+  });
+
+  it("a loaded map plus a pick: the picked target is live, the others keep their state", async () => {
+    navigation.searchLinkTargetsAction.mockResolvedValue([
+      { id: uuid(60), title: "Summer", subtitle: "/collections/summer" },
+    ]);
+    const collection = newSection("featured_collection", SID1);
+    const gone = {
+      ...collection,
+      id: SID2,
+      settings: { ...collection.settings, collection: uuid(61) },
+    } as unknown as Section;
+    const loaded = { collection: {}, product: {}, page: {} };
+    renderEditor("operator", stateWith([collection, gone], { targets: loaded }));
+    await tick();
+    const dots = () => screen.queryAllByRole("img", { name: en.onlineStoreSections.hasProblem });
+    expect(dots()).toHaveLength(1); // only the removed one
+    fireEvent.click(rowButton("Featured collection"));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "sum" } });
+    await tick(LINK_SEARCH_DEBOUNCE_MS);
+    fireEvent.click(screen.getByRole("button", { name: /Summer/ }));
+    expect(dots()).toHaveLength(1); // the picked one is live; the removed one still flagged
+  });
+
+  it("a duplicate below xl moves focus to the copy's form heading (the tree is hidden)", async () => {
+    renderEditor("operator", stateWith([richSection(SID1, "A")]));
+    await tick();
+    fireEvent.click(rowButton("A"));
+    fireEvent.keyDown(screen.getByRole("button", { name: /^More actions for A$/ }), {
+      key: "Enter",
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: en.onlineStoreSections.duplicate }));
+    await tick(10);
+    const heading = screen.getByRole("heading", { level: 3, name: "A" });
+    expect(document.activeElement).toBe(heading);
+    expect(document.querySelectorAll("[data-section-row]")).toHaveLength(2);
+  });
+
   it("a 409 on a section edit stops autosave and shows the reload alert", async () => {
     actions.saveThemeDraftAction.mockResolvedValue({ status: "conflict" });
     renderEditor("operator", stateWith([richSection(SID1, "A")]));
