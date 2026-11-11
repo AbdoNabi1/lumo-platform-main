@@ -191,4 +191,57 @@ describe("Sections", () => {
       "CL",
     ]);
   });
+
+  it("dispatches every section type except the announcement bar to a component (T9)", () => {
+    const lt = (text: string) => ({ ar: text, en: text });
+    const byType: Record<string, unknown> = {
+      hero: {
+        image: null,
+        mobileImage: null,
+        heading: lt("T-hero"),
+        subheading: lt(""),
+        button: null,
+        height: "small",
+        contentAlign: "start",
+        overlay: 0,
+      },
+      image_with_text: {
+        image: null,
+        heading: lt("T-iwt"),
+        body: lt(""),
+        button: null,
+        imagePosition: "start",
+      },
+      rich_text: { heading: lt("T-rich"), body: lt("b"), button: null, align: "start" },
+      testimonials: {
+        heading: lt("T-test"),
+        items: [{ quote: lt("q"), author: "a", rating: 0 }],
+      },
+      features: { heading: lt("T-feat"), items: [{ icon: "gift", title: lt("t"), text: lt("") }] },
+      whatsapp_cta: {
+        heading: lt("T-wa"),
+        text: lt(""),
+        buttonLabel: lt("go"),
+        phone: "201001234567",
+        message: lt(""),
+      },
+    };
+    const types = SECTION_TYPES.filter((type) => type !== "announcement_bar");
+    const sections = types
+      .filter((type) => type in byType)
+      .map((type, i) => ({ id: id(50 + i), type, settings: byType[type] })) as PublicSection[];
+    expect(sections.map((s) => s.type)).toEqual(Object.keys(byType));
+    expect(types).toEqual(
+      expect.arrayContaining(["featured_products", "featured_collection", "collection_list"]),
+    );
+    renderSections(sections, new Map());
+    expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "T-hero",
+      "T-iwt",
+      "T-rich",
+      "T-test",
+      "T-feat",
+      "T-wa",
+    ]);
+  });
 });

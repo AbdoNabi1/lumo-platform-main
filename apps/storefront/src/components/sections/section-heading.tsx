@@ -14,7 +14,7 @@ export function SectionHeading({
   const picked = pickText(text, locale);
   if (picked === null) return null;
   return (
-    <h2 id={`${id}-heading`} dir="auto" className="text-lg font-semibold">
+    <h2 id={`${id}-heading`} dir="auto" className="break-words text-lg font-semibold">
       {picked}
     </h2>
   );

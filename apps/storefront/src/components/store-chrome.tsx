@@ -6,6 +6,7 @@ import { storefrontSecrets } from "@/lib/storefront-env";
 import { PreviewBanner } from "./preview-banner";
 import { PreviewLinkKeeper } from "./preview-link-keeper";
 import { PreviewModeProvider } from "./preview-mode";
+import { AnnouncementBar } from "./sections/announcement-bar";
 import { SectionFocusListener } from "./sections/section-focus-listener";
 import { SiteFooter } from "./site-footer";
 import { SiteHeader } from "./site-header";
@@ -42,6 +43,16 @@ export function StoreChrome({
             expired={previewToken === null}
           />
         ) : null}
+        {/* Only here: LockedFrame and the gate never render the bar (Ruling 25). */}
+        {shell.header.announcement === null ? null : (
+          <AnnouncementBar
+            section={shell.header.announcement}
+            locale={locale}
+            previewToken={previewToken}
+            t={t}
+            preview={previewToken !== null}
+          />
+        )}
         <div
           className={cn(
             "bg-background/95 border-border z-30 border-b backdrop-blur-sm",

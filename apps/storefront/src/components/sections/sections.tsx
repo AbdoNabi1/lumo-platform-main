@@ -7,7 +7,13 @@ import type { Dictionary } from "@/messages/en";
 import { CollectionList } from "./collection-list";
 import { FeaturedCollection } from "./featured-collection";
 import { FeaturedProducts } from "./featured-products";
+import { FeaturesSection } from "./features";
+import { HeroSection } from "./hero";
+import { ImageWithTextSection } from "./image-with-text";
+import { RichTextSection } from "./rich-text-section";
 import { SectionFrame } from "./section-frame";
+import { TestimonialsSection } from "./testimonials";
+import { WhatsAppCtaSection } from "./whatsapp-cta";
 
 interface SectionsProps {
   readonly sections: readonly PublicSection[];
@@ -26,6 +32,12 @@ const HANDLED: ReadonlySet<string> = new Set([
   "featured_products",
   "featured_collection",
   "collection_list",
+  "hero",
+  "image_with_text",
+  "rich_text",
+  "testimonials",
+  "features",
+  "whatsapp_cta",
 ]);
 
 /** The content of one complete section of a handled type. */
@@ -66,6 +78,30 @@ function contentOf(section: PublicSection, data: SectionData, props: SectionsPro
           locale={locale}
         />
       );
+    case "hero":
+      return (
+        <HeroSection
+          section={section}
+          locale={locale}
+          previewToken={previewToken}
+          eager={section.id === props.eagerHeroId}
+          t={t}
+        />
+      );
+    case "image_with_text":
+      return (
+        <ImageWithTextSection section={section} locale={locale} previewToken={previewToken} t={t} />
+      );
+    case "rich_text":
+      return (
+        <RichTextSection section={section} locale={locale} previewToken={previewToken} t={t} />
+      );
+    case "testimonials":
+      return <TestimonialsSection section={section} locale={locale} t={t} />;
+    case "features":
+      return <FeaturesSection section={section} locale={locale} t={t} />;
+    case "whatsapp_cta":
+      return <WhatsAppCtaSection section={section} locale={locale} t={t} />;
     default:
       return null;
   }
@@ -94,6 +130,11 @@ function headingIdOf(section: PublicSection, locale: Locale): string | undefined
     case "featured_products":
     case "featured_collection":
     case "collection_list":
+    case "image_with_text":
+    case "rich_text":
+    case "testimonials":
+    case "features":
+    case "whatsapp_cta":
       return pickText(section.settings.heading, locale) === null
         ? undefined
         : `${section.id}-heading`;
@@ -104,7 +145,9 @@ function headingIdOf(section: PublicSection, locale: Locale): string | undefined
 
 /**
  * The homepage sections in order. A section whose data read failed is omitted and the rest still
- * render (Ruling 14). A type this renderer does not handle renders nothing. Task 9 extends the map.
+ * render (Ruling 14). A type this renderer does not handle renders nothing: the announcement bar
+ * lives in the store chrome. An incomplete or hidden section of a handled type keeps its frame in
+ * preview, so the editor can still focus it.
  */
 export function Sections(props: SectionsProps) {
   const { sections, data, t, mode } = props;

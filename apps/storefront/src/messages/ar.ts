@@ -75,6 +75,9 @@ export const ar: Dictionary = {
     hiddenPlaceholder: "قسم مخفي",
     incompletePlaceholder: "أكمل إعداد هذا القسم",
     viewAll: "عرض الكل",
+    rating: "التقييم {rating} من {max}",
+    announcement: "إعلان",
+    opensInNewTab: "يفتح في نافذة جديدة",
   },
   product: {
     unavailable: "هذا المنتج غير متاح حالياً.",

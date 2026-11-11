@@ -70,6 +70,9 @@ export const en = {
     hiddenPlaceholder: "Hidden section",
     incompletePlaceholder: "Finish setting up this section",
     viewAll: "View all",
+    rating: "Rated {rating} out of {max}",
+    announcement: "Announcement",
+    opensInNewTab: "Opens in a new tab",
   },
   product: {
     unavailable: "This product isn't available right now.",

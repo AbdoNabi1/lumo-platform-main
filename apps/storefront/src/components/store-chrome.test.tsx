@@ -87,6 +87,96 @@ describe("StoreChrome preview pieces (Ruling 16)", () => {
   });
 });
 
+const announcement = (over: Record<string, unknown> = {}): StorefrontShell["header"] => ({
+  sticky: false,
+  menu: [],
+  announcement: {
+    id: "00000000-0000-4000-8000-0000000000a1",
+    type: "announcement_bar",
+    settings: { text: { en: "Free shipping" }, link: null, style: "accent" },
+    ...over,
+  } as NonNullable<StorefrontShell["header"]["announcement"]>,
+});
+
+describe("StoreChrome announcement bar (Ruling 25)", () => {
+  it("renders above the header row, outside the sticky wrapper", () => {
+    render(
+      <StoreChrome
+        shell={{ ...FALLBACK_SHELL, header: { ...announcement(), sticky: true } }}
+        locale="en"
+        previewToken={null}
+        previewExpired={false}
+      >
+        <Probe />
+      </StoreChrome>,
+    );
+    const region = screen.getByRole("region", { name: en.sections.announcement });
+    const header = screen.getByRole("banner");
+    expect(region).toHaveTextContent("Free shipping");
+    expect(region.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(region.closest(".sticky")).toBeNull();
+    expect(header.closest(".sticky")).not.toBeNull();
+  });
+
+  it("comes after the preview banner and, in preview, sits inside data-section-id", () => {
+    const { container } = render(
+      <StoreChrome
+        shell={{ ...preview, header: announcement() }}
+        locale="en"
+        previewToken="tok"
+        previewExpired={false}
+      >
+        <Probe />
+      </StoreChrome>,
+    );
+    const wrapper = container.firstElementChild!;
+    expect(wrapper.children[0]).toBe(screen.getByRole("status"));
+    expect(wrapper.children[1]).toHaveAttribute(
+      "data-section-id",
+      "00000000-0000-4000-8000-0000000000a1",
+    );
+    expect(screen.getByRole("region", { name: en.sections.announcement })).toBeInTheDocument();
+  });
+
+  it("in preview a hidden bar renders the placeholder inside data-section-id", () => {
+    const { container } = render(
+      <StoreChrome
+        shell={{ ...preview, header: announcement({ hidden: true }) }}
+        locale="en"
+        previewToken="tok"
+        previewExpired={false}
+      >
+        <Probe />
+      </StoreChrome>,
+    );
+    const frame = container.querySelector("[data-section-id]");
+    expect(frame).toHaveTextContent(en.sections.hiddenPlaceholder);
+    expect(screen.queryByText("Free shipping")).toBeNull();
+  });
+
+  it("live: no announcement, nothing renders; a live bar has no data-section-id", () => {
+    const none = render(
+      <StoreChrome shell={FALLBACK_SHELL} locale="en" previewToken={null} previewExpired={false}>
+        <Probe />
+      </StoreChrome>,
+    );
+    expect(screen.queryByRole("region", { name: en.sections.announcement })).toBeNull();
+    none.unmount();
+    const { container } = render(
+      <StoreChrome
+        shell={{ ...FALLBACK_SHELL, header: announcement() }}
+        locale="en"
+        previewToken={null}
+        previewExpired={false}
+      >
+        <Probe />
+      </StoreChrome>,
+    );
+    expect(screen.getByRole("region", { name: en.sections.announcement })).toBeInTheDocument();
+    expect(container.querySelector("[data-section-id]")).toBeNull();
+  });
+});
+
 describe("StoreChrome section focus listener", () => {
   it("is mounted only in preview with an admin origin", () => {
     const view = (token: string | null) => (

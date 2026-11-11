@@ -165,6 +165,24 @@ describe("NotFound on a locked store (Ruling 5, preflight 7)", () => {
     expectNoChrome();
   });
 
+  it("a locked shell with an announcement renders no bar (Ruling 25)", async () => {
+    request.shell = lockedShell({
+      header: {
+        sticky: false,
+        menu: [],
+        announcement: {
+          id: "00000000-0000-4000-8000-0000000000a1",
+          type: "announcement_bar",
+          settings: { text: { en: "Secret sale" }, link: null, style: "dark" },
+        },
+      },
+    });
+    render(await NotFound());
+    expectNoChrome();
+    expect(screen.queryByText("Secret sale")).toBeNull();
+    expect(screen.queryByRole("region", { name: en.sections.announcement })).toBeNull();
+  });
+
   it("the owner's preview of a locked store keeps the chrome", async () => {
     request.shell = lockedShell({ mode: "preview" });
     request.token = "tok";

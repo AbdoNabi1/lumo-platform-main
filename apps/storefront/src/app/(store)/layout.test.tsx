@@ -1,5 +1,6 @@
 import { isValidElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
 import { LockedFrame } from "@/components/locked-frame";
 import { StoreChrome } from "@/components/store-chrome";
 import { FALLBACK_SHELL, type StorefrontShell } from "@/lib/online-store";
@@ -103,6 +104,30 @@ describe("StoreLayout locked view (Ruling 5)", () => {
     const props = (element as { props: { locale: string; shell: StorefrontShell } }).props;
     expect(props.locale).toBe("en");
     expect(props.shell.storeName).toBe("Nour");
+  });
+
+  it("a locked view never renders the announcement bar (Ruling 25)", async () => {
+    request.lockedView = true;
+    request.shell = {
+      ...FALLBACK_SHELL,
+      locked: true,
+      storeName: "Nour",
+      header: {
+        sticky: false,
+        menu: [],
+        announcement: {
+          id: "00000000-0000-4000-8000-0000000000a1",
+          type: "announcement_bar",
+          settings: { text: { en: "Secret sale" }, link: null, style: "dark" },
+        },
+      },
+    };
+    const element = await StoreLayout({ children: <p>policy</p> });
+    expect(isValidElement(element) && element.type === LockedFrame).toBe(true);
+    render(element);
+    expect(screen.getByText("policy")).toBeInTheDocument();
+    expect(screen.queryByText("Secret sale")).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
   });
 
   it("a locked view with a failed shell read (FALLBACK_SHELL, unlocked) still gets no chrome", async () => {
