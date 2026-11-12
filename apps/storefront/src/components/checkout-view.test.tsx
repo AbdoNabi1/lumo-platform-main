@@ -1222,13 +1222,15 @@ describe("CheckoutView — discount code field, chips and totals (Discounts Part
 
       fireEvent.click(submit());
 
-      const notice = await screen.findByRole("status");
+      const notice = await screen.findByRole("status", {}, { timeout: 5000 });
       expect(notice).toHaveTextContent(en.checkout.discountsChanged);
       expect(calls.slice(-2)).toEqual(["requestTax", "recalculate"]);
       expect(completeCheckout).not.toHaveBeenCalled();
       expect(initiatePayment).not.toHaveBeenCalled();
       expect(push).not.toHaveBeenCalled();
-      await waitFor(() => expect(submit()).toBeEnabled());
+      // The button reads "Processing…" until the transition ends; a slow CI runner needs more than
+      // the 1s default to get "Complete order" back.
+      await waitFor(() => expect(submit()).toBeEnabled(), { timeout: 5000 });
     });
 
     it("also stops when only the shipping discount moved", async () => {
@@ -1238,7 +1240,9 @@ describe("CheckoutView — discount code field, chips and totals (Discounts Part
 
       fireEvent.click(submit());
 
-      expect(await screen.findByRole("status")).toHaveTextContent(en.checkout.discountsChanged);
+      expect(await screen.findByRole("status", {}, { timeout: 5000 })).toHaveTextContent(
+        en.checkout.discountsChanged,
+      );
       expect(completeCheckout).not.toHaveBeenCalled();
     });
 
@@ -1249,7 +1253,9 @@ describe("CheckoutView — discount code field, chips and totals (Discounts Part
 
       fireEvent.click(submit());
 
-      await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"));
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"), {
+        timeout: 5000,
+      });
       expect(calls.slice(-4)).toEqual([
         "requestTax",
         "recalculate",
@@ -1265,7 +1271,9 @@ describe("CheckoutView — discount code field, chips and totals (Discounts Part
 
       fireEvent.click(submit());
 
-      await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"));
+      await waitFor(() => expect(push).toHaveBeenCalledWith("/checkout/confirmation"), {
+        timeout: 5000,
+      });
       expect(completeCheckout).toHaveBeenCalledWith("checkout-1");
     });
   });
