@@ -64,8 +64,8 @@ export class InMemoryPlanRepository implements PlanRepository {
     return null;
   }
 
-  async listPublished(): Promise<readonly Plan[]> {
-    return sortPublishedPlans([...this.store.values()]);
+  listPublished(): Promise<readonly Plan[]> {
+    return Promise.resolve(sortPublishedPlans([...this.store.values()]));
   }
 }
 
@@ -288,7 +288,7 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
     return entry !== undefined && entry.tenantId === tenantId ? entry.invoice : null;
   }
 
-  async listByTenantRef(tenantRef: string, tenantId: string): Promise<readonly Invoice[]> {
+  listByTenantRef(tenantRef: string, tenantId: string): Promise<readonly Invoice[]> {
     const mine: Invoice[] = [];
     for (const entry of this.store.values()) {
       if (entry.tenantId === tenantId && entry.invoice.tenantRef === tenantRef) {
@@ -296,9 +296,9 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
       }
     }
     // Insertion order is oldest first; reversing before a stable sort keeps newest-first on equal times.
-    return mine
-      .reverse()
-      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+    return Promise.resolve(
+      mine.reverse().sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)),
+    );
   }
 }
 

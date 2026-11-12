@@ -134,19 +134,25 @@ export class InMemoryShopDomainRepository implements ShopDomainRepository {
 export class InMemoryStaffDirectoryRepository implements StaffDirectoryRepository {
   private readonly store = new Map<string, StaffDirectoryEntry>();
 
-  async findByEmail(email: string): Promise<StaffDirectoryEntry | null> {
-    return this.store.get(email) ?? null;
+  findByEmail(email: string): Promise<StaffDirectoryEntry | null> {
+    return Promise.resolve(this.store.get(email) ?? null);
   }
 
-  async create(entry: StaffDirectoryEntry): Promise<void> {
+  create(entry: StaffDirectoryEntry): Promise<void> {
     // Synchronous check-and-set: two concurrent callers cannot both pass it.
-    if (this.store.has(entry.email)) throw new ConflictError("Email already has a store");
+    if (this.store.has(entry.email)) {
+      return Promise.reject(new ConflictError("Email already has a store"));
+    }
     this.store.set(entry.email, entry);
+    return Promise.resolve();
   }
 
-  async save(entry: StaffDirectoryEntry): Promise<void> {
-    if (!this.store.has(entry.email)) throw new Error("staff directory entry does not exist");
+  save(entry: StaffDirectoryEntry): Promise<void> {
+    if (!this.store.has(entry.email)) {
+      return Promise.reject(new Error("staff directory entry does not exist"));
+    }
     this.store.set(entry.email, entry);
+    return Promise.resolve();
   }
 }
 
