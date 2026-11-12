@@ -181,7 +181,11 @@ describe("RecoveryCard (order operations Part 3)", () => {
     renderCard();
     fireEvent.click(screen.getByRole("button", { name: r.copy }));
     await screen.findByRole("button", { name: r.copied });
-    fireEvent.click(screen.getByRole("button", { name: r.whatsapp }));
+    // "Copied" can render while the copy transition is still pending, and both buttons are
+    // disabled until it ends; a click on the disabled button would be ignored (as for a merchant).
+    const whatsapp = screen.getByRole("button", { name: r.whatsapp });
+    await waitFor(() => expect(whatsapp).toBeEnabled());
+    fireEvent.click(whatsapp);
     await screen.findByLabelText(r.messageLabel);
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: r.copied, hidden: true })).toBeNull(),
