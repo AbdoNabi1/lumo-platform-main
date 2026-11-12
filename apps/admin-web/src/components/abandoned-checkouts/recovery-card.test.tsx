@@ -1,5 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  configure,
+  fireEvent,
+  getConfig,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 
@@ -31,6 +39,17 @@ function stubClipboard(writeText: () => Promise<void>) {
     configurable: true,
   });
 }
+
+// Every wait here is on the card after a link is minted; on a slow CI runner that takes longer
+// than Testing Library's 1s default (a WhatsApp message box was missed at ~1.1s).
+let defaultAsyncTimeout = 1000;
+beforeAll(() => {
+  defaultAsyncTimeout = getConfig().asyncUtilTimeout;
+  configure({ asyncUtilTimeout: 5000 });
+});
+afterAll(() => {
+  configure({ asyncUtilTimeout: defaultAsyncTimeout });
+});
 
 beforeEach(() => {
   issueRecoveryLinkAction.mockResolvedValue({ ok: true, url: URL, shopName: "Sara Shop" });
