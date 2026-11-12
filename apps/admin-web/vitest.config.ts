@@ -27,6 +27,9 @@ export default defineConfig({
     },
 
     environment: "jsdom",
+    // 2026-10-18: the CI coverage run (v8-instrumented jsdom) took 6.7–8.5s on a few dialog/editor
+    // tests, over the 5s default; the per-call waitFor timeouts inside them already allow 5s.
+    testTimeout: 20_000,
     globals: false,
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],

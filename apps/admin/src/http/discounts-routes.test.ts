@@ -30,14 +30,16 @@ function build() {
     params: Record<string, string> = {},
     body?: unknown,
     query: Record<string, string> = {},
+    tenantId: string = TENANT,
   ) => {
     const route = routes.find((r: RouteDefinition) => r.method === method && r.path === path);
     if (route === undefined) throw new Error(`no route ${method} ${path}`);
+    const principal: Principal = { ...staff, tenantId };
     return route.handle({
       body,
       params,
       query,
-      context: { tenantId: TENANT, principal: staff, requestId: "r" },
+      context: { tenantId, principal, requestId: "r" },
     } as never) as Promise<Response>;
   };
   return { admin, call };
@@ -202,6 +204,28 @@ describe("/discounts — Shopify-style facade (Phase 2)", () => {
       title: "SALE15",
       value: { kind: "percentage", amount: 15 },
       usageLimit: 5,
+    });
+  });
+
+  it("never edits another tenant's discount", async () => {
+    const { call } = build();
+    const created = body<DiscountDto>(await call("POST", "/discounts", {}, sale10));
+    const id = { discountId: created.id };
+    const edit = { ...sale10, code: "HIJACK", value: { kind: "percentage", amount: 100 } };
+
+    const fromOtherTenant = await call("PUT", "/discounts/:discountId", id, edit, {}, "tenant-b");
+    expect(fromOtherTenant.status).toBe(404);
+    // A tenantId in the body cannot redirect the write either: the form schema is strict.
+    const smuggled = await call("PUT", "/discounts/:discountId", id, {
+      ...edit,
+      tenantId: "tenant-b",
+    });
+    expect(smuggled.status).toBe(422);
+
+    const unchanged = body<DiscountDto>(await call("GET", "/discounts/:discountId", id));
+    expect(unchanged).toMatchObject({
+      code: "SALE10",
+      value: { kind: "percentage", amount: 10 },
     });
   });
 

@@ -37,6 +37,7 @@ import type {
   ShippingQuoteSummary,
 } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { CheckoutDiscountCode } from "./checkout-discount-code";
 import { LineThumb } from "./line-thumb";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
@@ -45,6 +46,7 @@ type ErrorReason =
   | "validation"
   | "unavailable"
   | "out-of-stock"
+  | "discounts-changed"
   | "network"
   | "paymentOpen"
   | "handoff";
@@ -140,6 +142,7 @@ function errorBody(reason: ErrorReason, t: Dictionary): string {
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
   if (reason === "out-of-stock") return t.checkout.outOfStock;
+  if (reason === "discounts-changed") return t.checkout.discountsChanged;
   if (reason === "paymentOpen") return t.checkout.paymentOpenError;
   if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;
@@ -184,8 +187,13 @@ function ErrorBanner({
   return (
     <div
       ref={bannerRef}
-      role="alert"
-      className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      // Changed discounts are news, not a failure: the summary already shows the new total.
+      role={reason === "discounts-changed" ? "status" : "alert"}
+      className={
+        reason === "discounts-changed"
+          ? "border-border bg-muted rounded-md border px-3 py-2 text-sm"
+          : "border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      }
     >
       {errorBody(reason, t)}
       {reason === "out-of-stock" && (
@@ -409,6 +417,11 @@ function CheckoutForm({
     return false;
   }
 
+  /** Like choosing a shipping method: a change the shopper just made supersedes the old message. */
+  function clearError(): void {
+    setError(null);
+  }
+
   /** Runs `job` after every earlier job, so address saves and the final submit never overlap. */
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
     const next = queueRef.current.then(job, job);
@@ -547,6 +560,12 @@ function CheckoutForm({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    // The discounts the shopper reviewed. Tax and recalculation below refresh them server-side and
+    // store the new snapshot, so completion's own check would compare against the refreshed one.
+    const seen = {
+      order: session.totals?.discountMinor ?? 0,
+      shipping: session.totals?.shippingDiscountMinor ?? 0,
+    };
     // 1. Contact.
     if (contactSetRef.current !== emailValue) {
       const contact = await setContactEmail(session.id, emailValue);
@@ -576,13 +595,31 @@ function CheckoutForm({
       fail(payment.reason);
       return;
     }
-    // 5-7. Tax, fresh totals, completion.
-    for (const step of [requestTax, recalculate, completeCheckout] as const) {
-      const result: CheckoutActionResult = await step(session.id);
-      if (!result.ok) {
-        fail(result.reason);
-        return;
-      }
+    // 5. Tax.
+    const taxed = await requestTax(session.id);
+    if (!taxed.ok) {
+      fail(taxed.reason);
+      return;
+    }
+    // 6. Fresh totals. Stop before completing when the discounts are no longer the ones the
+    // shopper saw (a code expired, a limit was reached): `recalculate` revalidated `/checkout`, so
+    // the new total is on screen. Only discounts are compared — tax may legitimately appear here.
+    // Unreadable figures (`null`) go on; completion's DISCOUNTS_CHANGED 409 is the backstop.
+    const recalculated = await recalculate(session.id);
+    if (!recalculated.ok) {
+      fail(recalculated.reason);
+      return;
+    }
+    const fresh = recalculated.discounts;
+    if (fresh !== null && (fresh.order !== seen.order || fresh.shipping !== seen.shipping)) {
+      fail("discounts-changed");
+      return;
+    }
+    // 7. Completion.
+    const completed: CheckoutActionResult = await completeCheckout(session.id);
+    if (!completed.ok) {
+      fail(completed.reason);
+      return;
     }
     // 8. Strictly after completion: the API only opens a payment for a completed checkout.
     setError(null);
@@ -641,6 +678,8 @@ function CheckoutForm({
               selected={selectedMethod}
               t={t}
               locale={locale}
+              onError={setError}
+              onDiscountChange={clearError}
             />
           </div>
         </details>
@@ -843,6 +882,8 @@ function CheckoutForm({
             selected={selectedMethod}
             t={t}
             locale={locale}
+            onError={setError}
+            onDiscountChange={clearError}
           />
         </aside>
       </div>
@@ -1055,6 +1096,9 @@ function AddressFields({
   );
 }
 
+/** The sign shown before a discount amount (U+2212, a real minus). */
+const MINUS = "−";
+
 /** Display-only sum of the lines (price × quantity); the server's totals take over once they exist. */
 function linesTotal(session: CheckoutSessionSummary): number {
   return session.items.reduce((sum, item) => sum + item.unitPriceAmountMinor * item.quantity, 0);
@@ -1076,9 +1120,10 @@ function totalAmount(
   quotes: readonly ShippingQuoteSummary[],
   selected: string | null,
 ): number {
-  const subtotal = session.totals?.subtotalMinor ?? linesTotal(session);
-  if (selected === null) return subtotal;
+  // The server's total, always: with discounts in play the client never works one out itself.
   if (session.totals !== null) return session.totals.grandTotalMinor;
+  const subtotal = linesTotal(session);
+  if (selected === null) return subtotal;
   return subtotal + (shippingAmount(session, quotes, selected) ?? 0);
 }
 
@@ -1108,14 +1153,20 @@ function SummaryBody({
   selected,
   t,
   locale,
+  onError,
+  onDiscountChange,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly quotes: readonly ShippingQuoteSummary[];
   readonly selected: string | null;
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly onError: (reason: ErrorReason) => void;
+  /** A code was applied or removed: the page's banner/notice is stale. */
+  readonly onDiscountChange: () => void;
 }) {
   const shippingMinor = shippingAmount(session, quotes, selected);
+  const shippingDiscountMinor = session.totals?.shippingDiscountMinor ?? 0;
   return (
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-3">
@@ -1146,6 +1197,13 @@ function SummaryBody({
           </li>
         ))}
       </ul>
+      <CheckoutDiscountCode
+        checkoutSessionId={session.id}
+        codes={session.discount?.codes ?? []}
+        t={t}
+        onError={onError}
+        onSuccess={onDiscountChange}
+      />
       <dl className="border-border flex flex-col gap-1.5 border-t pt-3 text-sm">
         <SummaryRow
           label={t.checkout.summary.subtotal}
@@ -1155,12 +1213,35 @@ function SummaryBody({
             session.currency,
           )}
         />
+        {(session.discount?.applied ?? [])
+          .filter((applied) => applied.discountClass !== "shipping")
+          .map((applied, index) => (
+            <SummaryRow
+              key={`${applied.code ?? applied.title}-${index}`}
+              label={applied.code ?? applied.title}
+              value={`${MINUS}${formatCurrency(locale, applied.amountMinor, session.currency)}`}
+            />
+          ))}
         <SummaryRow
           label={t.checkout.summary.shipping}
           value={
-            shippingMinor === null
-              ? t.checkout.summary.enterShippingAddress
-              : priceLabel(shippingMinor, session.currency, locale, t)
+            shippingMinor === null ? (
+              t.checkout.summary.enterShippingAddress
+            ) : shippingDiscountMinor > 0 ? (
+              <>
+                <s className="text-muted-foreground me-2">
+                  {formatCurrency(locale, shippingMinor, session.currency)}
+                </s>
+                {priceLabel(
+                  Math.max(0, shippingMinor - shippingDiscountMinor),
+                  session.currency,
+                  locale,
+                  t,
+                )}
+              </>
+            ) : (
+              priceLabel(shippingMinor, session.currency, locale, t)
+            )
           }
           muted={shippingMinor === null}
         />
@@ -1199,7 +1280,7 @@ function SummaryRow({
   muted = false,
 }: {
   readonly label: string;
-  readonly value: string;
+  readonly value: ReactNode;
   readonly muted?: boolean;
 }) {
   return (

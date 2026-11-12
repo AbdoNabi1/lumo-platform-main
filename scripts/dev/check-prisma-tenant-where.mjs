@@ -108,6 +108,12 @@ export const EXEMPTIONS = {
     reason:
       "ConsentProjectionStore port, not Prisma; the tenant is an explicit argument (readEnvelopeTenant)",
   },
+  // Not a Prisma call: the Promotions CONTROLLER (`deps.promotions`), whose update takes `tenantId` in
+  // its input and scopes the repository write itself.
+  "apps/admin/src/interfaces/discounts/discounts.admin-controller.ts|promotions.update": {
+    cls: "typed-where",
+    reason: "PromotionsController.update, not Prisma; tenantId is a required field of its input",
+  },
   // G-75 and G-76 (both classes of "a row addressed by id alone") closed 2026-09-27: the tracking
   // store's findFirst now names the tenant, and the two upserts became updateMany-scoped-to-tenant +
   // create-on-miss. No open exemptions remain — see docs/plans/phase-7/WP-10-guard-verification.md.
