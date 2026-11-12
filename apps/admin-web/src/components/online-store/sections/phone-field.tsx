@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { Input, Label } from "@platform/ui";
-import { isWhatsAppDigits, toWhatsAppDigits } from "@platform/storefront-content";
+import { toWhatsAppDigits } from "@platform/storefront-content";
 import { errorAria, FieldError } from "./field-shared";
 
-// Only a valid number is shown as "+digits"; an invalid stored value is shown as stored, because a
-// leading plus would change how the shared rule reads what the merchant types next.
-const show = (stored: string) => (isWhatsAppDigits(stored) ? `+${stored}` : stored);
+// Only a number the shared rule itself produced is shown as "+digits". The digit-shape check alone
+// is not enough: a bare 8-10 digit value such as "501234567" has the right shape, but the rule
+// refuses it, and with a plus in front it would read as a different international number.
+const show = (stored: string) =>
+  stored !== "" && toWhatsAppDigits(stored) === stored ? `+${stored}` : stored;
 
 /**
  * A WhatsApp number. What is typed is kept as typed; a number the shared rule accepts is stored as

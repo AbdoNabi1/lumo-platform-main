@@ -232,6 +232,15 @@ describe("generated fields", () => {
     expect(screen.getByLabelText(f.phone)).toHaveValue("0123");
   });
 
+  it("reopening with a bare 8-10 digit stored value shows no plus (the shape alone is not valid)", () => {
+    for (const phone of ["501234567", "12345678", "1234567890"]) {
+      const section = withSettings(newSection("whatsapp_cta", ID), { phone });
+      const { unmount } = render(<Harness section={section} />);
+      expect(screen.getByLabelText(f.phone), phone).toHaveValue(phone);
+      unmount();
+    }
+  });
+
   it("single-line localized text renders as an input, never a textarea", () => {
     for (const [type, label] of [
       ["announcement_bar", f.text],
