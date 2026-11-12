@@ -31,7 +31,10 @@ export class PaymentsAdminController {
   ): Promise<AdminResponse> {
     const denied = await this.guard.ensure(principal, "payments:create_intent");
     if (denied) return denied;
-    return this.payments.createIntentLifecycle(input);
+    // A merchant-facing caller never opens a staff-recorded (`manual`) payment: only a draft order's
+    // checkout does, through the internal payment-initiation port (Ruling 8). Forced off here so no
+    // caller-built input can switch it on.
+    return this.payments.createIntentLifecycle({ ...input, allowStaffRecorded: false });
   }
 
   async authorize(

@@ -129,6 +129,7 @@ describe("InitiatePayment opens payment for exactly the shopper's selection", ()
       });
 
       const response = await app.checkout.initiatePayment({
+        initiatedByStaff: false,
         tenantId: "tenant-a",
         checkoutSessionId: id,
       });
@@ -157,10 +158,12 @@ describe("InitiatePayment opens payment for exactly the shopper's selection", ()
     });
 
     const notCompleted = await app.checkout.initiatePayment({
+      initiatedByStaff: false,
       tenantId: "tenant-a",
       checkoutSessionId: early,
     });
     const unselected = await app.checkout.initiatePayment({
+      initiatedByStaff: false,
       tenantId: "tenant-a",
       checkoutSessionId: noSelection,
     });
@@ -180,10 +183,12 @@ describe("InitiatePayment opens payment for exactly the shopper's selection", ()
     });
 
     const first = await app.checkout.initiatePayment({
+      initiatedByStaff: false,
       tenantId: "tenant-a",
       checkoutSessionId: id,
     });
     const second = await app.checkout.initiatePayment({
+      initiatedByStaff: false,
       tenantId: "tenant-a",
       checkoutSessionId: id,
     });
@@ -204,6 +209,7 @@ describe("InitiatePayment opens payment for exactly the shopper's selection", ()
     });
 
     const foreign = await app.checkout.initiatePayment({
+      initiatedByStaff: false,
       tenantId: "tenant-b",
       checkoutSessionId: id,
     });

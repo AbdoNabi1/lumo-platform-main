@@ -2,11 +2,51 @@ import type {
   CreateOrderFromCheckout,
   CreateOrderFromCheckoutInput,
 } from "../application/create-order-from-checkout.use-case";
+import type {
+  CompleteDraftFromCheckout,
+  CompleteDraftFromCheckoutInput,
+  CreateDraftOrder,
+  CreateDraftOrderInput,
+  DeleteDraftOrder,
+  DraftOrderIdInput,
+  GetDraftOrder,
+  ListDraftOrders,
+  ListDraftOrdersInput,
+  MarkDraftInvoiceSent,
+  SetDraftCheckout,
+  SetDraftCheckoutInput,
+  UpdateDraftOrder,
+  UpdateDraftOrderInput,
+} from "../application/draft-orders.use-cases";
 import type { GetOrder, GetOrderInput } from "../application/get-order.use-case";
 import type { GetSalesSummary } from "../application/get-sales-summary.use-case";
 import type { SalesSummaryInput } from "../application/sales-summary";
 import type { ListOrders, ListOrdersInput } from "../application/list-orders.use-case";
 import type { MarkOrderPaid, MarkOrderPaidInput } from "../application/mark-order-paid.use-case";
+import type {
+  AddOrderTags,
+  ArchiveOrders,
+  ArchiveOrdersInput,
+  ChangeOrderTagsInput,
+  GetOrderAnnotations,
+  GetOrderAnnotationsInput,
+  RemoveOrderTags,
+  SuggestOrderTags,
+  SuggestOrderTagsInput,
+  UnarchiveOrders,
+  UpdateOrderNote,
+  UpdateOrderNoteInput,
+} from "../application/order-annotations.use-cases";
+import type {
+  AddOrderComment,
+  AddOrderCommentInput,
+  DeleteOrderComment,
+  DeleteOrderCommentInput,
+  EditOrderComment,
+  EditOrderCommentInput,
+  ListOrderTimeline,
+  ListOrderTimelineInput,
+} from "../application/order-timeline.use-cases";
 import type {
   AdvanceOrder,
   AdvanceOrderInput,
@@ -34,6 +74,25 @@ export interface OrderControllerDeps {
   readonly getOrder: GetOrder;
   readonly listOrders: ListOrders;
   readonly getSalesSummary: GetSalesSummary;
+  readonly archiveOrders: ArchiveOrders;
+  readonly unarchiveOrders: UnarchiveOrders;
+  readonly getOrderAnnotations: GetOrderAnnotations;
+  readonly updateOrderNote: UpdateOrderNote;
+  readonly addOrderTags: AddOrderTags;
+  readonly removeOrderTags: RemoveOrderTags;
+  readonly suggestOrderTags: SuggestOrderTags;
+  readonly addOrderComment: AddOrderComment;
+  readonly editOrderComment: EditOrderComment;
+  readonly deleteOrderComment: DeleteOrderComment;
+  readonly listOrderTimeline: ListOrderTimeline;
+  readonly createDraftOrder: CreateDraftOrder;
+  readonly updateDraftOrder: UpdateDraftOrder;
+  readonly deleteDraftOrder: DeleteDraftOrder;
+  readonly getDraftOrder: GetDraftOrder;
+  readonly listDraftOrders: ListDraftOrders;
+  readonly markDraftInvoiceSent: MarkDraftInvoiceSent;
+  readonly setDraftCheckout: SetDraftCheckout;
+  readonly completeDraftFromCheckout: CompleteDraftFromCheckout;
 }
 
 /** Framework-agnostic interface boundary for order use-cases (no HTTP server). */
@@ -88,5 +147,88 @@ export class OrderController {
   /** The dashboard's sales figures for one range (Plan 3D); a read model, nothing is written. */
   async salesSummary(input: SalesSummaryInput): Promise<ControllerResponse> {
     return present(await this.deps.getSalesSummary.execute(input), 200);
+  }
+
+  /** Order operations Part 1: Shopify's Archive (outside the aggregate; idempotent). */
+  async archiveOrders(input: ArchiveOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.archiveOrders.execute(input), 200);
+  }
+
+  async unarchiveOrders(input: ArchiveOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.unarchiveOrders.execute(input), 200);
+  }
+
+  /** The annotations of a page of orders, in one read (body: `ReadonlyMap<string, OrderAnnotations>`). */
+  async orderAnnotations(input: GetOrderAnnotationsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getOrderAnnotations.execute(input), 200);
+  }
+
+  /** Part 2: the order note (outside the aggregate; writes its `note_changed` line). */
+  async updateOrderNote(input: UpdateOrderNoteInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateOrderNote.execute(input), 200);
+  }
+
+  async addOrderTags(input: ChangeOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.addOrderTags.execute(input), 200);
+  }
+
+  async removeOrderTags(input: ChangeOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.removeOrderTags.execute(input), 200);
+  }
+
+  async suggestOrderTags(input: SuggestOrderTagsInput): Promise<ControllerResponse> {
+    return present(await this.deps.suggestOrderTags.execute(input), 200);
+  }
+
+  async addOrderComment(input: AddOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.addOrderComment.execute(input), 201);
+  }
+
+  async editOrderComment(input: EditOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.editOrderComment.execute(input), 200);
+  }
+
+  async deleteOrderComment(input: DeleteOrderCommentInput): Promise<ControllerResponse> {
+    return present(await this.deps.deleteOrderComment.execute(input), 200);
+  }
+
+  /** The order's staff timeline (body: `readonly OrderTimelineEntry[]`, newest first, ≤ 200). */
+  async orderTimeline(input: ListOrderTimelineInput): Promise<ControllerResponse> {
+    return present(await this.deps.listOrderTimeline.execute(input), 200);
+  }
+
+  /** Order operations Part 4: drafts (authorization is the caller's — `DraftOrdersAdminController`). */
+  async createDraftOrder(input: CreateDraftOrderInput): Promise<ControllerResponse> {
+    return present(await this.deps.createDraftOrder.execute(input), 201);
+  }
+
+  async updateDraftOrder(input: UpdateDraftOrderInput): Promise<ControllerResponse> {
+    return present(await this.deps.updateDraftOrder.execute(input), 200);
+  }
+
+  async deleteDraftOrder(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.deleteDraftOrder.execute(input), 200);
+  }
+
+  async getDraftOrder(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.getDraftOrder.execute(input), 200);
+  }
+
+  async listDraftOrders(input: ListDraftOrdersInput): Promise<ControllerResponse> {
+    return present(await this.deps.listDraftOrders.execute(input), 200);
+  }
+
+  async markDraftInvoiceSent(input: DraftOrderIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.markDraftInvoiceSent.execute(input), 200);
+  }
+
+  async setDraftCheckout(input: SetDraftCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.setDraftCheckout.execute(input), 200);
+  }
+
+  async completeDraftFromCheckout(
+    input: CompleteDraftFromCheckoutInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.completeDraftFromCheckout.execute(input), 200);
   }
 }

@@ -2,10 +2,11 @@ import type { PaymentProvider } from "@platform/contracts";
 import type { ProviderRegistration } from "../application/provider-registry";
 import { CashOnDeliveryProvider } from "./cash-on-delivery-provider";
 import { InMemoryPaymentProvider } from "./in-memory-port-adapters";
+import { ManualPaymentProvider } from "./manual-payment-provider";
 
 /**
- * The two providers that ship with this service, expressed as ordinary registrations — the same
- * shape a provider registered from outside would have. Nothing else in payments knows either name;
+ * The three providers that ship with this service, expressed as ordinary registrations — the same
+ * shape a provider registered from outside would have. Nothing else in payments knows any name;
  * the domain reasons about the capabilities declared here.
  */
 
@@ -24,6 +25,27 @@ export function cashOnDeliveryRegistration(): ProviderRegistration {
       deliversWebhooks: false,
       requiresMerchantCredentials: false,
       chargesOffSession: false,
+    },
+    backing: "real",
+    create: () => provider,
+  };
+}
+
+/**
+ * Order operations Part 4 — `manual` ("Manual payment"): a draft order the merchant marks as paid. COD's
+ * capabilities (settled by an operator's confirmation, no webhooks) plus `recordedByStaff` — never
+ * offered, never enabled, and never cash a courier collects (Rulings 8 and 9).
+ */
+export function manualPaymentRegistration(): ProviderRegistration {
+  const provider = new ManualPaymentProvider();
+  return {
+    key: "manual",
+    capabilities: {
+      settlesAtPayTime: true,
+      deliversWebhooks: false,
+      requiresMerchantCredentials: false,
+      chargesOffSession: false,
+      recordedByStaff: true,
     },
     backing: "real",
     create: () => provider,
@@ -76,9 +98,19 @@ export interface PaymentProviderRegistrationInputs {
 export function composePaymentProviderRegistrations(
   inputs: PaymentProviderRegistrationInputs,
 ): readonly ProviderRegistration[] {
+  // `recordedByStaff` is reserved for the built-in `manual` provider: it skips merchant enablement and
+  // hides the method from merchants, so no externally registered provider may declare it (Ruling 8).
+  for (const registration of inputs.providerRegistrations ?? []) {
+    if (registration.capabilities.recordedByStaff === true) {
+      throw new Error(
+        `Payment provider "${registration.key}" declares recordedByStaff, which only the built-in manual provider may`,
+      );
+    }
+  }
   return [
     stripeRegistration(inputs.paymentProvider),
     cashOnDeliveryRegistration(),
+    manualPaymentRegistration(),
     ...(inputs.providerRegistrations ?? []),
   ];
 }

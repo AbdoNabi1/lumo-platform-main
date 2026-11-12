@@ -9,6 +9,7 @@ import {
 import { PaymentProviderRegistry } from "./application/provider-registry";
 import {
   cashOnDeliveryRegistration,
+  manualPaymentRegistration,
   stripeRegistration,
 } from "./infrastructure/built-in-provider-registrations";
 import { InMemoryMerchantPaymentSettingsRepository } from "./infrastructure/in-memory-merchant-payment-settings-repository";
@@ -55,6 +56,7 @@ function setup(overrides: { paymobFactory?: (c: Built) => PaymentProvider } = {}
   const registry = PaymentProviderRegistry.from([
     stripeRegistration(stripeStub),
     cashOnDeliveryRegistration(),
+    manualPaymentRegistration(),
     paymobLikeRegistration((context) =>
       (overrides.paymobFactory ?? (() => ({}) as PaymentProvider))(context),
     ),
@@ -99,6 +101,21 @@ describe("merchant PSP credentials never leak", () => {
       configured: true,
       config: { region: "egy", integrationId: 158 },
     });
+  });
+
+  it("the staff-recorded manual method is never listed, and refusing credentials submitted for it echoes none", async () => {
+    const { update, get, repo } = setup();
+
+    const refused = await update.execute({
+      tenantId: "tenant-a",
+      providerSettings: { manual: { credentials: SECRETS } },
+    });
+    const read = await get.execute({ tenantId: "tenant-a" });
+
+    expect(refused.ok).toBe(false);
+    noLeak(refused);
+    expect(read.ok && Object.keys(read.value.methods)).not.toContain("manual");
+    expect(await repo.get("tenant-a")).toBeNull();
   });
 
   it("are not in the value handed to the persistence layer — only a sealed envelope is", async () => {

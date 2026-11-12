@@ -1,4 +1,4 @@
-import type { DiscountUsagePort } from "@platform/checkout";
+import { isDraftPromotionId, type DiscountUsagePort } from "@platform/checkout";
 import type { CouponsController } from "@platform/coupons";
 import type { PromotionsController } from "@platform/promotions";
 
@@ -24,6 +24,8 @@ export class DiscountUsageAdapter implements DiscountUsagePort {
   async record(input: Parameters<DiscountUsagePort["record"]>[0]): Promise<void> {
     const failures: string[] = [];
     for (const discount of input.applied) {
+      // Part 4: a draft order's own discount names no promotion or coupon.
+      if (isDraftPromotionId(discount.promotionId)) continue;
       const response =
         discount.couponId !== undefined && discount.code !== undefined
           ? await this.coupons.redeem({

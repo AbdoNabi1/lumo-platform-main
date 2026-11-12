@@ -2,7 +2,10 @@ import { runReadScoped, type Database, type TransactionClient } from "@platform/
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { PaymentIntent } from "../domain/payment-intent";
-import type { PaymentIntentRepository } from "../domain/payment-intent-repository";
+import type {
+  PaymentIntentBatchReader,
+  PaymentIntentRepository,
+} from "../domain/payment-intent-repository";
 import { PaymentIntentMapper } from "./payment-intent.mapper";
 
 export interface PrismaPaymentIntentRepositoryDeps {
@@ -10,6 +13,13 @@ export interface PrismaPaymentIntentRepositoryDeps {
   readonly outbox: OutboxWriter<TransactionClient>;
   readonly context: EventContext;
 }
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const INTENT_CHILDREN = {
+  charges: { orderBy: { occurredAt: "asc" as const } },
+  refunds: { orderBy: { occurredAt: "asc" as const } },
+  attempts: { orderBy: { occurredAt: "asc" as const } },
+};
 
 /**
  * Production `PaymentIntentRepository` on the `payments` schema. Charges/attempts are append-only
@@ -21,7 +31,9 @@ export interface PrismaPaymentIntentRepositoryDeps {
  * per ADR-0003. Only `psp_token`/`payment_method` (tokenized) are stored — card data never
  * touches this schema (G-27).
  */
-export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
+export class PrismaPaymentIntentRepository
+  implements PaymentIntentRepository, PaymentIntentBatchReader
+{
   private readonly deps: PrismaPaymentIntentRepositoryDeps;
 
   constructor(deps: PrismaPaymentIntentRepositoryDeps) {
@@ -107,6 +119,33 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
     return this.findOne({ pspReference, tenantId }, tenantId, tx);
   }
 
+  /** Order operations Part 1: this shop's intents among `ids`, in one read. Non-UUID ids (legacy refs) can match no row and are not sent. */
+  async findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly PaymentIntent[]> {
+    const wanted = [...new Set(ids)].filter((id) => UUID_PATTERN.test(id));
+    if (wanted.length === 0) return [];
+    const run = (client: TransactionClient) =>
+      client.paymentIntent.findMany({
+        where: { tenantId, id: { in: wanted } },
+        include: INTENT_CHILDREN,
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) =>
+      PaymentIntentMapper.toDomain(
+        { ...row, paymentMethod: row.paymentMethod as { token: string; brand?: string } },
+        row.charges,
+        row.refunds,
+        row.attempts,
+      ),
+    );
+  }
+
   /** Shared lookup — every caller's `where` already carries `tenantId`; reads run via `runReadScoped` unless the caller supplied its `tx`. */
   private async findOne(
     where: { readonly tenantId: string } & Record<string, string>,
@@ -116,11 +155,7 @@ export class PrismaPaymentIntentRepository implements PaymentIntentRepository {
     const run = (client: TransactionClient) =>
       client.paymentIntent.findFirst({
         where,
-        include: {
-          charges: { orderBy: { occurredAt: "asc" } },
-          refunds: { orderBy: { occurredAt: "asc" } },
-          attempts: { orderBy: { occurredAt: "asc" } },
-        },
+        include: INTENT_CHILDREN,
       });
     const row =
       tx !== undefined && tx !== null

@@ -21,6 +21,7 @@ import {
   SettingsIcon,
   ShieldIcon,
   ShoppingBagIcon,
+  ShoppingCartIcon,
   StarIcon,
   StoreIcon,
   TagIcon,
@@ -62,7 +63,22 @@ export interface NavItem {
 
 export const PRIMARY_NAV: readonly NavItem[] = [
   { id: "dashboard", label: (t) => t.nav.dashboard, href: "/", Icon: HouseIcon },
-  { id: "orders", label: (t) => t.nav.orders, href: "/orders", Icon: ShoppingBagIcon },
+  {
+    id: "orders",
+    label: (t) => t.nav.orders,
+    href: "/orders",
+    Icon: ShoppingBagIcon,
+    // Shopify's order under Orders: Drafts (order operations Part 4) then Abandoned checkouts.
+    children: [
+      { id: "draft-orders", label: (t) => t.nav.drafts, href: "/draft-orders", Icon: FileTextIcon },
+      {
+        id: "abandoned-checkouts",
+        label: (t) => t.nav.abandonedCheckouts,
+        href: "/abandoned-checkouts",
+        Icon: ShoppingCartIcon,
+      },
+    ],
+  },
   {
     id: "products",
     label: (t) => t.nav.products,

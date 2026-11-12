@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OrderController } from "@platform/orders";
-import type { PaymentController } from "@platform/payments";
+import { InMemoryEventSerializer } from "@platform/domain-events/testing";
+import { wirePayments, type PaymentController } from "@platform/payments";
 import type { Logger } from "@platform/utils";
 import { CheckoutPaymentInitiationAdapter } from "./checkout-payment.adapters";
 
@@ -98,5 +99,43 @@ describe("CheckoutPaymentInitiationAdapter (Plan 3B: link the payment to its ord
     await expect(adapter.initiate(input)).rejects.toThrow("method not enabled");
 
     expect(orders.recordCheckoutPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("CheckoutPaymentInitiationAdapter and staff-recorded payments (Ruling 8, deny by default)", () => {
+  const manual = { ...input, provider: "manual" };
+
+  it("passes allowStaffRecorded through exactly as the draft checkout set it, false when it did not", async () => {
+    const payments = intentCreated();
+    const orders: Orders = {
+      recordCheckoutPayment: vi.fn().mockResolvedValue({ status: 200, body: {} }),
+    };
+    const adapter = new CheckoutPaymentInitiationAdapter(payments, orders, silentLogger());
+
+    await adapter.initiate({ ...manual, allowStaffRecorded: true });
+    await adapter.initiate(manual);
+
+    const calls = vi.mocked(payments.createIntentLifecycle).mock.calls;
+    expect(calls[0]?.[0]).toMatchObject({ provider: "manual", allowStaffRecorded: true });
+    expect(calls[1]?.[0]).toMatchObject({ provider: "manual", allowStaffRecorded: false });
+  });
+
+  it("over the real Payments context: a non-draft initiation of manual is refused, a draft one opens it", async () => {
+    let n = 0;
+    const { payments } = wirePayments({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: { generate: () => `id-${(n += 1)}` },
+      clock: { now: () => new Date("2026-10-25T00:00:00.000Z") },
+    });
+    const orders: Orders = {
+      recordCheckoutPayment: vi.fn().mockResolvedValue({ status: 200, body: {} }),
+    };
+    const adapter = new CheckoutPaymentInitiationAdapter(payments, orders, silentLogger());
+
+    await expect(adapter.initiate(manual)).rejects.toThrow(/Unknown payment method/);
+    const opened = await adapter.initiate({ ...manual, allowStaffRecorded: true });
+
+    expect(opened.provider).toBe("manual");
+    expect(orders.recordCheckoutPayment).toHaveBeenCalledTimes(1);
   });
 });

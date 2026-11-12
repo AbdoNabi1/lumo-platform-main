@@ -46,10 +46,16 @@ export async function OrderPaymentCard({
   order,
   t,
   locale,
+  canMarkCashReceived = false,
 }: {
   readonly order: OrderDetailDto;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /**
+   * `payments:confirm_cod_collection` (admins). Needed for a pending staff-recorded (`manual`)
+   * payment: a draft's "Mark as paid" whose settling step failed is finished here (Task 9 I-1).
+   */
+  readonly canMarkCashReceived?: boolean;
 }) {
   const intent = order.paymentRef === null ? null : await fetchPaymentIntent(order.paymentRef);
   const payment = intent?.outcome === "ok" ? intent.paymentIntent : null;
@@ -79,7 +85,9 @@ export async function OrderPaymentCard({
   const collectable =
     pending &&
     payment !== null &&
-    payment.provider === "cod" &&
+    // A pending `manual` intent (a draft's Mark as paid that stopped half-way) settles through the same
+    // confirmed collection — admin-only, like the route behind it.
+    (payment.provider === "cod" || (payment.provider === "manual" && canMarkCashReceived)) &&
     payment.capturedAmountMinor < payment.amountMinor &&
     !CLOSED_PAYMENT_STATUSES.has(payment.status);
   const canMarkWithReference = pending && order.paymentRef === null && order.status === "placed";
@@ -155,10 +163,10 @@ export async function OrderPaymentCard({
           <CodCollectionForm
             orderId={order.id}
             paymentIntentId={payment.id}
-            confirmMessage={t.orderDetail.confirmCashReceived.replace(
-              "{amount}",
-              formatCurrency(locale, payment.amountMinor, payment.currency),
-            )}
+            confirmMessage={(payment.provider === "manual"
+              ? t.orderDetail.confirmPaymentRecorded
+              : t.orderDetail.confirmCashReceived
+            ).replace("{amount}", formatCurrency(locale, payment.amountMinor, payment.currency))}
             t={t}
           />
         )}

@@ -106,3 +106,12 @@ export interface NotificationPort {
 export interface PaymentVerificationPort {
   hasCapturedPayment(orderId: string, paymentRef: string, tenantId: string): Promise<boolean>;
 }
+
+/**
+ * Order operations Part 2: the display name of a staff principal, snapshotted onto timeline entries
+ * ("Ahmed archived this order"). Unknown → null (shown as "Staff"). Never taken from the client.
+ * ADR-0014: `tenantId` per call.
+ */
+export interface StaffDirectoryPort {
+  displayNameOf(principalId: string, tenantId: string): Promise<string | null>;
+}

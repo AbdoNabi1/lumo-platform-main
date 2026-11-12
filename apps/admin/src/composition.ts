@@ -20,6 +20,7 @@ import {
   type PaymentMethodPort,
   type PricingValidationPort,
   type DiscountUsagePort,
+  type DraftOrderCompletionPort,
   type PromotionValidationPort,
   type ShippingCalculationPort,
   type TaxCalculationPort,
@@ -73,6 +74,7 @@ import {
   type StockReleasePort as OrdersStockReleasePort,
   type PaymentVerificationPort,
   type ShippingPort as OrdersShippingPort,
+  type StaffDirectoryPort,
 } from "@platform/orders";
 import { wirePages } from "@platform/pages";
 import {
@@ -111,6 +113,7 @@ import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
 import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
 import { logger as adminLogger } from "@platform/utils";
+import type { ShopDomainLike } from "./http/shop-link-url";
 import { TenantProvisioner } from "./tenant-provisioning";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
@@ -123,6 +126,7 @@ import { InventoryValidationAdapter } from "./infrastructure/cross-context/inven
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
+import { PrismaStaffDirectoryAdapter } from "./infrastructure/cross-context/staff-directory.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
 import { OrdersFulfillmentCancelAdapter } from "./infrastructure/cross-context/orders-fulfillment-cancel.adapter";
 import { OrdersPaymentVoidAdapter } from "./infrastructure/cross-context/orders-payment-void.adapter";
@@ -140,6 +144,7 @@ import { PaymentsNotificationAdapter } from "./infrastructure/cross-context/paym
 import { StoreCurrencyRelabelAdapter } from "./infrastructure/cross-context/store-currency-relabel.adapter";
 import { PaymentsOrdersAdapter } from "./infrastructure/cross-context/payments-orders.adapter";
 import { DiscountUsageAdapter } from "./infrastructure/cross-context/discount-usage.adapter";
+import { DraftOrderCompletionAdapter } from "./infrastructure/cross-context/draft-order-completion.adapter";
 import { PromotionValidationAdapter } from "./infrastructure/cross-context/promotion-validation.adapter";
 import { InMemoryAuditTrail } from "./infrastructure/in-memory-audit-trail";
 import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
@@ -175,6 +180,7 @@ import { LoyaltyAdminController } from "./interfaces/loyalty.admin-controller";
 import { MediaLibraryAdminController } from "./interfaces/media-library.admin-controller";
 import { NotificationsAdminController } from "./interfaces/notifications.admin-controller";
 import { OrdersAdminController } from "./interfaces/orders.admin-controller";
+import { DraftOrdersAdminController } from "./interfaces/draft-orders.admin-controller";
 import { PagesAdminController } from "./interfaces/pages.admin-controller";
 import { PaymentsAdminController } from "./interfaces/payments.admin-controller";
 import { PlatformConsoleAdminController } from "./interfaces/platform-console.admin-controller";
@@ -260,6 +266,12 @@ export interface AdminWiringDeps {
    * in-memory stub when absent — no behavior change for existing callers/tests.
    */
   readonly paymentVerification?: PaymentVerificationPort;
+  /**
+   * Order operations Part 2: whose name a timeline line shows. Absent ⇒ Security's
+   * `principals.display_name` when `prisma` is present (`PrismaStaffDirectoryAdapter`), else no names
+   * ("Staff"). Passed straight through to `wireOrders` like the other Orders ports.
+   */
+  readonly staffDirectory?: StaffDirectoryPort;
   /**
    * Gates Returns' `DecideResolution` staff-decided refund amount against the order's refundable
    * ceiling (Phase A.1, F-04). Passed straight through to `wireReturns(deps)` below; defaults to
@@ -403,6 +415,11 @@ export interface AdminWiringDeps {
    */
   readonly discountUsage?: DiscountUsagePort;
   /**
+   * Order operations Part 4: tells Orders a draft order's checkout became an order. Absent ⇒ the real
+   * `DraftOrderCompletionAdapter` over Orders.
+   */
+  readonly draftCompletion?: DraftOrderCompletionPort;
+  /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Passed straight through to `wireCheckout(deps)` below; absent ⇒ Checkout's own
    * `InMemoryOrderCreationAdapter` (fabricates a deterministic `orderRef`, never persists
@@ -448,6 +465,8 @@ export interface WiredAdmin {
   readonly inventory: InventoryAdminController;
   /** Orders screen → Orders. */
   readonly orders: OrdersAdminController;
+  /** Order operations Part 4: Orders → Drafts. */
+  readonly draftOrders: DraftOrdersAdminController;
   /** Customers screen → Identity. */
   readonly customers: CustomersAdminController;
   /**
@@ -555,6 +574,12 @@ export interface WiredAdmin {
   readonly storeCurrency: StoreCurrencyRelabelAdapter;
   /** T10.6: a tenant's lifecycle status straight from the source of truth (the gate caches it). */
   readonly tenantAvailability: (tenantId: string) => Promise<TenantAvailability>;
+  /**
+   * Order operations Part 3: the shop's domains — what a recovery link's absolute URL is built from.
+   * Tenancy's raw controller (the tenancy exemption, ADR-0014); it authorizes nothing itself — the
+   * route that calls it does (`orders:recover_checkout`).
+   */
+  readonly shopDomains: (tenantId: string) => Promise<readonly ShopDomainLike[]>;
   /** T10.6: runs / inspects a tenant's security baseline (idempotent, resumable). */
   readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
@@ -677,6 +702,16 @@ export interface WiredAdmin {
      * an admin/system-triggered action, so a customer with none yet gets an honest 404.
      */
     readonly loyalty: LoyaltyController;
+    /**
+     * Order operations Part 4: the three draft operations the invoice link and the post-completion
+     * bookkeeping need with no staff principal (the shopper opening an invoice, Checkout reporting a
+     * paid draft). Nothing else of Orders is reachable here; the guarded `draftOrders` facade stays the
+     * only staff path.
+     */
+    readonly draftOrders: Pick<
+      OrderController,
+      "getDraftOrder" | "setDraftCheckout" | "completeDraftFromCheckout"
+    >;
   };
   /**
    * The PSP webhook ingress seam (C2-2/C2-6). A webhook has no admin Bearer token — its
@@ -890,6 +925,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
           ? (sessionResponse.body as CheckoutSession).paymentSelection?.provider
           : undefined;
       }),
+    ...(deps.staffDirectory === undefined && deps.prisma !== undefined
+      ? { staffDirectory: new PrismaStaffDirectoryAdapter({ prisma: deps.prisma }) }
+      : {}),
   };
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
@@ -960,6 +998,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       ),
     discountUsage:
       deps.discountUsage ?? new DiscountUsageAdapter(promotions.promotions, coupons.coupons),
+    // Part 4: `orders` is wired above, so the real adapter needs no lazy cell.
+    draftCompletion: deps.draftCompletion ?? new DraftOrderCompletionAdapter(orders.orders),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
     // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
@@ -1175,6 +1215,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       payments: payments.payments,
       guard,
     }),
+    draftOrders: new DraftOrdersAdminController({ orders: orders.orders, guard }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
@@ -1275,6 +1316,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
+    shopDomains: async (tenantId) => {
+      const response = await tenancy.tenancy.listShopDomains({ shopId: tenantId });
+      return response.status === 200
+        ? (response.body as { readonly items: readonly ShopDomainLike[] }).items
+        : [];
+    },
     tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
     platformConsole: new PlatformConsoleAdminController({
@@ -1331,6 +1378,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       customers: identity.customers,
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
+      // Closures, not the controller: nothing else of Orders is reachable through this key.
+      draftOrders: {
+        getDraftOrder: (input) => orders.orders.getDraftOrder(input),
+        setDraftCheckout: (input) => orders.orders.setDraftCheckout(input),
+        completeDraftFromCheckout: (input) => orders.orders.completeDraftFromCheckout(input),
+      },
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),

@@ -13,13 +13,16 @@ const INITIAL_STATE: FormState = { status: "idle" };
 
 /**
  * The "create order from checkout session" recovery form (`app/orders/from-checkout`, T5.2) — for
- * a checkout session whose saga did not auto-create its order. Same repeated-line-item-array and
- * address-block technique as `OrderCreateForm`, plus `checkoutRef` and a second (billing) address
- * block. There is no checkout-session admin screen in this codebase to launch this from
- * contextually, so it is its own small screen, linked from the Orders list.
+ * a checkout session whose saga did not auto-create its order. Repeated line-item rows
+ * (`OrderLineItemsField`) and address blocks (`OrderAddressFields`), plus `checkoutRef` and a
+ * second (billing) address block. There is no checkout-session admin screen in this codebase to
+ * launch this from contextually, so it is its own small screen, linked from the Orders list.
  */
 export function OrderFromCheckoutForm({ t }: { readonly t: Dictionary }) {
-  const [state, formAction, isPending] = useActionState(createOrderFromCheckoutAction, INITIAL_STATE);
+  const [state, formAction, isPending] = useActionState(
+    createOrderFromCheckoutAction,
+    INITIAL_STATE,
+  );
   const formId = useId();
   const fieldErrors = state.status === "error" ? state.fieldErrors : {};
 

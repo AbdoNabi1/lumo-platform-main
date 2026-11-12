@@ -52,6 +52,14 @@ export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
   sameSite: "lax" as const,
 };
 
+/**
+ * Order operations Part 4: the checkout id an invoice link's claim opened (same options as
+ * `CHECKOUT_SESSION_COOKIE`). Only compared with that cookie, so `/checkout` can tell an invoice
+ * shopper whose session someone else opened since to "open your link again" rather than "start
+ * from your cart". Never the token, never a `sessionRef`.
+ */
+export const INVOICE_CHECKOUT_COOKIE = "morbeh_invoice_checkout";
+
 export interface ResolvedCartLine {
   readonly productId: string;
   /** Plan 2A: the variant this line sells; null on a legacy line (addressed by product). */

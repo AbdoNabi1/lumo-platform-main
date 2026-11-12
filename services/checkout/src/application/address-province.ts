@@ -1,5 +1,10 @@
 import { hasProvinces, isProvinceOf } from "@platform/regions";
+import { err, ok, type Result } from "@platform/types";
 import { ValidationError, type FieldIssue } from "@platform/utils";
+import {
+  CheckoutAddress,
+  type CheckoutAddressInput,
+} from "../domain/value-objects/checkout-address";
 
 /**
  * Plan 3C: a country with province data (Egypt's governorates, Saudi Arabia's regions, the emirates)
@@ -27,4 +32,20 @@ export function provinceProblem(
     return null;
   })();
   return issue === null ? null : new ValidationError("Invalid address", [issue]);
+}
+
+/** The whole address rule Checkout applies: the address's own fields, then its province. */
+export function validCheckoutAddress(
+  input: CheckoutAddressInput,
+): Result<CheckoutAddress, ValidationError> {
+  const address = CheckoutAddress.create(input);
+  if (!address.ok) return err(address.error);
+  const problem = provinceProblem(input.country, input.province);
+  return problem === null ? ok(address.value) : err(problem);
+}
+
+/** The same rule as {@link validCheckoutAddress}, for callers outside Checkout (drafts). */
+export function checkoutAddressProblem(input: CheckoutAddressInput): ValidationError | null {
+  const address = validCheckoutAddress(input);
+  return address.ok ? null : address.error;
 }

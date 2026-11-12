@@ -12,25 +12,44 @@ import {
 } from "lucide-react";
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import {
+  OrdersExportButton,
+  type OrdersExportContext,
+} from "@/components/orders/orders-export-dialog";
 import { OrdersPagination } from "@/components/orders/orders-pagination";
 import { OrdersTable } from "@/components/orders/orders-table";
 import { OrdersToolbar } from "@/components/orders/orders-toolbar";
-import { UnfulfilledFilterNote } from "@/components/orders/unfulfilled-filter-note";
-import { fetchOrdersPage } from "@/lib/api/orders";
+import { OrdersViewTabs } from "@/components/orders/orders-view-tabs";
+import { fetchOrdersPage, type OrderView } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { parseTagFilter } from "@/lib/orders/order-tags";
+import {
+  ORDERS_PAGE_SIZE,
+  orderActionPermissionsFor,
+  ordersExportContextFor,
+  parseOrderView,
+  type OrderActionPermissions,
+} from "@/lib/orders/order-views";
 import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = ORDERS_PAGE_SIZE;
 
 interface OrdersPageProps {
   readonly searchParams: Promise<{
     readonly q?: string;
     readonly status?: string;
     readonly after?: string;
+    /** Order operations Part 1: Shopify's tab (`all`, `unfulfilled`, `unpaid`, `open`, `archived`). */
+    readonly view?: string;
     /** Plan 3D: `unfulfilled` when opened from Home's "Orders to fulfill" card. */
     readonly fulfillment?: string;
+    /** Order operations Part 2: "Tagged with", one comma list. */
+    readonly tag?: string | string[];
+    /** Set by the export route handler when it sends the merchant back instead of a file. */
+    readonly exportError?: string;
   }>;
 }
 
@@ -48,16 +67,23 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const params = await searchParams;
-  const fulfillment = params.fulfillment === "unfulfilled" ? "unfulfilled" : undefined;
+  const view = parseOrderView(params);
+  const tags = parseTagFilter(params.tag);
+  const session = await readSession();
+  const role = highestRole(session?.roles ?? []);
+  // A viewer gets no Fulfill / Capture / Archive / Mark cash as received: the API would refuse them.
+  const permissions = orderActionPermissionsFor(role);
+  // `undefined` for a viewer (no `orders:export`): no Export button, no "Export selected".
+  const exportContext = ordersExportContextFor(role, view, { ...params, tags });
+  const exportError = (["too_many", "failed", "invalid"] as const).find(
+    (error) => error === params.exportError,
+  );
 
   return (
     <AppShell t={t} locale={locale} activeNavId="orders" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
         <header className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
-            <p className="text-muted-foreground mt-1 text-sm">{t.ordersPage.subtitle}</p>
-          </div>
+          <h1 className="text-2xl font-semibold tracking-tight">{t.ordersPage.title}</h1>
           <div className="flex flex-wrap items-center gap-2">
             {/* A recovery tool for the platform team, not a merchant action. */}
             {showPlatformTools() && (
@@ -68,8 +94,9 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
                 </Link>
               </Button>
             )}
+            {exportContext !== undefined && <OrdersExportButton context={exportContext} t={t} />}
             <Button asChild>
-              <Link href="/orders/new">
+              <Link href="/draft-orders/new">
                 <PlusIcon aria-hidden="true" />
                 {t.ordersPage.newOrder}
               </Link>
@@ -77,12 +104,21 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
           </div>
         </header>
 
+        <OrdersViewTabs current={view} q={params.q} status={params.status} tags={tags} t={t} />
+
         <OrdersToolbar t={t} />
 
-        {fulfillment !== undefined && <UnfulfilledFilterNote t={t} />}
+        {exportError !== undefined && (
+          <p
+            role="alert"
+            className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-base"
+          >
+            {t.ordersExport.errors[exportError]}
+          </p>
+        )}
 
         <Suspense
-          key={`${params.q ?? ""}:${params.status ?? ""}:${params.after ?? ""}:${fulfillment ?? ""}`}
+          key={`${view}:${params.q ?? ""}:${params.status ?? ""}:${tags.join(",")}:${params.after ?? ""}`}
           fallback={<OrdersTableSkeleton />}
         >
           <OrdersResults
@@ -90,7 +126,10 @@ export default async function OrdersPage({ searchParams }: OrdersPageProps) {
             after={params.after}
             status={params.status}
             search={params.q}
-            fulfillment={fulfillment}
+            view={view}
+            tags={tags}
+            permissions={permissions}
+            exportContext={exportContext}
             t={t}
             locale={locale}
           />
@@ -105,7 +144,10 @@ async function OrdersResults({
   after,
   status,
   search,
-  fulfillment,
+  view,
+  tags,
+  permissions,
+  exportContext,
   t,
   locale,
 }: {
@@ -113,12 +155,15 @@ async function OrdersResults({
   readonly after: string | undefined;
   readonly status: string | undefined;
   readonly search: string | undefined;
-  readonly fulfillment: "unfulfilled" | undefined;
+  readonly view: OrderView;
+  readonly tags: readonly string[];
+  readonly permissions: OrderActionPermissions;
+  readonly exportContext: OrdersExportContext | undefined;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
-  const hasFilters = Boolean(search) || Boolean(status) || fulfillment !== undefined;
-  const result = await fetchOrdersPage({ first, after, status, search, fulfillment });
+  const hasFilters = Boolean(search) || Boolean(status) || tags.length > 0 || view !== "all";
+  const result = await fetchOrdersPage({ first, after, status, search, view, tags });
 
   if (result.outcome === "unauthorized") {
     return (
@@ -154,7 +199,13 @@ async function OrdersResults({
   return (
     <Card>
       <CardContent className="p-0 sm:p-0">
-        <OrdersTable orders={result.items} t={t} locale={locale} />
+        <OrdersTable
+          orders={result.items}
+          t={t}
+          locale={locale}
+          permissions={permissions}
+          exportContext={exportContext}
+        />
       </CardContent>
       <div className="border-border flex items-center justify-between border-t px-4 py-3 sm:px-5">
         <OrdersPagination

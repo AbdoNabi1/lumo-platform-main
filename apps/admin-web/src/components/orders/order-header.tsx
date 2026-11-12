@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowLeftIcon } from "lucide-react";
-import { Button } from "@platform/ui";
+import { Badge, Button } from "@platform/ui";
 import type { OrderDetailDto } from "@/lib/api/orders";
 import { formatClockTime, formatCurrency, formatLongDate } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
@@ -21,10 +21,13 @@ export function OrderHeader({
   order,
   t,
   locale,
+  canArchive = false,
 }: {
   readonly order: OrderDetailDto;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /** `orders:archive`, from the session's role on the server; no Archive / Unarchive when false. */
+  readonly canArchive?: boolean;
 }) {
   const placedAt = new Date(order.createdAt);
   const placed = t.orderPage.placedFromStore
@@ -35,6 +38,8 @@ export function OrderHeader({
   const confirmRefund = [
     t.orderPage.confirmRefund.replace("{amount}", amount),
     ...(order.paymentProvider === "cod" ? [t.orderPage.confirmRefundCash] : []),
+    // Final review M-3: a "Mark as paid" payment is returned outside Morbeh too.
+    ...(order.paymentProvider === "manual" ? [t.orderPage.confirmRefundManual] : []),
   ].join("\n\n");
 
   return (
@@ -50,6 +55,7 @@ export function OrderHeader({
           <h1 className="text-2xl font-semibold tracking-tight">#{order.orderNumber}</h1>
           <OrderPaymentStatusBadge status={order.paymentStatus} t={t} />
           <OrderFulfillmentStatusBadge status={order.fulfillmentStatus} t={t} />
+          {order.archivedAt ? <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge> : null}
         </div>
         <p className="text-muted-foreground mt-1 text-sm">{placed}</p>
       </div>
@@ -60,7 +66,13 @@ export function OrderHeader({
           confirmMessage={confirmRefund}
           t={t}
         />
-        <OrderMoreActions orderId={order.id} canCancel={canCancelFrom(order.status)} t={t} />
+        <OrderMoreActions
+          orderId={order.id}
+          canArchive={canArchive}
+          canCancel={canCancelFrom(order.status)}
+          archived={Boolean(order.archivedAt)}
+          t={t}
+        />
       </div>
     </header>
   );

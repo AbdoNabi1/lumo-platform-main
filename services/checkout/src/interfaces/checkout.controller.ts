@@ -47,6 +47,35 @@ import type {
   ListPaymentMethods,
   ListPaymentMethodsInput,
 } from "../application/payment-initiation.use-cases";
+import type {
+  AbandonedCheckoutIdInput,
+  GetAbandonedCheckout,
+  IssueRecoveryLink,
+  IssueRecoveryLinkInput,
+  ListAbandonedCheckouts,
+  ListAbandonedCheckoutsInput,
+  ResolveCheckoutLink,
+  ResolveCheckoutLinkInput,
+  StartRecoveredCheckout,
+  StartRecoveredCheckoutInput,
+} from "../application/abandoned-checkouts.use-cases";
+import type {
+  ClaimInvoiceCheckout,
+  ClaimInvoiceCheckoutInput,
+  DraftLinksInput,
+  EstimateDraftTax,
+  EstimateDraftTaxInput,
+  IssueInvoiceLink,
+  IssueInvoiceLinkInput,
+  ListDraftLinks,
+  QuoteDraftShipping,
+  QuoteDraftShippingInput,
+  RevokeDraftLinks,
+  SelectDraftPayment,
+  SelectDraftPaymentInput,
+  StartDraftCheckout,
+  StartDraftCheckoutInput,
+} from "../application/draft-checkout.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CheckoutControllerDeps {
@@ -73,6 +102,19 @@ export interface CheckoutControllerDeps {
   readonly expireCheckout: ExpireCheckout;
   readonly generateOrderDraft: GenerateOrderDraft;
   readonly generatePaymentIntentRequest: GeneratePaymentIntentRequest;
+  readonly listAbandonedCheckouts: ListAbandonedCheckouts;
+  readonly getAbandonedCheckout: GetAbandonedCheckout;
+  readonly issueRecoveryLink: IssueRecoveryLink;
+  readonly resolveCheckoutLink: ResolveCheckoutLink;
+  readonly startRecoveredCheckout: StartRecoveredCheckout;
+  readonly startDraftCheckout: StartDraftCheckout;
+  readonly selectDraftPayment: SelectDraftPayment;
+  readonly quoteDraftShipping: QuoteDraftShipping;
+  readonly estimateDraftTax: EstimateDraftTax;
+  readonly issueInvoiceLink: IssueInvoiceLink;
+  readonly claimInvoiceCheckout: ClaimInvoiceCheckout;
+  readonly revokeDraftLinks: RevokeDraftLinks;
+  readonly listDraftLinks: ListDraftLinks;
 }
 
 /** Framework-agnostic interface boundary for checkout use-cases (no HTTP server). */
@@ -174,5 +216,63 @@ export class CheckoutController {
 
   async generatePaymentIntentRequest(input: CheckoutSessionIdInput): Promise<ControllerResponse> {
     return present(await this.deps.generatePaymentIntentRequest.execute(input), 200);
+  }
+
+  /** Order operations Part 3: the abandoned checkouts list (authorization is the caller's). */
+  async listAbandoned(input: ListAbandonedCheckoutsInput): Promise<ControllerResponse> {
+    return present(await this.deps.listAbandonedCheckouts.execute(input), 200);
+  }
+
+  async getAbandoned(input: AbandonedCheckoutIdInput): Promise<ControllerResponse> {
+    return present(await this.deps.getAbandonedCheckout.execute(input), 200);
+  }
+
+  async issueRecoveryLink(input: IssueRecoveryLinkInput): Promise<ControllerResponse> {
+    return present(await this.deps.issueRecoveryLink.execute(input), 201);
+  }
+
+  async resolveLink(input: ResolveCheckoutLinkInput): Promise<ControllerResponse> {
+    return present(await this.deps.resolveCheckoutLink.execute(input), 200);
+  }
+
+  /**
+   * Order operations Part 3: the recovery claim's clone — the caller's own session plus the counted
+   * claim, in one unit of work. Ownership (`sessionRef`) and pricing are the public route's.
+   */
+  async startRecovered(input: StartRecoveredCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.startRecoveredCheckout.execute(input), 201);
+  }
+
+  /** Order operations Part 4 — draft order checkouts (authorization is the caller's). */
+  async startDraft(input: StartDraftCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.startDraftCheckout.execute(input), 201);
+  }
+
+  async selectDraftPayment(input: SelectDraftPaymentInput): Promise<ControllerResponse> {
+    return present(await this.deps.selectDraftPayment.execute(input), 200);
+  }
+
+  async quoteDraftShipping(input: QuoteDraftShippingInput): Promise<ControllerResponse> {
+    return present(await this.deps.quoteDraftShipping.execute(input), 200);
+  }
+
+  async estimateDraftTax(input: EstimateDraftTaxInput): Promise<ControllerResponse> {
+    return present(await this.deps.estimateDraftTax.execute(input), 200);
+  }
+
+  async issueInvoiceLink(input: IssueInvoiceLinkInput): Promise<ControllerResponse> {
+    return present(await this.deps.issueInvoiceLink.execute(input), 201);
+  }
+
+  async claimInvoice(input: ClaimInvoiceCheckoutInput): Promise<ControllerResponse> {
+    return present(await this.deps.claimInvoiceCheckout.execute(input), 200);
+  }
+
+  async revokeDraftLinks(input: DraftLinksInput): Promise<ControllerResponse> {
+    return present(await this.deps.revokeDraftLinks.execute(input), 200);
+  }
+
+  async listDraftLinks(input: DraftLinksInput): Promise<ControllerResponse> {
+    return present(await this.deps.listDraftLinks.execute(input), 200);
   }
 }

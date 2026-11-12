@@ -41,4 +41,13 @@ export class AdminGuard {
       body: toErrorEnvelope(new AuthorizationError(`Missing permission "${permission}"`)),
     };
   }
+
+  /**
+   * A presentation probe ("may this person delete others' comments?"): asks the access control
+   * WITHOUT recording a decision, because it decides what is SHOWN, not what is done. Never a gate on
+   * its own — every action still passes {@link ensure} first.
+   */
+  async allows(principal: Principal, permission: Permission): Promise<boolean> {
+    return this.deps.accessControl.authorize(principal, permission);
+  }
 }

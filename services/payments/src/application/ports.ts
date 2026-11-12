@@ -52,7 +52,11 @@ export class PaymentProviderUnavailableError extends Error {
   }
 }
 
-/** What is registered on this platform and how each provider is backed — for the boot guard and the settings read. */
+/**
+ * What is registered on this platform and how each provider is backed — for the boot guard and the settings read.
+ * INTERNAL ONLY: it lists every registration, including a staff-recorded one (`manual`). It must never
+ * back a view a merchant or a shopper sees — those filter `recordedByStaff` out.
+ */
 export interface ProviderAvailability {
   readonly providers: readonly {
     readonly key: PaymentProviderKey;

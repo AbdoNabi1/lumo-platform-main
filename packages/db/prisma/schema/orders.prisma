@@ -16,12 +16,18 @@ model Order {
   version        Int      @default(0)
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
+  /// Order operations Part 1: Shopify's Archive. Outside the aggregate — never written by OrderMapper.
+  archivedAt     DateTime? @map("archived_at")
+  /// Order operations Part 2: the staff note. Outside the aggregate — never written by OrderMapper.
+  note           String?
 
   items  OrderItem[]
   events OrderEvent[]
+  tags   OrderTag[]
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId, customerRef, createdAt])
+  @@index([tenantId, archivedAt])
   @@map("orders")
   @@schema("orders")
 }
@@ -77,15 +83,91 @@ model OrderShippingAddress {
   line2         String? // Plan 3A
   province      String? // Plan 3C: ISO 3166-2 (EG-C); null before it was captured
 
+  @@index([tenantId]) // Order operations Part 1: the recipient search joins by tenant
   @@map("order_shipping_addresses")
+  @@schema("orders")
+}
+
+/// Order operations Part 2 — one tag on one order. `tag` is the spelling as typed (trimmed, inner
+/// spaces collapsed); `tagKey` is its lower-case identity (dedupe, filter, suggestions). Outside the
+/// aggregate. The relation exists for the list's tag filter (EXISTS), not for cascading.
+model OrderTag {
+  tenantId  String   @map("tenant_id")
+  orderId   String   @map("order_id") @db.Uuid
+  tag       String
+  tagKey    String   @map("tag_key")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@id([orderId, tagKey])
+  @@index([tenantId, tagKey])
+  @@map("order_tags")
+  @@schema("orders")
+}
+
+/// Order operations Part 2 — staff comments and annotation activity on an order. `kind` is one of
+/// comment | archived | unarchived | note_changed | tags_added | tags_removed | created_from_draft
+/// (CHECK + domain-enforced). `authorName` is a snapshot. Comments are soft-deleted (`deletedAt`).
+model OrderTimelineEntry {
+  id         String    @id @db.Uuid
+  tenantId   String    @map("tenant_id")
+  orderId    String    @map("order_id") @db.Uuid // bare id — never an FK
+  kind       String
+  authorRef  String?   @map("author_ref")
+  authorName String?   @map("author_name")
+  body       String?
+  data       Json      @default("{}")
+  createdAt  DateTime  @map("created_at")
+  editedAt   DateTime? @map("edited_at")
+  deletedAt  DateTime? @map("deleted_at")
+
+  @@index([orderId, createdAt])
+  @@map("order_timeline_entries")
+  @@schema("orders")
+}
+
+/// Order operations Part 4 — a draft order a merchant builds for a phone/WhatsApp customer. Content
+/// columns are saved with `version`; status/checkout/deletion columns only by guarded updates.
+model DraftOrder {
+  id              String    @id @db.Uuid
+  tenantId        String    @map("tenant_id")
+  draftNumber     String    @map("draft_number") // "D1", "D2", … per shop
+  status          String // open | invoice_sent | completed (CHECK + domain-enforced)
+  currency        String
+  customerRef     String?   @map("customer_ref") // bare id into Identity — never an FK
+  contactEmail    String?   @map("contact_email")
+  contactPhone    String?   @map("contact_phone")
+  shippingAddress Json      @default("{}") @map("shipping_address")
+  billingAddress  Json      @default("{}") @map("billing_address") // {} = same as shipping
+  lines           Json      @default("[]")
+  discount        Json      @default("{}")
+  shipping        Json      @default("{}")
+  note            String?
+  tags            Json      @default("[]")
+  checkoutRef     String?   @map("checkout_ref") // bare id into Checkout — never an FK
+  checkoutVersion Int?      @map("checkout_version")
+  orderRef        String?   @map("order_ref") // bare id into Orders — never an FK
+  invoiceSentAt   DateTime? @map("invoice_sent_at")
+  completedAt     DateTime? @map("completed_at")
+  deletedAt       DateTime? @map("deleted_at")
+  createdBy       String    @map("created_by")
+  version         Int       @default(0)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([tenantId, draftNumber])
+  @@index([tenantId, status])
+  @@map("draft_orders")
   @@schema("orders")
 }
 
 /// Plan 3B — the per-shop order number counter (1001, 1002, …). Bumped by one atomic raw upsert in
 /// `PrismaOrderNumberAllocator`, inside the order's transaction; Prisma never reads or writes it.
 model OrderNumberCounter {
-  tenantId   String @id @map("tenant_id")
-  lastNumber Int    @map("last_number")
+  tenantId        String @id @map("tenant_id")
+  lastNumber      Int    @map("last_number")
+  lastDraftNumber Int    @default(0) @map("last_draft_number") // Part 4: D1, D2, … (same atomic upsert row)
 
   @@map("order_number_counters")
   @@schema("orders")

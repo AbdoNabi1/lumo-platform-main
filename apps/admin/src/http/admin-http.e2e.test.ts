@@ -289,6 +289,8 @@ describe("GET /orders (list)", () => {
         shippingMethod: null,
         paymentStatus: "pending",
         fulfillmentStatus: "unfulfilled",
+        archivedAt: null,
+        tags: [],
       });
     }
 

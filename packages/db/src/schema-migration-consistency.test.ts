@@ -322,3 +322,200 @@ describe("inventory.inventory_items and catalog.product_variants — stock per v
     expect(actual.has("inventory_policy")).toBe(true);
   });
 });
+
+describe("orders schema — order archive (order operations Part 1)", () => {
+  it("a migration adds orders.orders.archived_at", () => {
+    const sql = readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+      .join("\n");
+    expect(columnsEverAddedTo("orders", "orders", sql).has("archived_at")).toBe(true);
+  });
+});
+
+describe("orders schema — notes, tags and timeline (order operations Part 2)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("a migration adds orders.orders.note", () => {
+    expect(columnsEverAddedTo("orders", "orders", allSql).has("note")).toBe(true);
+  });
+
+  it("order_tags has the model's columns, its (order, tag_key) key, the tenant tag index and the FK", () => {
+    expect([...columnsEverAddedTo("orders", "order_tags", allSql)].sort()).toEqual([
+      "created_at",
+      "order_id",
+      "tag",
+      "tag_key",
+      "tenant_id",
+    ]);
+    expect(allSql).toContain('CONSTRAINT "order_tags_pkey" PRIMARY KEY ("order_id", "tag_key")');
+    expect(allSql).toContain(
+      'CREATE INDEX "order_tags_tenant_id_tag_key_idx" ON "orders"."order_tags"("tenant_id", "tag_key");',
+    );
+    expect(allSql).toContain(
+      'ADD CONSTRAINT "order_tags_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"."orders"("id") ON DELETE RESTRICT ON UPDATE CASCADE;',
+    );
+  });
+
+  it("order_timeline_entries has the model's columns and accepts exactly the seven kinds", () => {
+    expect([...columnsEverAddedTo("orders", "order_timeline_entries", allSql)].sort()).toEqual([
+      "author_name",
+      "author_ref",
+      "body",
+      "created_at",
+      "data",
+      "deleted_at",
+      "edited_at",
+      "id",
+      "kind",
+      "order_id",
+      "tenant_id",
+    ]);
+    expect(allSql).toContain(
+      `CHECK ("kind" IN ('comment','archived','unarchived','note_changed','tags_added','tags_removed','created_from_draft'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "order_timeline_entries_order_id_created_at_idx" ON "orders"."order_timeline_entries"("order_id", "created_at");',
+    );
+  });
+
+  it.each(["order_tags", "order_timeline_entries"])(
+    "%s is RLS-forced with the tenant_isolation policy",
+    (table) => {
+      expect(allSql).toContain(`ALTER TABLE "orders"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "orders"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`DROP POLICY IF EXISTS tenant_isolation ON "orders"."${table}";`);
+      expect(allSql).toContain(`CREATE POLICY tenant_isolation ON "orders"."${table}" FOR ALL`);
+    },
+  );
+});
+
+describe("checkout schema — recovery links (order operations Part 3)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("checkout_sessions gains the two recovery columns and the abandoned-list index", () => {
+    const columns = columnsEverAddedTo("checkout", "checkout_sessions", allSql);
+    expect(columns.has("recovered_from_ref")).toBe(true);
+    expect(columns.has("recovered_order_ref")).toBe(true);
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_sessions_tenant_id_state_updated_at_idx" ON "checkout"."checkout_sessions"("tenant_id", "state", "updated_at");',
+    );
+  });
+
+  it("checkout_links has the model's columns, a unique token hash, the session index and both checks", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_links", allSql)].sort()).toEqual([
+      "checkout_session_id",
+      "claim_count",
+      "created_at",
+      "created_by",
+      "draft_order_ref",
+      "expires_at",
+      "id",
+      "last_claimed_at",
+      "purpose",
+      "result_checkout_ref",
+      "revoked_at",
+      "tenant_id",
+      "token_hash",
+    ]);
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "checkout_links_token_hash_key" ON "checkout"."checkout_links"("token_hash");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_links_tenant_id_checkout_session_id_idx" ON "checkout"."checkout_links"("tenant_id", "checkout_session_id");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "checkout_links_purpose_check" CHECK ("purpose" IN ('recovery','invoice'))`,
+    );
+    expect(allSql).toContain(`("purpose" = 'recovery' AND "checkout_session_id" IS NOT NULL) OR`);
+    expect(allSql).toContain(`("purpose" = 'invoice'  AND "draft_order_ref" IS NOT NULL))`);
+  });
+
+  it("checkout_links is RLS-forced with the tenant_isolation policy", () => {
+    expect(allSql).toContain('ALTER TABLE "checkout"."checkout_links" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "checkout"."checkout_links" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "checkout"."checkout_links";',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "checkout"."checkout_links" FOR ALL',
+    );
+  });
+});
+
+describe("orders and checkout schema — draft orders (order operations Part 4)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("draft_orders has the model's columns, the per-shop number key, the status index and the check", () => {
+    expect([...columnsEverAddedTo("orders", "draft_orders", allSql)].sort()).toEqual([
+      "billing_address",
+      "checkout_ref",
+      "checkout_version",
+      "completed_at",
+      "contact_email",
+      "contact_phone",
+      "created_at",
+      "created_by",
+      "currency",
+      "customer_ref",
+      "deleted_at",
+      "discount",
+      "draft_number",
+      "id",
+      "invoice_sent_at",
+      "lines",
+      "note",
+      "order_ref",
+      "shipping",
+      "shipping_address",
+      "status",
+      "tags",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "draft_orders_tenant_id_draft_number_key" ON "orders"."draft_orders"("tenant_id", "draft_number");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "draft_orders_tenant_id_status_idx" ON "orders"."draft_orders"("tenant_id", "status");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "draft_orders_status_check" CHECK ("status" IN ('open','invoice_sent','completed'))`,
+    );
+  });
+
+  it("draft_orders is RLS-forced with the tenant_isolation policy", () => {
+    expect(allSql).toContain('ALTER TABLE "orders"."draft_orders" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "orders"."draft_orders" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('DROP POLICY IF EXISTS tenant_isolation ON "orders"."draft_orders";');
+    expect(allSql).toContain('CREATE POLICY tenant_isolation ON "orders"."draft_orders" FOR ALL');
+  });
+
+  it("the counter gains last_draft_number, sessions gain draft_terms, links get the draft index", () => {
+    expect(
+      columnsEverAddedTo("orders", "order_number_counters", allSql).has("last_draft_number"),
+    ).toBe(true);
+    expect(columnsEverAddedTo("checkout", "checkout_sessions", allSql).has("draft_terms")).toBe(
+      true,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "checkout_links_tenant_id_draft_order_ref_idx" ON "checkout"."checkout_links"("tenant_id", "draft_order_ref");',
+    );
+  });
+});

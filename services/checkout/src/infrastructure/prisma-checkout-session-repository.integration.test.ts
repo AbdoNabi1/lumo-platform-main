@@ -8,6 +8,13 @@ import { OutboxWriter, rootEventContext } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import { CheckoutSession } from "../domain/checkout-session";
 import { ContactEmail } from "../domain/value-objects/contact-email";
+import {
+  ABANDONED_FIXTURE_CASES,
+  expectedIds,
+  FIXTURE_LISTED,
+  FIXTURE_OLDER_THAN,
+  seedAbandonedFixture,
+} from "./abandoned-checkout-fixture";
 import { CheckoutEventTranslator } from "./checkout-event-translator";
 import { PrismaCheckoutSessionRepository } from "./prisma-checkout-session-repository";
 
@@ -217,3 +224,73 @@ describe.runIf(Boolean(databaseUrl))("PrismaCheckoutSessionRepository (integrati
     await prisma.$disconnect();
   });
 });
+
+describe.runIf(Boolean(databaseUrl))(
+  "PrismaCheckoutSessionRepository.listAbandoned (integration, Part 3)",
+  () => {
+    async function seeded() {
+      const prisma = createTestPrismaClient(databaseUrl);
+      const ids: IdGenerator = { generate: () => crypto.randomUUID() };
+      const outbox = new OutboxWriter({
+        store: new PrismaOutboxStore(prisma),
+        translator: new CheckoutEventTranslator(),
+        serializer: new InMemoryEventSerializer(),
+        clock: { now: () => new Date("2026-10-18T00:00:00.000Z") },
+        producer: "checkout",
+      });
+      const repository = new PrismaCheckoutSessionRepository({
+        prisma,
+        outbox,
+        context: rootEventContext(ids),
+      });
+      const unitOfWork = new PrismaUnitOfWork(prisma);
+      const tenantId = `tenant-p3-${crypto.randomUUID().slice(0, 8)}`;
+      const otherTenantId = `tenant-p3-other-${crypto.randomUUID().slice(0, 8)}`;
+      const fixtureIds = await seedAbandonedFixture(
+        {
+          save: async (session, tenant, updatedAt) => {
+            await unitOfWork.run((tx) => repository.save(session, tenant, tx));
+            await prisma.checkoutSession.updateMany({
+              where: { tenantId: tenant, id: session.id.toString() },
+              data: { updatedAt },
+            });
+          },
+        },
+        { tenantId, otherTenantId },
+        () => crypto.randomUUID(),
+      );
+      return { prisma, repository, tenantId, ids: fixtureIds };
+    }
+
+    for (const c of ABANDONED_FIXTURE_CASES) {
+      it(c.name, async () => {
+        const { prisma, repository, tenantId, ids } = await seeded();
+        const page = await repository.listAbandoned(
+          { ...c.query, olderThan: FIXTURE_OLDER_THAN },
+          tenantId,
+        );
+        expect(page.items.map((r) => r.session.id.toString())).toEqual(
+          expectedIds(ids, c.expected),
+        );
+        await prisma.$disconnect();
+      });
+    }
+
+    it("pages by id, newest first", async () => {
+      const { prisma, repository, tenantId, ids } = await seeded();
+      const all = expectedIds(ids, FIXTURE_LISTED);
+      const first = await repository.listAbandoned(
+        { olderThan: FIXTURE_OLDER_THAN, first: 2 },
+        tenantId,
+      );
+      expect(first.items.map((r) => r.session.id.toString())).toEqual(all.slice(0, 2));
+      expect(first.pageInfo.hasNextPage).toBe(true);
+      const second = await repository.listAbandoned(
+        { olderThan: FIXTURE_OLDER_THAN, first: 2, after: first.pageInfo.endCursor ?? undefined },
+        tenantId,
+      );
+      expect(second.items.map((r) => r.session.id.toString())).toEqual(all.slice(2));
+      await prisma.$disconnect();
+    });
+  },
+);

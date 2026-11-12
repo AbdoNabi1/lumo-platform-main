@@ -55,7 +55,12 @@ export type MutationResult<T> =
       readonly message: string;
       readonly fields: readonly FieldIssue[];
     }
-  | { readonly outcome: "error"; readonly message: string };
+  | {
+      readonly outcome: "error";
+      readonly message: string;
+      /** The HTTP status when the API answered non-2xx; absent for a network failure or a bad body. */
+      readonly status?: number;
+    };
 
 /**
  * Resolves the same tenant id every admin-web request already sends as the `x-tenant-id` header
@@ -194,7 +199,11 @@ export async function mutateAdminApi<T>(
     };
   }
   if (!response.ok) {
-    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+    return {
+      outcome: "error",
+      message: `Admin API responded with status ${response.status}`,
+      status: response.status,
+    };
   }
 
   if (!isValid(parsed)) {

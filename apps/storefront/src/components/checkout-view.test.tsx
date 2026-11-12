@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { formatCurrency } from "@/lib/format";
 import { en } from "@/messages/en";
 import { ar } from "@/messages/ar";
 import { COUNTRY_CODES } from "@platform/regions";
-import type { ShippableCountries } from "@/lib/checkout-address";
+import { countryName, type ShippableCountries } from "@/lib/checkout-address";
 import type { CheckoutSessionSummary } from "@/lib/runtime-api";
 import type {
   CheckoutActionResult,
@@ -1005,6 +1006,238 @@ describe("CheckoutView — taxes in the summary (Plan 3C)", () => {
   });
 });
 
+describe("CheckoutView on an invoice checkout (order operations Part 4, spec §4.10)", () => {
+  const ADDRESS = {
+    name: "Mona Ali",
+    phone: "01001234567",
+    line1: "5 Nile St",
+    city: "Cairo",
+    postalCode: "",
+    country: "EG",
+    province: "EG-C",
+  };
+  const draftSession = session({
+    shippingAddress: ADDRESS,
+    billingAddress: ADDRESS,
+    contactEmail: "sara@example.com",
+    selectedShippingMethod: "draft",
+    totals: {
+      subtotalMinor: 50000,
+      shippingMinor: 4000,
+      taxMinor: 0,
+      grandTotalMinor: 49000,
+      taxIncluded: true,
+      shippingName: "Courier",
+      discountMinor: 5000,
+    },
+    draftInvoice: { draftNumber: "D3" },
+    discount: { applied: [{ title: "Loyal customer", amountMinor: 5000 }] },
+  });
+
+  /** Money as the page prints it (Intl puts a no-break space after the code). */
+  const money = (minor: number): string => formatCurrency("en", minor, "EGP").replace(/\s+/g, " ");
+
+  /** Lets the mount effects (and anything they started) run before a "never called" assertion. */
+  async function settled(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  it("shows the invoice badge, the fixed shipping and the draft's discount, with no shipping choice", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    await screen.findByText(en.checkout.fixedShippingHint);
+    await settled();
+
+    expect(screen.getByText(/^Invoice/).textContent).toBe("Invoice #D3");
+    expect(screen.queryByRole("radio", { name: STANDARD })).toBeNull();
+    expect(screen.queryByRole("radio", { name: /Courier/ })).toBeNull();
+    expect(screen.getAllByText(/Courier/).length).toBeGreaterThan(0);
+    const discountRows = screen.getAllByText("Loyal customer");
+    expect(discountRows.length).toBeGreaterThan(0);
+    expect(discountRows[0]?.closest("div")?.textContent?.replace(/\s+/g, " ")).toContain(
+      `−${money(5000)}`,
+    );
+    expect(screen.queryByLabelText(/discount code|gift card/i)).toBeNull();
+    expect(requestShippingQuote).not.toHaveBeenCalled();
+    expect(selectShipping).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's total even when no shipping method id is selected", async () => {
+    renderView({
+      session: { ...draftSession, selectedShippingMethod: null },
+      paymentMethods: ["cod"],
+    });
+    await settled();
+    const totals = Array.from(document.querySelectorAll("dd")).filter((dd) =>
+      dd.textContent?.replace(/\s+/g, " ").includes(money(49000)),
+    );
+    expect(totals.length).toBeGreaterThan(0);
+    expect(screen.getAllByText(en.checkout.summary.shipping).length).toBeGreaterThan(0);
+  });
+
+  it("falls back to a localised 'Discount' label when the merchant gave the discount no name", async () => {
+    renderView({
+      session: {
+        ...draftSession,
+        discount: { applied: [{ title: "Custom discount", amountMinor: 5000 }] },
+      },
+      paymentMethods: ["cod"],
+    });
+    await settled();
+    expect(screen.getAllByText(en.checkout.summary.discount).length).toBeGreaterThan(0);
+    expect(screen.queryByText("Custom discount")).toBeNull();
+  });
+
+  it("isolates the draft number inside the Arabic sentence", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"], locale: "ar" });
+    await settled();
+    expect(screen.getByText("#D3").tagName).toBe("BDI");
+    expect(screen.getByText(/^فاتورة/).textContent).toBe("فاتورة #D3");
+    expect(screen.getByText(ar.checkout.fixedShippingHint)).toBeInTheDocument();
+  });
+
+  it("placing the order never quotes or selects shipping", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.completeOrder }));
+    await waitFor(() => expect(completeCheckout).toHaveBeenCalled());
+    expect(requestShippingQuote).not.toHaveBeenCalled();
+    expect(selectShipping).not.toHaveBeenCalled();
+    expect(calls).toEqual([
+      "setBillingAddress",
+      "selectPayment",
+      "requestTax",
+      "recalculate",
+      "completeCheckout",
+      "initiatePayment",
+    ]);
+  });
+
+  it("shows the merchant's fixed shipping price in the shipping section and the summary (T10 M2)", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    await settled();
+    const hint = screen.getByText(en.checkout.fixedShippingHint);
+    const fixedRow = hint.previousElementSibling;
+    expect(fixedRow?.textContent?.replace(/\s+/g, " ")).toContain("Courier");
+    expect(fixedRow?.textContent?.replace(/\s+/g, " ")).toContain(money(4000));
+    const summaryRows = Array.from(document.querySelectorAll("dl > div")).filter(
+      (row) => row.querySelector("dt")?.textContent === en.checkout.summary.shipping,
+    );
+    expect(summaryRows.length).toBeGreaterThan(0);
+    for (const row of summaryRows) {
+      expect(row.querySelector("dd")?.textContent?.replace(/\s+/g, " ")).toBe(money(4000));
+    }
+  });
+
+  it("free shipping the server named in English reads 'Shipping — Free' in the shopper's language (M-2)", async () => {
+    const free = {
+      ...draftSession,
+      totals: { ...draftSession.totals!, shippingMinor: 0, shippingName: "Free shipping" },
+    };
+    renderView({ session: free, paymentMethods: ["cod"], locale: "ar" });
+    await settled();
+    expect(screen.queryByText("Free shipping")).toBeNull();
+    const fixedRow = screen.getByText(ar.checkout.fixedShippingHint).previousElementSibling;
+    expect(fixedRow?.textContent).toContain(ar.checkout.summary.shipping);
+    expect(fixedRow?.textContent).toContain(ar.checkout.summary.free);
+  });
+
+  it("keeps a free shipping name the merchant gave in their own words (M-2)", async () => {
+    const named = {
+      ...draftSession,
+      totals: { ...draftSession.totals!, shippingMinor: 0, shippingName: "شحن مجاني" },
+    };
+    renderView({ session: named, paymentMethods: ["cod"], locale: "ar" });
+    await settled();
+    expect(screen.getAllByText("شحن مجاني").length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["the shop's zones name another country", { countries: ["SA"], restOfWorld: false }],
+    ["the shop's zones name no destination", { countries: [], restOfWorld: false }],
+  ])(
+    "shows the draft's own country when %s (T10 M1)",
+    async (_case, shippable: ShippableCountries) => {
+      renderView({ session: draftSession, paymentMethods: ["cod"], shippable });
+      await settled();
+      const select = field(en.checkout.address.country) as unknown as HTMLSelectElement;
+      expect(select.value).toBe("EG");
+      expect(select.selectedOptions[0]?.textContent).toBe(countryName("EG", "en"));
+    },
+  );
+
+  it("names the draft's out-of-zone country in Arabic too (T10 M1)", async () => {
+    renderView({
+      session: draftSession,
+      paymentMethods: ["cod"],
+      shippable: { countries: ["SA"], restOfWorld: false },
+      locale: "ar",
+    });
+    await settled();
+    const select = field(ar.checkout.address.country) as unknown as HTMLSelectElement;
+    expect(select.value).toBe("EG");
+    expect(select.selectedOptions[0]?.textContent).toBe(countryName("EG", "ar"));
+  });
+
+  it("a corrected address is saved (tax follows it) but still never quoted", async () => {
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    type(en.checkout.address.line1, "7 Corniche Rd");
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.completeOrder }));
+    await waitFor(() => expect(completeCheckout).toHaveBeenCalled());
+    expect(setShippingAddress).toHaveBeenCalledWith(
+      "checkout-1",
+      expect.objectContaining({ line1: "7 Corniche Rd" }),
+    );
+    expect(requestShippingQuote).not.toHaveBeenCalled();
+    expect(selectShipping).not.toHaveBeenCalled();
+  });
+
+  it("still lets the shopper complete when the shop's zones name no destination", async () => {
+    renderView({
+      session: draftSession,
+      paymentMethods: ["cod"],
+      shippable: { countries: [], restOfWorld: false },
+    });
+    expect(screen.getByRole("button", { name: en.checkout.completeOrder })).toBeEnabled();
+  });
+
+  it("never offers the manual provider, even if the list somehow held it", () => {
+    renderView({ session: draftSession, paymentMethods: ["manual", "cod"] });
+    expect(screen.queryByRole("radio", { name: "manual" })).toBeNull();
+    expect(
+      screen.getAllByRole("radio", { name: new RegExp(en.checkout.paymentMethod.cod) }),
+    ).toHaveLength(1);
+  });
+
+  it("maps DRAFT_LOCKED to a calm message with no way back to a cart", async () => {
+    completeCheckout.mockResolvedValue({ ok: false, reason: "draft-locked" });
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.completeOrder }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(en.checkout.draftLockedBody);
+    expect(within(alert).queryByRole("link")).toBeNull();
+    expect(initiatePayment).not.toHaveBeenCalled();
+  });
+
+  it("out of stock on an invoice does not send the shopper to a cart they do not have", async () => {
+    completeCheckout.mockResolvedValue({ ok: false, reason: "out-of-stock" });
+    renderView({ session: draftSession, paymentMethods: ["cod"] });
+    fireEvent.click(screen.getByRole("button", { name: en.checkout.completeOrder }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(en.checkout.invoiceOutOfStock);
+    expect(within(alert).queryByRole("link")).toBeNull();
+  });
+
+  it("an ordinary checkout is untouched: no badge, no discount row, shipping still quoted", async () => {
+    renderView({
+      session: session({ contactEmail: "guest@example.com", shippingAddress: saved }),
+    });
+    expect(await screen.findByRole("radio", { name: STANDARD })).toBeInTheDocument();
+    expect(screen.queryByText(en.checkout.fixedShippingHint)).toBeNull();
+    expect(screen.queryByText(/^Invoice/)).toBeNull();
+  });
+});
+
 describe("CheckoutView — messages", () => {
   it("has every checkout key in Arabic too", () => {
     const missing: string[] = [];
@@ -1019,6 +1252,15 @@ describe("CheckoutView — messages", () => {
     };
     walk(en.checkout, ar.checkout, "checkout");
     expect(missing).toEqual([]);
+  });
+
+  it("keeps the invoice placeholders in both languages (T10 M6: IsolatedText drops a missing one)", () => {
+    for (const dictionary of [en, ar]) {
+      expect(dictionary.invoice.title).toContain("#{draft}");
+      expect(dictionary.checkout.invoiceBadge).toContain("#{draft}");
+      expect(dictionary.invoice.fromShop).toContain("{shop}");
+      expect(dictionary.recovery.fromShop).toContain("{shop}");
+    }
   });
 
   it("names the province field, the rates and the tax lines in Arabic", () => {

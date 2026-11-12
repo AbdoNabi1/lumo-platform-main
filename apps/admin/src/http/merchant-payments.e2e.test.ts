@@ -520,6 +520,55 @@ describe("merchant payments through the real HTTP pipeline (WP-13)", () => {
     expect(badConfig.statusCode).toBe(422);
   });
 
+  it("the staff-recorded `manual` method is never offered, listed or enableable, and a shopper cannot select it (Ruling 8)", async () => {
+    await seedProduct("tok-a");
+    await enableAll("tok-a");
+
+    const offered = ok<{ methods: string[] }>(
+      await get("/public/payment-methods", storefront("tenant-a")),
+      "list methods",
+    );
+    const settings = JSON.parse((await get("/payments/settings", admin("tok-a"))).body) as {
+      enabledMethods: string[];
+      methods: Record<string, unknown>;
+    };
+    const enableManual = await configureMerchant("tok-a", { enabledMethods: ["manual"] });
+    const checkout = await readyCheckout("tenant-a", "sess-manual", "manual");
+
+    expect(offered.methods).not.toContain("manual");
+    expect(settings.enabledMethods).not.toContain("manual");
+    expect(Object.keys(settings.methods)).not.toContain("manual");
+    expect(enableManual.statusCode).toBe(422);
+    expect(checkout.selection.statusCode).toBe(422);
+  });
+
+  it("the admin payment-intents route refuses `manual`: only a draft's checkout opens a staff-recorded payment (Ruling 8)", async () => {
+    await seedProduct("tok-a");
+    await enableAll("tok-a");
+    const checkout = await readyCheckout("tenant-a", "sess-route-manual", "cod");
+    ok(await checkout.complete(), "complete");
+    const orderRef = ok<{ orderRef: string }>(
+      await get(checkout.base, storefront("tenant-a", { "x-cart-session": "sess-route-manual" })),
+      "get checkout",
+    ).orderRef;
+
+    const refused = await send(
+      "POST",
+      "/payment-intents",
+      { ...admin("tok-a"), "idempotency-key": "route-manual-1" },
+      { orderRef, provider: "manual" },
+    );
+    const allowed = await send(
+      "POST",
+      "/payment-intents",
+      { ...admin("tok-a"), "idempotency-key": "route-cod-1" },
+      { orderRef, provider: "cod" },
+    );
+
+    expect(refused.statusCode).toBe(422);
+    expect(allowed.statusCode).toBe(201);
+  });
+
   it("a method the merchant has not enabled cannot be selected — and nothing is chosen in its place", async () => {
     await seedProduct("tok-a");
     await configureMerchant("tok-a", { enabledMethods: ["stripe"] });

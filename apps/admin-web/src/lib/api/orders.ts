@@ -6,6 +6,9 @@ export type OrderPaymentStatus = "pending" | "paid" | "refunded" | "voided";
 /** Plan 3B: Shopify's fulfillment status, derived on the server from the Fulfillment context. */
 export type OrderFulfillmentStatus = "unfulfilled" | "in_progress" | "fulfilled" | "delivered";
 
+/** Order operations Part 1: Shopify's default views of the list. */
+export type OrderView = "all" | "unfulfilled" | "unpaid" | "open" | "archived";
+
 export interface OrderListItemDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -22,6 +25,10 @@ export interface OrderListItemDto {
   readonly shippingMethod: string | null;
   readonly paymentStatus: OrderPaymentStatus;
   readonly fulfillmentStatus: OrderFulfillmentStatus;
+  /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
+  readonly archivedAt?: string | null;
+  /** Order operations Part 2: the order's tags; absent from an older API. */
+  readonly tags?: readonly string[];
 }
 
 export interface OrdersPageInfo {
@@ -67,8 +74,10 @@ export interface OrdersListQuery {
   readonly after?: string;
   readonly status?: string;
   readonly search?: string;
-  /** Plan 3D: only the open orders still waiting to be fulfilled (what Home's card counts). */
-  readonly fulfillment?: "unfulfilled";
+  /** Order operations Part 1: Shopify's tab; absent or "all" sends no param. */
+  readonly view?: OrderView;
+  /** Order operations Part 2: only orders carrying every one of these tags. */
+  readonly tags?: readonly string[];
 }
 
 export type FetchOrdersPageResult =
@@ -87,7 +96,8 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (query.after !== undefined) params.set("after", query.after);
   if (query.status !== undefined) params.set("status", query.status);
   if (query.search !== undefined) params.set("search", query.search);
-  if (query.fulfillment !== undefined) params.set("fulfillment", query.fulfillment);
+  if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
+  for (const tag of query.tags ?? []) params.append("tag", tag);
 
   const result = await getAdminApi(`/api/v1/orders?${params.toString()}`, isOrdersPageDto);
   if (result.outcome === "ok") {
@@ -96,6 +106,104 @@ export async function fetchOrdersPage(query: OrdersListQuery): Promise<FetchOrde
   if (result.outcome === "unauthorized") {
     return { outcome: "unauthorized" };
   }
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
+}
+
+export interface OrderExportLineDto {
+  readonly title: string;
+  readonly variantTitle: string | null;
+  readonly sku: string | null;
+  readonly quantity: number;
+}
+
+/** One courier row per order (`GET /orders/export-rows`, spec §1.4). */
+export interface OrderExportRowDto {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly createdAt: string;
+  readonly customerName: string | null;
+  readonly email: string | null;
+  readonly phone: string | null;
+  readonly line1: string;
+  readonly line2: string | null;
+  readonly city: string;
+  readonly province: string | null;
+  readonly country: string;
+  readonly items: readonly OrderExportLineDto[];
+  readonly itemCount: number;
+  readonly subtotalMinor: number;
+  readonly shippingMinor: number;
+  readonly discountMinor: number;
+  readonly totalMinor: number;
+  readonly codAmountMinor: number;
+  readonly currency: string;
+  readonly paymentStatus: OrderPaymentStatus;
+  readonly paymentProvider: string | null;
+  readonly fulfillmentStatus: OrderFulfillmentStatus;
+  readonly shippingMethod: string | null;
+  readonly tags: readonly string[];
+  readonly note: string | null;
+}
+
+export interface OrderExportQuery {
+  readonly view?: OrderView | undefined;
+  readonly search?: string | undefined;
+  readonly status?: string | undefined;
+  readonly ids?: readonly string[] | undefined;
+  /** Order operations Part 2: only orders carrying every one of these tags. */
+  readonly tags?: readonly string[] | undefined;
+  /** ISO instants (the route handler turns shop-local days into them). */
+  readonly createdFrom?: string | undefined;
+  readonly createdTo?: string | undefined;
+  readonly first?: number | undefined;
+  readonly after?: string | undefined;
+}
+
+export type FetchOrderExportRowsResult =
+  | {
+      readonly outcome: "ok";
+      readonly items: readonly OrderExportRowDto[];
+      readonly pageInfo: OrdersPageInfo;
+    }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "error"; readonly message: string };
+
+function isExportRowsPage(
+  value: unknown,
+): value is { items: readonly OrderExportRowDto[]; pageInfo: OrdersPageInfo } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { items?: unknown }).items) &&
+    typeof (value as { pageInfo?: unknown }).pageInfo === "object"
+  );
+}
+
+/** One page of export rows (`orders:export`). Server-only, like every `lib/api` call. */
+export async function fetchOrderExportRows(
+  query: OrderExportQuery,
+): Promise<FetchOrderExportRowsResult> {
+  const params = new URLSearchParams();
+  if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
+  if (query.search !== undefined) params.set("search", query.search);
+  if (query.status !== undefined) params.set("status", query.status);
+  if (query.ids !== undefined) params.set("ids", query.ids.join(","));
+  for (const tag of query.tags ?? []) params.append("tag", tag);
+  if (query.createdFrom !== undefined) params.set("createdFrom", query.createdFrom);
+  if (query.createdTo !== undefined) params.set("createdTo", query.createdTo);
+  if (query.first !== undefined) params.set("first", String(query.first));
+  if (query.after !== undefined) params.set("after", query.after);
+  const result = await getAdminApi(
+    `/api/v1/orders/export-rows?${params.toString()}`,
+    isExportRowsPage,
+  );
+  if (result.outcome === "ok") {
+    return { outcome: "ok", items: result.data.items, pageInfo: result.data.pageInfo };
+  }
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
   return {
     outcome: "error",
     message: result.outcome === "not_found" ? "Not found" : result.message,
@@ -154,6 +262,45 @@ export interface OrderHistoryEntryDto {
   readonly occurredAt: string;
 }
 
+/** Order operations Part 2 — what one staff-timeline line is. */
+export type OrderTimelineKind =
+  | "comment"
+  | "archived"
+  | "unarchived"
+  | "note_changed"
+  | "tags_added"
+  | "tags_removed"
+  | "created_from_draft";
+
+/** One line of the order's staff timeline (`GET /orders/:id` → `timelineEntries`). */
+export interface TimelineEntryDto {
+  readonly id: string;
+  readonly kind: OrderTimelineKind;
+  /** null → shown as "Staff". */
+  readonly authorName: string | null;
+  /** The comment text; null for activity lines and for a deleted comment. */
+  readonly body: string | null;
+  readonly data: {
+    readonly tags?: readonly string[];
+    readonly cleared?: boolean;
+    readonly draftNumber?: string;
+    /** The draft the order came from (Ruling 24): "Order created from draft #D3" links back to it. */
+    readonly draftId?: string;
+  };
+  readonly createdAt: string;
+  readonly editedAt: string | null;
+  readonly deleted: boolean;
+  /** Decided by the API: this viewer may edit / delete this line. */
+  readonly canEdit: boolean;
+  readonly canDelete: boolean;
+}
+
+/** A tag suggestion (`GET /order-tags`). */
+export interface OrderTagUsageDto {
+  readonly tag: string;
+  readonly count: number;
+}
+
 export interface OrderDetailDto {
   readonly id: string;
   readonly orderNumber: string;
@@ -178,6 +325,12 @@ export interface OrderDetailDto {
   readonly shippingMethod: string | null;
   /** G-127: whether Refund can succeed right now — decided by the backend, never guessed from the status. */
   readonly refundable: boolean;
+  /** Order operations Part 1: when the order was archived; null/absent when not (an older API omits it). */
+  readonly archivedAt?: string | null;
+  /** Order operations Part 2 — absent from an older API. */
+  readonly note?: string | null;
+  readonly tags?: readonly string[];
+  readonly timelineEntries?: readonly TimelineEntryDto[];
 }
 
 function isOrderDetailDto(value: unknown): value is OrderDetailDto {
@@ -211,13 +364,13 @@ export async function fetchOrder(orderId: string): Promise<FetchOrderResult> {
 }
 
 /**
- * T5.2 — the 7 order write routes below (`admin-routes.ts` lines ~1011-1117). One shared line-item
- * shape (`OrderLineItemInput`) and one shared address shape (`OrderAddressInput`) cover both
- * `placeOrder`'s and `createOrderFromCheckout`'s bodies — `placeOrderBody`/
- * `createOrderFromCheckoutBody` declare the same per-item and per-address fields verbatim, only
- * `createOrderFromCheckoutBody` additionally requires `checkoutRef`/`billingAddress` and is
- * `.strict()`. Manual unit prices ARE correct here (unlike the storefront): these are operator-
- * entered backoffice order-creation forms, not a re-derivation of a caller-untrusted price.
+ * T5.2 — the 6 order write routes below (`admin-routes.ts` lines ~1011-1117). One shared line-item
+ * shape (`OrderLineItemInput`) and one address shape (`OrderAddressInput`) cover
+ * `createOrderFromCheckout`'s body (`createOrderFromCheckoutBody`, which also requires
+ * `checkoutRef`/`billingAddress` and is `.strict()`). Merchant-created orders now start as
+ * draft orders (`lib/api/draft-orders.ts`), priced by the server. Manual unit prices ARE correct
+ * here (unlike the storefront): this is an operator-entered backoffice recovery form, not a
+ * re-derivation of a caller-untrusted price.
  */
 
 export interface OrderLineItemInput {
@@ -234,13 +387,6 @@ export interface OrderAddressInput {
   readonly country: string;
 }
 
-export interface PlaceOrderInput {
-  readonly customerRef: string;
-  readonly currency: string;
-  readonly items: readonly OrderLineItemInput[];
-  readonly shippingAddress: OrderAddressInput;
-}
-
 export interface CreateOrderFromCheckoutInput {
   readonly checkoutRef: string;
   readonly customerRef: string;
@@ -251,29 +397,14 @@ export interface CreateOrderFromCheckoutInput {
 }
 
 /**
- * `POST /orders` and `POST /orders/from-checkout` return the created `Order` **aggregate**, not a
- * DTO (`admin-routes.ts`'s handlers return `admin.orders.placeOrder(...)`/
- * `admin.orders.createFromCheckout(...)` directly — same situation `createProduct` in
- * `lib/api/products.ts` documents for `POST /products`). Never type the whole aggregate here: this
- * only validates the response is an object and reads an `id` off it, for the post-create redirect.
+ * `POST /orders/from-checkout` returns the created `Order` **aggregate**, not a
+ * DTO (`admin-routes.ts`'s handler returns `admin.orders.createFromCheckout(...)` directly —
+ * same situation `createProduct` in `lib/api/products.ts` documents for `POST /products`). Never
+ * type the whole aggregate here: this only validates the response is an object and reads an `id`
+ * off it, for the post-create redirect.
  */
 function isCreatedOrder(value: unknown): value is { readonly id?: unknown } {
   return typeof value === "object" && value !== null;
-}
-
-/** Places a backoffice order (`POST /orders`, `idempotent: true`, `orders:place`). */
-export async function placeOrder(
-  input: PlaceOrderInput,
-  idempotencyKey: string,
-): Promise<MutationResult<{ readonly id: string }>> {
-  const result = await mutateAdminApi(
-    "/api/v1/orders",
-    { method: "POST", body: input, idempotencyKey },
-    isCreatedOrder,
-  );
-  if (result.outcome !== "ok") return result;
-  const id = typeof result.data.id === "string" ? result.data.id : "";
-  return { outcome: "ok", data: { id } };
 }
 
 /**
@@ -387,5 +518,232 @@ export function requestFulfillment(
     orderPath(orderId, "/request-fulfillment"),
     { method: "POST", idempotencyKey },
     isUnknown,
+  );
+}
+
+/** Order operations Part 1 — the list's bulk actions (`POST /orders/bulk`, one result per order). */
+export const BULK_ORDER_ACTIONS = [
+  "archive",
+  "unarchive",
+  "fulfill",
+  "capture_payments",
+  "mark_cod_collected",
+  "add_tags",
+  "remove_tags",
+] as const;
+export type BulkOrderAction = (typeof BULK_ORDER_ACTIONS)[number];
+
+export interface BulkOrderResultDto {
+  readonly orderId: string;
+  readonly outcome: "ok" | "skipped" | "failed";
+  readonly reason?: string;
+}
+
+function isBulkResults(
+  value: unknown,
+): value is { readonly results: readonly BulkOrderResultDto[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { results?: unknown }).results)
+  );
+}
+
+/** `POST /orders/bulk` (`idempotent: true`; the action's own permission is checked by the API). */
+export function bulkOrders(
+  action: BulkOrderAction,
+  orderIds: readonly string[],
+  idempotencyKey: string,
+  tags?: readonly string[],
+): Promise<MutationResult<{ readonly results: readonly BulkOrderResultDto[] }>> {
+  return mutateAdminApi(
+    "/api/v1/orders/bulk",
+    {
+      method: "POST",
+      body: { action, orderIds, ...(tags === undefined ? {} : { tags }) },
+      idempotencyKey,
+    },
+    isBulkResults,
+  );
+}
+
+/** A printable packing slip (`GET /orders/packing-slips`). */
+export interface PackingSlipDto {
+  readonly orderId: string;
+  readonly orderNumber: string;
+  readonly createdAt: string;
+  readonly shipTo: {
+    readonly name: string | null;
+    readonly phone: string | null;
+    readonly line1: string;
+    readonly line2: string | null;
+    readonly city: string;
+    readonly province: string | null;
+    readonly postalCode: string;
+    readonly country: string;
+  };
+  readonly lines: readonly OrderExportLineDto[];
+  readonly note: string | null;
+  readonly codAmountMinor: number;
+  readonly currency: string;
+}
+
+function isPackingSlips(value: unknown): value is { readonly slips: readonly PackingSlipDto[] } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { slips?: unknown }).slips)
+  );
+}
+
+export async function fetchPackingSlips(
+  ids: readonly string[],
+): Promise<
+  | { readonly outcome: "ok"; readonly slips: readonly PackingSlipDto[] }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "error"; readonly message: string }
+> {
+  const result = await getAdminApi(
+    `/api/v1/orders/packing-slips?ids=${ids.map(encodeURIComponent).join(",")}`,
+    isPackingSlips,
+  );
+  if (result.outcome === "ok") return { outcome: "ok", slips: result.data.slips };
+  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
+}
+
+/** `POST /orders/:orderId/archive` (`idempotent: true`, `orders:archive`). */
+export function archiveOrder(
+  orderId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/archive"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
+  );
+}
+
+/** `POST /orders/:orderId/unarchive` (`idempotent: true`, `orders:archive`). */
+export function unarchiveOrder(
+  orderId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<unknown>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/unarchive"),
+    { method: "POST", idempotencyKey },
+    isUnknown,
+  );
+}
+
+function isNoteBody(value: unknown): value is { readonly note: string | null } {
+  if (typeof value !== "object" || value === null) return false;
+  const note = (value as { note?: unknown }).note;
+  return note === null || typeof note === "string";
+}
+
+function isTagsBody(value: unknown): value is { readonly tags: readonly string[] } {
+  return (
+    typeof value === "object" && value !== null && Array.isArray((value as { tags?: unknown }).tags)
+  );
+}
+
+/** `PUT /orders/:orderId/note` (`orders:edit_note`); null or blank removes the note. */
+export function updateOrderNote(
+  orderId: string,
+  note: string | null,
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly note: string | null }>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/note"),
+    { method: "PUT", body: { note }, idempotencyKey },
+    isNoteBody,
+  );
+}
+
+/** `POST /orders/:orderId/tags` (`orders:tag`): adds, then removes; answers the order's tags. */
+export function changeOrderTags(
+  orderId: string,
+  change: { readonly add?: readonly string[]; readonly remove?: readonly string[] },
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly tags: readonly string[] }>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/tags"),
+    {
+      method: "POST",
+      body: {
+        ...(change.add === undefined ? {} : { add: change.add }),
+        ...(change.remove === undefined ? {} : { remove: change.remove }),
+      },
+      idempotencyKey,
+    },
+    isTagsBody,
+  );
+}
+
+function isTagUsages(value: unknown): value is { readonly tags: readonly OrderTagUsageDto[] } {
+  return isTagsBody(value);
+}
+
+/** `GET /order-tags?q=` — the shop's tags starting with `prefix`; null when the read failed. */
+export async function fetchOrderTagSuggestions(
+  prefix: string,
+): Promise<readonly OrderTagUsageDto[] | null> {
+  const result = await getAdminApi(
+    `/api/v1/order-tags?q=${encodeURIComponent(prefix)}`,
+    isTagUsages,
+  );
+  return result.outcome === "ok" ? result.data.tags : null;
+}
+
+function isTimelineEntry(value: unknown): value is TimelineEntryDto {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { kind?: unknown }).kind === "string"
+  );
+}
+
+/** `POST /orders/:orderId/comments` (`orders:comment`); the author is the signed-in staff member. */
+export function addOrderComment(
+  orderId: string,
+  body: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, "/comments"),
+    { method: "POST", body: { body }, idempotencyKey },
+    isTimelineEntry,
+  );
+}
+
+/** `PATCH /orders/:orderId/comments/:entryId` — the API lets only the author edit. */
+export function editOrderComment(
+  orderId: string,
+  entryId: string,
+  body: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, `/comments/${encodeURIComponent(entryId)}`),
+    { method: "PATCH", body: { body }, idempotencyKey },
+    isTimelineEntry,
+  );
+}
+
+/** `DELETE /orders/:orderId/comments/:entryId` — the author, or an admin. */
+export function deleteOrderComment(
+  orderId: string,
+  entryId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<TimelineEntryDto>> {
+  return mutateAdminApi(
+    orderPath(orderId, `/comments/${encodeURIComponent(entryId)}`),
+    { method: "DELETE", idempotencyKey },
+    isTimelineEntry,
   );
 }

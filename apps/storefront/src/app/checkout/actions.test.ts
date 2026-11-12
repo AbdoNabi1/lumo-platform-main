@@ -388,4 +388,48 @@ describe("completeCheckout — out of stock (Plan 2B-3)", () => {
 
     expect(result).toEqual({ ok: false, reason: "unavailable" });
   });
+
+  it("also reads an OUT_OF_STOCK code (an invoice checkout's refusal)", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: { code: "OUT_OF_STOCK", message: "stock" },
+    });
+
+    expect(await actions.completeCheckout("checkout-1")).toEqual({
+      ok: false,
+      reason: "out-of-stock",
+    });
+  });
+});
+
+describe("an invoice checkout's merchant-fixed terms (order operations Part 4)", () => {
+  const locked = { status: 409, body: { code: "DRAFT_LOCKED", message: "DRAFT_LOCKED: fixed" } };
+
+  it("maps a 409 DRAFT_LOCKED on any mutating step to its own reason", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutShippingAddress.mockResolvedValue(locked);
+    expect(await actions.setShippingAddress("checkout-1", address)).toEqual({
+      ok: false,
+      reason: "draft-locked",
+    });
+  });
+
+  it("maps it on completion too", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue(locked);
+    expect(await actions.completeCheckout("checkout-1")).toEqual({
+      ok: false,
+      reason: "draft-locked",
+    });
+  });
+
+  it("any other 409 stays 'unavailable'", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    setCheckoutShippingAddress.mockResolvedValue({ status: 409, body: { code: "DRAFT_BUSY" } });
+    expect(await actions.setShippingAddress("checkout-1", address)).toEqual({
+      ok: false,
+      reason: "unavailable",
+    });
+  });
 });
