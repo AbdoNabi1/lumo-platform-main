@@ -12,40 +12,60 @@ function newestFirst(a: OrderTimelineEntry, b: OrderTimelineEntry): number {
 export class InMemoryOrderTimelineRepository implements OrderTimelineRepository {
   private readonly store = new Map<string, Map<string, OrderTimelineEntry>>();
 
-  async append(entry: OrderTimelineEntry, tenantId: string): Promise<void> {
-    let bucket = this.store.get(tenantId);
-    if (bucket === undefined) {
-      bucket = new Map();
-      this.store.set(tenantId, bucket);
+  append(entry: OrderTimelineEntry, tenantId: string): Promise<void> {
+    try {
+      let bucket = this.store.get(tenantId);
+      if (bucket === undefined) {
+        bucket = new Map();
+        this.store.set(tenantId, bucket);
+      }
+      bucket.set(entry.id, entry);
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    bucket.set(entry.id, entry);
   }
 
-  async listForOrder(
+  listForOrder(
     orderId: string,
     tenantId: string,
     options: { readonly first: number },
   ): Promise<readonly OrderTimelineEntry[]> {
-    const take = Math.max(1, Math.min(Math.trunc(options.first), TIMELINE_READ_LIMIT));
-    return [...(this.store.get(tenantId)?.values() ?? [])]
-      .filter((entry) => entry.orderId === orderId)
-      .sort(newestFirst)
-      .slice(0, take);
+    try {
+      const take = Math.max(1, Math.min(Math.trunc(options.first), TIMELINE_READ_LIMIT));
+      return Promise.resolve(
+        [...(this.store.get(tenantId)?.values() ?? [])]
+          .filter((entry) => entry.orderId === orderId)
+          .sort(newestFirst)
+          .slice(0, take),
+      );
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
-  async findById(entryId: string, tenantId: string): Promise<OrderTimelineEntry | null> {
-    return this.store.get(tenantId)?.get(entryId) ?? null;
+  findById(entryId: string, tenantId: string): Promise<OrderTimelineEntry | null> {
+    try {
+      return Promise.resolve(this.store.get(tenantId)?.get(entryId) ?? null);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
-  async update(entry: OrderTimelineEntry, tenantId: string): Promise<void> {
-    const bucket = this.store.get(tenantId);
-    const current = bucket?.get(entry.id);
-    if (bucket === undefined || current === undefined) return;
-    bucket.set(entry.id, {
-      ...current,
-      body: entry.body,
-      editedAt: entry.editedAt,
-      deletedAt: entry.deletedAt,
-    });
+  update(entry: OrderTimelineEntry, tenantId: string): Promise<void> {
+    try {
+      const bucket = this.store.get(tenantId);
+      const current = bucket?.get(entry.id);
+      if (bucket === undefined || current === undefined) return Promise.resolve();
+      bucket.set(entry.id, {
+        ...current,
+        body: entry.body,
+        editedAt: entry.editedAt,
+        deletedAt: entry.deletedAt,
+      });
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }

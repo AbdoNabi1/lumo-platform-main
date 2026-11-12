@@ -66,36 +66,41 @@ export class InMemoryCheckoutSessionRepository
     return this.store.get(tenantId)?.get(id) ?? null;
   }
 
-  async findRecord(id: string, tenantId: string): Promise<CheckoutSessionRecord | null> {
-    return this.recordOf(id, tenantId);
+  findRecord(id: string, tenantId: string): Promise<CheckoutSessionRecord | null> {
+    try {
+      return Promise.resolve(this.recordOf(id, tenantId));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
-  async listAbandoned(
-    query: AbandonedCheckoutQuery,
-    tenantId: string,
-  ): Promise<AbandonedCheckoutPage> {
-    const search = normalizeAbandonedSearch(query.search);
-    const first = clampAbandonedPageSize(query.first);
-    const matching = [...(this.store.get(tenantId)?.keys() ?? [])]
-      .map((id) => this.recordOf(id, tenantId))
-      .filter((record): record is CheckoutSessionRecord => record !== null)
-      .filter((record) => isAbandonedCheckout(record, query.olderThan))
-      .filter(
-        (record) =>
-          query.recovery === undefined ||
-          (query.recovery === "recovered") === isRecovered(record.session),
-      )
-      .filter((record) => search === undefined || matchesAbandonedSearch(record.session, search))
-      .filter((record) => query.after === undefined || record.session.id.toString() < query.after)
-      .sort((a, b) => (a.session.id.toString() < b.session.id.toString() ? 1 : -1));
-    const items = matching.slice(0, first);
-    return {
-      items,
-      pageInfo: {
-        hasNextPage: matching.length > first,
-        endCursor: items.at(-1)?.session.id.toString() ?? null,
-      },
-    };
+  listAbandoned(query: AbandonedCheckoutQuery, tenantId: string): Promise<AbandonedCheckoutPage> {
+    try {
+      const search = normalizeAbandonedSearch(query.search);
+      const first = clampAbandonedPageSize(query.first);
+      const matching = [...(this.store.get(tenantId)?.keys() ?? [])]
+        .map((id) => this.recordOf(id, tenantId))
+        .filter((record): record is CheckoutSessionRecord => record !== null)
+        .filter((record) => isAbandonedCheckout(record, query.olderThan))
+        .filter(
+          (record) =>
+            query.recovery === undefined ||
+            (query.recovery === "recovered") === isRecovered(record.session),
+        )
+        .filter((record) => search === undefined || matchesAbandonedSearch(record.session, search))
+        .filter((record) => query.after === undefined || record.session.id.toString() < query.after)
+        .sort((a, b) => (a.session.id.toString() < b.session.id.toString() ? 1 : -1));
+      const items = matching.slice(0, first);
+      return Promise.resolve({
+        items,
+        pageInfo: {
+          hasNextPage: matching.length > first,
+          endCursor: items.at(-1)?.session.id.toString() ?? null,
+        },
+      });
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   private recordOf(id: string, tenantId: string): CheckoutSessionRecord | null {

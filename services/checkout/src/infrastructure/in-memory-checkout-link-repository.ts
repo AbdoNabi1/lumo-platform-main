@@ -15,61 +15,86 @@ export function newestFirst(links: readonly CheckoutLink[]): CheckoutLink[] {
 export class InMemoryCheckoutLinkRepository implements CheckoutLinkRepository {
   private readonly store = new Map<string, Map<string, CheckoutLinkSnapshot>>();
 
-  async save(link: CheckoutLink, tenantId: string): Promise<void> {
-    let bucket = this.store.get(tenantId);
-    if (bucket === undefined) {
-      bucket = new Map();
-      this.store.set(tenantId, bucket);
-    }
-    if (link.isNew) {
-      bucket.set(link.id, link.snapshot());
-      return;
-    }
-    // Only the first revocation, like the Prisma adapter's guarded update.
-    const stored = bucket.get(link.id);
-    if (stored !== undefined && stored.revokedAt === null && link.revokedAt !== null) {
-      bucket.set(link.id, { ...stored, revokedAt: link.revokedAt });
+  save(link: CheckoutLink, tenantId: string): Promise<void> {
+    try {
+      let bucket = this.store.get(tenantId);
+      if (bucket === undefined) {
+        bucket = new Map();
+        this.store.set(tenantId, bucket);
+      }
+      if (link.isNew) {
+        bucket.set(link.id, link.snapshot());
+        return Promise.resolve();
+      }
+      // Only the first revocation, like the Prisma adapter's guarded update.
+      const stored = bucket.get(link.id);
+      if (stored !== undefined && stored.revokedAt === null && link.revokedAt !== null) {
+        bucket.set(link.id, { ...stored, revokedAt: link.revokedAt });
+      }
+      return Promise.resolve();
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
   /** Check and count in one synchronous step: no await between them, so no claim is lost. */
-  async recordClaim(
+  recordClaim(
     id: string,
     tenantId: string,
     now: Date,
     resultCheckoutRef: string,
   ): Promise<number | null> {
-    const bucket = this.store.get(tenantId);
-    const stored = bucket?.get(id);
-    if (bucket === undefined || stored === undefined) return null;
-    const link = CheckoutLink.reconstitute(stored);
-    if (!link.isUsable(now)) return null;
-    link.recordClaim(now, resultCheckoutRef);
-    bucket.set(id, link.snapshot());
-    return link.claimCount;
-  }
-
-  async findByTokenHash(tokenHash: string, tenantId: string): Promise<CheckoutLink | null> {
-    for (const stored of this.store.get(tenantId)?.values() ?? []) {
-      if (stored.tokenHash === tokenHash) return CheckoutLink.reconstitute(stored);
+    try {
+      const bucket = this.store.get(tenantId);
+      const stored = bucket?.get(id);
+      if (bucket === undefined || stored === undefined) return Promise.resolve(null);
+      const link = CheckoutLink.reconstitute(stored);
+      if (!link.isUsable(now)) return Promise.resolve(null);
+      link.recordClaim(now, resultCheckoutRef);
+      bucket.set(id, link.snapshot());
+      return Promise.resolve(link.claimCount);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    return null;
   }
 
-  async findById(id: string, tenantId: string): Promise<CheckoutLink | null> {
-    const stored = this.store.get(tenantId)?.get(id);
-    return stored === undefined ? null : CheckoutLink.reconstitute(stored);
+  findByTokenHash(tokenHash: string, tenantId: string): Promise<CheckoutLink | null> {
+    try {
+      for (const stored of this.store.get(tenantId)?.values() ?? []) {
+        if (stored.tokenHash === tokenHash) {
+          return Promise.resolve(CheckoutLink.reconstitute(stored));
+        }
+      }
+      return Promise.resolve(null);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
-  async listForSessions(
+  findById(id: string, tenantId: string): Promise<CheckoutLink | null> {
+    try {
+      const stored = this.store.get(tenantId)?.get(id);
+      return Promise.resolve(stored === undefined ? null : CheckoutLink.reconstitute(stored));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  listForSessions(
     checkoutSessionIds: readonly string[],
     tenantId: string,
   ): Promise<readonly CheckoutLink[]> {
-    const wanted = new Set(checkoutSessionIds);
-    const links = [...(this.store.get(tenantId)?.values() ?? [])]
-      .filter((stored) => stored.checkoutSessionId !== null && wanted.has(stored.checkoutSessionId))
-      .map((stored) => CheckoutLink.reconstitute(stored));
-    return newestFirst(links);
+    try {
+      const wanted = new Set(checkoutSessionIds);
+      const links = [...(this.store.get(tenantId)?.values() ?? [])]
+        .filter(
+          (stored) => stored.checkoutSessionId !== null && wanted.has(stored.checkoutSessionId),
+        )
+        .map((stored) => CheckoutLink.reconstitute(stored));
+      return Promise.resolve(newestFirst(links));
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 
   // Not `async` (nothing to await), in the lint-clean `Promise.resolve` form of

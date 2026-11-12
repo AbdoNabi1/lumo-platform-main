@@ -58,12 +58,18 @@ export class InMemoryPaymentIntentRepository
   }
 
   /** Mirrors `PrismaPaymentIntentRepository.findByIds`: this shop's intents among `ids`, deduped. */
-  async findByIds(ids: readonly string[], tenantId: string): Promise<readonly PaymentIntent[]> {
-    const bucket = this.store.get(tenantId);
-    if (bucket === undefined) return [];
-    return [...new Set(ids)].flatMap((id) => {
-      const intent = bucket.get(id);
-      return intent === undefined ? [] : [intent];
-    });
+  findByIds(ids: readonly string[], tenantId: string): Promise<readonly PaymentIntent[]> {
+    try {
+      const bucket = this.store.get(tenantId);
+      if (bucket === undefined) return Promise.resolve([]);
+      return Promise.resolve(
+        [...new Set(ids)].flatMap((id) => {
+          const intent = bucket.get(id);
+          return intent === undefined ? [] : [intent];
+        }),
+      );
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }

@@ -86,7 +86,7 @@ export class InMemoryStaffDirectory implements StaffDirectoryPort {
     this.names.set(principalId, name);
   }
 
-  async displayNameOf(principalId: string): Promise<string | null> {
-    return this.names.get(principalId) ?? null;
+  displayNameOf(principalId: string): Promise<string | null> {
+    return Promise.resolve(this.names.get(principalId) ?? null);
   }
 }
