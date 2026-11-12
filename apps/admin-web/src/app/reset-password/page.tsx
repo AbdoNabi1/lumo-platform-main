@@ -19,10 +19,14 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
 export default async function ResetPasswordPage({
   searchParams,
 }: {
-  readonly searchParams: Promise<{ readonly token?: string; readonly error?: string }>;
+  readonly searchParams: Promise<{
+    readonly token?: string;
+    readonly store?: string;
+    readonly error?: string;
+  }>;
 }) {
   if (!isNativeAuth()) redirect("/login");
-  const { token, error } = await searchParams;
+  const { token, store, error } = await searchParams;
   const missingToken = token === undefined || token.length === 0;
   const message = missingToken
     ? ERROR_TEXT["invalid"]
@@ -61,6 +65,9 @@ export default async function ResetPasswordPage({
           ) : (
             <form action="/auth/reset" method="post" className="flex flex-col gap-4">
               <input type="hidden" name="token" defaultValue={token} />
+              {store !== undefined && store.length > 0 && (
+                <input type="hidden" name="store" defaultValue={store} />
+              )}
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="password">New password / كلمة السر الجديدة</Label>
                 <Input

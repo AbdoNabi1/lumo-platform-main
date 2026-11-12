@@ -37,6 +37,9 @@ const SHARED_VERBATIM = new Set([
   "shippingSettings.between",
   "shippingSettings.noCondition",
   "taxSettings.noOverrides",
+  // Settings → Domains: an example hostname typed in Latin letters (hostnames are ASCII); nothing to
+  // translate.
+  "domainsPage.hostnamePlaceholder",
   // T5.9a — the three `ContentBlock` body format names (`ContentCreateForm`'s format `<select>`).
   // "HTML"/"Markdown"/"JSON" are technical format identifiers, not natural-language words, and are
   // conventionally left untransliterated in Arabic UI copy — same rationale as the entries above.

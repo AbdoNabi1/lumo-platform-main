@@ -60,6 +60,7 @@ import {
 } from "./product-images";
 import { mapPage, publicCatalogRoutes } from "./public-catalog-routes";
 import { publicAuthRoutes } from "./public-auth-routes";
+import { publicMerchantRoutes } from "./public-merchant-routes";
 import { publicStaffAuthRoutes } from "./public-staff-auth-routes";
 import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
@@ -83,6 +84,9 @@ import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
 import { shippingZonesRoutes } from "./shipping-zones-routes";
 import { taxesRoutes } from "./taxes-routes";
+import { storeBillingRoutes } from "./store-billing-routes";
+import { storeDomainsRoutes } from "./store-domains-routes";
+import { storeSettingsRoutes } from "./store-settings-routes";
 import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
@@ -330,6 +334,16 @@ export interface OrderDetailDto {
 }
 
 const orderRefundPolicy = new RefundPolicy();
+
+/**
+ * Security console reads that take no tenant: they report the PROCESS-wide security telemetry (login
+ * and access counters, the risk-band distribution) summed over every tenant the API serves, so they
+ * are platform-operator reads and are pinned with the platform console under TENANT_MODE=multi.
+ */
+const PROCESS_WIDE_SECURITY_READS: ReadonlySet<string> = new Set([
+  "/security/console/analytics",
+  "/security/console/risk-explorer",
+]);
 
 function isRefundable(order: Order, paymentStatus: string | null): boolean {
   if (!orderRefundPolicy.canRefund(order.status)) return false;
@@ -951,9 +965,21 @@ export function adminRoutes(
   options: {
     readonly tenancyPinnedTo?: string;
     readonly rateLimiter?: RateLimiter;
+    /** Set only under TENANT_MODE=multi; without it merchant sign-up answers 503. */
+    readonly platformTenantId?: string;
     readonly onTenantLifecycleChange?: (tenantId: string) => void;
   } = {},
 ): readonly RouteDefinition[] {
+  // Under TENANT_MODE=multi a merchant's own owner holds `admin` (`*:*` in the role table), so a
+  // permission check alone cannot keep platform-wide reads away from merchants: those routes are
+  // pinned to the platform-operator tenant exactly like the tenancy family (ADR-0014 point 8f).
+  const pinned = options.tenancyPinnedTo;
+  const platformOperatorOnly = (routes: readonly RouteDefinition[]): readonly RouteDefinition[] =>
+    pinned === undefined ? routes : pinRoutesToTenant(routes, pinned);
+  const pinProcessWideReads = (routes: readonly RouteDefinition[]): readonly RouteDefinition[] =>
+    routes.flatMap((route) =>
+      PROCESS_WIDE_SECURITY_READS.has(route.path) ? platformOperatorOnly([route]) : [route],
+    );
   return [
     defineRoute({
       method: "POST",
@@ -2184,9 +2210,9 @@ export function adminRoutes(
     ...securityAiGovernanceRoutes(admin),
     ...securityAuthorizationRoutes(admin),
     ...securityIdentityRoutes(admin),
-    ...securityOperationsRoutes(admin),
+    ...pinProcessWideReads(securityOperationsRoutes(admin)),
     ...securitySecretsRoutes(admin),
-    ...securitySessionsRoutes(admin),
+    ...pinProcessWideReads(securitySessionsRoutes(admin)),
     ...notificationsRoutes(admin),
     ...contentRoutes(admin),
     ...couponsRoutes(admin),
@@ -2207,16 +2233,25 @@ export function adminRoutes(
           ? {}
           : { onLifecycleChange: options.onTenantLifecycleChange }),
       });
-      return options.tenancyPinnedTo === undefined
-        ? tenancy
-        : pinRoutesToTenant(tenancy, options.tenancyPinnedTo);
+      return platformOperatorOnly(tenancy);
     })(),
+    // Store settings are per request tenant (the repository takes the tenant per call), so they sit
+    // outside the pinned tenancy family and work for every merchant under TENANT_MODE=multi.
+    ...storeSettingsRoutes(admin),
+    ...storeDomainsRoutes(admin),
+    ...storeBillingRoutes(admin),
     ...licensingRoutes(admin),
-    ...platformConsoleRoutes(admin),
+    ...platformOperatorOnly(platformConsoleRoutes(admin)),
     ...discountsRoutes(admin),
     ...promotionsRoutes(admin),
     ...publicAuthRoutes(admin, options.rateLimiter),
     ...publicStaffAuthRoutes(admin, options.rateLimiter),
+    ...publicMerchantRoutes(admin, {
+      ...(options.rateLimiter === undefined ? {} : { rateLimiter: options.rateLimiter }),
+      ...(options.platformTenantId === undefined
+        ? {}
+        : { platformTenantId: options.platformTenantId }),
+    }),
     ...staffAccountRoutes(admin),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),

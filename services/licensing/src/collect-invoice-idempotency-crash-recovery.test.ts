@@ -44,6 +44,10 @@ class PostgresLikeInvoiceRepository implements InvoiceRepository {
     return InvoiceMapper.toDomain(row);
   }
 
+  async listByTenantRef(): Promise<readonly Invoice[]> {
+    return [];
+  }
+
   size(): number {
     return this.rows.size;
   }
@@ -247,6 +251,7 @@ describe("Task 1 Scenario 4 / Task 3 — crash after PSP success, before settle(
     let saveAttempts = 0;
     const crashingInvoices: InvoiceRepository = {
       findById: (id) => invoices.findById(id),
+      listByTenantRef: () => invoices.listByTenantRef(),
       save: async (invoice) => {
         saveAttempts += 1;
         if (saveAttempts === 1) throw new Error("simulated process crash during settle commit");

@@ -49,6 +49,7 @@ import { wireInventory, type InventoryController } from "@platform/inventory";
 import {
   wireLicensing,
   type FinanceLedgerPort,
+  type LicensingController,
   type PaymentsPort,
   type StoredMethodBillingDeps,
   type WiredLicensing,
@@ -109,9 +110,15 @@ import {
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
 import { wireShipping } from "@platform/shipping";
-import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
-import { logger as adminLogger } from "@platform/utils";
+import {
+  wireTenancy,
+  type DnsVerifier,
+  type TenancyController,
+  type TenantAvailability,
+} from "@platform/tenancy";
+import { ConflictError, logger as adminLogger } from "@platform/utils";
 import { TenantProvisioner } from "./tenant-provisioning";
+import { MerchantOnboarding } from "./merchant-onboarding/merchant-onboarding";
 import { wireTheme } from "@platform/theme";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
@@ -149,7 +156,10 @@ import { AdminGuard } from "./interfaces/admin-guard";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
-import { StaffAuthAdminController } from "./interfaces/staff-auth.admin-controller";
+import {
+  StaffAuthAdminController,
+  staffIdentifier,
+} from "./interfaces/staff-auth.admin-controller";
 import type { EmailSender } from "./interfaces/email-sender.port";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
@@ -216,6 +226,20 @@ const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
   fees: "6100-FEES",
 };
 
+/** The DNS records custom domains must point at, as configured for the runtime's DNS verifier. */
+export interface StorefrontDnsTargetInput {
+  /** The name a subdomain CNAMEs to; absent ⇒ no CNAME target configured. */
+  readonly cname?: string;
+  /** The storefront's public IPv4s, for apex domains (A records). */
+  readonly ipv4: readonly string[];
+}
+
+/** `GET /store/domains`'s `dnsTarget`: always present, `null`/empty when not configured. */
+export interface StorefrontDnsTarget {
+  readonly cname: string | null;
+  readonly ipv4: readonly string[];
+}
+
 export interface AdminWiringDeps {
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
@@ -250,8 +274,19 @@ export interface AdminWiringDeps {
   readonly platformTenantId?: string;
   /** Plan 1A: e.g. `morbeh.store`; new shops get `<slug>.<this>`. */
   readonly platformStoreDomain?: string;
+  /**
+   * Project 1: the licensing plan key new stores start their trial on (`DEFAULT_PLAN_KEY`). Unset, or
+   * naming a plan with no published version ⇒ self-serve sign-up is refused.
+   */
+  readonly defaultPlanKey?: string;
   /** Plan 1A: verifies custom domains' DNS; absent ⇒ custom domains stay pending. */
   readonly dnsVerifier?: DnsVerifier;
+  /**
+   * What `dnsVerifier` accepts (`STOREFRONT_CNAME_TARGET` / `STOREFRONT_IPV4`), so the Domains screen
+   * tells a merchant exactly the record that will verify. A plain value — never a tenant. Absent ⇒
+   * no target to show (`{ cname: null, ipv4: [] }`).
+   */
+  readonly storefrontDnsTarget?: StorefrontDnsTargetInput;
   /** In-memory Security only (tests/dev): Identity subject refs treated as known, so an owner can be registered offline. */
   readonly knownSubjects?: readonly string[];
   /**
@@ -559,6 +594,26 @@ export interface WiredAdmin {
   readonly tenantProvisioner: TenantProvisioner;
   /** Licensing screen → Licensing (Sprint 5.5/5.6 — Licensing's first admin-transport wiring). */
   readonly licensing: LicensingAdminController;
+  /**
+   * The scope Morbeh's own billing rows (subscriptions, invoices, saved cards) live under:
+   * `deps.platformTenantId`, or — in a single-tenant deployment — the request's own tenant. A FUNCTION
+   * on purpose: the tenant-mode-guard walks the admin graph for fields named `tenantId`, and a
+   * function is not walked. The merchant billing routes pair it with `context.tenantId` as the ref.
+   */
+  readonly platformScope: (requestTenantId: string) => string;
+  /**
+   * Project 1: self-serve merchant sign-up (store, owner, settings, trial, session), resumable per
+   * email. Built from closures over the raw Tenancy/Licensing/Security wiring — no controller objects
+   * — so the tenant-mode guard's graph walk finds nothing under it.
+   */
+  readonly merchantOnboarding: MerchantOnboarding;
+  /**
+   * The store a merchant email belongs to (the staff directory), for the public merchant sign-in and
+   * reset routes. A FUNCTION on purpose, like `platformScope`: the tenant-mode guard does not walk it.
+   */
+  readonly findStoreForEmail: (
+    email: string,
+  ) => Promise<{ readonly shopId: string; readonly status: string } | null>;
   /** Platform Console screen → Platform Console (Sprint 5.6, ADR-0018 addendum-2 §J — read-model only). */
   readonly platformConsole: PlatformConsoleAdminController;
   /** Wishlist screen → Wishlist (Sprint S1 — Wishlist's first admin-transport wiring). */
@@ -699,6 +754,11 @@ export interface WiredAdmin {
    * can ask what really backs each method. Nothing at request time reaches a provider through this.
    */
   readonly paymentProviders: PaymentProviderResolver;
+  /**
+   * The DNS target custom domains must point at (`deps.storefrontDnsTarget`), read by
+   * `GET /store/domains`. A plain config value, the same for every shop.
+   */
+  readonly storefrontDnsTarget: StorefrontDnsTarget;
 }
 
 interface DrainableContext {
@@ -1157,6 +1217,33 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     wishlist,
   ];
 
+  const tenantProvisioner = new TenantProvisioner({
+    security: security.security,
+    logger: adminLogger,
+  });
+  const staffAuth = new StaffAuthAdminController({
+    security: security.security,
+    ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
+    sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+    ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
+    ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
+    ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
+    ...(deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+      ? {
+          passwordRegistrar: deps.passwordAuthProvider,
+          credentialStore: deps.passwordAuthProvider.credentialStore,
+        }
+      : {}),
+  });
+  const merchantOnboarding = buildMerchantOnboarding({
+    deps,
+    tenancy: tenancy.tenancy,
+    licensing: licensing.licensing,
+    security,
+    tenantProvisioner,
+    staffAuth,
+  });
+
   return {
     products: new ProductsAdminController({
       products: catalog.products,
@@ -1275,8 +1362,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
-    tenantProvisioner: new TenantProvisioner({ security: security.security, logger: adminLogger }),
+    tenantProvisioner,
     licensing: new LicensingAdminController({ licensing: licensing.licensing, guard }),
+    platformScope: (requestTenantId: string): string => deps.platformTenantId ?? requestTenantId,
+    merchantOnboarding,
+    findStoreForEmail: async (email) => {
+      const entry = await tenancy.tenancy.findStaffDirectoryEntry(email.trim().toLowerCase());
+      return entry === null ? null : { shopId: entry.shopId, status: entry.status };
+    },
     platformConsole: new PlatformConsoleAdminController({
       platformConsole: platformConsole.platformConsole,
       guard,
@@ -1292,20 +1385,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       signupEmail,
       signupCompletionUrlBase,
     }),
-    staffAuth: new StaffAuthAdminController({
-      security: security.security,
-      ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
-      sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
-      ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
-      ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
-      ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
-      ...(deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
-        ? {
-            passwordRegistrar: deps.passwordAuthProvider,
-            credentialStore: deps.passwordAuthProvider.credentialStore,
-          }
-        : {}),
-    }),
+    staffAuth,
     securityWiring: security,
     drainOutbox: async () => {
       let total = 0;
@@ -1337,5 +1417,115 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       verifyWebhook: (input) => payments.payments.verifyWebhook(input),
     },
     paymentProviders: payments.providers,
+    storefrontDnsTarget: {
+      cname: deps.storefrontDnsTarget?.cname ?? null,
+      ipv4: [...(deps.storefrontDnsTarget?.ipv4 ?? [])],
+    },
   };
+}
+
+interface MerchantOnboardingWiring {
+  readonly deps: AdminWiringDeps;
+  readonly tenancy: TenancyController;
+  readonly licensing: LicensingController;
+  readonly security: Pick<WiredSecurity, "identityDirectory" | "passwordRegistrar">;
+  readonly tenantProvisioner: TenantProvisioner;
+  readonly staffAuth: StaffAuthAdminController;
+}
+
+const expectSuccess = (response: { status: number; body: unknown }, step: string): void => {
+  if (response.status >= 300) {
+    throw new Error(`merchant signup step "${step}" failed with status ${response.status}`);
+  }
+};
+
+/**
+ * Project 1: the sign-up orchestrator over the RAW Tenancy/Licensing controllers (not the guarded
+ * admin ones — there is no principal yet). Every port is a closure, so the only plain fields the
+ * tenant-mode guard can see under `merchantOnboarding` are config strings and the logger.
+ * Billing rows live in the platform scope (`deps.platformTenantId`); the new tenant is the `tenantRef`.
+ */
+function buildMerchantOnboarding(wiring: MerchantOnboardingWiring): MerchantOnboarding {
+  const { deps, tenancy, licensing, security, tenantProvisioner, staffAuth } = wiring;
+  const platformScope = (): string => {
+    const scope = deps.platformTenantId;
+    if (scope === undefined || scope === "") {
+      throw new Error("merchant signup needs the platform tenant (TENANT_MODE=multi)");
+    }
+    return scope;
+  };
+  return new MerchantOnboarding({
+    platformTenantId: deps.platformTenantId,
+    defaultPlanKey: deps.defaultPlanKey,
+    platformStoreDomain: deps.platformStoreDomain,
+    // The same condition staff login needs to issue a token over durable credentials (Plan 1B):
+    // an issuer, and the hashed store `staffAuth` is wired with (an in-memory provider forgets
+    // every password on restart).
+    nativeSignInAvailable:
+      deps.staffTokenIssuer !== undefined &&
+      deps.passwordAuthProvider instanceof HashedPasswordAuthProvider,
+    logger: adminLogger,
+    findEntry: (email) => tenancy.findStaffDirectoryEntry(email),
+    recordPending: async (entry) => {
+      const recorded = await tenancy.recordPendingOwner(entry);
+      if (recorded.ok) return true;
+      if (recorded.error instanceof ConflictError) return false;
+      throw recorded.error;
+    },
+    activateEntry: async (email) => {
+      const activated = await tenancy.activateDirectoryEntry(email);
+      if (!activated.ok) throw activated.error;
+    },
+    resolveDefaultPlan: async (planKey) => {
+      const resolved = await licensing.resolveDefaultPlanVersion({ planKey });
+      if (resolved.status === 404) return null;
+      expectSuccess(resolved, "resolveDefaultPlanVersion");
+      return (resolved.body as { planVersionRef: string }).planVersionRef;
+    },
+    slugTaken: (slug) => tenancy.slugTaken(slug),
+    createTenant: async ({ slug, name }) => {
+      const created = await tenancy.createTenant({ slug, name, isolationTier: "pooled" });
+      if (created.status === 409) return null;
+      expectSuccess(created, "createTenant");
+      return (created.body as { id: string }).id;
+    },
+    provision: async (tenantId, ownerExternalId) => {
+      // The owner principal's subject must be known to the identity directory before it is registered.
+      security.identityDirectory.register(ownerExternalId);
+      return (await tenantProvisioner.provision(tenantId, { ownerExternalId })).complete;
+    },
+    setOwnerPassword: async (tenantId, email, password, ownerExternalId) => {
+      security.identityDirectory.register(ownerExternalId);
+      await security.passwordRegistrar.setPassword({
+        tenantId,
+        identifier: staffIdentifier(email),
+        password,
+        principalExternalId: ownerExternalId,
+      });
+    },
+    saveStoreSettings: async (tenantId, input) => {
+      expectSuccess(await tenancy.updateStoreSettings(tenantId, input), "updateStoreSettings");
+    },
+    startTrial: async (tenantRef, planVersionRef) => {
+      const tenantId = platformScope();
+      const created = await licensing.createSubscription({ tenantRef, planVersionRef, tenantId });
+      let subscriptionId: string;
+      if (created.status === 409) {
+        // An earlier attempt created it: activate it unless that attempt got that far too.
+        const found = await licensing.findMerchantSubscription({ tenantRef, tenantId });
+        expectSuccess(found, "findMerchantSubscription");
+        const existing = found.body as { id: string; status: string };
+        if (existing.status !== "trial") return;
+        subscriptionId = existing.id;
+      } else {
+        expectSuccess(created, "createSubscription");
+        subscriptionId = (created.body as { id: string }).id;
+      }
+      expectSuccess(
+        await licensing.activateSubscription({ subscriptionId, tenantId }),
+        "activateSubscription",
+      );
+    },
+    signIn: (tenantId, email, password) => staffAuth.login({ tenantId, email, password }),
+  });
 }

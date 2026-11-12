@@ -59,6 +59,17 @@ LEVEL SECURITY`, and — checked explicitly — **no** tenant-scoped table witho
     no real risk. Do not read that as a precedent for deploying without a backup; it was a
     measured, empty-table exception.
 
+  **2026-10-16 — one applied migration edited (a comment, no SQL), with the owner's approval.**
+  `20260823000000_rls_tenant_isolation/migration.sql` had a `--` comment inside its `DO $$ … $$`
+  block that contained a literal `$$`. Postgres ends a dollar-quoted body at the first matching
+  delimiter, comments included, so on a fresh database (DB Integration CI) `migrate deploy` failed
+  with `syntax error at or near "`"`. The comment was reworded to contain no delimiter; every
+statement is byte-for-byte unchanged. The file's sha256 went from
+`c86c96f2157f25e147f24c547a568479ef9d6b0ea28b6d7717a72da39e912d53`to`8930ff97a36c2a7f92437962226fad0c9f9e58ec92c99d8749df427d3bdbd067`. `migrate deploy`never
+re-runs an applied migration, so the live database is unaffected and nothing was run against it;`migrate dev`/`migrate status` against it may report the migration as modified after it was
+  applied. (The file is the 2026-09-19 reconstruction, so its checksum likely never matched the
+  live row anyway.) Do not "fix" that report by resetting the database.
+
 - **Development:** `pnpm db:migrate` (`prisma migrate dev`) against local compose Postgres —
   never edit an applied migration; always add a new one.
 - **Production:** `prisma migrate deploy` in CD, before the new app version serves traffic.
@@ -90,3 +101,20 @@ LEVEL SECURITY`, and — checked explicitly — **no** tenant-scoped table witho
 - Read models / projections are **not** in these schemas (G-8): they are CDC-fed and land with
   their own design; command-side tables here stay write-shaped.
 - Metafields (G-34) intentionally absent: the ADR must precede the tables it attaches to.
+
+## 5. Owner deploys (written, not yet applied)
+
+Hand-written and additive (expand-only); the agent never applies them. Deploy with
+`prisma migrate deploy` **before** the release that reads them (merchant onboarding, branch
+`morbeh/merchant-onboarding`):
+
+- `20261016020000_setup_guide_dismissed` — adds the nullable
+  `tenancy.store_settings.setup_guide_dismissed_at` (when the merchant dismissed Home's setup
+  guide). The table keeps its existing RLS policy.
+- `20261016030000_staff_directory` — creates `tenancy.staff_directory` (which store a staff email
+  signs in to; one store per email) with RLS enabled and forced and its own `tenant_isolation`
+  policy.
+
+Neither touches existing rows. Self-serve sign-up stays off (503) until the owner also sets
+`TENANT_MODE=multi`, `DEFAULT_PLAN_KEY` and `AUTH_MODE=native` (native staff sign-in: the API's own
+token issuer over the hashed password store; without it a new store could never be signed in to).

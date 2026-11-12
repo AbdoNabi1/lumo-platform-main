@@ -1,5 +1,6 @@
 import type { CursorPage, Paginated } from "@platform/types";
 import type { ShopDomain } from "./shop-domain";
+import type { StaffDirectoryEntry } from "./staff-directory";
 import type { StoreSettings } from "./store-settings";
 import type { Tenant } from "./tenant";
 import type { Workspace } from "./workspace";
@@ -35,11 +36,21 @@ export interface ShopDomainRepository {
 }
 
 /**
- * One row per shop. Like every Tenancy repository it is scoped to the tenant its composition was
- * built for (ADR-0008); there is no tenant argument.
+ * One row per shop. Unlike the other Tenancy repositories the tenant is a per-call argument: a
+ * merchant reads and writes their own row whichever tenant the deployment was composed for.
  */
 export interface StoreSettingsRepository {
   /** `null` until the merchant has saved once; callers fall back to {@link StoreSettings.defaults}. */
-  get(tx?: unknown): Promise<StoreSettings | null>;
-  save(settings: StoreSettings, tx?: unknown): Promise<void>;
+  get(tenantId: string, tx?: unknown): Promise<StoreSettings | null>;
+  save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void>;
+}
+
+/** Which store a staff email signs in to. Keyed by the normalised email (one store per email). */
+export interface StaffDirectoryRepository {
+  /** `email` is already normalised (`normaliseEmail`). */
+  findByEmail(email: string, tx?: unknown): Promise<StaffDirectoryEntry | null>;
+  /** Inserts a NEW row. Throws `ConflictError` when the email already has one (race-proof). */
+  create(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
+  /** Updates an EXISTING row (e.g. activation); never creates one. */
+  save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
 }

@@ -219,8 +219,10 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   //    the consumer path is pinned. startWorker still runs assertWorkerTenantModeSupported, which
   //    refuses multi for whatever is genuinely single-tenant (tenant-mode-guard.ts). This function
   //    is shared by both processes and no longer decides for them.
-  // Multi mode is now POSSIBLE, not SAFE: T10.5 (adversarial isolation suite) has not been written.
-  // Do not enable TENANT_MODE=multi anywhere until it has.
+  // Multi mode is POSSIBLE. The T10.5 adversarial isolation suites exist
+  // (apps/admin/src/http/tenant-isolation.e2e.test.ts, and merchant-onboarding-isolation.e2e.test.ts
+  // for two self-signed-up stores). It is still not to be ENABLED anywhere until the roadmap's remaining
+  // blockers close: the legacy storage-key count and T10.7 class B.
   const clock = new SystemClock();
   const idGenerator = new CryptoIdGenerator();
   // Phase A.13 (Task 1/2): previously an unsafe `as` cast supplied only `url`/`logQueries` — the real

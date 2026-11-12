@@ -113,6 +113,12 @@ export class Plan extends AggregateRoot<PlanProps> {
     return this.props.versions.find((v) => v.id.toString() === versionId);
   }
 
+  /** The currently published version, or `undefined` when none is published. */
+  get publishedVersion(): PlanVersion | undefined {
+    const id = this.props.publishedVersionId;
+    return id === undefined ? undefined : this.versionById(id);
+  }
+
   private findVersion(versionId: string): PlanVersion {
     const version = this.props.versions.find((v) => v.id.toString() === versionId);
     if (version === undefined) throw new NotFoundError(`Plan version ${versionId} not found`);
@@ -147,4 +153,18 @@ export class Plan extends AggregateRoot<PlanProps> {
   get publishedVersionId(): string | undefined {
     return this.props.publishedVersionId;
   }
+}
+
+/**
+ * Plans that have a published version, cheapest first (then by key) — the order a merchant sees
+ * when choosing a plan. A plan with nothing published is not offered, so it is dropped here.
+ */
+export function sortPublishedPlans(plans: readonly Plan[]): readonly Plan[] {
+  return plans
+    .filter((plan) => plan.publishedVersion !== undefined)
+    .sort(
+      (a, b) =>
+        (a.publishedVersion?.spec.pricing.basePriceMinor ?? 0) -
+          (b.publishedVersion?.spec.pricing.basePriceMinor ?? 0) || a.key.localeCompare(b.key),
+    );
 }

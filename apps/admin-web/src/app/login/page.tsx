@@ -4,6 +4,7 @@ import { Button, Card, CardContent, Input, Label } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 import { authConfig } from "@/lib/auth/config";
 import { oryAdminHeaders } from "@/lib/auth/ory-admin";
+import { signupEnabled } from "@/lib/auth/merchant";
 import { isNativeAuth } from "@/lib/auth/native";
 import { fetchWithTimeout } from "@/lib/fetch-with-timeout";
 import { NativeLoginForm } from "./native-login-form";
@@ -59,6 +60,7 @@ interface LoginPageProps {
     readonly error?: string;
     readonly return_to?: string;
     readonly reset?: string;
+    readonly signup?: string;
   }>;
 }
 
@@ -69,10 +71,21 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     error,
     return_to: returnTo,
     reset,
+    signup,
   } = await searchParams;
 
   // Plan 1B-2: native mode is a plain email/password form — no Hydra challenge, no Kratos flow.
-  if (isNativeAuth()) return <NativeLoginForm error={error} returnTo={returnTo} reset={reset} />;
+  if (isNativeAuth()) {
+    return (
+      <NativeLoginForm
+        error={error}
+        returnTo={returnTo}
+        reset={reset}
+        signup={signup}
+        signupEnabled={signupEnabled()}
+      />
+    );
+  }
 
   if (loginChallenge !== undefined) {
     await handleLoginChallenge(loginChallenge);

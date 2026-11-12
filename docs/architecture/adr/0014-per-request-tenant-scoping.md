@@ -170,6 +170,12 @@ envelope.tenantId })`) read nothing, and turned gap F-02 ("`tenantId` is optiona
 >    `services/catalog/src/infrastructure/prisma-catalog-repositories.ts:46`. Harmless today (the role
 >    bypasses RLS); **a hard blocker for Phase 2**: under `lumo_app`, every write and every read inside a
 >    unit of work would see or write nothing.
+>    **[Call sites added 2026-10-17 by merchant self-serve sign-up]** `buildMerchantOnboarding`
+>    (`apps/admin/src/composition.ts`) writes through `PrismaUnitOfWork` with no `app.tenant_id`:
+>    `UpdateStoreSettings` (`services/tenancy/src/application/store-settings.use-cases.ts`) must be
+>    scoped to the MERCHANT's tenant, and `RecordPendingOwner` / `ActivateDirectoryEntry`
+>    (`services/tenancy/src/application/staff-directory.use-cases.ts`) to the PLATFORM scope, when this
+>    conversion happens.
 > 3. **Amendment 3's automated "N of N entry points" assertion does not exist**, so Phase 2's gate is unmet
 >    and there is no count to report. No test asserts `current_setting('app.tenant_id', true)` is non-null
 >    at any entry point.

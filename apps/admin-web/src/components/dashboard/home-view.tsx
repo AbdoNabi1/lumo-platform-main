@@ -14,7 +14,8 @@ import { TopProducts } from "./top-products";
  * Home, from one report (Plan 3D). Everything on it is a real figure from the shop's orders; a zero is
  * a zero. When the report cannot be loaded each card says so with "Try again" and shows no number at
  * all: there is no fallback and no sample. Recent orders load on their own (`recentOrders` is their
- * Suspense boundary), so they neither wait for, nor depend on, the report.
+ * Suspense boundary), so they neither wait for, nor depend on, the report; the same goes for the
+ * setup guide (`setupGuide`) above the cards.
  */
 export function HomeView({
   t,
@@ -22,6 +23,7 @@ export function HomeView({
   userName,
   range,
   result,
+  setupGuide,
   recentOrders,
 }: {
   readonly t: Dictionary;
@@ -29,6 +31,8 @@ export function HomeView({
   readonly userName: string;
   readonly range: DashboardRange;
   readonly result: FetchSalesAnalyticsResult;
+  /** The setup guide (its own Suspense boundary), shown between the header and the figures. */
+  readonly setupGuide?: ReactNode;
   readonly recentOrders: ReactNode;
 }) {
   const unauthorized = result.outcome === "unauthorized";
@@ -46,6 +50,8 @@ export function HomeView({
   return (
     <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 sm:gap-8">
       <DashboardHeader t={t} userName={userName} range={range} />
+
+      {setupGuide}
 
       {result.outcome === "ok" ? (
         <>

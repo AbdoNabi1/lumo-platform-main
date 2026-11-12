@@ -25,7 +25,13 @@ import {
   VerifyDomain,
 } from "./application/shop-domains.use-cases";
 import {
+  ActivateDirectoryEntry,
+  FindStaffDirectoryEntry,
+  RecordPendingOwner,
+} from "./application/staff-directory.use-cases";
+import {
   GetPublicStore,
+  DismissSetupGuide,
   GetStoreSettings,
   UpdateStoreSettings,
 } from "./application/store-settings.use-cases";
@@ -41,12 +47,14 @@ import {
 } from "./application/tenancy.use-cases";
 import type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "./domain/repositories";
 import {
   InMemoryShopDomainRepository,
+  InMemoryStaffDirectoryRepository,
   InMemoryStoreSettingsRepository,
   InMemoryTenantRepository,
   InMemoryWorkspaceRepository,
@@ -54,6 +62,7 @@ import {
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   PrismaShopDomainRepository,
+  PrismaStaffDirectoryRepository,
   PrismaStoreSettingsRepository,
   PrismaTenantRepository,
   PrismaWorkspaceRepository,
@@ -103,6 +112,7 @@ interface TenancyRepos {
   readonly workspaces: WorkspaceRepository;
   readonly domains: ShopDomainRepository;
   readonly storeSettings: StoreSettingsRepository;
+  readonly staffDirectory: StaffDirectoryRepository;
 }
 
 /** Builds the `TenancyController` from an already-wired repo set — shared by both branches so the use-case wiring is written exactly once. */
@@ -146,7 +156,22 @@ function buildController(
     resolveHost: new ResolveHost(tenancyDeps),
     getStoreSettings: new GetStoreSettings({ settings: repos.storeSettings }),
     updateStoreSettings: new UpdateStoreSettings({ settings: repos.storeSettings, unitOfWork }),
+    dismissSetupGuide: new DismissSetupGuide({
+      settings: repos.storeSettings,
+      unitOfWork,
+      clock: deps.clock,
+    }),
     getPublicStore: new GetPublicStore({ settings: repos.storeSettings }),
+    recordPendingOwner: new RecordPendingOwner({
+      staffDirectory: repos.staffDirectory,
+      unitOfWork,
+    }),
+    activateDirectoryEntry: new ActivateDirectoryEntry({
+      staffDirectory: repos.staffDirectory,
+      unitOfWork,
+    }),
+    findStaffDirectoryEntry: new FindStaffDirectoryEntry({ staffDirectory: repos.staffDirectory }),
+    slugTaken: async (slug) => (await repos.tenants.findBySlug(slug)) !== null,
   });
 }
 
@@ -181,6 +206,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
       workspaces: new PrismaWorkspaceRepository(tenancyDeps),
       domains: new PrismaShopDomainRepository(tenancyDeps),
       storeSettings: new PrismaStoreSettingsRepository(tenancyDeps),
+      staffDirectory: new PrismaStaffDirectoryRepository(tenancyDeps),
     };
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
@@ -209,6 +235,7 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
     workspaces: new InMemoryWorkspaceRepository({ outbox: outboxWriter, context }),
     domains: new InMemoryShopDomainRepository(),
     storeSettings: new InMemoryStoreSettingsRepository(),
+    staffDirectory: new InMemoryStaffDirectoryRepository(),
   };
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = buildController(repos, unitOfWork, deps);

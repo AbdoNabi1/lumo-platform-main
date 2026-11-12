@@ -1,13 +1,16 @@
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
+import { ConflictError } from "@platform/utils";
 import type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import type { StaffDirectoryEntry } from "../domain/staff-directory";
 import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
@@ -128,15 +131,40 @@ export class InMemoryShopDomainRepository implements ShopDomainRepository {
   }
 }
 
-export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
-  private current: StoreSettings | null = null;
+export class InMemoryStaffDirectoryRepository implements StaffDirectoryRepository {
+  private readonly store = new Map<string, StaffDirectoryEntry>();
 
-  get(): Promise<StoreSettings | null> {
-    return Promise.resolve(this.current);
+  findByEmail(email: string): Promise<StaffDirectoryEntry | null> {
+    return Promise.resolve(this.store.get(email) ?? null);
   }
 
-  save(settings: StoreSettings): Promise<void> {
-    this.current = settings;
+  create(entry: StaffDirectoryEntry): Promise<void> {
+    // Synchronous check-and-set: two concurrent callers cannot both pass it.
+    if (this.store.has(entry.email)) {
+      return Promise.reject(new ConflictError("Email already has a store"));
+    }
+    this.store.set(entry.email, entry);
+    return Promise.resolve();
+  }
+
+  save(entry: StaffDirectoryEntry): Promise<void> {
+    if (!this.store.has(entry.email)) {
+      return Promise.reject(new Error("staff directory entry does not exist"));
+    }
+    this.store.set(entry.email, entry);
+    return Promise.resolve();
+  }
+}
+
+export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
+  private readonly rows = new Map<string, StoreSettings>();
+
+  get(tenantId: string): Promise<StoreSettings | null> {
+    return Promise.resolve(this.rows.get(tenantId) ?? null);
+  }
+
+  save(tenantId: string, settings: StoreSettings): Promise<void> {
+    this.rows.set(tenantId, settings);
     return Promise.resolve();
   }
 }

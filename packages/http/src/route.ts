@@ -17,6 +17,11 @@ export interface RequestContext {
    */
   readonly rawBody?: Uint8Array;
   /**
+   * The caller's address as the transport sees it (`request.ip`) — for per-address rate limits a
+   * public route applies itself. Absent when the transport cannot tell.
+   */
+  readonly ip?: string;
+  /**
    * The raw request headers (C2-2) — needed by any route whose authenticity check is a header a
    * third party sets itself (e.g. `Stripe-Signature`), which by definition cannot be a zod-parsed
    * body field. Fastify's own header value shape (a single value is usually a `string`; a

@@ -58,6 +58,8 @@ interface InvoiceProps {
   status: InvoiceStatus;
   paymentReference?: string;
   discount?: InvoiceDiscount;
+  /** When the row was first written; undefined only for an aggregate rebuilt without a timestamp. */
+  readonly createdAt?: Date;
 }
 
 /**
@@ -78,7 +80,14 @@ export class Invoice extends AggregateRoot<InvoiceProps> {
   ): Invoice {
     Invoice.assertExactMoney(currency, lineItems);
     const invoice = new Invoice(
-      { tenantRef, subscriptionRef, currency, lineItems: [...lineItems], status: "draft" },
+      {
+        tenantRef,
+        subscriptionRef,
+        currency,
+        lineItems: [...lineItems],
+        status: "draft",
+        createdAt: occurredAt,
+      },
       id,
     );
     invoice.raise("created", eventId, occurredAt);
@@ -95,6 +104,7 @@ export class Invoice extends AggregateRoot<InvoiceProps> {
     version: number,
     paymentReference?: string,
     discount?: InvoiceDiscount,
+    createdAt?: Date,
   ): Invoice {
     const invoice = new Invoice(
       {
@@ -105,6 +115,7 @@ export class Invoice extends AggregateRoot<InvoiceProps> {
         status,
         paymentReference,
         ...(discount === undefined ? {} : { discount }),
+        ...(createdAt === undefined ? {} : { createdAt }),
       },
       id,
       version,
@@ -255,6 +266,11 @@ export class Invoice extends AggregateRoot<InvoiceProps> {
 
   get discount(): InvoiceDiscount | undefined {
     return this.props.discount;
+  }
+
+  /** When the invoice was created (the persisted row's `created_at`, or the draft's event time). */
+  get createdAt(): Date | undefined {
+    return this.props.createdAt;
   }
 
   /**

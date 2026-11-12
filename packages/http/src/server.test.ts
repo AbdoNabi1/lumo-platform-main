@@ -167,7 +167,7 @@ async function buildServer(overrides: TestOverrides = {}): Promise<FastifyInstan
       summary: "Public: list widgets",
       schema: {},
       handle: async ({ context }) => {
-        handled.push({ principal: context.principal, tenantId: context.tenantId });
+        handled.push({ principal: context.principal, tenantId: context.tenantId, ip: context.ip });
         return { status: 200, body: { items: [] } };
       },
     }),
@@ -556,6 +556,18 @@ describe("HTTP transport", () => {
       });
       expect(keys.at(-1)).toMatch(/^rl:t-1:public:/);
       expect(keys.at(-1)).not.toContain(":public:public"); // never keyed by the shared principal id
+      await app2.close();
+    });
+
+    it("hands the handler the caller's address on the request context", async () => {
+      const app2 = await buildServer();
+      await app2.inject({
+        method: "GET",
+        url: "/api/v1/public-widgets",
+        headers: { "x-tenant-id": "t-1" },
+        remoteAddress: "203.0.113.7",
+      });
+      expect(handled.at(-1)).toMatchObject({ ip: "203.0.113.7" });
       await app2.close();
     });
 

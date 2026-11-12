@@ -50,6 +50,13 @@ import {
   SetMerchantFeatureOverride,
 } from "./application/licensing.use-cases";
 import {
+  ChangeMerchantPlan,
+  FindMerchantSubscription,
+  GetMerchantBilling,
+  ListPublishedPlans,
+  ResolveDefaultPlanVersion,
+} from "./application/merchant-billing.use-cases";
+import {
   BeginCardEnrolment,
   RecordCardToken,
   RecordInvoiceTransaction,
@@ -262,6 +269,15 @@ function buildController(
     idGenerator: deps.idGenerator,
     clock: deps.clock,
   };
+  const merchantBillingDeps = {
+    plans: repos.plans,
+    subscriptions: repos.subscriptions,
+    invoices: repos.invoices,
+    billingPaymentMethods: repos.billingPaymentMethods,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  };
   const collectInvoice = new CollectInvoice(billingDeps);
   const issueInvoiceForDunning = new IssueInvoice(billingDeps);
   const dunningDeps = {
@@ -328,6 +344,11 @@ function buildController(
     expireCoupon: new ExpireCoupon(couponDeps),
     revokeCoupon: new RevokeCoupon(couponDeps),
     getCoupon: new GetCoupon(couponDeps),
+    getMerchantBilling: new GetMerchantBilling(merchantBillingDeps),
+    listPublishedPlans: new ListPublishedPlans(merchantBillingDeps),
+    resolveDefaultPlanVersion: new ResolveDefaultPlanVersion(merchantBillingDeps),
+    changeMerchantPlan: new ChangeMerchantPlan(merchantBillingDeps),
+    findMerchantSubscription: new FindMerchantSubscription(merchantBillingDeps),
     createPlan: new CreatePlan(licensingDeps),
     createPlanDraft: new CreatePlanDraft(licensingDeps),
     schedulePlanVersion: new SchedulePlanVersion(licensingDeps),

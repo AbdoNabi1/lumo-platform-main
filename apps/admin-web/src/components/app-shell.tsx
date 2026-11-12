@@ -8,8 +8,10 @@ import { LocaleSwitch } from "./locale-switch";
 import { MobileNav } from "./mobile-nav";
 import { SidebarNav } from "./sidebar-nav";
 import { SignOutLink } from "./sign-out-link";
+import { TrialBanner } from "./trial-banner";
 import type { Locale } from "@/lib/i18n";
 import { showPlatformTools as platformToolsOn } from "@/lib/platform-tools";
+import { getStoreContext, storeUrlForSession, type StoreContext } from "@/lib/shell/store-context";
 import type { Dictionary } from "@/messages/en";
 
 export interface CurrentUser {
@@ -28,6 +30,11 @@ interface AppShellProps {
   readonly user: CurrentUser;
 }
 
+interface AppShellViewProps extends AppShellProps {
+  /** The shop's name, own domain and billing notice; omitted → brand, STOREFRONT_URL, no banner. */
+  readonly store?: StoreContext | undefined;
+}
+
 /**
  * The admin chrome: sidebar, topbar and content region, laid out like Shopify's admin — a grey
  * sidebar whose current page is a white row, and no footer.
@@ -39,10 +46,20 @@ interface AppShellProps {
  *
  * The layout is expressed with logical properties (`border-e`, `ms-*`, `text-start`), so
  * RTL is a direction change on `<html dir>` rather than a second stylesheet.
+ *
+ * An async server component: it reads the shop's name, primary domain and billing notice itself
+ * (`getStoreContext`, memoised per request and never throwing), so no page has to pass them in.
  */
-export function AppShell({ children, t, locale, activeNavId, user }: AppShellProps) {
-  // Read per request, on the server: NEXT_PUBLIC_* would be frozen at build time (Plan 3C).
-  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
+export async function AppShell(props: AppShellProps) {
+  const store = await getStoreContext();
+  return <AppShellView {...props} store={store} />;
+}
+
+/** The synchronous layout behind {@link AppShell}; tests render this with a `store` of their own. */
+export function AppShellView({ children, t, locale, activeNavId, user, store }: AppShellViewProps) {
+  // The shop's own domain wins; STOREFRONT_URL only for the default store — never another store's.
+  const storefrontUrl = storeUrlForSession(store ?? { storeUrl: null, sessionTenantId: null });
+  const storeName = store?.storeName?.trim() || t.brand;
   const showPlatformTools = platformToolsOn();
   const nav = (
     <SidebarNav
@@ -66,7 +83,9 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
       >
         <div className="flex items-center gap-2.5 px-5 max-lg:justify-center max-lg:px-2">
           <BrandMark />
-          <span className="text-xl font-semibold tracking-tight max-lg:sr-only">{t.brand}</span>
+          <span className="truncate text-xl font-semibold tracking-tight max-lg:sr-only">
+            {storeName}
+          </span>
         </div>
 
         {/* Who is signed in, and signing out, live in the topbar's account menu, as in Shopify. */}
@@ -77,7 +96,7 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
         <header className="border-border/50 bg-card/80 sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b px-4 backdrop-blur-sm sm:px-6">
           <MobileNav
             openLabel={t.nav.openMenu}
-            title={t.brand}
+            title={storeName}
             description={t.nav.primary}
             footer={
               <div className="flex flex-col gap-3">
@@ -108,7 +127,7 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
 
           <div className="flex items-center gap-2 md:hidden">
             <BrandMark className="size-5" />
-            <span className="font-semibold">{t.brand}</span>
+            <span className="truncate font-semibold">{storeName}</span>
           </div>
 
           <GlobalSearch
@@ -133,6 +152,13 @@ export function AppShell({ children, t, locale, activeNavId, user }: AppShellPro
             <AccountMenu t={t} user={user} />
           </div>
         </header>
+
+        <TrialBanner
+          banner={store?.banner ?? null}
+          trialDaysLeft={store?.trialDaysLeft ?? null}
+          t={t}
+          locale={locale}
+        />
 
         <main className="flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">{children}</main>
       </div>

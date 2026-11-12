@@ -7,7 +7,7 @@ import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
 import type { MerchantFeatureOverride } from "../domain/merchant-feature-override";
-import type { Plan } from "../domain/plan";
+import { sortPublishedPlans, type Plan } from "../domain/plan";
 import type {
   BillingPaymentMethodRepository,
   CouponRepository,
@@ -62,6 +62,10 @@ export class InMemoryPlanRepository implements PlanRepository {
       if (plan.key === key) return plan;
     }
     return null;
+  }
+
+  listPublished(): Promise<readonly Plan[]> {
+    return Promise.resolve(sortPublishedPlans([...this.store.values()]));
   }
 }
 
@@ -282,6 +286,19 @@ export class InMemoryInvoiceRepository implements InvoiceRepository {
   async findById(id: string, tenantId: string): Promise<Invoice | null> {
     const entry = this.store.get(id);
     return entry !== undefined && entry.tenantId === tenantId ? entry.invoice : null;
+  }
+
+  listByTenantRef(tenantRef: string, tenantId: string): Promise<readonly Invoice[]> {
+    const mine: Invoice[] = [];
+    for (const entry of this.store.values()) {
+      if (entry.tenantId === tenantId && entry.invoice.tenantRef === tenantRef) {
+        mine.push(entry.invoice);
+      }
+    }
+    // Insertion order is oldest first; reversing before a stable sort keeps newest-first on equal times.
+    return Promise.resolve(
+      mine.reverse().sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0)),
+    );
   }
 }
 

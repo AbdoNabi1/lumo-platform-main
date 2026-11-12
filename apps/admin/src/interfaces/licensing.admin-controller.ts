@@ -1,5 +1,6 @@
 import type { Principal } from "@platform/contracts";
 import type { LicensingController } from "@platform/licensing";
+import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { AdminGuard } from "./admin-guard";
 import type { AdminResponse } from "./admin-response";
 
@@ -236,5 +237,67 @@ export class LicensingAdminController {
     const denied = await this.guard.ensure(principal, "licensing:billing:manage");
     if (denied) return denied;
     return this.licensing.getCoupon(input);
+  }
+
+  /**
+   * Merchant self-serve billing (Task 6). These authorize the merchant's own `settings:*` permissions,
+   * NOT the operator's `licensing:*` ones: a merchant has no `licensing:billing:manage`, and must not
+   * gain it. `tenantRef` is the caller's own shop and `tenantId` the platform scope the rows live
+   * under — both supplied by the route from the request's context, never by the client.
+   */
+  async getMerchantBilling(
+    principal: Principal,
+    tenantRef: string,
+    tenantId: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    return this.licensing.getMerchantBilling({ tenantRef, tenantId });
+  }
+
+  async listPublishedPlans(principal: Principal): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    const plans = await this.licensing.listPublishedPlans();
+    if (plans.status !== 200) return plans;
+    return { status: 200, body: { items: plans.body } };
+  }
+
+  async changeMerchantPlan(
+    principal: Principal,
+    tenantRef: string,
+    tenantId: string,
+    planKey: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.licensing.changeMerchantPlan({ tenantRef, tenantId, planKey });
+  }
+
+  /**
+   * Starts the card checkout for one of the merchant's OWN invoices and answers only its URL. The
+   * invoice id comes from the client, so it is first looked up among the merchant's invoices: anything
+   * else — another store's invoice included — is a 404 that reveals nothing.
+   */
+  async payMerchantInvoice(
+    principal: Principal,
+    tenantRef: string,
+    tenantId: string,
+    invoiceId: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    const billing = await this.licensing.getMerchantBilling({ tenantRef, tenantId });
+    if (billing.status !== 200) return billing;
+    const own = (billing.body as { invoices: ReadonlyArray<{ id: string }> }).invoices;
+    if (!own.some((invoice) => invoice.id === invoiceId)) {
+      return { status: 404, body: toErrorEnvelope(new NotFoundError("Invoice not found")) };
+    }
+    const begun = await this.licensing.beginCardEnrolment({ invoiceId, tenantId });
+    if (begun.status !== 200) return begun;
+    return {
+      status: 200,
+      body: { checkoutUrl: (begun.body as { checkoutUrl: string }).checkoutUrl },
+    };
   }
 }

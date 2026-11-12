@@ -12,6 +12,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
 /** Plan 1C: neutral notices after the forgot-password / reset-password round trips. */
 const NOTICE_TEXT: Readonly<Record<string, string>> = {
   done: "Password changed. Sign in / اتغيرت كلمة السر، ادخل",
+  ready: "Your store is ready — sign in / متجرك جاهز — سجّل دخول",
   sent: "If the account exists, a reset link is on its way / لو الحساب موجود، هيوصلك لينك إعادة التعيين",
 };
 
@@ -19,13 +20,20 @@ export function NativeLoginForm({
   error,
   returnTo,
   reset,
+  signup,
+  signupEnabled = false,
 }: {
   readonly error: string | undefined;
   readonly returnTo: string | undefined;
   readonly reset?: string | undefined;
+  /** `?signup=done` after a sign-up that still needs a sign-in. */
+  readonly signup?: string | undefined;
+  /** Whether to offer the "Open your store" link; decided by the server page, never here. */
+  readonly signupEnabled?: boolean;
 }) {
   const message = error === undefined ? undefined : ERROR_TEXT[error];
-  const notice = reset === undefined ? undefined : NOTICE_TEXT[reset];
+  const notice =
+    reset !== undefined ? NOTICE_TEXT[reset] : signup === "done" ? NOTICE_TEXT["ready"] : undefined;
   return (
     <main className="lumo-canvas flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-sm">
@@ -81,6 +89,13 @@ export function NativeLoginForm({
               Forgot password? / نسيت كلمة السر؟
             </Link>
           </p>
+          {signupEnabled && (
+            <p className="mt-2 text-center text-sm">
+              <Link href="/signup" className="text-muted-foreground underline">
+                New to Morbeh? Open your store / جديد على مربح؟ افتح متجرك
+              </Link>
+            </p>
+          )}
         </CardContent>
       </Card>
     </main>

@@ -1,4 +1,5 @@
 import type { UseCase } from "@platform/application";
+import type { Clock } from "@platform/contracts";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
@@ -12,6 +13,8 @@ export interface StoreSettingsView {
   readonly currency: string;
   readonly timezone: string;
   readonly weightUnit: string;
+  /** ISO-8601 instant the merchant dismissed Home's setup guide, or `null` while it still shows. */
+  readonly setupGuideDismissedAt: string | null;
 }
 
 export function toStoreSettingsView(settings: StoreSettings): StoreSettingsView {
@@ -21,6 +24,7 @@ export function toStoreSettingsView(settings: StoreSettings): StoreSettingsView 
     currency: settings.currency,
     timezone: settings.timezone,
     weightUnit: settings.weightUnit,
+    setupGuideDismissedAt: settings.setupGuideDismissedAt?.toISOString() ?? null,
   };
 }
 
@@ -30,7 +34,7 @@ export interface StoreSettingsDeps {
 }
 
 export class GetStoreSettings implements UseCase<
-  Record<string, never>,
+  { readonly tenantId: string },
   StoreSettingsView,
   DomainError
 > {
@@ -40,15 +44,19 @@ export class GetStoreSettings implements UseCase<
     this.deps = deps;
   }
 
-  async execute(_input: Record<string, never>): Promise<Result<StoreSettingsView, DomainError>> {
-    const stored = await this.deps.settings.get();
+  async execute(input: {
+    readonly tenantId: string;
+  }): Promise<Result<StoreSettingsView, DomainError>> {
+    const stored = await this.deps.settings.get(input.tenantId);
     return ok(toStoreSettingsView(stored ?? StoreSettings.defaults()));
   }
 }
 
+export type UpdateStoreSettingsInput = StoreSettingsInput & { readonly tenantId: string };
+
 /** Replaces the shop's settings wholesale (Shopify's Settings → General "Save"). */
 export class UpdateStoreSettings implements UseCase<
-  StoreSettingsInput,
+  UpdateStoreSettingsInput,
   StoreSettingsView,
   DomainError
 > {
@@ -58,13 +66,44 @@ export class UpdateStoreSettings implements UseCase<
     this.deps = deps;
   }
 
-  async execute(input: StoreSettingsInput): Promise<Result<StoreSettingsView, DomainError>> {
-    const created = StoreSettings.create(input);
+  async execute(input: UpdateStoreSettingsInput): Promise<Result<StoreSettingsView, DomainError>> {
+    const { tenantId, ...rest } = input;
+    const created = StoreSettings.create(rest);
     if (!created.ok) return err(created.error);
-    await this.deps.unitOfWork.run(async (tx) => {
-      await this.deps.settings.save(created.value, tx);
+    // The merchant never sends the dismissal, so a save carries the stored one over.
+    const next = await this.deps.unitOfWork.run(async (tx) => {
+      const current = await this.deps.settings.get(tenantId, tx);
+      const value = created.value.withSetupGuideDismissedAt(current?.setupGuideDismissedAt ?? null);
+      await this.deps.settings.save(tenantId, value, tx);
+      return value;
     });
-    return ok(toStoreSettingsView(created.value));
+    return ok(toStoreSettingsView(next));
+  }
+}
+
+/** Hides Home's setup guide for good (Shopify's "Dismiss"); dismissing again keeps the first time. */
+export class DismissSetupGuide implements UseCase<
+  { readonly tenantId: string },
+  StoreSettingsView,
+  DomainError
+> {
+  private readonly deps: StoreSettingsDeps & { readonly clock: Clock };
+
+  constructor(deps: StoreSettingsDeps & { readonly clock: Clock }) {
+    this.deps = deps;
+  }
+
+  async execute(input: {
+    readonly tenantId: string;
+  }): Promise<Result<StoreSettingsView, DomainError>> {
+    const { tenantId } = input;
+    const next = await this.deps.unitOfWork.run(async (tx) => {
+      const current = (await this.deps.settings.get(tenantId, tx)) ?? StoreSettings.defaults();
+      const value = current.withSetupGuideDismissed(this.deps.clock.now());
+      await this.deps.settings.save(tenantId, value, tx);
+      return value;
+    });
+    return ok(toStoreSettingsView(next));
   }
 }
 
@@ -75,7 +114,7 @@ export interface PublicStoreView {
 }
 
 export class GetPublicStore implements UseCase<
-  Record<string, never>,
+  { readonly tenantId: string },
   PublicStoreView,
   DomainError
 > {
@@ -85,8 +124,10 @@ export class GetPublicStore implements UseCase<
     this.deps = deps;
   }
 
-  async execute(_input: Record<string, never>): Promise<Result<PublicStoreView, DomainError>> {
-    const settings = (await this.deps.settings.get()) ?? StoreSettings.defaults();
+  async execute(input: {
+    readonly tenantId: string;
+  }): Promise<Result<PublicStoreView, DomainError>> {
+    const settings = (await this.deps.settings.get(input.tenantId)) ?? StoreSettings.defaults();
     return ok({ name: settings.storeName, currency: settings.currency });
   }
 }

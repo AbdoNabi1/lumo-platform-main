@@ -1,16 +1,23 @@
-import type { Database, TransactionClient } from "@platform/db";
+import {
+  runInTenantTransaction,
+  runReadScoped,
+  type Database,
+  type TransactionClient,
+} from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
-import { ConcurrencyError } from "@platform/utils";
+import { ConcurrencyError, ConflictError } from "@platform/utils";
 import type { Prisma } from "@prisma/client";
 import type {
   ShopDomainRepository,
+  StaffDirectoryRepository,
   StoreSettingsRepository,
   TenantRepository,
   WorkspaceRepository,
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
+import { StaffDirectoryEntry, type StaffDirectoryStatus } from "../domain/staff-directory";
 import type { StoreSettings } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
@@ -238,6 +245,18 @@ export class PrismaShopDomainRepository implements ShopDomainRepository {
   }
 }
 
+/** ADR-0014: reuse the caller's `tx` if given, else scope the read via `runReadScoped`. */
+function readScoped<T>(
+  prisma: Database,
+  tenantId: string,
+  tx: unknown,
+  run: (client: TransactionClient) => Promise<T>,
+): Promise<T> {
+  return tx !== undefined && tx !== null
+    ? run(tx as TransactionClient)
+    : runReadScoped(prisma, tenantId, run);
+}
+
 export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
   private readonly deps: PrismaTenancyRepositoriesDeps;
 
@@ -245,20 +264,101 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
     this.deps = deps;
   }
 
-  async get(tx?: unknown): Promise<StoreSettings | null> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const row = await client.storeSettings.findFirst({ where: { tenantId: this.deps.tenantId } });
+  async get(tenantId: string, tx?: unknown): Promise<StoreSettings | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.storeSettings.findFirst({ where: { tenantId } }),
+    );
     return row === null ? null : StoreSettingsMapper.toDomain(row);
   }
 
-  async save(settings: StoreSettings, tx?: unknown): Promise<void> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
-    const tenantId = this.deps.tenantId;
+  async save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void> {
     const data = StoreSettingsMapper.toRow(settings);
-    await client.storeSettings.upsert({
-      where: { tenantId },
-      create: { tenantId, ...data },
-      update: data,
+    const run = async (client: TransactionClient): Promise<void> => {
+      await client.storeSettings.upsert({
+        where: { tenantId },
+        create: { tenantId, ...data },
+        update: data,
+      });
+    };
+    // Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS.
+    if (tx !== undefined && tx !== null) {
+      await run(tx as TransactionClient);
+      return;
+    }
+    await runInTenantTransaction(this.deps.prisma, tenantId, run);
+  }
+}
+
+/** Platform-scoped like `PrismaShopDomainRepository`: every row carries the deployment's `tenantId`. */
+export class PrismaStaffDirectoryRepository implements StaffDirectoryRepository {
+  private readonly deps: PrismaTenancyRepositoriesDeps;
+
+  constructor(deps: PrismaTenancyRepositoriesDeps) {
+    this.deps = deps;
+  }
+
+  async findByEmail(email: string, tx?: unknown): Promise<StaffDirectoryEntry | null> {
+    const tenantId = this.deps.tenantId;
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.staffDirectoryEntry.findFirst({ where: { email, tenantId } }),
+    );
+    return row === null
+      ? null
+      : StaffDirectoryEntry.restore({
+          email: row.email,
+          shopId: row.shopRef,
+          ownerExternalId: row.ownerExternalId,
+          status: row.status as StaffDirectoryStatus,
+        });
+  }
+
+  async create(entry: StaffDirectoryEntry, tx?: unknown): Promise<void> {
+    const tenantId = this.deps.tenantId;
+    await this.inTransaction(tx, async (client) => {
+      try {
+        await client.staffDirectoryEntry.create({
+          data: {
+            tenantId,
+            email: entry.email,
+            shopRef: entry.shopId,
+            ownerExternalId: entry.ownerExternalId,
+            status: entry.status,
+          },
+        });
+      } catch (error) {
+        // P2002 = unique constraint violation: the email already has a store (the primary key).
+        if ((error as { code?: unknown } | null)?.code === "P2002") {
+          throw new ConflictError("Email already has a store");
+        }
+        throw error;
+      }
     });
+  }
+
+  async save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void> {
+    const tenantId = this.deps.tenantId;
+    await this.inTransaction(tx, async (client) => {
+      const updated = await client.staffDirectoryEntry.updateMany({
+        where: { email: entry.email, tenantId },
+        data: {
+          shopRef: entry.shopId,
+          ownerExternalId: entry.ownerExternalId,
+          status: entry.status,
+        },
+      });
+      if (updated.count === 0) throw new Error("staff directory entry does not exist");
+    });
+  }
+
+  /** Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS. */
+  private async inTransaction(
+    tx: unknown,
+    run: (client: TransactionClient) => Promise<void>,
+  ): Promise<void> {
+    if (tx !== undefined && tx !== null) {
+      await run(tx as TransactionClient);
+      return;
+    }
+    await runInTenantTransaction(this.deps.prisma, this.deps.tenantId, run);
   }
 }
