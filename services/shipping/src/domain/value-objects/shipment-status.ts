@@ -42,13 +42,16 @@ export function canTransitionShipment(from: ShipmentStatusValue, to: ShipmentSta
   return TRANSITIONS[from].includes(to);
 }
 
-/** Statuses a carrier walk may pass through on the way to its target (Ruling 23). */
+/**
+ * Statuses a carrier walk may pass through on the way to its target (Ruling 23, amended in Task 1
+ * fix round 1). `delivery_failed` is not here, so a late scan never invents a failure or walks
+ * backwards; `label_created` is not here because a walk never starts from `created`. Both can
+ * still be the walk's starting status.
+ */
 const WALKABLE = new Set<ShipmentStatusValue>([
-  "label_created",
   "carrier_accepted",
   "in_transit",
   "out_for_delivery",
-  "delivery_failed",
 ]);
 
 /** Targets reachable by walking; every other target (`cancelled`, `exception`, …) needs a direct edge. */
@@ -65,11 +68,14 @@ const WALK_TARGETS = new Set<ShipmentStatusValue>([
  * Ruling 23: the shortest walk over the transition table from `from` to `to`, for carrier scans
  * that skip steps. Returns the steps after `from`, ending with `to`; `[]` when they are equal;
  * `null` when `to` is unreachable (the scan is then recorded without a status change).
+ * A shipment in `created` has no live carrier delivery (never labelled, or voided and re-shipping
+ * with the old tracking number still set), so no scan moves it: always `null`.
  */
 export function carrierPathTo(
   from: ShipmentStatusValue,
   to: ShipmentStatusValue,
 ): readonly ShipmentStatusValue[] | null {
+  if (from === "created") return null;
   if (from === to) return [];
   if (!WALK_TARGETS.has(to)) return canTransitionShipment(from, to) ? [to] : null;
   const previous = new Map<ShipmentStatusValue, ShipmentStatusValue>();

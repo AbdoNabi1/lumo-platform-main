@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { BusinessRuleError, UniqueEntityId } from "@platform/domain";
 import type { Result } from "@platform/types";
 import { Shipment } from "./shipment";
+import { ShippingAttempt } from "./shipping-attempt";
 import { ShipmentPackage } from "./value-objects/shipment-package";
 import { Carrier, CarrierService } from "./value-objects/carrier";
 import { ShippingLabel } from "./value-objects/shipping-label";
 import { TrackingNumber } from "./value-objects/tracking-number";
+import { carrierPathTo } from "./value-objects/shipment-status";
 
 function pkg(): ShipmentPackage {
   const result = ShipmentPackage.create("pkg-1", ["item-1"], 500);
@@ -216,6 +218,75 @@ describe("pending label attempts (§9a.5, Ruling 4)", () => {
     s.retry("evt-2", at);
     expect(s.status.value).toBe("created");
     expect(s.attempts.filter((a) => a.kind === "label")).toHaveLength(0);
+  });
+
+  it("does not depend on attempt row order: a settle row stored before its pending row still closes it", () => {
+    // Prisma orders attempts by occurredAt alone; equal or skewed clocks can reorder a pair.
+    const attempt = (n: number, outcome: "pending" | "failed") =>
+      ShippingAttempt.create(UniqueEntityId.from(`a-${n}`), "label", outcome, at, "1001-1");
+    const reordered = Shipment.reconstitute(
+      UniqueEntityId.from("ship-1"),
+      "fulfillment-1",
+      [pkg()],
+      shipment().status,
+      2,
+      { attempts: [attempt(1, "failed"), attempt(0, "pending")] },
+    );
+    expect(reordered.pendingLabelAttempt()).toBeUndefined();
+    expect(reordered.nextLabelReference("1001")).toBe("1001-2");
+  });
+
+  it("refuses to begin under a reference already used on this shipment", () => {
+    const s = shipment();
+    s.beginLabelAttempt("1001-1", at);
+    s.failLabelAttempt("1001-1", at);
+    expect(() => s.beginLabelAttempt("1001-1", at)).toThrow(/already used/i);
+    expect(s.attempts).toHaveLength(2);
+  });
+
+  it("createLabel with a reference requires it to be the open attempt, and changes nothing otherwise", () => {
+    const s = shipment();
+    s.beginLabelAttempt("1001-1", at);
+    expect(() =>
+      s.createLabel(
+        unwrap(ShippingLabel.create("del-1", "5108002", "del-1")),
+        unwrap(Carrier.create("bosta")),
+        unwrap(CarrierService.create("standard")),
+        unwrap(TrackingNumber.create("5108002")),
+        "evt-1",
+        at,
+        "1001-9",
+      ),
+    ).toThrow(BusinessRuleError);
+    expect(s.status.value).toBe("created");
+    expect(s.label).toBeUndefined();
+    expect(s.trackingNumber).toBeUndefined();
+    expect(s.pendingLabelAttempt()?.reference).toBe("1001-1");
+    expect(s.pullDomainEvents()).toHaveLength(0);
+  });
+
+  it("void, re-ship, then a late carrier cancel for the old delivery does not cancel the new shipment", () => {
+    const s = shipment();
+    s.beginLabelAttempt("1001-1", at);
+    s.createLabel(
+      unwrap(ShippingLabel.create("del-1", "5108002", "del-1")),
+      unwrap(Carrier.create("bosta")),
+      unwrap(CarrierService.create("standard")),
+      unwrap(TrackingNumber.create("5108002")),
+      "evt-1",
+      at,
+      "1001-1",
+    );
+    s.voidLabel("evt-2", at);
+    s.transition("created", "evt-3", at);
+    s.beginLabelAttempt(s.nextLabelReference("1001"), at);
+    // The void leaves the old tracking number on the shipment, so a late Bosta 48/49 for the
+    // terminated delivery still finds it; the walk must refuse to move a shipment in created.
+    expect(s.trackingNumber?.value).toBe("5108002");
+    expect(carrierPathTo(s.status.value, "cancelled")).toBeNull();
+    expect(carrierPathTo(s.status.value, "exception")).toBeNull();
+    expect(s.status.value).toBe("created");
+    expect(s.pendingLabelAttempt()?.reference).toBe("1001-2");
   });
 
   it("an open attempt while created does not need carrier review", () => {

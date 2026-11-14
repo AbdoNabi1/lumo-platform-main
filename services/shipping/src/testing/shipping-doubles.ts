@@ -30,7 +30,8 @@ interface StoredRow {
 
 /**
  * Reproduces `PrismaShipmentRepository`'s contract without a database: rows are bucketed by tenant
- * (ADR-0014, so another tenant's id or tracking number is not found), `save()` throws
+ * (ADR-0014, so another tenant's id or tracking number is not found), `save()` stores a snapshot
+ * (later changes to the caller's instance don't reach the row) and throws
  * `ConcurrencyError` on a version mismatch, every read returns a freshly reconstituted instance
  * stamped with the row's current version (never one mutable object shared across reads), and the
  * fulfillment/tracking lookups return the newest row by creation, like `orderBy: { createdAt: "desc" }`.
@@ -43,7 +44,7 @@ export class PostgresLikeShipmentRepository implements ShipmentRepository {
     const id = shipment.id.toString();
     const existing = bucket.get(id);
     if (existing === undefined) {
-      bucket.set(id, { shipment, version: 1 });
+      bucket.set(id, snapshot(shipment, 1));
       return Promise.resolve();
     }
     if (existing.version !== shipment.version) {
@@ -53,7 +54,7 @@ export class PostgresLikeShipmentRepository implements ShipmentRepository {
         ),
       );
     }
-    bucket.set(id, { shipment, version: existing.version + 1 });
+    bucket.set(id, snapshot(shipment, existing.version + 1));
     return Promise.resolve();
   }
 
@@ -116,6 +117,11 @@ export class PostgresLikeShipmentRepository implements ShipmentRepository {
     }
     return found === undefined ? null : reconstitute(found);
   }
+}
+
+/** What a write stores: an independent copy, so the caller's instance can't change the row afterwards. */
+function snapshot(shipment: Shipment, version: number): StoredRow {
+  return { shipment: reconstitute({ shipment, version }), version };
 }
 
 /** A fresh instance per read, mirroring a real DB round-trip. */

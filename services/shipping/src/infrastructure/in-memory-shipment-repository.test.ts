@@ -110,6 +110,31 @@ describe("InMemoryShipmentRepository lookups (local carriers)", () => {
     expect(await shipments.findByTrackingNumber("bosta", "0000000", "t-1")).toBeNull();
   });
 
+  it("a re-labelled shipment is no longer found by the voided label's tracking number", async () => {
+    const shipments = repository();
+    const s = labelled("ship-bosta", "bosta", "5108002");
+    s.voidLabel("evt-2", new Date(0));
+    s.transition("created", "evt-3", new Date(0));
+    await shipments.save(s, "t-1");
+    // While re-shipping, the old number still matches (the walk refuses to move `created`).
+    expect((await shipments.findByTrackingNumber("bosta", "5108002", "t-1"))?.status.value).toBe(
+      "created",
+    );
+
+    const label = ShippingLabel.create("del-2", "5108999", "del-2");
+    const carrier = Carrier.create("bosta");
+    const service = CarrierService.create("standard");
+    const tracking = TrackingNumber.create("5108999");
+    if (!label.ok || !carrier.ok || !service.ok || !tracking.ok) throw new Error("invalid");
+    s.createLabel(label.value, carrier.value, service.value, tracking.value, "evt-4", new Date(0));
+    await shipments.save(s, "t-1");
+
+    expect(await shipments.findByTrackingNumber("bosta", "5108002", "t-1")).toBeNull();
+    expect((await shipments.findByTrackingNumber("bosta", "5108999", "t-1"))?.id.toString()).toBe(
+      "ship-bosta",
+    );
+  });
+
   it("findByFulfillmentRef returns the newest shipment for the fulfillment (F4)", async () => {
     const shipments = repository();
     const first = newShipment("ship-old", "fulfillment-1");

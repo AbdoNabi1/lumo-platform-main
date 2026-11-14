@@ -27,3 +27,7 @@ The domain never generates ids or reads the clock. Identity is supplied:
 - **Domain events:** `eventId` and `occurredAt` are supplied at construction (no `crypto`, no `Date.now`).
 
 This keeps the domain reusable by every bounded context and fully testable without infrastructure.
+
+**Server-only.** `deterministicEntityId(seed)` (a SHA-256-derived, UUID-shaped id for child
+entities such as attempt logs) imports `node:crypto`, so this package's root export runs on Node
+only. Never value-import `@platform/domain` into a browser bundle (admin-web, storefront).

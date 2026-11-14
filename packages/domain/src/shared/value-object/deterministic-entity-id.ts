@@ -7,6 +7,9 @@ import { UniqueEntityId } from "./unique-entity-id";
  * their parent and position (e.g. an aggregate's append-only attempt log), so a re-save produces
  * the same id and `skipDuplicates` still dedupes, while the value fits a Postgres `UUID` column.
  * Not a random id: new aggregate ids still come from the `IdGenerator` port.
+ *
+ * Server-only: this imports `node:crypto`, so `@platform/domain`'s root export is Node-only and
+ * must not be value-imported into a browser bundle (admin-web, storefront).
  */
 export function deterministicEntityId(seed: string): UniqueEntityId {
   const bytes = createHash("sha256").update(seed).digest().subarray(0, 16);

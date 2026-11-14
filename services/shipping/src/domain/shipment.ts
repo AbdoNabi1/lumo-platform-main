@@ -144,7 +144,8 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
   /**
    * Requests a label from the carrier (`CarrierProviderPort.createLabel`, idempotency-keyed) —
    * records the label + carrier/service and transitions to `label_created`. On the carrier path,
-   * `reference` is the open pending attempt's reference, and the `succeeded` row closes it.
+   * `reference` must be the open pending attempt's reference (checked before anything changes),
+   * and the `succeeded` row closes it.
    */
   createLabel(
     label: ShippingLabel,
@@ -155,6 +156,7 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     occurredAt: Date,
     reference?: string,
   ): void {
+    if (reference !== undefined) this.requireOpenLabelAttempt(reference);
     this.props.label = label;
     this.props.carrier = carrier;
     this.props.carrierService = carrierService;
@@ -164,19 +166,20 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
   }
 
   /**
-   * The open carrier label request (Ruling 4): the latest `label`/`pending` attempt whose
-   * reference has no later `label` attempt. Attempts are append-only, so a pending row is closed
-   * by appending a `succeeded`/`failed` `label` row with the same reference, never by rewriting.
+   * The open carrier label request (Ruling 4): a `label`/`pending` attempt whose reference has no
+   * `succeeded`/`failed` `label` attempt anywhere in the log. Attempts are append-only, so a
+   * pending row is closed by appending a settle row with the same reference, never by rewriting.
+   * Independent of row order: Prisma orders attempts by `occurredAt` alone, which equal or skewed
+   * clocks can tie or invert. References are unique per shipment ({@link beginLabelAttempt}).
    */
   pendingLabelAttempt(): ShippingAttempt | undefined {
-    const settled = new Set<string | undefined>();
-    for (let i = this.props.attempts.length - 1; i >= 0; i -= 1) {
-      const attempt = this.props.attempts[i];
-      if (attempt === undefined || attempt.kind !== "label") continue;
-      if (attempt.outcome === "pending" && !settled.has(attempt.reference)) return attempt;
-      settled.add(attempt.reference);
+    const labels = this.props.attempts.filter((a) => a.kind === "label");
+    const settled = new Set(labels.filter((a) => a.outcome !== "pending").map((a) => a.reference));
+    let open: ShippingAttempt | undefined;
+    for (const attempt of labels) {
+      if (attempt.outcome === "pending" && !settled.has(attempt.reference)) open = attempt;
     }
-    return undefined;
+    return open;
   }
 
   /** `${base}-${1 + number of pending label attempts}` (Ruling 4): each carrier request gets a fresh reference. */
@@ -187,12 +190,21 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     return `${base}-${started + 1}`;
   }
 
-  /** Opens a carrier label request (appends `label`/`pending`/`reference`). Throws if one is already open or the status can't reach `label_created`. */
+  /**
+   * Opens a carrier label request (appends `label`/`pending`/`reference`). Throws if one is
+   * already open, if `reference` was already used on this shipment, or if the status can't reach
+   * `label_created`.
+   */
   beginLabelAttempt(reference: string, occurredAt: Date): void {
     const open = this.pendingLabelAttempt();
     if (open !== undefined) {
       throw new BusinessRuleError(
         `Shipment ${this.id.toString()} already has a pending label attempt (${String(open.reference)})`,
+      );
+    }
+    if (this.props.attempts.some((a) => a.kind === "label" && a.reference === reference)) {
+      throw new BusinessRuleError(
+        `Label reference "${reference}" was already used on shipment ${this.id.toString()}`,
       );
     }
     if (!canTransitionShipment(this.props.status.value, "label_created")) {

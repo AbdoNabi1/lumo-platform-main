@@ -74,6 +74,24 @@ describe("PostgresLikeShipmentRepository", () => {
     expect(found).not.toBe(await repo.findByFulfillmentRef("fulfillment-1", "t-1"));
   });
 
+  it("stores a snapshot: changing the saved instance afterwards does not change the row", async () => {
+    const repo = new PostgresLikeShipmentRepository();
+    const s = newShipment("ship-1");
+    await repo.save(s, "t-1");
+    s.cancel("evt-1", new Date(0));
+
+    expect((await repo.findById("ship-1", "t-1"))?.status.value).toBe("created");
+    const reread = await repo.findById("ship-1", "t-1");
+    if (reread === null) throw new Error("seed failed");
+    reread.beginLabelAttempt("1001-1", new Date(0));
+    await repo.save(reread, "t-1");
+    reread.failLabelAttempt("1001-1", new Date(0));
+
+    const stored = await repo.findById("ship-1", "t-1");
+    expect(stored?.attempts).toHaveLength(1);
+    expect(stored?.pendingLabelAttempt()?.reference).toBe("1001-1");
+  });
+
   it("refuses a stale version with ConcurrencyError", async () => {
     const repo = new PostgresLikeShipmentRepository();
     await repo.save(newShipment("ship-1"), "t-1");

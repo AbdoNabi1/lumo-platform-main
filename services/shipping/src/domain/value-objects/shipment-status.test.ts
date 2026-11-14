@@ -54,4 +54,35 @@ describe("carrierPathTo (Ruling 23)", () => {
     expect(carrierPathTo("label_created", "exception")).toBeNull();
     expect(carrierPathTo("in_transit", "exception")).toEqual(["exception"]);
   });
+  it("never walks backwards through delivery_failed (fix round 1, Ruling 23 amended)", () => {
+    expect(carrierPathTo("out_for_delivery", "in_transit")).toBeNull();
+    expect(carrierPathTo("out_for_delivery", "carrier_accepted")).toBeNull();
+    expect(carrierPathTo("in_transit", "carrier_accepted")).toBeNull();
+  });
+  it("still walks forward out of delivery_failed and records a real failure as a direct step", () => {
+    expect(carrierPathTo("delivery_failed", "in_transit")).toEqual(["in_transit"]);
+    expect(carrierPathTo("delivery_failed", "delivered")).toEqual([
+      "in_transit",
+      "out_for_delivery",
+      "delivered",
+    ]);
+    expect(carrierPathTo("out_for_delivery", "delivery_failed")).toEqual(["delivery_failed"]);
+  });
+  it.each([
+    "created",
+    "label_created",
+    "carrier_accepted",
+    "in_transit",
+    "out_for_delivery",
+    "delivered",
+    "delivery_failed",
+    "returned",
+    "cancelled",
+    "exception",
+  ] as const)(
+    "never moves a shipment in created (no live carrier delivery): created → %s",
+    (to) => {
+      expect(carrierPathTo("created", to)).toBeNull();
+    },
+  );
 });
