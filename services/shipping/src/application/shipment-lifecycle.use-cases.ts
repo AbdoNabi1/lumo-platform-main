@@ -3,12 +3,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { BusinessRuleError, Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import {
-  ConcurrencyError,
-  type DomainError,
-  NotFoundError,
-  ValidationError,
-} from "@platform/utils";
+import { type DomainError, NotFoundError, ValidationError } from "@platform/utils";
 import type { Shipment } from "../domain/shipment";
 import type { ShipmentRepository } from "../domain/shipment-repository";
 import { Carrier, CarrierService } from "../domain/value-objects/carrier";
@@ -19,28 +14,8 @@ import {
   type ShipmentStatusValue,
 } from "../domain/value-objects/shipment-status";
 import type { ShipmentStatusOutput } from "./create-shipment.use-case";
+import { withConcurrencyRetry } from "./concurrency-retry";
 import type { CarrierProviderPort, FulfillmentPort, NotificationPort } from "./ports";
-
-/**
- * Bounded retry on optimistic-lock conflicts only (Phase A.15, reusing the shape Payments'
- * `withConcurrencyRetry` established in Phase A.4/A.8, duplicated per-context by convention).
- * `PrismaShipmentRepository.save` throws `ConcurrencyError` when a concurrent writer already
- * advanced the row's `version` — that is expected/recoverable (two racing label/void attempts for
- * the same shipment), so the read-check-write attempt is retried from scratch against the
- * now-current row. Any other error propagates immediately.
- */
-async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promise<T>): Promise<T> {
-  for (let i = 1; i <= maxAttempts; i += 1) {
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof ConcurrencyError) || i === maxAttempts) {
-        throw error;
-      }
-    }
-  }
-  throw new Error("unreachable");
-}
 
 export interface ShipmentIdInput {
   /** ADR-0014: the caller's verified tenant. */

@@ -1,9 +1,17 @@
-import { runReadScoped, type Database, type TransactionClient } from "@platform/db";
+import { runReadScoped, type Database, type Prisma, type TransactionClient } from "@platform/db";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import type { Shipment } from "../domain/shipment";
 import type { ShipmentRepository } from "../domain/shipment-repository";
-import { ShipmentMapper } from "./shipment.mapper";
+import {
+  type DeliveryEstimateJson,
+  ShipmentMapper,
+  type ShipmentPackageJson,
+  type ShippingLabelJson,
+  type TrackingEventJson,
+} from "./shipment.mapper";
+
+type ShipmentRecord = Prisma.ShipmentGetPayload<{ include: { attempts: true } }>;
 
 export interface PrismaShipmentRepositoryDeps {
   readonly prisma: Database;
@@ -92,31 +100,7 @@ export class PrismaShipmentRepository implements ShipmentRepository {
         include: { attempts: { orderBy: { occurredAt: "asc" } } },
       }),
     );
-    if (row === null) return null;
-    return ShipmentMapper.toDomain(
-      {
-        ...row,
-        // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
-        // structural overlap with a concrete element shape (comparability fails, not just assignability).
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-        label: row.label as { labelId: string; trackingNumber: string },
-        trackingEvents: row.trackingEvents as {
-          id: string;
-          description: string;
-          location: string | null;
-          occurredAt: string;
-        }[],
-        deliveryEstimate: row.deliveryEstimate as {
-          windowStart: string;
-          windowEnd: string;
-        },
-      },
-      row.attempts,
-    );
+    return row === null ? null : this.toDomain(row);
   }
 
   /** Scaffolding for retry-safe saga-activity idempotency (Sprint A0 precondition); not yet called by any use case. */
@@ -131,33 +115,10 @@ export class PrismaShipmentRepository implements ShipmentRepository {
         include: { attempts: { orderBy: { occurredAt: "asc" } } },
       }),
     );
-    if (row === null) return null;
-    return ShipmentMapper.toDomain(
-      {
-        ...row,
-        // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
-        // structural overlap with a concrete element shape (comparability fails, not just assignability).
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-        label: row.label as { labelId: string; trackingNumber: string },
-        trackingEvents: row.trackingEvents as {
-          id: string;
-          description: string;
-          location: string | null;
-          occurredAt: string;
-        }[],
-        deliveryEstimate: row.deliveryEstimate as {
-          windowStart: string;
-          windowEnd: string;
-        },
-      },
-      row.attempts,
-    );
+    return row === null ? null : this.toDomain(row);
   }
 
+  /** Newest first (F4): a carrier-cancelled shipment's replacement is the one the order uses. */
   async findByFulfillmentRef(
     fulfillmentRef: string,
     tenantId: string,
@@ -167,28 +128,38 @@ export class PrismaShipmentRepository implements ShipmentRepository {
       client.shipment.findFirst({
         where: { fulfillmentRef, tenantId },
         include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        orderBy: { createdAt: "desc" },
       }),
     );
-    if (row === null) return null;
+    return row === null ? null : this.toDomain(row);
+  }
+
+  async findByTrackingNumber(
+    carrier: string,
+    trackingNumber: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Shipment | null> {
+    const row = await readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.shipment.findFirst({
+        where: { tenantId, carrier, trackingNumber },
+        include: { attempts: { orderBy: { occurredAt: "asc" } } },
+        orderBy: { createdAt: "desc" },
+      }),
+    );
+    return row === null ? null : this.toDomain(row);
+  }
+
+  private toDomain(row: ShipmentRecord): Shipment {
     return ShipmentMapper.toDomain(
       {
         ...row,
-        packages: row.packages as unknown as {
-          reference: string;
-          itemRefs: readonly string[];
-          weightGrams: number;
-        }[],
-        label: row.label as { labelId: string; trackingNumber: string },
-        trackingEvents: row.trackingEvents as {
-          id: string;
-          description: string;
-          location: string | null;
-          occurredAt: string;
-        }[],
-        deliveryEstimate: row.deliveryEstimate as {
-          windowStart: string;
-          windowEnd: string;
-        },
+        // Array-of-objects JSON columns need the `unknown` hop: Prisma's `JsonValue` union has no
+        // structural overlap with a concrete element shape (comparability fails, not just assignability).
+        packages: row.packages as unknown as ShipmentPackageJson[],
+        label: row.label as unknown as ShippingLabelJson,
+        trackingEvents: row.trackingEvents as unknown as TrackingEventJson[],
+        deliveryEstimate: row.deliveryEstimate as unknown as DeliveryEstimateJson,
       },
       row.attempts,
     );

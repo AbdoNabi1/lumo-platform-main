@@ -1,4 +1,5 @@
 import { AggregateRoot, BusinessRuleError, UniqueEntityId } from "@platform/domain";
+import { attemptIdFor } from "./attempt-id";
 import { ShipmentTransitioned } from "./events/shipment-transitioned.event";
 import {
   ShippingAttempt,
@@ -140,7 +141,11 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     );
   }
 
-  /** Requests a label from the carrier (`CarrierProviderPort.createLabel`, idempotency-keyed) — records the label + carrier/service and transitions to `label_created`. */
+  /**
+   * Requests a label from the carrier (`CarrierProviderPort.createLabel`, idempotency-keyed) —
+   * records the label + carrier/service and transitions to `label_created`. On the carrier path,
+   * `reference` is the open pending attempt's reference, and the `succeeded` row closes it.
+   */
   createLabel(
     label: ShippingLabel,
     carrier: Carrier,
@@ -148,13 +153,76 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     trackingNumber: TrackingNumber,
     eventId: string,
     occurredAt: Date,
+    reference?: string,
   ): void {
     this.props.label = label;
     this.props.carrier = carrier;
     this.props.carrierService = carrierService;
     this.props.trackingNumber = trackingNumber;
     this.transition("label_created", eventId, occurredAt);
-    this.recordAttempt("label", "succeeded", occurredAt);
+    this.recordAttempt("label", "succeeded", occurredAt, reference);
+  }
+
+  /**
+   * The open carrier label request (Ruling 4): the latest `label`/`pending` attempt whose
+   * reference has no later `label` attempt. Attempts are append-only, so a pending row is closed
+   * by appending a `succeeded`/`failed` `label` row with the same reference, never by rewriting.
+   */
+  pendingLabelAttempt(): ShippingAttempt | undefined {
+    const settled = new Set<string | undefined>();
+    for (let i = this.props.attempts.length - 1; i >= 0; i -= 1) {
+      const attempt = this.props.attempts[i];
+      if (attempt === undefined || attempt.kind !== "label") continue;
+      if (attempt.outcome === "pending" && !settled.has(attempt.reference)) return attempt;
+      settled.add(attempt.reference);
+    }
+    return undefined;
+  }
+
+  /** `${base}-${1 + number of pending label attempts}` (Ruling 4): each carrier request gets a fresh reference. */
+  nextLabelReference(base: string): string {
+    const started = this.props.attempts.filter(
+      (a) => a.kind === "label" && a.outcome === "pending",
+    ).length;
+    return `${base}-${started + 1}`;
+  }
+
+  /** Opens a carrier label request (appends `label`/`pending`/`reference`). Throws if one is already open or the status can't reach `label_created`. */
+  beginLabelAttempt(reference: string, occurredAt: Date): void {
+    const open = this.pendingLabelAttempt();
+    if (open !== undefined) {
+      throw new BusinessRuleError(
+        `Shipment ${this.id.toString()} already has a pending label attempt (${String(open.reference)})`,
+      );
+    }
+    if (!canTransitionShipment(this.props.status.value, "label_created")) {
+      throw new BusinessRuleError(
+        `Cannot start a label attempt for a shipment that is ${this.props.status.value}`,
+      );
+    }
+    this.recordAttempt("label", "pending", occurredAt, reference);
+  }
+
+  /** Closes the open carrier label request as failed (appends `label`/`failed`/`reference`). */
+  failLabelAttempt(reference: string, occurredAt: Date): void {
+    this.requireOpenLabelAttempt(reference);
+    this.recordAttempt("label", "failed", occurredAt, reference);
+  }
+
+  /**
+   * The carrier's answer to the open label request is unknown (§9a.5): `created → exception`,
+   * recording `carrier`/`failed`/`CARRIER_RESULT_UNKNOWN:<reference>`. The pending attempt stays
+   * open, so {@link needsCarrierReview} holds until `retry()` closes it.
+   */
+  markCarrierResultUnknown(reference: string, eventId: string, occurredAt: Date): void {
+    this.requireOpenLabelAttempt(reference);
+    this.transition("exception", eventId, occurredAt);
+    this.recordAttempt("carrier", "failed", occurredAt, `CARRIER_RESULT_UNKNOWN:${reference}`);
+  }
+
+  /** The merchant must check the carrier before shipping again: status `exception` with an open label attempt. */
+  get needsCarrierReview(): boolean {
+    return this.props.status.value === "exception" && this.pendingLabelAttempt() !== undefined;
   }
 
   voidLabel(eventId: string, occurredAt: Date): void {
@@ -214,6 +282,13 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     if (target === undefined) {
       throw new BusinessRuleError(`Cannot retry a shipment that is ${this.props.status.value}`);
     }
+    // Ruling 42: the merchant has checked the carrier, so the unknown request is closed as failed
+    // and the next request goes out under the next reference.
+    const pending =
+      this.props.status.value === "exception" ? this.pendingLabelAttempt() : undefined;
+    if (pending?.reference !== undefined) {
+      this.failLabelAttempt(pending.reference, occurredAt);
+    }
     this.transition(target, eventId, occurredAt);
     this.recordAttempt("retry", "succeeded", occurredAt);
   }
@@ -253,6 +328,14 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
     );
   }
 
+  private requireOpenLabelAttempt(reference: string): void {
+    if (this.pendingLabelAttempt()?.reference !== reference) {
+      throw new BusinessRuleError(
+        `Shipment ${this.id.toString()} has no pending label attempt "${reference}"`,
+      );
+    }
+  }
+
   private recordAttempt(
     kind: ShippingAttemptKind,
     outcome: ShippingAttemptOutcome,
@@ -261,7 +344,7 @@ export class Shipment extends AggregateRoot<ShipmentProps> {
   ): void {
     this.props.attempts.push(
       ShippingAttempt.create(
-        UniqueEntityId.from(this.id.toString() + this.props.attempts.length),
+        UniqueEntityId.from(attemptIdFor(this.id.toString(), this.props.attempts.length)),
         kind,
         outcome,
         occurredAt,

@@ -15,19 +15,24 @@ export type ShipmentStatusValue =
   | "cancelled"
   | "closed";
 
-/** The validated lifecycle transition table (Sprint 4.10). Recoverable states (`rejected`/`delivery_failed`/`exception`) can retry forward. */
+/**
+ * The validated lifecycle transition table (Sprint 4.10). Recoverable states
+ * (`rejected`/`delivery_failed`/`exception`) can retry forward. Local carriers (spec §9a.4) add
+ * edges only: `created → exception` (a lost label response), `returned` from every in-flight state,
+ * `in_transit → delivery_failed`, and a carrier cancel from `carrier_accepted`/`in_transit`.
+ */
 const TRANSITIONS: Readonly<Record<ShipmentStatusValue, readonly ShipmentStatusValue[]>> = {
-  created: ["label_created", "voided", "cancelled"],
+  created: ["label_created", "voided", "cancelled", "exception"],
   label_created: ["carrier_accepted", "rejected", "voided", "cancelled"],
   voided: ["created", "closed"],
   carrier_accepted: ["in_transit", "cancelled"],
   rejected: ["created", "cancelled"],
-  in_transit: ["out_for_delivery", "exception"],
-  out_for_delivery: ["delivered", "delivery_failed"],
+  in_transit: ["out_for_delivery", "exception", "delivery_failed", "returned", "cancelled"],
+  out_for_delivery: ["delivered", "delivery_failed", "returned"],
   delivered: ["returned", "closed"],
-  delivery_failed: ["in_transit", "exception", "closed"],
+  delivery_failed: ["in_transit", "exception", "closed", "returned"],
   returned: ["closed"],
-  exception: ["created", "closed"],
+  exception: ["created", "closed", "returned"],
   cancelled: ["closed"],
   closed: [],
 };
@@ -35,6 +40,55 @@ const TRANSITIONS: Readonly<Record<ShipmentStatusValue, readonly ShipmentStatusV
 /** Whether a transition from `from` to `to` is allowed by the shipment lifecycle's transition table. */
 export function canTransitionShipment(from: ShipmentStatusValue, to: ShipmentStatusValue): boolean {
   return TRANSITIONS[from].includes(to);
+}
+
+/** Statuses a carrier walk may pass through on the way to its target (Ruling 23). */
+const WALKABLE = new Set<ShipmentStatusValue>([
+  "label_created",
+  "carrier_accepted",
+  "in_transit",
+  "out_for_delivery",
+  "delivery_failed",
+]);
+
+/** Targets reachable by walking; every other target (`cancelled`, `exception`, …) needs a direct edge. */
+const WALK_TARGETS = new Set<ShipmentStatusValue>([
+  "carrier_accepted",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "delivery_failed",
+  "returned",
+]);
+
+/**
+ * Ruling 23: the shortest walk over the transition table from `from` to `to`, for carrier scans
+ * that skip steps. Returns the steps after `from`, ending with `to`; `[]` when they are equal;
+ * `null` when `to` is unreachable (the scan is then recorded without a status change).
+ */
+export function carrierPathTo(
+  from: ShipmentStatusValue,
+  to: ShipmentStatusValue,
+): readonly ShipmentStatusValue[] | null {
+  if (from === to) return [];
+  if (!WALK_TARGETS.has(to)) return canTransitionShipment(from, to) ? [to] : null;
+  const previous = new Map<ShipmentStatusValue, ShipmentStatusValue>();
+  const queue: ShipmentStatusValue[] = [from];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    for (const next of TRANSITIONS[node]) {
+      if (previous.has(next) || next === from) continue;
+      if (next !== to && !WALKABLE.has(next)) continue;
+      previous.set(next, node);
+      if (next === to) {
+        const path: ShipmentStatusValue[] = [to];
+        for (let at = node; at !== from; at = previous.get(at)!) path.unshift(at);
+        return path;
+      }
+      queue.push(next);
+    }
+  }
+  return null;
 }
 
 /** Retry targets for the 3 recoverable states (`RetryShipment` use case). */

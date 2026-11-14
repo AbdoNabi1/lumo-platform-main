@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import { assertWriteTimeTenant } from "@platform/messaging/testing";
 import { Shipment } from "../domain/shipment";
+import { Carrier, CarrierService } from "../domain/value-objects/carrier";
 import { ShipmentPackage } from "../domain/value-objects/shipment-package";
+import { ShippingLabel } from "../domain/value-objects/shipping-label";
+import { TrackingNumber } from "../domain/value-objects/tracking-number";
 import { InMemoryProcessedCarrierWebhookStore } from "./in-memory-port-adapters";
 import { InMemoryShipmentRepository } from "./in-memory-shipment-repository";
 import { ShippingEventTranslator } from "./shipping-event-translator";
@@ -20,6 +23,30 @@ function newShipment(id: string, fulfillmentRef: string): Shipment {
   if (!pkg.ok) throw new Error("test setup: invalid package");
   return Shipment.create(UniqueEntityId.from(id), fulfillmentRef, [pkg.value]);
 }
+
+function labelled(id: string, carrier: string, trackingNumber: string): Shipment {
+  const shipment = newShipment(id, `fulfillment-${id}`);
+  const label = ShippingLabel.create("del-1", trackingNumber, "del-1");
+  const carrierVo = Carrier.create(carrier);
+  const service = CarrierService.create("standard");
+  const tracking = TrackingNumber.create(trackingNumber);
+  if (!label.ok || !carrierVo.ok || !service.ok || !tracking.ok) {
+    throw new Error("test setup: invalid label");
+  }
+  shipment.createLabel(
+    label.value,
+    carrierVo.value,
+    service.value,
+    tracking.value,
+    "evt-1",
+    new Date(0),
+  );
+  return shipment;
+}
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
 
 function repository() {
   const outbox = new OutboxWriter({
@@ -58,7 +85,7 @@ describe("InMemoryProcessedCarrierWebhookStore tenant isolation (ADR-0014)", () 
 
 describe("InMemoryShipmentRepository write-time tenant (ADR-0014 amendment 2026-09-18)", () => {
   it("carries each call's tenantId into the outbox envelope, not the singleton context's", async () => {
-    await assertWriteTimeTenant("shipping", async (outbox, tenantId) => {
+    const check = assertWriteTimeTenant("shipping", async (outbox, tenantId) => {
       const shipments = new InMemoryShipmentRepository({
         outbox,
         context: rootEventContext(sequentialIds()),
@@ -67,5 +94,32 @@ describe("InMemoryShipmentRepository write-time tenant (ADR-0014 amendment 2026-
       shipment.transition("label_created", "evt-1", new Date(0));
       await shipments.save(shipment, tenantId);
     });
+    await expect(check).resolves.toBeUndefined();
+  });
+});
+
+describe("InMemoryShipmentRepository lookups (local carriers)", () => {
+  it("findByTrackingNumber is tenant- and carrier-scoped", async () => {
+    const shipments = repository();
+    await shipments.save(labelled("ship-bosta", "bosta", "5108002"), "t-1");
+
+    const found = await shipments.findByTrackingNumber("bosta", "5108002", "t-1");
+    expect(found?.id.toString()).toBe("ship-bosta");
+    expect(await shipments.findByTrackingNumber("bosta", "5108002", "t-2")).toBeNull();
+    expect(await shipments.findByTrackingNumber("aramex", "5108002", "t-1")).toBeNull();
+    expect(await shipments.findByTrackingNumber("bosta", "0000000", "t-1")).toBeNull();
+  });
+
+  it("findByFulfillmentRef returns the newest shipment for the fulfillment (F4)", async () => {
+    const shipments = repository();
+    const first = newShipment("ship-old", "fulfillment-1");
+    await shipments.save(first, "t-1");
+    await shipments.save(newShipment("ship-new", "fulfillment-1"), "t-1");
+    // Re-saving the older shipment does not make it the newest (Prisma orders by createdAt).
+    first.cancel("evt-1", new Date(0));
+    await shipments.save(first, "t-1");
+
+    const found = await shipments.findByFulfillmentRef("fulfillment-1", "t-1");
+    expect(found?.id.toString()).toBe("ship-new");
   });
 });
