@@ -106,6 +106,8 @@ export interface InvoiceRow {
   readonly discountMinor: number | null;
   readonly discountCouponRef: string | null;
   readonly version: number;
+  /** The row's `created_at`. Optional so a hand-built row (a test fake) need not invent one. */
+  readonly createdAt?: Date;
 }
 
 export interface CouponRow {
@@ -331,6 +333,7 @@ export class InvoiceMapper {
       row.version,
       row.paymentReference ?? undefined,
       InvoiceMapper.discountOf(row),
+      row.createdAt,
     );
   }
 

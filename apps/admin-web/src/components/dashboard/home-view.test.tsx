@@ -23,7 +23,12 @@ const recentOrdersSlot = <section aria-label="recent-orders-slot" />;
 
 function renderHome(
   result: FetchSalesAnalyticsResult,
-  options: { t?: Dictionary; locale?: "en" | "ar"; range?: "7d" | "today" } = {},
+  options: {
+    t?: Dictionary;
+    locale?: "en" | "ar";
+    range?: "7d" | "today";
+    setupGuide?: ReactNode;
+  } = {},
 ) {
   return render(
     <HomeView
@@ -32,6 +37,7 @@ function renderHome(
       userName="Abdullah"
       range={options.range ?? "7d"}
       result={result}
+      {...(options.setupGuide === undefined ? {} : { setupGuide: options.setupGuide })}
       recentOrders={recentOrdersSlot}
     />,
   );
@@ -56,6 +62,28 @@ describe("HomeView: a shop with no orders", () => {
 
     expect(screen.getByText("مفيش مبيعات في الفترة دي")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(NOT_REAL);
+  });
+});
+
+describe("HomeView: the setup guide slot", () => {
+  const slot = <section aria-label="setup-guide-slot" />;
+
+  it("renders the guide between the header and the figures", () => {
+    renderHome({ outcome: "ok", data: emptyReport() }, { setupGuide: slot });
+
+    const guide = screen.getByLabelText("setup-guide-slot");
+    const heading = screen.getByRole("heading", { level: 1, name: "Home" });
+    const firstCard = screen.getAllByRole("heading", { level: 3 })[0]!;
+    expect(heading.compareDocumentPosition(guide) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      guide.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("still shows the guide when the report failed to load", () => {
+    renderHome({ outcome: "error", message: "boom" }, { setupGuide: slot });
+
+    expect(screen.getByLabelText("setup-guide-slot")).toBeInTheDocument();
   });
 });
 

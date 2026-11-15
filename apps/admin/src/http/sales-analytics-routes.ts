@@ -121,7 +121,7 @@ export function salesAnalyticsRoutes(
           if (problem !== null) return invalidRange(problem);
         }
 
-        const region = await admin.tenancy.getStoreRegion(context.principal);
+        const region = await admin.tenancy.getStoreRegion(context.principal, context.tenantId);
         if (region.status !== 200) return region;
         const { timezone, currency } = region.body as { timezone: string; currency: string };
 

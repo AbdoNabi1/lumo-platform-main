@@ -32,3 +32,16 @@ describe("Plan 1A config", () => {
     expect(() => loadRuntimeConfig({ ...base, STOREFRONT_IPV4: "not-an-ip" })).toThrow();
   });
 });
+
+describe("Project 1 sign-up config", () => {
+  it("DEFAULT_PLAN_KEY is optional and read as given", () => {
+    expect(loadRuntimeConfig({ ...base }).DEFAULT_PLAN_KEY).toBeUndefined();
+    expect(loadRuntimeConfig({ ...base, DEFAULT_PLAN_KEY: "basic" }).DEFAULT_PLAN_KEY).toBe(
+      "basic",
+    );
+  });
+
+  it("treats an empty DEFAULT_PLAN_KEY (the .env.example line) as unset", () => {
+    expect(loadRuntimeConfig({ ...base, DEFAULT_PLAN_KEY: "" }).DEFAULT_PLAN_KEY).toBeUndefined();
+  });
+});

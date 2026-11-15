@@ -136,13 +136,14 @@ export interface StoreSettingsRow {
   readonly currency: string;
   readonly timezone: string;
   readonly weightUnit: string;
+  readonly setupGuideDismissedAt: Date | null;
 }
 
 export class StoreSettingsMapper {
   static toDomain(row: StoreSettingsRow): StoreSettings {
     const result = StoreSettings.create(row);
     if (!result.ok) throw new Error(`Corrupt store_settings row: ${result.error.message}`);
-    return result.value;
+    return result.value.withSetupGuideDismissedAt(row.setupGuideDismissedAt);
   }
 
   static toRow(settings: StoreSettings): StoreSettingsRow {
@@ -152,6 +153,7 @@ export class StoreSettingsMapper {
       currency: settings.currency,
       timezone: settings.timezone,
       weightUnit: settings.weightUnit,
+      setupGuideDismissedAt: settings.setupGuideDismissedAt,
     };
   }
 }

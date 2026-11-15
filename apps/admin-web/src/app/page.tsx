@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { cookies } from "next/headers";
 import { AppShell } from "@/components/app-shell";
 import { HomeView } from "@/components/dashboard/home-view";
+import { SetupGuideSection, SetupGuideSkeleton } from "@/components/dashboard/setup-guide-section";
 import {
   RecentOrdersSection,
   RecentOrdersSkeleton,
@@ -12,7 +13,10 @@ import { parseRange } from "@/lib/dashboard/ranges";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 interface HomePageProps {
-  readonly searchParams: Promise<{ readonly range?: string | string[] }>;
+  readonly searchParams: Promise<{
+    readonly range?: string | string[];
+    readonly welcome?: string | string[];
+  }>;
 }
 
 /**
@@ -21,14 +25,17 @@ interface HomePageProps {
  * orders. A server component: it reads the range from the URL (`?range=7d`), fetches the figures on
  * the server and renders them; every number is computed from the shop's orders, and a shop with none
  * sees zeros. If the figures cannot be loaded each card says so with "Try again", never sample
- * numbers. The latest orders stream in on their own, in their own Suspense boundary.
+ * numbers. The latest orders stream in on their own, in their own Suspense boundary, and so does the
+ * setup guide above the figures (`?welcome=1`, where sign-up lands, greets a new merchant above it).
  */
 export default async function HomePage({ searchParams }: HomePageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
-  const range = parseRange((await searchParams).range);
+  const query = await searchParams;
+  const range = parseRange(query.range);
+  const welcome = query.welcome === "1";
   const result = await fetchSalesAnalytics(range);
 
   return (
@@ -39,6 +46,11 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         userName={user.name.split(" ")[0] ?? user.name}
         range={range}
         result={result}
+        setupGuide={
+          <Suspense fallback={welcome ? <SetupGuideSkeleton t={t} /> : null}>
+            <SetupGuideSection t={t} locale={locale} welcome={welcome} />
+          </Suspense>
+        }
         recentOrders={
           <Suspense fallback={<RecentOrdersSkeleton t={t} />}>
             <RecentOrdersSection t={t} locale={locale} />

@@ -17,6 +17,7 @@ import { getCurrentUser } from "@/lib/auth/current-user";
 import { formatDateTime } from "@/lib/format";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { buildStockView, UNAVAILABLE_STOCK } from "@/lib/products/stock";
+import { getStoreContext, storeUrlForSession } from "@/lib/shell/store-context";
 
 interface ProductDetailPageProps {
   readonly params: Promise<{ readonly productId: string }>;
@@ -86,19 +87,20 @@ export default async function ProductDetailPage({ params, searchParams }: Produc
   const categories = categoriesResult.outcome === "ok" ? categoriesResult.items : [];
 
   // Never default a failed read to zeros: Save would write them. Read-only quantities instead.
-  const [warehousesResult, inventoryResult, settings] = await Promise.all([
+  const [warehousesResult, inventoryResult, settings, store] = await Promise.all([
     fetchWarehouses(),
     fetchProductInventory(product.id),
     storeSettingsOrDefaults(),
+    getStoreContext(),
   ]);
   const stock =
     warehousesResult.outcome === "ok" && inventoryResult.outcome === "ok"
       ? buildStockView(warehousesResult.items, inventoryResult.rows, product.variants)
       : UNAVAILABLE_STOCK;
 
-  // Read here, per request: a `NEXT_PUBLIC_` variable would be frozen at build time, and this app's
-  // image is built without build args. Unset or blank hides the editor's Preview button.
-  const storefrontUrl = process.env["STOREFRONT_URL"]?.trim() || null;
+  // The preview base: this store's own domain, or STOREFRONT_URL only for the default store (never
+  // another store's storefront). `null` hides the editor's Preview button.
+  const storefrontUrl = storeUrlForSession(store);
 
   return (
     <AppShell t={t} locale={locale} activeNavId="products" user={user}>

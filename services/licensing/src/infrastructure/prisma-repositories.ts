@@ -8,7 +8,7 @@ import type { Credit } from "../domain/credit";
 import type { Invoice } from "../domain/invoice";
 import type { MerchantCapabilities } from "../domain/merchant-capabilities";
 import type { MerchantFeatureOverride } from "../domain/merchant-feature-override";
-import type { Plan } from "../domain/plan";
+import { sortPublishedPlans, type Plan } from "../domain/plan";
 import type {
   BillingPaymentMethodRepository,
   CouponRepository,
@@ -106,6 +106,12 @@ export class PrismaPlanRepository implements PlanRepository {
     const client = tx !== undefined && tx !== null ? (tx as TransactionClient) : this.deps.prisma;
     const row = await client.plan.findFirst({ where: { key } });
     return row === null ? null : PlanMapper.toDomain(row as unknown as PlanRow);
+  }
+
+  async listPublished(tx?: unknown): Promise<readonly Plan[]> {
+    const client = tx !== undefined && tx !== null ? (tx as TransactionClient) : this.deps.prisma;
+    const rows = await client.plan.findMany({ where: { publishedVersionId: { not: null } } });
+    return sortPublishedPlans(rows.map((row) => PlanMapper.toDomain(row as unknown as PlanRow)));
   }
 }
 
@@ -506,6 +512,24 @@ export class PrismaInvoiceRepository implements InvoiceRepository {
     // Prisma row's `lineItems: JsonValue` has no structural overlap with `InvoiceRow`'s
     // `readonly InvoiceLineItem[]` (comparability fails).
     return row === null ? null : InvoiceMapper.toDomain(row as unknown as InvoiceRow);
+  }
+
+  /** Newest first. Same scoping as `findById`: the caller's `tx`, else `runReadScoped` on the platform tenant. */
+  async listByTenantRef(
+    tenantRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly Invoice[]> {
+    const run = (client: TransactionClient) =>
+      client.invoice.findMany({
+        where: { tenantRef, tenantId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      });
+    const rows =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.deps.prisma, tenantId, run);
+    return rows.map((row) => InvoiceMapper.toDomain(row as unknown as InvoiceRow));
   }
 }
 

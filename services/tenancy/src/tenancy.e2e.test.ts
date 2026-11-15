@@ -67,6 +67,14 @@ describe("tenancy (end to end)", () => {
     const response = await app.tenancy.suspendTenant({ tenantId: "missing" });
     expect(response.status).toBe(404);
   });
+
+  it("slugTaken answers whether a tenant already holds the slug", async () => {
+    const app = wire();
+    expect(await app.tenancy.slugTaken("acme")).toBe(false);
+    await app.tenancy.createTenant({ slug: "acme", name: "Acme", isolationTier: "pooled" });
+    expect(await app.tenancy.slugTaken("acme")).toBe(true);
+    expect(await app.tenancy.slugTaken("acme-2")).toBe(false);
+  });
 });
 
 describe("tenancy lifecycle protections (T10.6)", () => {
