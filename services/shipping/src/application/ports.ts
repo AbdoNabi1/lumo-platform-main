@@ -38,3 +38,24 @@ export interface ProcessedCarrierWebhookStore {
   hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean>;
   markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void>;
 }
+
+/**
+ * Seals and opens one merchant's carrier secrets (spec §6). The tenant and carrier key are sealed
+ * INSIDE the envelope and re-checked on open, so an envelope copied to another tenant's row, or
+ * from the API key slot to the webhook slot (`"<key>:webhook"`, Ruling 27), never opens. No
+ * implementation may put a secret in an error message or a log line.
+ */
+export interface CarrierCredentialVault {
+  /** `stub` is the offline stand-in the boot guard (Task 12) refuses outside `local`. */
+  readonly backing: "real" | "stub";
+  seal(
+    tenantId: string,
+    carrierKey: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<string>;
+  open(
+    tenantId: string,
+    carrierKey: string,
+    sealed: string,
+  ): Promise<Readonly<Record<string, string>>>;
+}

@@ -21,3 +21,37 @@ export {
   PrismaShippingZoneRepository,
   type PrismaShippingZoneRepositoryDeps,
 } from "./infrastructure/prisma-shipping-zone-repository";
+export { CARRIER_KEY_PATTERN, isWellFormedCarrierKey } from "./domain/value-objects/carrier-key";
+export { carrierFailureOf } from "./application/carrier-provider";
+export type {
+  AwbOptions,
+  CarrierDelivery,
+  CarrierDeliveryRequest,
+  CarrierDeliveryStatus,
+  CarrierFailure,
+  CarrierFailureKind,
+  CarrierParcelRequest,
+  CarrierProblem,
+  CarrierProvider,
+  CarrierRejectionCode,
+  CarrierStatusTarget,
+} from "./application/carrier-provider";
+export { CarrierRegistry } from "./application/carrier-registry";
+export type {
+  CarrierBuildContext,
+  CarrierCapabilities,
+  CarrierConfigParseResult,
+  CarrierRegistration,
+} from "./application/carrier-registry";
+export { CarrierResolutionError } from "./application/carrier-resolver";
+export type {
+  CarrierResolutionCode,
+  CarrierResolutionPurpose,
+  CarrierResolver,
+} from "./application/carrier-resolver";
+export type { CarrierCredentialVault } from "./application/ports";
+export {
+  EnvelopeCarrierCredentialVault,
+  InMemoryCarrierCredentialVault,
+  SHIPPING_CREDENTIALS_KEY_ALIAS,
+} from "./infrastructure/envelope-carrier-credential-vault";

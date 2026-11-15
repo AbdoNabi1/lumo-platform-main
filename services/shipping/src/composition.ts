@@ -11,7 +11,10 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import { CarrierRegistry, type CarrierRegistration } from "./application/carrier-registry";
+import type { CarrierResolver } from "./application/carrier-resolver";
 import { CreateShipment } from "./application/create-shipment.use-case";
+import type { CarrierCredentialVault } from "./application/ports";
 import { ListShippableCountries, QuoteShippingRates } from "./application/quote-shipping.use-cases";
 import {
   AddRate,
@@ -31,8 +34,10 @@ import {
   UpdateTracking,
   VoidLabel,
 } from "./application/shipment-lifecycle.use-cases";
+import type { MerchantCarrierSettingsRepository } from "./domain/merchant-carrier-settings-repository";
 import type { ShipmentRepository } from "./domain/shipment-repository";
 import type { ShippingZoneRepository } from "./domain/shipping-zone-repository";
+import { InMemoryMerchantCarrierSettingsRepository } from "./infrastructure/in-memory-merchant-carrier-settings-repository";
 import { InMemoryShipmentRepository } from "./infrastructure/in-memory-shipment-repository";
 import { InMemoryShippingZoneRepository } from "./infrastructure/in-memory-shipping-zone-repository";
 import {
@@ -42,12 +47,14 @@ import {
   InMemoryProcessedCarrierWebhookStore,
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
+import { PrismaMerchantCarrierSettingsRepository } from "./infrastructure/prisma-merchant-carrier-settings-repository";
 import { PrismaShipmentRepository } from "./infrastructure/prisma-shipment-repository";
 import { PrismaShippingZoneRepository } from "./infrastructure/prisma-shipping-zone-repository";
 import {
   SHIPPING_PUBLISHED_EVENTS,
   ShippingEventTranslator,
 } from "./infrastructure/shipping-event-translator";
+import { TenantCarrierResolver } from "./infrastructure/tenant-carrier-resolver";
 import { ShippingController } from "./interfaces/shipping.controller";
 import { ShippingZonesController } from "./interfaces/shipping-zones.controller";
 
@@ -63,6 +70,16 @@ export interface ShippingWiringDeps {
    * out of scope for C-01.
    */
   readonly prisma?: Database;
+  /**
+   * Project 5: the carriers composed at boot (the runtime registers Bosta only when both its KEK
+   * and the public admin URL are set, Ruling 31). Absent ⇒ none.
+   */
+  readonly carrierRegistrations?: readonly CarrierRegistration[];
+  /**
+   * Seals and opens carrier secrets under the `shipping-credentials` KEK. There is NO stub
+   * default: absent means every carrier resolves to `CARRIER_NOT_AVAILABLE`.
+   */
+  readonly carrierCredentialVault?: CarrierCredentialVault;
 }
 
 export interface WiredShipping {
@@ -71,6 +88,31 @@ export interface WiredShipping {
   readonly zones: ShippingZonesController;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
+  /** Project 5: the carriers composed at boot. Declarations and factories only, no tenant. */
+  readonly carrierRegistry: CarrierRegistry;
+}
+
+/**
+ * Project 5: the carrier foundation over an already-wired settings repository. The resolver is a
+ * process-wide singleton holding no tenant (ADR-0014); the carrier use cases (Task 4) consume it.
+ */
+interface CarrierFoundation {
+  readonly registry: CarrierRegistry;
+  readonly settings: MerchantCarrierSettingsRepository;
+  readonly resolver: CarrierResolver;
+}
+
+function buildCarrierFoundation(
+  settings: MerchantCarrierSettingsRepository,
+  deps: ShippingWiringDeps,
+): CarrierFoundation {
+  const registry = CarrierRegistry.from(deps.carrierRegistrations ?? []);
+  const resolver = new TenantCarrierResolver({
+    settings,
+    registry,
+    vault: deps.carrierCredentialVault,
+  });
+  return { registry, settings, resolver };
 }
 
 /** Plan 3C: the zones controller over an already-wired zone repository. */
@@ -160,6 +202,10 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
       context,
     });
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
+    const carriers = buildCarrierFoundation(
+      new PrismaMerchantCarrierSettingsRepository(deps.prisma),
+      deps,
+    );
 
     return {
       shipping: buildController(shipments, unitOfWork, deps),
@@ -170,6 +216,7 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
       ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
+      carrierRegistry: carriers.registry,
     };
   }
 
@@ -186,6 +233,7 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
   const shipments = new InMemoryShipmentRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
   const controller = buildController(shipments, unitOfWork, deps);
+  const carriers = buildCarrierFoundation(new InMemoryMerchantCarrierSettingsRepository(), deps);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -207,5 +255,6 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
     zones: buildZonesController(new InMemoryShippingZoneRepository(), unitOfWork, deps),
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
+    carrierRegistry: carriers.registry,
   };
 }

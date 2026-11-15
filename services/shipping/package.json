@@ -24,6 +24,7 @@
     "@platform/messaging": "workspace:*",
     "@platform/regions": "workspace:*",
     "@platform/repository": "workspace:*",
+    "@platform/secrets": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/utils": "workspace:*",
     "@prisma/client": "^6.5.0"
