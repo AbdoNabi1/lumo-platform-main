@@ -18,6 +18,8 @@ const selectCheckoutPayment = vi.fn();
 const recalculateCheckoutApi = vi.fn();
 const completeCheckoutApi = vi.fn();
 const initiateCheckoutPayment = vi.fn();
+const applyCheckoutDiscountCode = vi.fn();
+const removeCheckoutDiscountCode = vi.fn();
 
 vi.mock("@/lib/runtime-api", () => ({
   getCurrentCart: (...args: unknown[]) => getCurrentCart(...args),
@@ -33,6 +35,8 @@ vi.mock("@/lib/runtime-api", () => ({
   recalculateCheckout: (...args: unknown[]) => recalculateCheckoutApi(...args),
   completeCheckout: (...args: unknown[]) => completeCheckoutApi(...args),
   initiateCheckoutPayment: (...args: unknown[]) => initiateCheckoutPayment(...args),
+  applyCheckoutDiscountCode: (...args: unknown[]) => applyCheckoutDiscountCode(...args),
+  removeCheckoutDiscountCode: (...args: unknown[]) => removeCheckoutDiscountCode(...args),
 }));
 
 const revalidatePath = vi.fn();
@@ -387,5 +391,190 @@ describe("completeCheckout — out of stock (Plan 2B-3)", () => {
     const result = await actions.completeCheckout("checkout-1");
 
     expect(result).toEqual({ ok: false, reason: "unavailable" });
+  });
+});
+
+describe("completeCheckout — discounts changed", () => {
+  it("maps a 409 whose message starts with DISCOUNTS_CHANGED: and revalidates the totals", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({
+      status: 409,
+      body: {
+        code: "BUSINESS_RULE",
+        message: "DISCOUNTS_CHANGED: the discounts changed; review the new total",
+      },
+    });
+
+    const result = await actions.completeCheckout("checkout-1");
+
+    expect(result).toEqual({ ok: false, reason: "discounts-changed" });
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+});
+
+describe("recalculate — carries the fresh discount figures", () => {
+  const totals = {
+    subtotalMinor: 24000,
+    shippingMinor: 500,
+    taxMinor: 0,
+    grandTotalMinor: 21100,
+    discountMinor: 2400,
+    shippingDiscountMinor: 500,
+  };
+
+  it("returns the order and shipping discounts the runtime just computed, and revalidates", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 200, body: session({ totals }) });
+
+    const result = await actions.recalculate("checkout-1");
+
+    expect(result).toEqual({
+      ok: true,
+      checkoutSessionId: "checkout-1",
+      discounts: { order: 2400, shipping: 500 },
+    });
+    expect(recalculateCheckoutApi).toHaveBeenCalledWith("checkout-1", "session-a");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it.each([
+    ["no body", null],
+    ["no totals", session()],
+    ["totals without the discount figures", { totals: { ...totals, discountMinor: undefined } }],
+    ["a non-numeric figure", { totals: { ...totals, shippingDiscountMinor: "500" } }],
+  ])("returns null discounts for %s", async (_label, body) => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 200, body });
+
+    const result = await actions.recalculate("checkout-1");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1", discounts: null });
+  });
+
+  it("maps a failure status like every other action", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    recalculateCheckoutApi.mockResolvedValue({ status: 409, body: null });
+
+    expect(await actions.recalculate("checkout-1")).toEqual({ ok: false, reason: "unavailable" });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("applyDiscountCode", () => {
+  const rejection = (message: string) => ({
+    status: 422,
+    body: {
+      code: "VALIDATION",
+      message: "Discount code not applied",
+      retryable: false,
+      fields: [{ field: "code", message }],
+      traceId: "t",
+    },
+  });
+
+  it("applies the trimmed code with the server-held session and revalidates /checkout", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValue({ status: 200, body: session() });
+
+    const result = await actions.applyDiscountCode("checkout-1", "  SAVE10 ");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
+    expect(applyCheckoutDiscountCode).toHaveBeenCalledWith("checkout-1", "session-a", "SAVE10");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it("surfaces the runtime's rejection token on a 422 about the code field", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValue(rejection("minimum_not_met"));
+
+    const result = await actions.applyDiscountCode("checkout-1", "SAVE10");
+
+    expect(result).toEqual({ ok: false, reason: "rejected", rejection: "minimum_not_met" });
+  });
+
+  it("revalidates /checkout on a rejection too: the runtime drops a re-entered code", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValue(rejection("expired"));
+
+    await actions.applyDiscountCode("checkout-1", "SAVE10");
+
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it("treats a 422 about another field, or with no readable envelope, as validation", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValueOnce({
+      status: 422,
+      body: { fields: [{ field: "sessionRef", message: "Required" }] },
+    });
+    expect(await actions.applyDiscountCode("checkout-1", "SAVE10")).toEqual({
+      ok: false,
+      reason: "validation",
+    });
+
+    applyCheckoutDiscountCode.mockResolvedValueOnce({ status: 422, body: null });
+    expect(await actions.applyDiscountCode("checkout-1", "SAVE10")).toEqual({
+      ok: false,
+      reason: "validation",
+    });
+  });
+
+  it("a blank code is a validation error and never reaches the runtime", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+
+    const result = await actions.applyDiscountCode("checkout-1", "   ");
+
+    expect(result).toEqual({ ok: false, reason: "validation" });
+    expect(applyCheckoutDiscountCode).not.toHaveBeenCalled();
+  });
+
+  it("requires an existing guest session", async () => {
+    const result = await actions.applyDiscountCode("checkout-1", "SAVE10");
+
+    expect(result).toEqual({ ok: false, reason: "ownership" });
+    expect(applyCheckoutDiscountCode).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [404, "ownership"],
+    [409, "unavailable"],
+    [500, "network"],
+    [0, "network"],
+  ])("maps a %i response to %s", async (status, reason) => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    applyCheckoutDiscountCode.mockResolvedValue({ status, body: null });
+
+    expect(await actions.applyDiscountCode("checkout-1", "SAVE10")).toEqual({ ok: false, reason });
+  });
+});
+
+describe("removeDiscountCode", () => {
+  it("removes the code and revalidates /checkout", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    removeCheckoutDiscountCode.mockResolvedValue({ status: 200, body: session() });
+
+    const result = await actions.removeDiscountCode("checkout-1", "SAVE10");
+
+    expect(result).toEqual({ ok: true, checkoutSessionId: "checkout-1" });
+    expect(removeCheckoutDiscountCode).toHaveBeenCalledWith("checkout-1", "session-a", "SAVE10");
+    expect(revalidatePath).toHaveBeenCalledWith("/checkout");
+  });
+
+  it("maps a 404 to ownership", async () => {
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    removeCheckoutDiscountCode.mockResolvedValue({ status: 404, body: null });
+
+    expect(await actions.removeDiscountCode("checkout-1", "SAVE10")).toEqual({
+      ok: false,
+      reason: "ownership",
+    });
+  });
+
+  it("requires an existing guest session", async () => {
+    expect(await actions.removeDiscountCode("checkout-1", "SAVE10")).toEqual({
+      ok: false,
+      reason: "ownership",
+    });
+    expect(removeCheckoutDiscountCode).not.toHaveBeenCalled();
   });
 });

@@ -846,6 +846,30 @@ export interface CheckoutTotalsSummary {
   readonly taxIncluded?: boolean;
   /** Plan 3C: the name of the shipping rate the shopper chose. */
   readonly shippingName?: string | null;
+  /** Discounts Part 3: what the applied discounts took off the items (absent on an older API). */
+  readonly discountMinor?: number;
+  /** Discounts Part 3: what the applied discounts took off the shipping (absent on an older API). */
+  readonly shippingDiscountMinor?: number;
+}
+
+/** A code the shopper entered and whether it applies; `reason` is a stable token the storefront words. */
+export interface CheckoutDiscountCodeSummary {
+  readonly code: string;
+  readonly applicable: boolean;
+  readonly reason: string | null;
+}
+
+/** One discount that took something off — its title and amount only, never promotion internals. */
+export interface CheckoutAppliedDiscountSummary {
+  readonly title: string;
+  readonly code: string | null;
+  readonly discountClass: string;
+  readonly amountMinor: number;
+}
+
+export interface CheckoutDiscountSummary {
+  readonly codes: readonly CheckoutDiscountCodeSummary[];
+  readonly applied: readonly CheckoutAppliedDiscountSummary[];
 }
 
 export interface CheckoutSessionSummary {
@@ -862,6 +886,8 @@ export interface CheckoutSessionSummary {
   /** The payment method the shopper selected ("cod", "stripe"…), or null before they choose. */
   readonly selectedPaymentMethod: string | null;
   readonly orderRef: string | null;
+  /** Discounts Part 3: the entered codes and what was taken off (absent on an older API). */
+  readonly discount?: CheckoutDiscountSummary;
 }
 
 export interface ShippingQuoteSummary {
@@ -998,6 +1024,42 @@ export function selectCheckoutPayment(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment-selection`,
     { sessionRef, paymentMethodRef, provider },
   );
+}
+
+/** Applies a typed discount code. Sends the code only — the runtime re-derives every amount. */
+export function applyCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  return postItem<unknown>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes`,
+    { sessionRef, code },
+  );
+}
+
+/**
+ * Removes a code. The DELETE has no body, so ownership travels in the `x-cart-session` header —
+ * the form `resolveSessionRef` prefers (the querystring one is deprecated and only logs a warning).
+ */
+export async function removeCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  try {
+    const response = await fetch(
+      `${RUNTIME_API_URL}/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes/${encodeURIComponent(code)}`,
+      {
+        method: "DELETE",
+        headers: { "x-tenant-id": await currentTenantId(), "x-cart-session": sessionRef },
+        cache: "no-store",
+      },
+    );
+    return { status: response.status, body: await response.json().catch(() => null) };
+  } catch {
+    return { status: 0, body: null };
+  }
 }
 
 export function recalculateCheckout(

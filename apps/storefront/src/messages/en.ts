@@ -195,6 +195,29 @@ export const en = {
       includingTaxes: "Including {tax} in taxes",
       total: "Total",
     },
+    discount: {
+      label: "Discount code",
+      placeholder: "Discount code",
+      apply: "Apply",
+      applying: "Applying…",
+      removeLabel: "Remove code {code}",
+      notApplicable: "Not applicable: {reason}",
+      codesLabel: "Discount codes",
+      reasons: {
+        not_found: "That code doesn't exist. Check it and try again.",
+        expired: "This code has expired.",
+        not_started: "This code isn't active yet.",
+        minimum_not_met: "Your order doesn't meet the minimum for this code.",
+        not_eligible: "You aren't eligible for this code.",
+        usage_limit_reached: "This code has reached its usage limit.",
+        already_used: "You've already used this code.",
+        cannot_combine: "This code can't be combined with the discounts already applied.",
+        too_many_codes: "You've reached the maximum number of discount codes.",
+        too_many_attempts: "Too many attempts. Wait a moment and try again.",
+        no_matching_items: "None of the items in your cart qualify.",
+      },
+      genericReason: "This code can't be used.",
+    },
     sameAsShipping: "Same as shipping address",
     paymentMethod: {
       stripe: "Card (via Stripe)",
@@ -216,6 +239,8 @@ export const en = {
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
     outOfStock:
       "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
+    discountsChanged:
+      "Your discounts changed — please review the new total before placing your order.",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",
