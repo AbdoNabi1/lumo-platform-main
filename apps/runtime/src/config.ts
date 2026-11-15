@@ -133,6 +133,11 @@ const schema = z
 
     /** Plan 1A: the zone shops get subdomains under (`<slug>.<this>`). Unset ⇒ no automatic subdomain. */
     PLATFORM_STORE_DOMAIN: z.string().min(3).optional(),
+    /** Project 1: the plan key new stores start their trial on. Unset (or empty) ⇒ sign-up refused. */
+    DEFAULT_PLAN_KEY: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z.string().min(1).optional(),
+    ),
     /** Plan 1A: the name merchants CNAME custom domains to. Unset ⇒ custom domains cannot be verified. */
     STOREFRONT_CNAME_TARGET: z.string().min(3).optional(),
     /** Plan 1A: the storefront's public IPv4s, for apex custom domains (comma-separated). */

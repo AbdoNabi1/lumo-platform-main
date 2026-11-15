@@ -69,8 +69,22 @@ function methodsOf(): readonly string[] {
   );
 }
 
+/**
+ * The merchant self-serve methods (Task 6) are guarded too, but by the merchant's own `settings:*`
+ * permissions — a merchant holds no `licensing:*` grant and must not need one. Named explicitly, so a
+ * new method cannot slip out of the operator check by being called "merchant".
+ */
+const MERCHANT_SELF_SERVE = [
+  "getMerchantBilling",
+  "listPublishedPlans",
+  "changeMerchantPlan",
+  "payMerchantInvoice",
+] as const;
+
 const operatorMethods = methodsOf().filter(
-  (name) => !(PSP_AUTHENTICATED as readonly string[]).includes(name),
+  (name) =>
+    !(PSP_AUTHENTICATED as readonly string[]).includes(name) &&
+    !(MERCHANT_SELF_SERVE as readonly string[]).includes(name),
 );
 
 function build(): { controller: LicensingAdminController } & ReturnType<typeof denyingGuard> {
@@ -118,6 +132,23 @@ describe("every licensing admin action authorizes before it delegates", () => {
     expect(asked[0]).toMatch(/^licensing:[a-z]+:[a-z]+$/);
     expect(audited.map((entry) => entry.decision)).toEqual(["deny"]);
   });
+
+  it.each(MERCHANT_SELF_SERVE)(
+    "%s is refused 403 on a settings permission and never reaches Licensing",
+    async (method) => {
+      const { controller, asked, audited } = build();
+
+      const response = await invoke(controller, method, staff, "shop-a", "platform", "x");
+
+      expect(response).toEqual({
+        status: 403,
+        body: expect.objectContaining({ code: "FORBIDDEN", retryable: false }),
+      });
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatch(/^settings:(read|update)$/);
+      expect(audited.map((entry) => entry.decision)).toEqual(["deny"]);
+    },
+  );
 
   it.each(PSP_AUTHENTICATED)("%s takes no principal, so it cannot be guarded", (method) => {
     const prototype = LicensingAdminController.prototype as unknown as Record<

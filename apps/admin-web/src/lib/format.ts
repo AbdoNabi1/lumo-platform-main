@@ -170,3 +170,14 @@ export function formatLongDate(locale: Locale, iso: string, timeZone?: string): 
     ...(timeZone === undefined ? {} : { timeZone }),
   }).format(new Date(iso));
 }
+
+/**
+ * "Oct 9, 2026" / the Arabic equivalent, in UTC. Billing dates (trial end, next charge, bill date) are
+ * instants the runtime stamps; formatting them in UTC keeps the server render and the browser's
+ * hydration identical whatever time zone each runs in.
+ */
+export function formatMediumDate(locale: Locale, iso: string): string {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" }).format(
+    new Date(iso),
+  );
+}

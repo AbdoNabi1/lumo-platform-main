@@ -10,8 +10,13 @@ vi.mock("jose", () => ({
   jwtVerify: jwtVerifyMock,
 }));
 
-const { DEFAULT_STORE_SETTINGS, fetchStoreSettings, storeSettingsOrDefaults, updateStoreSettings } =
-  await import("./store-settings");
+const {
+  DEFAULT_STORE_SETTINGS,
+  dismissSetupGuide,
+  fetchStoreSettings,
+  storeSettingsOrDefaults,
+  updateStoreSettings,
+} = await import("./store-settings");
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -82,5 +87,49 @@ describe("store settings API (Plan 3C)", () => {
       timezone: "Africa/Cairo",
       weightUnit: "kg",
     });
+  });
+});
+
+describe("setup guide dismissal", () => {
+  it("accepts settings with or without setupGuideDismissedAt", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { ...settings, setupGuideDismissedAt: null }))
+        .mockResolvedValueOnce(
+          jsonResponse(200, { ...settings, setupGuideDismissedAt: "2026-10-17T10:00:00.000Z" }),
+        )
+        .mockResolvedValueOnce(jsonResponse(200, settings)),
+    );
+    expect((await fetchStoreSettings()).outcome).toBe("ok");
+    const dismissed = await fetchStoreSettings();
+    expect(dismissed.outcome === "ok" && dismissed.settings.setupGuideDismissedAt).toBe(
+      "2026-10-17T10:00:00.000Z",
+    );
+    expect((await fetchStoreSettings()).outcome).toBe("ok");
+  });
+
+  it("refuses a non-string, non-null setupGuideDismissedAt", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ...settings, setupGuideDismissedAt: 5 })),
+    );
+    expect((await fetchStoreSettings()).outcome).toBe("error");
+  });
+
+  it("POSTs /store/setup-guide/dismiss with the idempotency key", async () => {
+    const answer = { ...settings, setupGuideDismissedAt: "2026-10-17T10:00:00.000Z" };
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, answer));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await dismissSetupGuide("key-9");
+
+    expect(result).toEqual({ outcome: "ok", data: answer });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://runtime.test/api/v1/store/setup-guide/dismiss");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeUndefined();
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-9");
   });
 });

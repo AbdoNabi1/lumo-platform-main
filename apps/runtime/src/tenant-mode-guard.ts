@@ -148,17 +148,27 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
   },
   {
     file: "apps/admin-web/src/lib/api/client.ts",
-    line: 'return requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);',
+    line: 'return session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);',
     class: "client-header-source",
     why:
-      "Outbound x-tenant-id header from the admin-web server. The API resolves the verified claim " +
-      "first under multi; the server never defaults a missing tenant. Per-user tenant here is T10.5+.",
+      "Outbound x-tenant-id header from the admin-web server: the signed-in session's tenant first, " +
+      "the deployment default only with no session. The API resolves the verified claim first under " +
+      "multi; the server never defaults a missing tenant.",
   },
   {
     file: "apps/admin-web/src/lib/api/client.ts",
-    line: 'const tenantId = requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);',
+    line: 'const tenantId = session?.tenantId ?? requireProdEnv("TENANT_DEFAULT_ID", DEFAULT_TENANT_ID);',
     class: "client-header-source",
     why: "Same outbound header source as above.",
+  },
+  {
+    file: "apps/admin-web/src/lib/shell/store-context.ts",
+    line: 'return requireProdEnv("TENANT_DEFAULT_ID", "tenant-local");',
+    class: "client-header-source",
+    why:
+      "Never sent anywhere: compared with the session's tenant so the single-store STOREFRONT_URL " +
+      "link is offered only to the deployment's default store, never to another store. Same source " +
+      "and fail-closed resolution as lib/api/client.ts.",
   },
   {
     file: "apps/admin-web/src/lib/auth/native.ts",

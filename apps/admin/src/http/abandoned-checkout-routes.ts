@@ -140,7 +140,7 @@ export function abandonedCheckoutRoutes(admin: WiredAdmin): readonly RouteDefini
           url: shopLinkUrl(hostname, path),
           path,
           expiresAt,
-          shopName: await shopNameOf(admin),
+          shopName: await shopNameOf(admin, context.tenantId),
         };
         return { status: 201, body };
       },

@@ -193,7 +193,7 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
       handle: async ({ body, context }) => {
         const denied = await admin.draftOrders.authorizeDraft(context.principal);
         if (denied !== null) return denied;
-        const currency = await storeCurrencyOf(admin);
+        const currency = await storeCurrencyOf(admin, context.tenantId);
         if (currency === null) return currencyUnavailable();
         const content = await draftContentFrom(
           admin,
@@ -412,7 +412,7 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
             url: shopLinkUrl(hostname, path),
             path,
             expiresAt,
-            shopName: await shopNameOf(admin),
+            shopName: await shopNameOf(admin, tenantId),
           },
         };
       },

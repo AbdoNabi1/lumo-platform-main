@@ -20,8 +20,11 @@ export function shopLinkUrl(hostname: string | null, path: string): string | nul
 }
 
 /** The shop's name as the storefront shows it — no permission needed (it is public). "" if unreadable. */
-export async function shopNameOf(admin: Pick<WiredAdmin, "tenancy">): Promise<string> {
-  const response = await admin.tenancy.getPublicStore();
+export async function shopNameOf(
+  admin: Pick<WiredAdmin, "tenancy">,
+  tenantId: string,
+): Promise<string> {
+  const response = await admin.tenancy.getPublicStore(tenantId);
   if (response.status !== 200) return "";
   const name = (response.body as { readonly name?: unknown }).name;
   return typeof name === "string" ? name : "";

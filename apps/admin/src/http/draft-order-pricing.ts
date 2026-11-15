@@ -128,8 +128,11 @@ export function draftConflict(code: string, message: string): AdminResponse {
 }
 
 /** The shop's currency (Settings → General) — every draft is in it. Null when unreadable. */
-export async function storeCurrencyOf(admin: Pick<WiredAdmin, "tenancy">): Promise<string | null> {
-  const response = await admin.tenancy.getPublicStore();
+export async function storeCurrencyOf(
+  admin: Pick<WiredAdmin, "tenancy">,
+  tenantId: string,
+): Promise<string | null> {
+  const response = await admin.tenancy.getPublicStore(tenantId);
   if (response.status !== 200) return null;
   const currency = (response.body as { readonly currency?: unknown }).currency;
   return typeof currency === "string" ? currency : null;

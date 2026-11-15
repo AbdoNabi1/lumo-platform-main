@@ -170,7 +170,7 @@ async function previewInvoice(
       draft.lines.map((line) => ({ productId: line.productRef, variantId: line.variantRef })),
     ),
     estimatedTaxOf(admin, tenantId, draft),
-    shopNameOf(admin),
+    shopNameOf(admin, tenantId),
   ]);
   const dto: CheckoutLinkPreviewDto = {
     purpose: "invoice",
@@ -451,7 +451,7 @@ export function publicCheckoutLinkRoutes(admin: WiredAdmin): readonly RouteDefin
           purpose: "recovery",
           draftNumber: null,
           completed: false,
-          shopName: await shopNameOf(admin),
+          shopName: await shopNameOf(admin, context.tenantId),
           itemCount: session.items.reduce((count, item) => count + item.quantity, 0),
           items: session.items.map((item) => ({
             title: item.title ?? null,

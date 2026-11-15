@@ -200,6 +200,29 @@ export const ar: Dictionary = {
       includingTaxes: "شامل {tax} ضرايب",
       total: "الإجمالي",
     },
+    discount: {
+      label: "كود الخصم",
+      placeholder: "كود الخصم",
+      apply: "تطبيق",
+      applying: "جاري التطبيق…",
+      removeLabel: "إزالة الكود {code}",
+      notApplicable: "غير مطبّق: {reason}",
+      codesLabel: "أكواد الخصم",
+      reasons: {
+        not_found: "الكود ده مش موجود. اتأكد منه وجرّب تاني.",
+        expired: "الكود ده انتهت صلاحيته.",
+        not_started: "الكود ده لسه ما اشتغلش.",
+        minimum_not_met: "طلبك أقل من الحد الأدنى المطلوب للكود ده.",
+        not_eligible: "مش مؤهّل تستخدم الكود ده.",
+        usage_limit_reached: "الكود ده وصل للحد الأقصى من الاستخدام.",
+        already_used: "انت استخدمت الكود ده قبل كده.",
+        cannot_combine: "الكود ده ما ينفعش يتجمع مع الخصومات المطبّقة.",
+        too_many_codes: "وصلت للحد الأقصى من أكواد الخصم.",
+        too_many_attempts: "محاولات كتير. استنى شوية وجرّب تاني.",
+        no_matching_items: "مفيش أي منتج في السلة بينطبق عليه الكود.",
+      },
+      genericReason: "الكود ده ما ينفعش يتستخدم.",
+    },
     sameAsShipping: "نفس عنوان الشحن",
     paymentMethod: {
       stripe: "بطاقة (عبر Stripe)",
@@ -230,6 +253,7 @@ export const ar: Dictionary = {
     invoiceUnavailableBody:
       "لا يمكن تعديل هذه الفاتورة أو دفعها من هنا حاليًا. افتح رابط الفاتورة مرة أخرى، أو تواصل مع المتجر.",
     invoiceOutOfStock: "بعض المنتجات في هذه الفاتورة لم تعد متوفرة. يُرجى التواصل مع المتجر.",
+    discountsChanged: "الخصومات اتغيّرت — راجع الإجمالي الجديد قبل ما تأكّد طلبك.",
     networkErrorBody: "تعذّر الوصول إلى خدمة الدفع. حاول مرة أخرى.",
     confirmation: {
       title: "شكراً لطلبك",
