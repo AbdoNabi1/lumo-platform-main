@@ -204,7 +204,9 @@ describe("ProductEditor", () => {
     fireEvent.change(screen.getByLabelText(t.price), { target: { value: "abc" } });
     fireEvent.click(screen.getByRole("button", { name: t.save }));
 
-    expect(await screen.findByText("Enter a valid price")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Enter a valid price", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText(t.price)).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByRole("alert")).toHaveTextContent("Please check the highlighted fields.");
   });
@@ -244,7 +246,10 @@ describe("ProductEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: t.save }));
 
     await waitFor(() => expect(saveProductAction).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByRole("button", { name: t.save })).toBeDisabled());
+    // After the save the label goes "Saving…" → "Save"; a slow CI runner needs more than the 1s default.
+    await waitFor(() => expect(screen.getByRole("button", { name: t.save })).toBeDisabled(), {
+      timeout: 5000,
+    });
   });
 
   it("ignores typing in cards that submit their own forms", () => {

@@ -154,12 +154,12 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
   });
 
   it("BEGIN/ROLLBACK: an aborted transaction leaves no trace in a fresh session", async () => {
-    const { prisma, repository } = wire();
+    const { prisma, repository, tenantId } = wire();
     const intent = newIntent();
 
     await expect(
       prisma.$transaction(async (tx) => {
-        await repository.save(intent, tx as unknown as Parameters<typeof repository.save>[1]);
+        await repository.save(intent, tenantId, tx);
         throw new Error("forced rollback");
       }),
     ).rejects.toThrow("forced rollback");

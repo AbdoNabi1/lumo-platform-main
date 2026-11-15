@@ -163,10 +163,11 @@ export class DiscountsAdminController {
       if (holder.status === 200 && (holder.body as Coupon).promotionRef !== discountId)
         return codeTaken();
     }
+    // The form's fields go first, so nothing in them can replace the tenant or the promotion id.
     const updated = await this.deps.promotions.update({
+      ...toPromotionFields(discount),
       tenantId,
       promotionId: discountId,
-      ...toPromotionFields(discount),
     });
     if (!isOk(updated)) return updated;
     if (coupon !== undefined) {
