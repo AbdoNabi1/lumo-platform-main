@@ -5,6 +5,7 @@ import { formatCurrency, formatNumber, orderDateParts } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { OrderFulfillmentStatusBadge, OrderPaymentStatusBadge } from "./order-status-badge";
+import { OrderSelectCheckbox } from "./orders-selection";
 
 /** Columns that only fit from the medium breakpoint up. On a phone: Order, Customer, Total, Payment status. */
 const FROM_MD = "hidden md:table-cell";
@@ -43,17 +44,25 @@ export function OrdersTable({
   t,
   locale,
   now,
+  selectable = false,
 }: {
   readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly now?: Date;
+  /** Adds a checkbox column. Must sit inside `OrdersSelectionProvider`. */
+  readonly selectable?: boolean;
 }) {
   const reference = now ?? new Date();
   return (
     <Table aria-label={t.ordersPage.title}>
       <TableHeader>
         <TableRow>
+          {selectable && (
+            <TableHead className="w-8">
+              <span className="sr-only">{t.carrierShipping.selectColumn}</span>
+            </TableHead>
+          )}
           <TableHead>{t.ordersPage.columns.order}</TableHead>
           <TableHead className={FROM_MD}>{t.ordersPage.columns.date}</TableHead>
           <TableHead>{t.ordersPage.columns.customer}</TableHead>
@@ -69,6 +78,11 @@ export function OrdersTable({
           const date = orderDateParts(locale, order.createdAt, reference);
           return (
             <TableRow key={order.id} className="hover:bg-muted/50 relative">
+              {selectable && (
+                <TableCell className="relative z-10 w-8">
+                  <OrderSelectCheckbox orderId={order.id} orderNumber={order.orderNumber} t={t} />
+                </TableCell>
+              )}
               <TableCell className="font-semibold">
                 <Link
                   href={`/orders/${order.id}`}

@@ -28,7 +28,7 @@ function resultState(result: MutationResult<unknown>, t: Dictionary): FormState 
   if (result.outcome === "not_found") return error(t.formErrors.notFound);
   if (result.outcome === "invalid" && result.code === "VALIDATION")
     return error(t.formErrors.invalid);
-  return error(carrierErrorMessage(result.code, t));
+  return error(carrierErrorMessage(result.code, t, "settings"));
 }
 export async function saveCarrierAction(
   _previous: FormState,

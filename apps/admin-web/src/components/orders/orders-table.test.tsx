@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { OrderListItemDto } from "@/lib/api/orders";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
+import { OrdersSelectionProvider } from "./orders-selection";
 import { OrdersTable } from "./orders-table";
+
+vi.mock("@/app/orders/carrier-actions", () => ({ bulkShipWithCarrierAction: vi.fn() }));
 
 // Built from local calendar fields: "today" is the runtime's own calendar day.
 const at = (month: number, day: number, hour: number, minute: number) =>
@@ -245,5 +248,22 @@ describe("OrdersTable — like Shopify's orders list (Plan 3B)", () => {
     expect(screen.getByText("مدفوع")).toBeInTheDocument();
     expect(screen.getByText("قيد التجهيز")).toBeInTheDocument();
     expect(screen.getByText(/النهارده الساعة/)).toBeInTheDocument();
+  });
+});
+
+describe("OrdersTable selection", () => {
+  it("has no checkbox column unless selectable", () => {
+    render(<OrdersTable orders={[order()]} t={ar} locale="ar" now={NOW} />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("selectable rows get a labelled checkbox above the row link", () => {
+    render(
+      <OrdersSelectionProvider>
+        <OrdersTable orders={[order()]} t={ar} locale="ar" now={NOW} selectable />
+      </OrdersSelectionProvider>,
+    );
+    const box = screen.getByRole("checkbox", { name: "حدّد الطلب #1001" });
+    expect(box.closest("td")).toHaveClass("relative", "z-10");
   });
 });

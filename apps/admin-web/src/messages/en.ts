@@ -1570,6 +1570,64 @@ export const en = {
     notAvailable: "Bosta isn't available on this platform yet.",
     notConfigured: "Paste the API key first.",
   },
+  carrierShipping: {
+    cardTitle: "Carrier shipping",
+    shipWith: "Ship with {carrier}",
+    shipping: "Shipping…",
+    shipped: "Shipped with {carrier}",
+    trackingNumber: "Tracking number",
+    trackOnCarrier: "Track on Bosta",
+    printWaybill: "Print waybill",
+    printWaybills: "Print waybills",
+    cancelShipment: "Cancel shipment",
+    cancelling: "Cancelling…",
+    confirmCancel: "Cancel this Bosta shipment? You can ship the order again afterwards.",
+    needsReview:
+      "We couldn't confirm whether Bosta created this shipment. Check Bosta's dashboard: if it's there, cancel it, then press \"Ship again\".",
+    shipAgain: "I checked Bosta — ship again",
+    timelineTitle: "Tracking",
+    noEvents: "No updates from the carrier yet.",
+    selected: "{count} selected",
+    clearSelection: "Clear",
+    selectColumn: "Select",
+    selectOrder: "Select order #{n}",
+    tooMany: "Select up to 50 orders.",
+    resultsTitle: "Shipping results",
+    shippedCount: "{count} shipped",
+    failedCount: "{count} not shipped",
+    close: "Close",
+    awbNotAvailable: "These orders have no waybill yet: {orders}",
+    errors: {
+      ORDER_NOT_SHIPPABLE: "This order can't be shipped (cancelled, closed or already shipped).",
+      ORDER_NOT_PAID:
+        "Collect payment or mark the order paid first. Only cash-on-delivery orders ship unpaid.",
+      COD_AMOUNT_MISMATCH:
+        "The cash-on-delivery amount doesn't match the order total. Review the payment before shipping.",
+      COD_ABOVE_CARRIER_LIMIT: "Bosta collects up to 30,000 EGP per shipment.",
+      ADDRESS_NOT_SHIPPABLE:
+        "Bosta can't deliver to this address. Fix the governorate or area and try again.",
+      PHONE_NOT_SHIPPABLE: "The customer's phone must be an Egyptian mobile number (01xxxxxxxxx).",
+      CURRENCY_NOT_SUPPORTED: "Bosta ships orders in Egyptian pounds only.",
+      OPEN_PACKAGE_NEEDS_IMAGES:
+        '"Open before paying" is on, but this order\'s products have no photos.',
+      STOCK_NOT_RESERVED: "Not enough stock to ship this order.",
+      CARRIER_NOT_ENABLED: "Bosta isn't connected. Connect it in Settings → Shipping.",
+      CARRIER_CREDENTIALS_REJECTED:
+        "Bosta rejected your API key. Update it in Settings → Shipping.",
+      CARRIER_TIMEOUT: "Bosta didn't answer in time. Try again.",
+      CARRIER_UNAVAILABLE: "Couldn't reach Bosta right now. Try again in a minute.",
+      CARRIER_CREATE_IN_PROGRESS:
+        "This shipment is still being created. Wait a minute, then try again.",
+      SHIPMENT_IN_PROGRESS: "Someone is already shipping this order.",
+      CARRIER_REJECTED: "Bosta refused this shipment. Check the order details and try again.",
+      CARRIER_CANCEL_NOT_ALLOWED:
+        "Bosta already picked up this shipment, so it can't be cancelled here.",
+      CARRIER_CANCEL_REFUSED:
+        "Bosta refused to cancel this shipment. Cancel it from Bosta's dashboard.",
+      AWB_NOT_AVAILABLE: "Some selected orders have no waybill yet.",
+      CARRIER_USE_CANCEL: 'Use "Cancel shipment" on the order page for Bosta shipments.',
+    },
+  },
   shippingSettings: {
     title: "Shipping and delivery",
     subtitle: "Where you ship, and what customers pay at checkout.",

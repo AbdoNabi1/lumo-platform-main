@@ -10,7 +10,7 @@ vi.mock("jose", () => ({
   jwtVerify: jwtVerifyMock,
 }));
 
-const { mutateAdminApi } = await import("./client");
+const { mutateAdminApi, postAdminApiForBytes } = await import("./client");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -175,5 +175,44 @@ describe("mutateAdminApi", () => {
 
     const result = await mutateAdminApi("/api/v1/products", { method: "POST" }, isRecord);
     expect(result.outcome).toBe("error");
+  });
+});
+
+describe("postAdminApiForBytes", () => {
+  it("returns the response bytes on 200", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([37, 80, 68, 70])));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await postAdminApiForBytes("/api/v1/shipments/awb", { orderIds: ["a"] }, 1000);
+    expect(result).toEqual({ outcome: "ok", bytes: new Uint8Array([37, 80, 68, 70]) });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ orderIds: ["a"] }));
+  });
+
+  it("maps 409 to conflict with the order numbers and code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(409, { code: "AWB_NOT_AVAILABLE", orderNumbers: ["1001", 5, "1002"] }),
+        ),
+    );
+    expect(await postAdminApiForBytes("/x", {})).toEqual({
+      outcome: "conflict",
+      code: "AWB_NOT_AVAILABLE",
+      orderNumbers: ["1001", "1002"],
+    });
+  });
+
+  it("maps 401/403, 404, other statuses and network failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 403 })));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "unauthorized" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 404 })));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "not_found" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 500 })));
+    expect(await postAdminApiForBytes("/x", {})).toMatchObject({ outcome: "error" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "error", message: "down" });
   });
 });

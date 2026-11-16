@@ -13,9 +13,11 @@ import {
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { OrdersPagination } from "@/components/orders/orders-pagination";
+import { OrdersBulkBar, OrdersSelectionProvider } from "@/components/orders/orders-selection";
 import { OrdersTable } from "@/components/orders/orders-table";
 import { OrdersToolbar } from "@/components/orders/orders-toolbar";
 import { UnfulfilledFilterNote } from "@/components/orders/unfulfilled-filter-note";
+import { fetchEnabledCarriers } from "@/lib/api/carriers";
 import { fetchOrdersPage } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
@@ -23,6 +25,9 @@ import { showPlatformTools } from "@/lib/platform-tools";
 import type { Dictionary } from "@/messages/en";
 
 const PAGE_SIZE = 20;
+
+/** Bulk shipping can take up to 75 s (Ruling 36). */
+export const maxDuration = 90;
 
 interface OrdersPageProps {
   readonly searchParams: Promise<{
@@ -118,7 +123,11 @@ async function OrdersResults({
   readonly locale: Locale;
 }) {
   const hasFilters = Boolean(search) || Boolean(status) || fulfillment !== undefined;
-  const result = await fetchOrdersPage({ first, after, status, search, fulfillment });
+  const [result, carriersResult] = await Promise.all([
+    fetchOrdersPage({ first, after, status, search, fulfillment }),
+    fetchEnabledCarriers(),
+  ]);
+  const carriers = carriersResult.outcome === "ok" ? carriersResult.data.carriers : [];
 
   if (result.outcome === "unauthorized") {
     return (
@@ -152,18 +161,21 @@ async function OrdersResults({
   }
 
   return (
-    <Card>
-      <CardContent className="p-0 sm:p-0">
-        <OrdersTable orders={result.items} t={t} locale={locale} />
-      </CardContent>
-      <div className="border-border flex items-center justify-between border-t px-4 py-3 sm:px-5">
-        <OrdersPagination
-          hasNextPage={result.pageInfo.hasNextPage}
-          endCursor={result.pageInfo.endCursor}
-          t={t}
-        />
-      </div>
-    </Card>
+    <OrdersSelectionProvider>
+      <OrdersBulkBar carriers={carriers} t={t} />
+      <Card>
+        <CardContent className="p-0 sm:p-0">
+          <OrdersTable orders={result.items} t={t} locale={locale} selectable />
+        </CardContent>
+        <div className="border-border flex items-center justify-between border-t px-4 py-3 sm:px-5">
+          <OrdersPagination
+            hasNextPage={result.pageInfo.hasNextPage}
+            endCursor={result.pageInfo.endCursor}
+            t={t}
+          />
+        </div>
+      </Card>
+    </OrdersSelectionProvider>
   );
 }
 

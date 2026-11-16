@@ -14,13 +14,19 @@ import {
   OrderCustomerCard,
   OrderCustomerCardSkeleton,
 } from "@/components/orders/order-customer-card";
+import { OrderCarrierCard } from "@/components/orders/order-carrier-card";
 import { OrderHeader } from "@/components/orders/order-header";
 import { OrderItemsCard } from "@/components/orders/order-items-card";
 import { OrderPaymentCard, OrderPaymentCardSkeleton } from "@/components/orders/order-payment-card";
 import { OrderTimeline } from "@/components/orders/order-timeline";
-import { fetchOrder } from "@/lib/api/orders";
+import { fetchOrderCarrierShipment } from "@/lib/api/carrier-shipments";
+import { fetchOrder, type OrderDetailDto } from "@/lib/api/orders";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import type { Dictionary } from "@/messages/en";
+
+/** Shipping with a carrier can take up to 30 s (Ruling 36). */
+export const maxDuration = 90;
 
 interface OrderDetailPageProps {
   readonly params: Promise<{ readonly orderId: string }>;
@@ -92,6 +98,10 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
           <div className="flex flex-col gap-6 xl:col-span-2">
             <OrderItemsCard order={order} t={t} locale={locale} />
 
+            <Suspense fallback={null}>
+              <OrderCarrierSection order={order} t={t} locale={locale} />
+            </Suspense>
+
             <Suspense fallback={<OrderPaymentCardSkeleton t={t} />}>
               <OrderPaymentCard order={order} t={t} locale={locale} />
             </Suspense>
@@ -125,6 +135,29 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
         </div>
       </div>
     </AppShell>
+  );
+}
+
+/** The carrier card; a failed read hides it rather than breaking the order page. */
+async function OrderCarrierSection({
+  order,
+  t,
+  locale,
+}: {
+  readonly order: OrderDetailDto;
+  readonly t: Dictionary;
+  readonly locale: Locale;
+}) {
+  const result = await fetchOrderCarrierShipment(order.id);
+  if (result.outcome !== "ok") return null;
+  return (
+    <OrderCarrierCard
+      orderId={order.id}
+      fulfillmentStatus={order.fulfillmentStatus}
+      view={result.data}
+      t={t}
+      locale={locale}
+    />
   );
 }
 

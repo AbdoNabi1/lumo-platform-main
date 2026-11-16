@@ -285,3 +285,70 @@ export async function sendAdminBinary<T>(
   }
   return { outcome: "ok", data: parsed };
 }
+
+/** The outcome of fetching raw bytes (a waybill PDF). A 409 carries the order numbers that blocked it. */
+export type BytesResult =
+  | { readonly outcome: "ok"; readonly bytes: Uint8Array }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "not_found" }
+  | {
+      readonly outcome: "conflict";
+      readonly code?: string;
+      readonly orderNumbers: readonly string[];
+    }
+  | { readonly outcome: "error"; readonly message: string };
+
+/**
+ * POSTs a JSON body and reads the response as bytes — server-side only, like every function here.
+ * The bytes are returned to the caller and never stored (waybills are personal data).
+ */
+export async function postAdminApiForBytes(
+  path: string,
+  body: unknown,
+  timeoutMs = 30_000,
+): Promise<BytesResult> {
+  const runtimeApiUrl = requireProdEnv("RUNTIME_API_URL", DEFAULT_RUNTIME_API_URL);
+  const headers = await adminRequestHeaders();
+  headers["content-type"] = "application/json";
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${runtimeApiUrl}${path}`,
+      { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" },
+      timeoutMs,
+    );
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : "Network error reaching the admin API",
+    };
+  }
+
+  if (response.status === 401 || response.status === 403) return { outcome: "unauthorized" };
+  if (response.status === 404) return { outcome: "not_found" };
+  if (response.status === 409) {
+    const envelope = (await response.json().catch(() => null)) as {
+      readonly code?: unknown;
+      readonly orderNumbers?: unknown;
+    } | null;
+    return {
+      outcome: "conflict",
+      ...(typeof envelope?.code === "string" ? { code: envelope.code } : {}),
+      orderNumbers: Array.isArray(envelope?.orderNumbers)
+        ? envelope.orderNumbers.filter((n): n is string => typeof n === "string")
+        : [],
+    };
+  }
+  if (!response.ok) {
+    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+  }
+  try {
+    return { outcome: "ok", bytes: new Uint8Array(await response.arrayBuffer()) };
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : "Could not read the admin API response",
+    };
+  }
+}

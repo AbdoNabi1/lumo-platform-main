@@ -14,6 +14,8 @@ import {
   type CreateShipmentPackageInput,
 } from "@/lib/api/shipping";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { carrierErrorMessage, hasShippingMessage } from "@/lib/shipping/carrier-errors";
+import type { MutationResult } from "@/lib/api/client";
 
 /**
  * T5.4 — the Shipment detail screen's write actions (`app/orders/[orderId]/shipment/page.tsx`).
@@ -36,10 +38,38 @@ function optionalStringField(formData: FormData, name: string): string | undefin
   return value.length > 0 ? value : undefined;
 }
 
-async function formErrorDictionary() {
+async function fullDictionary() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
-  return dictionaryFor(locale).formErrors;
+  return dictionaryFor(locale);
+}
+
+async function formErrorDictionary() {
+  return (await fullDictionary()).formErrors;
+}
+
+/**
+ * Void and advance can be refused with a carrier code (`CARRIER_USE_CANCEL`: Bosta shipments are
+ * cancelled from the order page). Those get the localised carrier sentence; everything else keeps
+ * the generic `toFormState` projection.
+ */
+function toShipmentFormState(
+  result: MutationResult<unknown>,
+  t: Awaited<ReturnType<typeof fullDictionary>>,
+): FormState {
+  if (
+    result.outcome !== "ok" &&
+    "code" in result &&
+    result.code !== "VALIDATION" &&
+    hasShippingMessage(result.code, t)
+  ) {
+    return {
+      status: "error",
+      message: carrierErrorMessage(result.code, t),
+      fieldErrors: {},
+    };
+  }
+  return toFormState(result, t.formErrors);
 }
 
 /** Both screens that show shipment data — the Order Detail card and this route's own page. */
@@ -60,7 +90,9 @@ function revalidateShipmentScreens(orderId: string): void {
 function parseShipmentCreatePackages(
   formData: FormData,
 ): readonly CreateShipmentPackageInput[] | null {
-  const references = formData.getAll("packageReference").map((v) => (typeof v === "string" ? v : ""));
+  const references = formData
+    .getAll("packageReference")
+    .map((v) => (typeof v === "string" ? v : ""));
   const itemRefsRaw = formData
     .getAll("packageItemRefs")
     .map((v) => (typeof v === "string" ? v : ""));
@@ -68,7 +100,11 @@ function parseShipmentCreatePackages(
     .getAll("packageWeightGrams")
     .map((v) => (typeof v === "string" ? v : ""));
 
-  if (references.length === 0 || references.length !== itemRefsRaw.length || references.length !== weights.length) {
+  if (
+    references.length === 0 ||
+    references.length !== itemRefsRaw.length ||
+    references.length !== weights.length
+  ) {
     return null;
   }
 
@@ -80,7 +116,12 @@ function parseShipmentCreatePackages(
       .map((ref) => ref.trim())
       .filter((ref) => ref.length > 0);
     const weightGrams = Number.parseInt(weights[index] ?? "", 10);
-    if (reference.length === 0 || itemRefs.length === 0 || Number.isNaN(weightGrams) || weightGrams <= 0) {
+    if (
+      reference.length === 0 ||
+      itemRefs.length === 0 ||
+      Number.isNaN(weightGrams) ||
+      weightGrams <= 0
+    ) {
       return null;
     }
     packages.push({ reference, itemRefs, weightGrams });
@@ -138,7 +179,8 @@ export async function voidShipmentLabelAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const t = await formErrorDictionary();
+  const dictionary = await fullDictionary();
+  const t = dictionary.formErrors;
   const orderId = stringField(formData, "orderId");
   const shipmentId = stringField(formData, "shipmentId");
   if (orderId.length === 0 || shipmentId.length === 0) {
@@ -150,7 +192,7 @@ export async function voidShipmentLabelAction(
     revalidateShipmentScreens(orderId);
     return { status: "success" };
   }
-  return toFormState(result, t);
+  return toShipmentFormState(result, dictionary);
 }
 
 /** Appends a carrier tracking scan (`TrackingForm`, offered at the "in motion" statuses). */
@@ -249,7 +291,8 @@ export async function advanceShipmentAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  const t = await formErrorDictionary();
+  const dictionary = await fullDictionary();
+  const t = dictionary.formErrors;
   const orderId = stringField(formData, "orderId");
   const shipmentId = stringField(formData, "shipmentId");
   const toStatus = stringField(formData, "toStatus");
@@ -266,5 +309,5 @@ export async function advanceShipmentAction(
     revalidateShipmentScreens(orderId);
     return { status: "success" };
   }
-  return toFormState(result, t);
+  return toShipmentFormState(result, dictionary);
 }
