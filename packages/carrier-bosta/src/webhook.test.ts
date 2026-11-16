@@ -21,6 +21,26 @@ describe("Bosta webhooks", () => {
     expect(bostaWebhookEventId(parsed!)).toBe("48089608:24:1689252908261");
     expect(parseBostaWebhook(bytesOf(webhook47))?.exceptionReason).toMatch(/^Postponed/);
   });
+  it("accepts a valid webhook of exactly 16,384 bytes", () => {
+    const encoder = new TextEncoder();
+    const json = JSON.stringify(webhook24);
+    const bytes = encoder.encode(json + " ".repeat(16_384 - encoder.encode(json).byteLength));
+    expect(bytes.byteLength).toBe(16_384);
+    expect(parseBostaWebhook(bytes)).toEqual({
+      trackingNumber: "48089608",
+      state: 24,
+      type: "SEND",
+      timeStamp: 1689252908261,
+      numberOfAttempts: 0,
+    });
+  });
+  it("rejects a valid webhook of exactly 16,385 bytes", () => {
+    const encoder = new TextEncoder();
+    const json = JSON.stringify(webhook24);
+    const bytes = encoder.encode(json + " ".repeat(16_385 - encoder.encode(json).byteLength));
+    expect(bytes.byteLength).toBe(16_385);
+    expect(parseBostaWebhook(bytes)).toBeNull();
+  });
   it("drops unknown keys, rejects malformed data, and clips reasons", () => {
     expect(parseBostaWebhook(bytesOf({ ...webhook24, extra: "x" }))).toEqual({
       trackingNumber: "48089608",
