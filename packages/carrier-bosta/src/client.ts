@@ -28,6 +28,8 @@ interface RequestOptions {
   /** Noun used in the fixed English refusal sentence; never response text. */
   readonly label: string;
   readonly mode?: "json" | "bytes" | "discard";
+  /** A 2xx `success:false` envelope is handed to the caller's parser instead of rejected. */
+  readonly passSuccessFalse?: boolean;
   /** Rejections on this request are cancel refusals (Ruling 1). */
   readonly cancel?: boolean;
   /** A 404 carrying this errorCode is returned as `notFound` instead of throwing. */
@@ -46,12 +48,13 @@ function numberOrNull(value: unknown): number | null {
   const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
   return value !== "" && Number.isFinite(parsed) ? parsed : null;
 }
-function errorCodeOf(text: string): number | null {
+/** `undefined` means the body was not JSON at all (never a documented refusal). */
+function errorCodeOf(text: string): number | null | undefined {
   try {
     const body: unknown = JSON.parse(text);
     return isObject(body) ? numberOrNull(body.errorCode) : null;
   } catch {
-    return null;
+    return undefined;
   }
 }
 function trackingOf(value: unknown): string | null {
@@ -193,6 +196,7 @@ export class BostaClient {
     const reply = await this.request("POST", "/deliveries/search", {
       body: { businessReference: reference },
       label: "search",
+      passSuccessFalse: true,
     });
     return parseSearchResponse(reply.json, reference);
   }
@@ -277,7 +281,7 @@ export class BostaClient {
     return cities;
   }
 
-  /** Ruling 8: success is a 2xx; the body is never read. */
+  /** Ruling 8: status-only. Exactly 200 is valid; 401/403 reject the key; all else is unavailable. The body is never read. */
   async verifyKey(): Promise<void> {
     await this.request("GET", "/pickup-locations", { label: "key check", mode: "discard" });
   }
@@ -300,7 +304,7 @@ export class BostaClient {
       });
       status = response.status;
       const success = status >= 200 && status < 300;
-      if (!(success && mode === "discard")) {
+      if (mode !== "discard") {
         if (mode === "bytes") {
           bytes = new Uint8Array(await response.arrayBuffer());
           if (!(success && startsWithPdf(bytes))) text = new TextDecoder().decode(bytes);
@@ -316,6 +320,14 @@ export class BostaClient {
     return this.classify(status, text, bytes, options, mode);
   }
 
+  private credentialsRejected(status: number): BostaApiError {
+    return new BostaApiError({
+      carrierFailure: "credentials_rejected",
+      status,
+      message: `Bosta rejected the API key (HTTP ${status})`,
+    });
+  }
+
   private classify(
     status: number,
     text: string,
@@ -323,8 +335,12 @@ export class BostaClient {
     options: RequestOptions,
     mode: "json" | "bytes" | "discard",
   ): Reply {
+    if (mode === "discard") {
+      if (status === 200) return { status };
+      if (status === 401 || status === 403) throw this.credentialsRejected(status);
+      throw unavailable(`Bosta is unavailable (HTTP ${status})`, status);
+    }
     if (status >= 200 && status < 300) {
-      if (mode === "discard") return { status };
       if (mode === "bytes" && startsWithPdf(bytes)) return { status, bytes };
       let json: unknown;
       try {
@@ -333,18 +349,15 @@ export class BostaClient {
         if (mode === "bytes") return { status, bytes };
         throw unavailable("Bosta response was not JSON", status);
       }
-      if (isObject(json) && json.success === false)
+      if (isObject(json) && json.success === false && options.passSuccessFalse !== true)
         throw rejection(status, numberOrNull(json.errorCode), options);
       return mode === "bytes" ? { status, bytes } : { status, json };
     }
     if (status === 401 || status === 403) {
-      throw new BostaApiError({
-        carrierFailure: "credentials_rejected",
-        status,
-        message: `Bosta rejected the API key (HTTP ${status})`,
-      });
+      throw this.credentialsRejected(status);
     }
     const errorCode = errorCodeOf(text);
+    if (errorCode === undefined) throw unavailable(`Bosta is unavailable (HTTP ${status})`, status);
     if (status === 404 && options.notFoundCode !== undefined && errorCode === options.notFoundCode)
       return { status, notFound: true };
     if (status >= 400 && status < 500 && status !== 408 && status !== 429)

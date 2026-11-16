@@ -253,4 +253,58 @@ describe("BostaClient", () => {
       carrierFailure: "unavailable",
     });
   });
+
+  it("search with a 200 success:false envelope is unavailable, not rejected", async () => {
+    await expect(
+      client(
+        vi.fn<HttpFetch>().mockResolvedValueOnce(ok(200, { success: false, data: [] })),
+      ).searchByBusinessReference("1001-1"),
+    ).rejects.toMatchObject({
+      carrierFailure: "unavailable",
+      status: 200,
+      message: "Bosta search response not recognised",
+    });
+  });
+
+  it("verifyKey is status-only and never reads the body", async () => {
+    const spied =
+      (status: number): HttpFetch =>
+      () =>
+        Promise.resolve({
+          status,
+          text: () => Promise.reject(new Error("body read")),
+          arrayBuffer: () => Promise.reject(new Error("body read")),
+        });
+    await expect(client(spied(200)).verifyKey()).resolves.toBeUndefined();
+    for (const status of [401, 403]) {
+      await expect(client(spied(status)).verifyKey()).rejects.toMatchObject({
+        carrierFailure: "credentials_rejected",
+        status,
+      });
+    }
+    for (const status of [201, 204, 400, 404, 422, 500]) {
+      await expect(client(spied(status)).verifyKey()).rejects.toMatchObject({
+        carrierFailure: "unavailable",
+        status,
+      });
+    }
+  });
+
+  it("a non-JSON failure body on create is unavailable and never echoed", async () => {
+    for (const status of [400, 422]) {
+      const html: HttpFetch = () =>
+        Promise.resolve({
+          status,
+          text: () => Promise.resolve("<html>proxy error</html>"),
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+        });
+      try {
+        await client(html).createDelivery({});
+        expected();
+      } catch (error) {
+        expect(error).toMatchObject({ carrierFailure: "unavailable", status });
+        expect((error as Error).message).not.toContain("proxy error");
+      }
+    }
+  });
 });
