@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "message": "Done successfully.",
+  "data": {
+    "list": [
+      {
+        "_id": "Jrb6X6ucjiYgMP4T7",
+        "name": "Alexandria",
+        "nameAr": "الإسكندرية",
+        "alias": "Alexandria",
+        "code": "EG-02",
+        "sector": 2,
+        "pickupAvailability": true,
+        "dropOffAvailability": true
+      },
+      {
+        "_id": "FceDyHXwpSYYF9zGW",
+        "name": "Cairo",
+        "nameAr": "القاهرة",
+        "alias": "Cairo",
+        "code": "EG-01",
+        "sector": 1,
+        "pickupAvailability": true,
+        "dropOffAvailability": true
+      }
+    ]
+  }
+}

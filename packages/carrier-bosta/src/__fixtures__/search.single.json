@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "message": "Done successfully.",
+  "data": {
+    "_id": "Lx9vyKBqAeiIcERQKfn6I",
+    "trackingNumber": "5108002",
+    "businessReference": "12345678",
+    "sender": {
+      "_id": "6dow5iWGHejX8IA5vMMUb",
+      "phone": "+201****5435",
+      "name": "Business Name",
+      "type": "BUSINESS_ACCOUNT"
+    },
+    "message": "Delivery created successfully!",
+    "state": {
+      "code": 10,
+      "value": "Pickup requested"
+    },
+    "creationSrc": "API"
+  }
+}

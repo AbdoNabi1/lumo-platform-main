@@ -1,0 +1,6 @@
+{
+  "success": false,
+  "message": "District not found in the selected city",
+  "errorCode": 3003,
+  "data": null
+}
