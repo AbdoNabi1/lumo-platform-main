@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { PrismaOutboxStore, PrismaUnitOfWork, type Database } from "@platform/db";
 import type { EventSerializer } from "@platform/domain-events";
@@ -13,6 +14,13 @@ import {
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CarrierRegistry, type CarrierRegistration } from "./application/carrier-registry";
 import type { CarrierResolver } from "./application/carrier-resolver";
+import {
+  GetCarrierSettings,
+  ListEnabledCarriers,
+  RotateCarrierWebhookSecret,
+  UpdateCarrierSettings,
+  VerifyCarrierWebhook,
+} from "./application/carrier-settings.use-cases";
 import { CreateShipment } from "./application/create-shipment.use-case";
 import type { CarrierCredentialVault } from "./application/ports";
 import { ListShippableCountries, QuoteShippingRates } from "./application/quote-shipping.use-cases";
@@ -80,6 +88,8 @@ export interface ShippingWiringDeps {
    * default: absent means every carrier resolves to `CARRIER_NOT_AVAILABLE`.
    */
   readonly carrierCredentialVault?: CarrierCredentialVault;
+  /** 32 random bytes, base64url. Overridable so tests get deterministic webhook secrets. */
+  readonly randomSecret?: () => string;
 }
 
 export interface WiredShipping {
@@ -139,12 +149,22 @@ function buildZonesController(
 function buildController(
   shipments: ShipmentRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
+  carriers: CarrierFoundation,
   deps: ShippingWiringDeps,
 ): ShippingController {
   const fulfillmentPort = new InMemoryFulfillmentAdapter();
   const carrierProvider = new InMemoryCarrierProvider();
   const notifications = new InMemoryNotificationAdapter();
   const processedCarrierWebhooks = new InMemoryProcessedCarrierWebhookStore();
+
+  const carrierSettingsDeps = {
+    settings: carriers.settings,
+    registry: carriers.registry,
+    vault: deps.carrierCredentialVault,
+    unitOfWork,
+    clock: deps.clock,
+    randomSecret: deps.randomSecret ?? (() => randomBytes(32).toString("base64url")),
+  };
 
   const lifecycleDeps = {
     shipments,
@@ -175,6 +195,11 @@ function buildController(
       processedCarrierWebhooks,
     }),
     getShipmentByFulfillment: new GetShipmentByFulfillment({ shipments }),
+    getCarrierSettings: new GetCarrierSettings(carrierSettingsDeps),
+    listEnabledCarriers: new ListEnabledCarriers(carrierSettingsDeps),
+    updateCarrierSettings: new UpdateCarrierSettings(carrierSettingsDeps),
+    rotateCarrierWebhookSecret: new RotateCarrierWebhookSecret(carrierSettingsDeps),
+    verifyCarrierWebhook: new VerifyCarrierWebhook(carrierSettingsDeps),
   });
 }
 
@@ -208,7 +233,7 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
     );
 
     return {
-      shipping: buildController(shipments, unitOfWork, deps),
+      shipping: buildController(shipments, unitOfWork, carriers, deps),
       zones: buildZonesController(
         new PrismaShippingZoneRepository({ prisma: deps.prisma }),
         unitOfWork,
@@ -232,8 +257,8 @@ export function wireShipping(deps: ShippingWiringDeps): WiredShipping {
 
   const shipments = new InMemoryShipmentRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(shipments, unitOfWork, deps);
   const carriers = buildCarrierFoundation(new InMemoryMerchantCarrierSettingsRepository(), deps);
+  const controller = buildController(shipments, unitOfWork, carriers, deps);
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

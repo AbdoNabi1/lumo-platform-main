@@ -43,6 +43,21 @@ export type {
   CarrierConfigParseResult,
   CarrierRegistration,
 } from "./application/carrier-registry";
+export {
+  GetCarrierSettings,
+  ListEnabledCarriers,
+  MAX_CARRIER_SECRET_LENGTH,
+  RotateCarrierWebhookSecret,
+  UpdateCarrierSettings,
+  VerifyCarrierWebhook,
+} from "./application/carrier-settings.use-cases";
+export type {
+  CarrierSettingsDeps,
+  CarrierSettingsDto,
+  CarrierSettingsEntryDto,
+  EnabledCarriersDto,
+  UpdateCarrierSettingsInput,
+} from "./application/carrier-settings.use-cases";
 export { CarrierResolutionError } from "./application/carrier-resolver";
 export type {
   CarrierResolutionCode,
