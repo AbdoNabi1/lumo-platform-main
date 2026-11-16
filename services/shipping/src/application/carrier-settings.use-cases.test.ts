@@ -532,7 +532,9 @@ describe("RotateCarrierWebhookSecret", () => {
   it("is CARRIER_NOT_AVAILABLE (409) without a vault", async () => {
     const h = settingsHarness({ vault: null });
     const r = await h.rotate.execute({ tenantId: "t-1", carrierKey: "bosta" });
+    expect(r.ok).toBe(false);
     expect(!r.ok && r.error.code).toBe("CARRIER_NOT_AVAILABLE");
+    expect(!r.ok && (r.error as { httpStatus?: number }).httpStatus).toBe(409);
   });
 
   it("is CARRIER_UNKNOWN for an unregistered key", async () => {
@@ -574,6 +576,29 @@ describe("GetCarrierSettings", () => {
         webhookUrl: "https://admin.example.test/api/v1/public/shipping/webhook/bosta",
       },
     ]);
+  });
+
+  it("returns one entry per registration in registry order, not sorted", async () => {
+    const h = settingsHarness();
+    const zeta = fakeRegistration({ key: "zeta" }).registration;
+    const bosta = fakeRegistration({ key: "bosta" }).registration;
+    const get = new GetCarrierSettings({
+      ...h.deps,
+      registry: CarrierRegistry.from([zeta, bosta]),
+    });
+    const r = await get.execute({ tenantId: "t-1" });
+    expect(r.ok && r.value.carriers.map((c) => c.key)).toEqual(["zeta", "bosta"]);
+    expect(r.ok && r.value.carriers).toHaveLength(2);
+    for (const entry of r.ok ? r.value.carriers : []) {
+      expect(entry).toMatchObject({
+        displayName: "Fake carrier",
+        available: true,
+        enabled: false,
+        configured: false,
+        config: null,
+        capabilities: { cod: true, awb: true, webhooks: true, cancel: true },
+      });
+    }
   });
 
   it("reports available false without a vault", async () => {
