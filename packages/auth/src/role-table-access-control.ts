@@ -64,6 +64,11 @@ export function permissionMatches(granted: string, required: string): boolean {
   return (gResource === "*" || gResource === rResource) && (gAction === "*" || gAction === rAction);
 }
 
+export const ADMIN_ONLY_PERMISSIONS: ReadonlySet<string> = new Set([
+  "shipping:read_settings",
+  "shipping:update_settings",
+]);
+
 /** `AccessControl` over the role table. Only staff principals are considered. */
 export class RoleTableAccessControl implements AccessControl {
   authorize(principal: Principal, permission: Permission): Promise<boolean> {
@@ -72,6 +77,7 @@ export class RoleTableAccessControl implements AccessControl {
       const canonical = ROLE_ALIASES[role];
       return (
         canonical !== undefined &&
+        (!ADMIN_ONLY_PERMISSIONS.has(permission) || canonical === "admin") &&
         ROLE_PERMISSIONS[canonical].some((granted) => permissionMatches(granted, permission))
       );
     });

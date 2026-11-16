@@ -82,6 +82,7 @@ import { securitySessionsRoutes } from "./security-sessions-routes";
 import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
 import { shippingZonesRoutes } from "./shipping-zones-routes";
+import { carrierSettingsRoutes } from "./carrier-settings-routes";
 import { taxesRoutes } from "./taxes-routes";
 import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
@@ -2177,6 +2178,7 @@ export function adminRoutes(
     ...fulfillmentRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
+    ...carrierSettingsRoutes(admin),
     ...taxesRoutes(admin),
     ...returnsRoutes(admin),
     ...reviewsRoutes(admin),

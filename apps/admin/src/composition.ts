@@ -108,7 +108,8 @@ import {
   type WiredSecurity,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
-import { wireShipping } from "@platform/shipping";
+import { wireShipping, type ShippingWiringDeps } from "@platform/shipping";
+import type { DistributedLock } from "@platform/contracts";
 import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
 import { logger as adminLogger } from "@platform/utils";
 import { TenantProvisioner } from "./tenant-provisioning";
@@ -196,6 +197,7 @@ import { SecuritySessionsAdminController } from "./interfaces/security-sessions.
 import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
 import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
+import { CarrierSettingsAdminController } from "./interfaces/carrier-settings.admin-controller";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
@@ -217,6 +219,10 @@ const DEFAULT_FINANCE_POSTING_ACCOUNTS: PostingAccounts = {
 };
 
 export interface AdminWiringDeps {
+  readonly carrierRegistrations?: ShippingWiringDeps["carrierRegistrations"];
+  readonly carrierCredentialVault?: ShippingWiringDeps["carrierCredentialVault"];
+  readonly randomSecret?: ShippingWiringDeps["randomSecret"];
+  readonly distributedLock?: DistributedLock;
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -481,6 +487,7 @@ export interface WiredAdmin {
   readonly shipping: ShippingAdminController;
   /** Plan 3C: Settings → Shipping and delivery (zones and rates). */
   readonly shippingZones: ShippingZonesAdminController;
+  readonly carrierSettings: CarrierSettingsAdminController;
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -1200,6 +1207,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     shipping: new ShippingAdminController({ shipping: shipping.shipping, guard }),
     shippingZones: new ShippingZonesAdminController({ zones: shipping.zones, guard }),
+    carrierSettings: new CarrierSettingsAdminController({ shipping: shipping.shipping, guard }),
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),
