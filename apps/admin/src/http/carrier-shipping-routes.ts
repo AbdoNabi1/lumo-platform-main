@@ -99,7 +99,7 @@ export function carrierShippingRoutes(admin: WiredAdmin): readonly RouteDefiniti
       permission: "shipping:void_label",
       idempotent: true,
       summary: "Cancel carrier shipment",
-      schema: { params: shipmentParams },
+      schema: { params: shipmentParams, body: z.object({}).strict().optional() },
       handle: ({ params, context }) =>
         admin.carrierShipping.cancel(context.principal, { ...params, tenantId: context.tenantId }),
     }),

@@ -1,9 +1,11 @@
-import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryCarrierCredentialVault } from "@platform/shipping";
 import { fakeRegistration } from "@platform/shipping/testing";
 import { createAdminHttpApi } from "./server";
+import { CarrierShippingAdminController } from "../interfaces/carrier-shipping.admin-controller";
+import { CarrierFulfillmentAdapter } from "../carrier-shipping/carrier-fulfillment.adapter";
 
 beforeEach(() => {
   expect.hasAssertions();
@@ -165,12 +167,39 @@ it("ships, prints, isolates and cancels a real order end-to-end", async () => {
   expect(pdf.headers["content-type"]).toContain("application/pdf");
   expect(pdf.headers["cache-control"]).toBe("private, no-store");
   expect(pdf.rawPayload.subarray(0, 5).toString()).toBe("%PDF-");
+  const cancelHandler = vi.spyOn(CarrierShippingAdminController.prototype, "cancel");
+  const detach = vi.spyOn(CarrierFulfillmentAdapter.prototype, "detach");
+  try {
+    for (const payload of [{ cod: 999 }, { amount: 999 }]) {
+      const rejected = await app.inject({
+        method: "POST",
+        url: `/api/v1/shipments/${shipmentId}/cancel`,
+        headers,
+        payload,
+      });
+      expect(rejected.statusCode, rejected.body).toBe(422);
+      expect(rejected.json()).toMatchObject({ code: "VALIDATION" });
+      expect(cancelHandler).not.toHaveBeenCalled();
+      expect(detach).not.toHaveBeenCalled();
+      expect(fake.record.cancelCalls).toHaveLength(0);
+    }
+  } finally {
+    cancelHandler.mockRestore();
+    detach.mockRestore();
+  }
   const cancel = await app.inject({
     method: "POST",
     url: `/api/v1/shipments/${shipmentId}/cancel`,
     headers,
   });
-  expect(cancel.statusCode).toBe(200);
+  expect(cancel.statusCode, cancel.body).toBe(200);
+  const emptyBodyCancel = await app.inject({
+    method: "POST",
+    url: `/api/v1/shipments/${shipmentId}/cancel`,
+    headers,
+    payload: {},
+  });
+  expect(emptyBodyCancel.statusCode, emptyBodyCancel.body).toBe(200);
   const orderCarrier = await app.inject({
     method: "GET",
     url: `/api/v1/orders/${orderId}/carrier-shipment`,

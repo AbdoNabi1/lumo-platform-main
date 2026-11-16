@@ -4,6 +4,7 @@ import type { ShippableOrder } from "./ports";
 import type { CarrierFulfillmentAdapter } from "./carrier-fulfillment.adapter";
 import type { ShippingController } from "@platform/shipping";
 import type { DistributedLock } from "@platform/contracts";
+import { logger } from "@platform/utils";
 
 beforeEach(() => {
   expect.hasAssertions();
@@ -150,6 +151,67 @@ describe("ShipOrderWithCarrier", () => {
     expect(result).toMatchObject({ ok: true, value: { trackingNumber: "5108002" } });
     expect(s.fulfillment.attach).toHaveBeenCalledWith("t-1", "f-1", "bosta", "d-1", "5108002");
   });
+  it.each(["returns false", "throws"])(
+    "recovers the original delivery when post-label attachment %s",
+    async (failure) => {
+      const s = setup();
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        if (failure === "returns false") s.fulfillment.attach.mockResolvedValueOnce(false);
+        else s.fulfillment.attach.mockRejectedValueOnce(new Error("Name 123 Street"));
+
+        const expected = {
+          ok: true,
+          value: {
+            orderId: "o-1",
+            orderNumber: "1001",
+            shipmentId: "s-1",
+            trackingNumber: "5108002",
+            carrierKey: "bosta",
+          },
+        };
+        expect(await s.ship.execute(input)).toEqual(expected);
+        expect(s.fulfillment.attach).toHaveBeenCalledTimes(1);
+        expect(s.fulfillment.attach).toHaveBeenNthCalledWith(
+          1,
+          "t-1",
+          "f-1",
+          "bosta",
+          "d-1",
+          "5108002",
+        );
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledWith("carrier fulfillment attach failed", {
+          tenantId: "t-1",
+          fulfillmentOrderId: "f-1",
+          shipmentId: "s-1",
+        });
+        expect(s.release).toHaveBeenCalledTimes(1);
+
+        s.shipping.getByFulfillment.mockResolvedValue({
+          status: 200,
+          body: { id: { toString: () => "s-1" }, status: { value: "label_created" } },
+        });
+        expect(await s.ship.execute(input)).toEqual(expected);
+        expect(s.fulfillment.attach).toHaveBeenCalledTimes(2);
+        expect(s.fulfillment.attach).toHaveBeenNthCalledWith(
+          2,
+          "t-1",
+          "f-1",
+          "bosta",
+          "d-1",
+          "5108002",
+        );
+        expect(s.shipping.create).toHaveBeenCalledTimes(1);
+        // createLabel is the idempotent controller entry point, called again to read the existing label.
+        expect(s.shipping.createLabel).toHaveBeenCalledTimes(2);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(s.release).toHaveBeenCalledTimes(2);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
   it("returns a voided shipment to created", async () => {
     const s = setup("voided");
     await s.ship.execute(input);
