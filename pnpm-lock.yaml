@@ -419,6 +419,9 @@ importers:
       '@platform/automation':
         specifier: workspace:*
         version: link:../../services/automation
+      '@platform/carrier-bosta':
+        specifier: workspace:*
+        version: link:../../packages/carrier-bosta
       '@platform/cart':
         specifier: workspace:*
         version: link:../../services/cart

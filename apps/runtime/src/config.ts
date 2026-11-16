@@ -232,6 +232,13 @@ const schema = z
     // with a KMS backend it is that KMS's key reference.
     PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
 
+    // ── Merchant carrier credentials (Project 5, Bosta). Merchants' carrier API keys and webhook
+    // secrets are sealed under this key-encryption key, SEPARATE from PAYMENT_CREDENTIALS_KEK_REF.
+    // Carriers need BOTH this and ADMIN_API_PUBLIC_URL (the admin API's public origin, where carriers
+    // post status updates); exactly one set refuses boot outside `local` (Ruling 31).
+    SHIPPING_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    ADMIN_API_PUBLIC_URL: z.string().url().optional(),
+
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
      * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `off`: the collector
