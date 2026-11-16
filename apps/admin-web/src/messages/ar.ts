@@ -1521,6 +1521,7 @@ export const ar: Dictionary = {
       CARRIER_TIMEOUT: "بوسطة ماردّتش في الوقت. جرّب تاني.",
       CARRIER_UNAVAILABLE: "مش قادرين نوصل لبوسطة دلوقتي. جرّب كمان دقيقة.",
       CARRIER_CREATE_IN_PROGRESS: "الشحنة لسه بتتعمل. استنى دقيقة وجرّب تاني.",
+      FULFILLMENT_DETACH_PENDING: "لسه بنفك الشحنة القديمة من الطلب ده. جرّب تاني كمان دقيقة.",
       SHIPMENT_IN_PROGRESS: "في حد بيشحن الطلب ده دلوقتي.",
       CARRIER_REJECTED: "بوسطة رفضت الشحنة. راجع بيانات الطلب وجرّب تاني.",
       CARRIER_CANCEL_NOT_ALLOWED: "بوسطة استلمت الشحنة خلاص، فمش ممكن تتلغي من هنا.",

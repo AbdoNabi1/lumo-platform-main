@@ -2,6 +2,7 @@ import type {
   AttachCarrierShipment,
   AttachCarrierShipmentInput,
   DetachCarrierShipment,
+  DetachCarrierShipmentInput,
   MirrorShipmentStatus,
   MirrorShipmentStatusInput,
   PrepareForCarrierShipment,
@@ -93,7 +94,7 @@ export class FulfillmentController {
   }
 
   /** Voids the label before pickup: back to `packing_completed`. */
-  async detachCarrierShipment(input: FulfillmentOrderIdInput): Promise<ControllerResponse> {
+  async detachCarrierShipment(input: DetachCarrierShipmentInput): Promise<ControllerResponse> {
     return present(await this.deps.detachCarrierShipment.execute(input), 200);
   }
 

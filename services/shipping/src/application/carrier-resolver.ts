@@ -1,3 +1,4 @@
+import { CarrierError } from "../domain/errors";
 import type { CarrierProvider } from "./carrier-provider";
 
 /** Ruling 30: a new shipment needs the carrier enabled; an existing one (cancel, print) only configured. */
@@ -22,6 +23,15 @@ export class CarrierResolutionError extends Error {
     this.name = "CarrierResolutionError";
     this.code = code;
   }
+}
+
+/** Present all carrier-resolution failures consistently at application boundaries. */
+export function carrierResolutionToError(error: CarrierResolutionError): CarrierError {
+  return new CarrierError(
+    error.code,
+    "Carrier could not be resolved",
+    error.code === "CARRIER_UNKNOWN" ? 422 : 409,
+  );
 }
 
 /** ADR-0014: a process-wide singleton resolving one tenant's carrier per call. */

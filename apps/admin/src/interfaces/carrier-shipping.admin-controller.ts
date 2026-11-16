@@ -94,9 +94,21 @@ export class CarrierShippingAdminController {
     if (denied) return denied;
     const response = await this.deps.shipping.cancelCarrierShipment(input);
     if (response.status !== 200) return response;
-    const result = response.body as { fulfillmentRef: string; shipmentId: string; status: string };
+    const result = response.body as {
+      fulfillmentRef: string;
+      shipmentId: string;
+      status: string;
+      trackingNumber?: string;
+    };
     try {
-      if (!(await this.deps.fulfillment.detach(input.tenantId, result.fulfillmentRef)))
+      if (
+        !result.trackingNumber ||
+        !(await this.deps.fulfillment.detach(
+          input.tenantId,
+          result.fulfillmentRef,
+          result.trackingNumber,
+        ))
+      )
         logger.warn("carrier fulfillment detach failed", {
           tenantId: input.tenantId,
           fulfillmentOrderId: result.fulfillmentRef,

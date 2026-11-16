@@ -1618,6 +1618,8 @@ export const en = {
       CARRIER_UNAVAILABLE: "Couldn't reach Bosta right now. Try again in a minute.",
       CARRIER_CREATE_IN_PROGRESS:
         "This shipment is still being created. Wait a minute, then try again.",
+      FULFILLMENT_DETACH_PENDING:
+        "We're still releasing the previous shipment from this order. Try again in a minute.",
       SHIPMENT_IN_PROGRESS: "Someone is already shipping this order.",
       CARRIER_REJECTED: "Bosta refused this shipment. Check the order details and try again.",
       CARRIER_CANCEL_NOT_ALLOWED:

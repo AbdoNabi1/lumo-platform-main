@@ -4,7 +4,11 @@ import { type DomainError, NotFoundError, ValidationError } from "@platform/util
 import { CarrierError } from "../domain/errors";
 import type { Shipment } from "../domain/shipment";
 import { carrierFailureOf } from "./carrier-provider";
-import { CarrierResolutionError, type CarrierResolver } from "./carrier-resolver";
+import {
+  CarrierResolutionError,
+  carrierResolutionToError,
+  type CarrierResolver,
+} from "./carrier-resolver";
 import { withConcurrencyRetry } from "./concurrency-retry";
 import type { ShipmentStatusOutput } from "./create-shipment.use-case";
 import {
@@ -27,7 +31,12 @@ export class CancelCarrierShipment {
   constructor(private readonly deps: CarrierShipmentDeps) {}
   async execute(
     input: ShipmentIdInput,
-  ): Promise<Result<ShipmentStatusOutput & { readonly fulfillmentRef: string }, DomainError>> {
+  ): Promise<
+    Result<
+      ShipmentStatusOutput & { readonly fulfillmentRef: string; readonly trackingNumber?: string },
+      DomainError
+    >
+  > {
     const precheck = await this.deps.unitOfWork.run(async (tx) => {
       const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
       if (shipment === null) return err(new NotFoundError("Shipment not found"));
@@ -38,6 +47,7 @@ export class CancelCarrierShipment {
             shipmentId: input.shipmentId,
             status: shipment.status.value,
             fulfillmentRef: shipment.fulfillmentRef,
+            ...(shipment.trackingNumber ? { trackingNumber: shipment.trackingNumber.value } : {}),
           },
         });
       if (
@@ -71,8 +81,7 @@ export class CancelCarrierShipment {
       );
       await provider.cancelDelivery(tracking);
     } catch (error) {
-      if (error instanceof CarrierResolutionError)
-        return err(new CarrierError(error.code, "Carrier could not be resolved", 409));
+      if (error instanceof CarrierResolutionError) return err(carrierResolutionToError(error));
       const failure = carrierFailureOf(error);
       if (failure === null) throw error;
       return failure.carrierFailure === "rejected"
@@ -108,6 +117,7 @@ export class CancelCarrierShipment {
           shipmentId: input.shipmentId,
           status: shipment.status.value,
           fulfillmentRef: shipment.fulfillmentRef,
+          trackingNumber: tracking,
         });
       }),
     );
@@ -158,8 +168,7 @@ export class PrintCarrierAwbs {
       );
       return ok({ pdf });
     } catch (error) {
-      if (error instanceof CarrierResolutionError)
-        return err(new CarrierError(error.code, "Carrier could not be resolved", 409));
+      if (error instanceof CarrierResolutionError) return err(carrierResolutionToError(error));
       if (carrierFailureOf(error) !== null)
         return err(new CarrierError("CARRIER_UNAVAILABLE", "Carrier unavailable", 503));
       throw error;

@@ -78,6 +78,19 @@ async function carrierHarness(script: FakeCarrierScript = {}, enabled = true) {
   };
 }
 
+it.each(["cancel", "print"] as const)(
+  "%s returns 422 for an unregistered carrier",
+  async (operation) => {
+    const h = await carrierHarness();
+    await h.add("unknown", "aramex", "unknown-tn");
+    const result =
+      operation === "cancel"
+        ? await h.cancel.execute({ tenantId: "t", shipmentId: "unknown" })
+        : await h.print.execute({ tenantId: "t", shipmentIds: ["unknown"] });
+    expect(!result.ok && result.error).toMatchObject({ code: "CARRIER_UNKNOWN", httpStatus: 422 });
+  },
+);
+
 it("legacy void on a managed carrier shipment is refused", async () => {
   const shipments = new PostgresLikeShipmentRepository();
   const uow = new TrackingUnitOfWork();

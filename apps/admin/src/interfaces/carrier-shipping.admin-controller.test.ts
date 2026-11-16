@@ -33,7 +33,12 @@ function setup(status = "created") {
       .mockResolvedValue({ status: 200, body: { pdf: new Uint8Array([37, 80, 68, 70]) } }),
     cancelCarrierShipment: vi.fn().mockResolvedValue({
       status: 200,
-      body: { shipmentId: "s-1", status: "voided", fulfillmentRef: "f-1" },
+      body: {
+        shipmentId: "s-1",
+        status: "voided",
+        fulfillmentRef: "f-1",
+        trackingNumber: "old-tn",
+      },
     }),
     listEnabledCarriers: vi.fn().mockResolvedValue({ status: 200, body: { carriers: [] } }),
   };
@@ -69,5 +74,5 @@ it("detaches the fulfillment after cancellation", async () => {
   expect(
     await s.controller.cancel(principal, { tenantId: "t-1", shipmentId: "s-1" }),
   ).toMatchObject({ status: 200, body: { shipmentId: "s-1", status: "voided" } });
-  expect(s.fulfillment.detach).toHaveBeenCalledWith("t-1", "f-1");
+  expect(s.fulfillment.detach).toHaveBeenCalledWith("t-1", "f-1", "old-tn");
 });

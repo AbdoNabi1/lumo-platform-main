@@ -274,6 +274,39 @@ describe("PrepareForCarrierShipment (9a.3)", () => {
 });
 
 describe("Attach / Detach (Ruling 35, 9a.3)", () => {
+  it("detaches only the expected tracking identity", async () => {
+    const h = harness({ confirmed: true });
+    const id = await h.attachedOrder("identity");
+    const mismatch = await h.detach.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      expectedTrackingNumber: "old",
+    });
+    expect(mismatch.ok && mismatch.value).toMatchObject({
+      status: "tracking_assigned",
+      changed: false,
+    });
+    expect((await h.order(id)).trackingNumber?.value).toBe("5108002");
+    const matched = await h.detach.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      expectedTrackingNumber: "5108002",
+    });
+    expect(matched.ok && matched.value).toMatchObject({
+      status: "packing_completed",
+      changed: true,
+    });
+    expect((await h.order(id)).trackingNumber).toBeUndefined();
+    const absent = await h.detach.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      expectedTrackingNumber: "5108002",
+    });
+    expect(absent.ok && absent.value).toMatchObject({
+      status: "packing_completed",
+      changed: false,
+    });
+  });
   it("attach is idempotent for the same tracking number; detach clears it back to packing_completed", async () => {
     const h = harness({ confirmed: true });
     const id = await h.packedOrder("order-1");

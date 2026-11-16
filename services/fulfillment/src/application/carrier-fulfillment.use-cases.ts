@@ -226,10 +226,14 @@ export class AttachCarrierShipment implements UseCase<
   }
 }
 
-/** Voids the label on an order that has not been picked up: back to `packing_completed` with the carrier reference and tracking number cleared (spec 9a.3). */
+export interface DetachCarrierShipmentInput extends FulfillmentOrderIdInput {
+  readonly expectedTrackingNumber?: string;
+}
+
+/** Voids the label only when its optional expected tracking identity still matches. */
 export class DetachCarrierShipment implements UseCase<
-  FulfillmentOrderIdInput,
-  FulfillmentOrderStatusOutput,
+  DetachCarrierShipmentInput,
+  FulfillmentOrderStatusOutput & { readonly changed: boolean },
   DomainError
 > {
   private readonly deps: FulfillmentLifecycleDeps;
@@ -239,23 +243,27 @@ export class DetachCarrierShipment implements UseCase<
   }
 
   async execute(
-    input: FulfillmentOrderIdInput,
-  ): Promise<Result<FulfillmentOrderStatusOutput, DomainError>> {
-    return statusOnly(
-      await mutateOrder(this.deps, input, (order) => {
-        const from = order.status.value;
-        if (from === "packing_completed") return ok({ changed: false });
-        if (from !== "shipment_created" && from !== "tracking_assigned") {
-          return err(
-            new BusinessRuleError(
-              `FULFILLMENT_ALREADY_DISPATCHED: a fulfillment order in "${from}" no longer holds a voidable label`,
-            ),
-          );
-        }
-        order.returnToPacking(this.deps.idGenerator.generate(), this.deps.clock.now());
-        return ok({ changed: true });
-      }),
-    );
+    input: DetachCarrierShipmentInput,
+  ): Promise<Result<FulfillmentOrderStatusOutput & { readonly changed: boolean }, DomainError>> {
+    return mutateOrder(this.deps, input, (order) => {
+      if (
+        input.expectedTrackingNumber !== undefined &&
+        order.trackingNumber?.value !== input.expectedTrackingNumber
+      ) {
+        return ok({ changed: false });
+      }
+      const from = order.status.value;
+      if (from === "packing_completed") return ok({ changed: false });
+      if (from !== "shipment_created" && from !== "tracking_assigned") {
+        return err(
+          new BusinessRuleError(
+            `FULFILLMENT_ALREADY_DISPATCHED: a fulfillment order in "${from}" no longer holds a voidable label`,
+          ),
+        );
+      }
+      order.returnToPacking(this.deps.idGenerator.generate(), this.deps.clock.now());
+      return ok({ changed: true });
+    });
   }
 }
 

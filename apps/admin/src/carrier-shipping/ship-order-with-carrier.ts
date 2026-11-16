@@ -79,6 +79,22 @@ export class ShipOrderWithCarrier {
     if (!ready.ok) return { ...ready, orderNumber: order.orderNumber };
     const fulfillmentRef = ready.fulfillmentOrderId;
     const current = await this.deps.shipping.getByFulfillment({ tenantId, fulfillmentRef });
+    if (current.status !== 200 && current.status !== 404)
+      return responseFailure(current, order.orderNumber);
+    const currentShipment = current.status === 200 ? (current.body as Shipment) : undefined;
+    if (
+      ready.trackingNumber !== undefined &&
+      (currentShipment === undefined ||
+        ["voided", "cancelled"].includes(currentShipment.status.value) ||
+        currentShipment.trackingNumber?.value !== ready.trackingNumber)
+    ) {
+      try {
+        if (!(await this.deps.fulfillment.detach(tenantId, fulfillmentRef, ready.trackingNumber)))
+          return fail("FULFILLMENT_DETACH_PENDING");
+      } catch {
+        return fail("FULFILLMENT_DETACH_PENDING");
+      }
+    }
     let shipmentId: string;
     let status: string;
     if (

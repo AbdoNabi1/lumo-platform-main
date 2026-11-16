@@ -2,7 +2,7 @@ import type { FulfillmentController, FulfillmentOrder } from "@platform/fulfillm
 import type { ShippableOrder, ShipCode } from "./ports";
 
 type Ready =
-  | { ok: true; fulfillmentOrderId: string; status: string }
+  | { ok: true; fulfillmentOrderId: string; status: string; trackingNumber?: string }
   | { ok: false; code: ShipCode; httpStatus: number };
 type Response = Awaited<ReturnType<FulfillmentController["getByOrder"]>>;
 function failure(response: Response): Ready {
@@ -34,6 +34,7 @@ export class CarrierFulfillmentAdapter {
   async ensureReady(tenantId: string, order: ShippableOrder): Promise<Ready> {
     const current = await this.fulfillment.getByOrder({ tenantId, orderRef: order.orderId });
     let fulfillmentOrderId: string;
+    let trackingNumber: string | undefined;
     if (current.status === 404) {
       const created = await this.fulfillment.create({
         tenantId,
@@ -62,10 +63,16 @@ export class CarrierFulfillmentAdapter {
         return { ok: false, code: "ORDER_NOT_SHIPPABLE", httpStatus: 409 };
       }
       fulfillmentOrderId = value.id.toString();
+      trackingNumber = value.trackingNumber?.value;
     }
     const prepared = await this.fulfillment.prepareForCarrier({ tenantId, fulfillmentOrderId });
     if (!successful(prepared)) return failure(prepared);
-    return { ok: true, fulfillmentOrderId, status: (prepared.body as { status: string }).status };
+    return {
+      ok: true,
+      fulfillmentOrderId,
+      status: (prepared.body as { status: string }).status,
+      ...(trackingNumber === undefined ? {} : { trackingNumber }),
+    };
   }
 
   async attach(
@@ -84,9 +91,17 @@ export class CarrierFulfillmentAdapter {
     });
     return successful(response);
   }
-  async detach(tenantId: string, fulfillmentOrderId: string): Promise<boolean> {
+  async detach(
+    tenantId: string,
+    fulfillmentOrderId: string,
+    expectedTrackingNumber?: string,
+  ): Promise<boolean> {
     return successful(
-      await this.fulfillment.detachCarrierShipment({ tenantId, fulfillmentOrderId }),
+      await this.fulfillment.detachCarrierShipment({
+        tenantId,
+        fulfillmentOrderId,
+        ...(expectedTrackingNumber === undefined ? {} : { expectedTrackingNumber }),
+      }),
     );
   }
 }

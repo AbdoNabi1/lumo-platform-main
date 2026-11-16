@@ -23,7 +23,11 @@ import {
   type CarrierParcelRequest,
   type CarrierProvider,
 } from "./carrier-provider";
-import { CarrierResolutionError, type CarrierResolver } from "./carrier-resolver";
+import {
+  CarrierResolutionError,
+  carrierResolutionToError,
+  type CarrierResolver,
+} from "./carrier-resolver";
 
 export interface ShipmentIdInput {
   /** ADR-0014: the caller's verified tenant. */
@@ -235,8 +239,7 @@ export class CreateLabel implements UseCase<CreateLabelInput, CreateLabelOutput,
         precheck.value.mode === "fresh" ? "new_shipment" : "existing_shipment",
       );
     } catch (error) {
-      if (error instanceof CarrierResolutionError)
-        return err(new CarrierError(error.code, "Carrier could not be resolved", 409));
+      if (error instanceof CarrierResolutionError) return err(carrierResolutionToError(error));
       throw error;
     }
     if (precheck.value.mode === "resume") {

@@ -84,7 +84,7 @@ describe("carrier methods on FulfillmentController (wireFulfillment, in-memory)"
     });
     expect(detached).toEqual({
       status: 200,
-      body: { fulfillmentOrderId: id, status: "packing_completed" },
+      body: { fulfillmentOrderId: id, status: "packing_completed", changed: true },
     });
     const events = await wired.drainOutbox();
     expect(events).toBeGreaterThan(0);

@@ -118,6 +118,14 @@ it("ships, prints, isolates and cancels a real order end-to-end", async () => {
     payload: { paymentRef: "pay-1" },
   });
   expect(paid.statusCode).toBe(200);
+  const unknown = await app.inject({
+    method: "POST",
+    url: `/api/v1/orders/${orderId}/carrier-shipments`,
+    headers,
+    payload: { carrierKey: "aramex" },
+  });
+  expect(unknown.statusCode, unknown.body).toBe(422);
+  expect(unknown.json()).toMatchObject({ code: "CARRIER_UNKNOWN" });
   const shipped = await app.inject({
     method: "POST",
     url: `/api/v1/orders/${orderId}/carrier-shipments`,

@@ -78,6 +78,16 @@ async function harness(script: FakeCarrierScript = {}, enabled = true) {
 }
 
 describe("CreateLabel carrier path", () => {
+  it("returns 422 for an unregistered carrier", async () => {
+    const h = await harness();
+    const result = await h.create.execute({
+      tenantId: "t",
+      shipmentId: "s",
+      carrier: { ...details, carrierKey: "aramex" },
+    });
+    expect(!result.ok && result.error).toMatchObject({ code: "CARRIER_UNKNOWN", httpStatus: 422 });
+    expect(h.fake.record.createCalls).toHaveLength(0);
+  });
   it("a prepare problem writes no attempt (Review Focus 4)", async () => {
     const h = await harness({
       prepare: [{ code: "ADDRESS_NOT_SHIPPABLE", reason: "PROVINCE_MISSING" }],
