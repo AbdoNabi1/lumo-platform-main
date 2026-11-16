@@ -44,6 +44,17 @@ describe("present", () => {
     expect(response.body).toMatchObject({ code: "CARRIER_UNAVAILABLE", retryable: true });
   });
 
+  it("maps CARRIER_USE_CANCEL to 409 with its code", () => {
+    const response = present<never>(
+      err<DomainError>(
+        new CarrierError("CARRIER_USE_CANCEL", "Use the carrier cancel for this shipment", 409),
+      ),
+      200,
+    );
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({ code: "CARRIER_USE_CANCEL" });
+  });
+
   it("keeps the code table for other domain errors and passes success through", () => {
     expect(present(err<DomainError>(new BusinessRuleError("nope")), 200).status).toBe(409);
     expect(present(ok({ id: "s-1" }), 201)).toEqual({ status: 201, body: { id: "s-1" } });

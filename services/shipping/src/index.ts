@@ -1,3 +1,19 @@
+export {
+  CancelCarrierShipment,
+  PrintCarrierAwbs,
+  GetShipment,
+} from "./application/carrier-shipment.use-cases";
+export type {
+  CarrierShipmentDeps,
+  PrintCarrierAwbsInput,
+} from "./application/carrier-shipment.use-cases";
+export { CreateLabel, IN_FLIGHT_GRACE_MS } from "./application/shipment-lifecycle.use-cases";
+export type {
+  CarrierLabelDetails,
+  CreateLabelInput,
+  CreateLabelOutput,
+  CreateLabelDeps,
+} from "./application/shipment-lifecycle.use-cases";
 export { wireShipping } from "./composition";
 export type { ShippingWiringDeps, WiredShipping } from "./composition";
 export { ShippingController } from "./interfaces/shipping.controller";

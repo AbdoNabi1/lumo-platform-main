@@ -21,6 +21,11 @@ import {
   UpdateCarrierSettings,
   VerifyCarrierWebhook,
 } from "./application/carrier-settings.use-cases";
+import {
+  CancelCarrierShipment,
+  PrintCarrierAwbs,
+  GetShipment,
+} from "./application/carrier-shipment.use-cases";
 import { CreateShipment } from "./application/create-shipment.use-case";
 import type { CarrierCredentialVault } from "./application/ports";
 import { ListShippableCountries, QuoteShippingRates } from "./application/quote-shipping.use-cases";
@@ -173,6 +178,7 @@ function buildController(
     clock: deps.clock,
     fulfillmentPort,
     notifications,
+    isCarrierManaged: (key: string) => carriers.registry.has(key),
   };
 
   return new ShippingController({
@@ -183,7 +189,17 @@ function buildController(
       clock: deps.clock,
     }),
     advanceShipment: new AdvanceShipment(lifecycleDeps),
-    createLabel: new CreateLabel({ ...lifecycleDeps, carrierProvider }),
+    createLabel: new CreateLabel({
+      ...lifecycleDeps,
+      carrierProvider,
+      carriers: carriers.resolver,
+    }),
+    cancelCarrierShipment: new CancelCarrierShipment({
+      ...lifecycleDeps,
+      carriers: carriers.resolver,
+    }),
+    printCarrierAwbs: new PrintCarrierAwbs({ ...lifecycleDeps, carriers: carriers.resolver }),
+    getShipment: new GetShipment(lifecycleDeps),
     voidLabel: new VoidLabel({ ...lifecycleDeps, carrierProvider }),
     updateTracking: new UpdateTracking({ shipments, unitOfWork, clock: deps.clock }),
     retryShipment: new RetryShipment(lifecycleDeps),
