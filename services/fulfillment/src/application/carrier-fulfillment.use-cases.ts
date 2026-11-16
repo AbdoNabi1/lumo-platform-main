@@ -162,6 +162,18 @@ export class PrepareForCarrierShipment implements UseCase<
   }
 }
 
+/** The domain calls of an attach, shared by `AttachCarrierShipment` and `MirrorShipmentStatus`: `packing_completed` → `shipment_created` (when needed) → `tracking_assigned`. */
+function applyCarrierAttach(
+  order: FulfillmentOrder,
+  reference: CarrierReference,
+  tracking: TrackingNumber,
+  eventId: () => string,
+  at: Date,
+): void {
+  if (order.status.value === "packing_completed") order.createShipment(reference, eventId(), at);
+  order.assignTracking(tracking, eventId(), at);
+}
+
 export interface AttachCarrierShipmentInput extends FulfillmentOrderIdInput {
   readonly carrier: string;
   readonly carrierShipmentId: string;
@@ -200,16 +212,14 @@ export class AttachCarrierShipment implements UseCase<
             ),
           );
         }
-        if (from === "packing_completed") {
-          order.createShipment(reference.value, eventId(), this.deps.clock.now());
-        } else if (from !== "shipment_created") {
+        if (from !== "packing_completed" && from !== "shipment_created") {
           return err(
             new BusinessRuleError(
               `FULFILLMENT_NOT_ATTACHABLE: a fulfillment order in "${from}" cannot take a carrier shipment`,
             ),
           );
         }
-        order.assignTracking(tracking.value, eventId(), this.deps.clock.now());
+        applyCarrierAttach(order, reference.value, tracking.value, eventId, this.deps.clock.now());
         return ok({ changed: true });
       }),
     );
@@ -251,7 +261,19 @@ export class DetachCarrierShipment implements UseCase<
 
 export interface MirrorShipmentStatusInput extends FulfillmentOrderIdInput {
   readonly shipmentStatus: string;
+  /** With `trackingNumber` and `carrierShipmentId`, lets a packed order take the label before it mirrors (F16). */
+  readonly carrier?: string;
+  readonly trackingNumber?: string;
+  readonly carrierShipmentId?: string;
 }
+
+/** Shipment statuses that never attach a label on their own. */
+const NO_ATTACH_STATUSES: ReadonlySet<string> = new Set([
+  "created",
+  "label_created",
+  "voided",
+  "cancelled",
+]);
 
 /** Shipment status → the fulfillment status it drives (spec 9a.4). */
 const MIRROR_TARGETS: Readonly<Record<string, FulfillmentStatusValue>> = {
@@ -284,9 +306,18 @@ export class MirrorShipmentStatus implements UseCase<
     input: MirrorShipmentStatusInput,
   ): Promise<Result<FulfillmentOrderStatusOutput & { readonly changed: boolean }, DomainError>> {
     return mutateOrder(this.deps, input, (order) => {
-      const from = order.status.value;
+      let from = order.status.value;
       const eventId = (): string => this.deps.idGenerator.generate();
       const now = (): Date => this.deps.clock.now();
+
+      // A predecessor shipment (another tracking number) never moves this fulfillment.
+      if (
+        input.trackingNumber !== undefined &&
+        order.trackingNumber !== undefined &&
+        order.trackingNumber.value !== input.trackingNumber
+      ) {
+        return ok({ changed: false });
+      }
 
       if (input.shipmentStatus === "cancelled") {
         if (from !== "shipment_created" && from !== "tracking_assigned") {
@@ -297,9 +328,25 @@ export class MirrorShipmentStatus implements UseCase<
       }
 
       const target = MIRROR_TARGETS[input.shipmentStatus];
-      if (target === undefined) return ok({ changed: false });
+      let attached = false;
+      if (
+        from === "packing_completed" &&
+        !NO_ATTACH_STATUSES.has(input.shipmentStatus) &&
+        input.carrier !== undefined &&
+        input.trackingNumber !== undefined &&
+        input.carrierShipmentId !== undefined
+      ) {
+        const reference = CarrierReference.create(input.carrier, input.carrierShipmentId);
+        const tracking = TrackingNumber.create(input.trackingNumber);
+        if (!reference.ok) return err(reference.error);
+        if (!tracking.ok) return err(tracking.error);
+        applyCarrierAttach(order, reference.value, tracking.value, eventId, now());
+        attached = true;
+        from = order.status.value;
+      }
+      if (target === undefined) return ok({ changed: attached });
       const path = fulfillmentCarrierPathTo(from, target);
-      if (path === null || path.length === 0) return ok({ changed: false });
+      if (path === null || path.length === 0) return ok({ changed: attached });
 
       for (const step of path.slice(0, -1)) order.transition(step, eventId(), now());
       switch (target) {

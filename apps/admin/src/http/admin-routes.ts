@@ -39,6 +39,7 @@ import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
+import { publicCarrierWebhookRoutes } from "./public-carrier-webhook-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
@@ -2174,6 +2175,7 @@ export function adminRoutes(
     ...checkoutRoutes(admin),
     ...paymentsRoutes(admin),
     ...paymentsWebhookRoutes(admin),
+    ...publicCarrierWebhookRoutes(admin),
     ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
     ...shippingRoutes(admin),

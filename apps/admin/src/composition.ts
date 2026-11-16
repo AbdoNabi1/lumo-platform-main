@@ -108,7 +108,7 @@ import {
   type WiredSecurity,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
-import { wireShipping, type ShippingWiringDeps } from "@platform/shipping";
+import { wireShipping, type ShippingController, type ShippingWiringDeps } from "@platform/shipping";
 import type { DistributedLock } from "@platform/contracts";
 import { wireTenancy, type DnsVerifier, type TenantAvailability } from "@platform/tenancy";
 import { logger as adminLogger } from "@platform/utils";
@@ -693,6 +693,17 @@ export interface WiredAdmin {
    * `publicReads` above: the unguarded, framework-agnostic controller + the PSP port, exposed so a
    * `public: true` route can verify the signature itself before recording anything.
    */
+  /**
+   * The carrier webhook ingress seam (spec 9a.1). Like `paymentsWebhook`, a carrier presents no Bearer
+   * token: its authentication IS `verify` (the tenant's webhook secret), checked by a `public: true` route.
+   * `mirrorFulfillment` is the best-effort follow-up onto the fulfillment order (Ruling 25).
+   */
+  readonly carrierWebhooks: {
+    readonly verify: ShippingController["verifyCarrierWebhook"];
+    readonly record: ShippingController["recordWebhook"];
+    readonly mirrorFulfillment: FulfillmentController["mirrorShipmentStatus"];
+    readonly logger?: { warn(message: string, meta: Record<string, string>): void };
+  };
   readonly paymentsWebhook: {
     readonly recordWebhook: PaymentController["recordWebhook"];
     /**
@@ -1339,6 +1350,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       customers: identity.customers,
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
+    },
+    carrierWebhooks: {
+      verify: (input) => shipping.shipping.verifyCarrierWebhook(input),
+      record: (input) => shipping.shipping.recordWebhook(input),
+      mirrorFulfillment: (input) => fulfillment.fulfillment.mirrorShipmentStatus(input),
+      logger: adminLogger,
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),

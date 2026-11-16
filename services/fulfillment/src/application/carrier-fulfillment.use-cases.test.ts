@@ -456,6 +456,70 @@ describe("MirrorShipmentStatus (9a.4, Ruling 24)", () => {
     expect(r.ok && r.value).toMatchObject({ status: "packing_completed", changed: false });
   });
 
+  it("packing_completed + in_transit with carrier fields attaches then mirrors in one step", async () => {
+    const h = harness({ confirmed: true });
+    const id = await h.packedOrder("order-1");
+    const r = await h.mirror.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      shipmentStatus: "in_transit",
+      carrier: "bosta",
+      trackingNumber: "5108002",
+      carrierShipmentId: "del-1",
+    });
+    expect(r.ok && r.value).toMatchObject({ status: "in_transit", changed: true });
+    expect((await h.order(id)).trackingNumber?.value).toBe("5108002");
+    expect(h.repo.trail).toEqual([
+      "shipment_created",
+      "tracking_assigned",
+      "shipment_dispatched",
+      "in_transit",
+    ]);
+  });
+
+  it("packing_completed + in_transit without the carrier fields is changed=false", async () => {
+    const h = harness({ confirmed: true });
+    const id = await h.packedOrder("order-1");
+    const r = await h.mirror.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      shipmentStatus: "in_transit",
+      trackingNumber: "5108002",
+    });
+    expect(r.ok && r.value).toMatchObject({ status: "packing_completed", changed: false });
+  });
+
+  it("packing_completed + cancelled never attaches", async () => {
+    const h = harness({ confirmed: true });
+    const id = await h.packedOrder("order-1");
+    const r = await h.mirror.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      shipmentStatus: "cancelled",
+      carrier: "bosta",
+      trackingNumber: "5108002",
+      carrierShipmentId: "del-1",
+    });
+    expect(r.ok && r.value).toMatchObject({ status: "packing_completed", changed: false });
+    expect((await h.order(id)).trackingNumber).toBeUndefined();
+  });
+
+  it("a predecessor's tracking number never moves the fulfillment (plan review 1, finding 7)", async () => {
+    const h = harness({ confirmed: true });
+    const id = await h.packedOrder("order-1");
+    must(await h.attach.execute(attachInput(id, "B-1")));
+    const r = await h.mirror.execute({
+      tenantId: T,
+      fulfillmentOrderId: id,
+      shipmentStatus: "cancelled",
+      carrier: "bosta",
+      trackingNumber: "A-1",
+      carrierShipmentId: "del-0",
+    });
+    expect(r.ok && r.value).toMatchObject({ status: "tracking_assigned", changed: false });
+    expect((await h.order(id)).trackingNumber?.value).toBe("B-1");
+  });
+
   it("is NOT_FOUND for an unknown order", async () => {
     const h = harness({ confirmed: true });
     const r = await h.mirror.execute({
