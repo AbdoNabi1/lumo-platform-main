@@ -44,6 +44,6 @@ describe("wireShipping — carrier foundation (Project 5)", () => {
     const registration = fakeRegistration().registration;
     expect(() =>
       wireShipping({ ...base(), carrierRegistrations: [registration, registration] }),
-    ).toThrow(/already registered/);
+    ).toThrow(/duplicate/i);
   });
 });

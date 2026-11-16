@@ -59,7 +59,7 @@ export class CarrierRegistry {
         );
       }
       if (byKey.has(registration.key)) {
-        throw new Error(`Carrier "${registration.key}" is already registered`);
+        throw new Error(`Duplicate carrier key "${registration.key}"`);
       }
       if (registration.credentialFields.length === 0) {
         throw new Error(`Carrier "${registration.key}": credentialFields must be non-empty`);

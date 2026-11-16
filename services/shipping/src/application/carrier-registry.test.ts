@@ -10,7 +10,7 @@ describe("CarrierRegistry", () => {
   it("refuses a duplicate key: a later registration never replaces an earlier one", () => {
     expect(() =>
       CarrierRegistry.from([fakeRegistration().registration, fakeRegistration().registration]),
-    ).toThrow(/already registered/);
+    ).toThrow(/duplicate/i);
   });
 
   it.each([["Bosta"], ["b"], ["1bosta"], ["bosta!"], ["a".repeat(33)]])(
