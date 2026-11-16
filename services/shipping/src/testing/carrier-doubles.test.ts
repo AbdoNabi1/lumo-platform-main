@@ -49,12 +49,32 @@ describe("carrier doubles", () => {
     expect(second).not.toBe(first);
   });
 
-  it("records repeated scripted verification failures", async () => {
-    const reg = fakeRegistration({ script: { verify: "credentials_rejected" } });
+  it("records open transaction counts for cancel, print and get calls", async () => {
+    const reg = fakeRegistration({ openCount: () => 2 });
     const provider = reg.registration.create(context);
-    const error = await provider.verifyCredentials().catch((e: unknown) => e);
-    expect(carrierFailureOf(error)).toEqual({ carrierFailure: "credentials_rejected" });
-    expect(reg.record.verifyCalls).toBe(1);
+    await provider.cancelDelivery("TN");
+    await provider.printAwbs(["TN"], {});
+    await provider.getDelivery("TN");
+    expect(reg.record.cancelOpenCounts).toEqual([2]);
+    expect(reg.record.printOpenCounts).toEqual([2]);
+    expect(reg.record.getOpenCounts).toEqual([2]);
+  });
+
+  it("records repeated scripted verification failures", async () => {
+    const reg = fakeRegistration({
+      script: { verify: "credentials_rejected" },
+      openCount: () => 1,
+    });
+    const first = reg.registration.create(context);
+    const second = reg.registration.create(context);
+    await expect(first.verifyCredentials()).rejects.toMatchObject({
+      carrierFailure: "credentials_rejected",
+    });
+    await expect(second.verifyCredentials()).rejects.toMatchObject({
+      carrierFailure: "credentials_rejected",
+    });
+    expect(reg.record.verifyCalls).toBe(2);
+    expect(reg.record.verifyOpenCounts).toEqual([1, 1]);
   });
   it("shifts prepare, cancel, print and get queues before using defaults", async () => {
     const status = {

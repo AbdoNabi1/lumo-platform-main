@@ -15,6 +15,14 @@ beforeEach(() => {
   expect.hasAssertions();
 });
 
+function graphHasTenantId(value: unknown, seen = new WeakSet<object>()): boolean {
+  if (typeof value !== "object" || value === null || seen.has(value)) return false;
+  seen.add(value);
+  return Object.entries(value).some(
+    ([key, child]) => key === "tenantId" || graphHasTenantId(child, seen),
+  );
+}
+
 interface HarnessOptions {
   readonly enabled?: boolean;
   readonly vault?: CarrierCredentialVault | null;
@@ -172,7 +180,12 @@ describe("TenantCarrierResolver (ADR-0014: per call, caches nothing)", () => {
       registry: CarrierRegistry.from([]),
       vault: undefined,
     });
-    expect(JSON.stringify(Object.keys(resolver))).not.toContain("tenant");
+    expect(graphHasTenantId(resolver)).toBe(false);
+    expect(graphHasTenantId({ deps: { inner: { tenantId: "t-1" } } })).toBe(true);
+    const cyclic: { self?: unknown; children: unknown[] } = { children: [] };
+    cyclic.self = cyclic;
+    cyclic.children.push({ tenantId: "t-1" });
+    expect(graphHasTenantId(cyclic)).toBe(true);
   });
 
   it("webhookVaultKey seals the webhook secret under its own key (Ruling 27)", () => {

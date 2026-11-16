@@ -63,8 +63,11 @@ export interface FakeCarrierRecord {
   readonly findCalls: string[];
   readonly findOpenCounts: number[];
   readonly cancelCalls: string[];
+  readonly cancelOpenCounts: number[];
   readonly printCalls: [readonly string[], AwbOptions][];
+  readonly printOpenCounts: number[];
   readonly getCalls: string[];
+  readonly getOpenCounts: number[];
   verifyCalls: number;
   readonly verifyOpenCounts: number[];
 }
@@ -114,19 +117,19 @@ export class FakeCarrierProvider implements CarrierProvider {
   }
 
   cancelDelivery(trackingNumber: string): Promise<"cancelled" | "not_found"> {
-    this.openCount();
+    this.record.cancelOpenCounts.push(this.openCount());
     this.record.cancelCalls.push(trackingNumber);
     return answer(this.script.cancel?.shift() ?? "cancelled");
   }
 
   printAwbs(trackingNumbers: readonly string[], options: AwbOptions): Promise<Uint8Array> {
-    this.openCount();
+    this.record.printOpenCounts.push(this.openCount());
     this.record.printCalls.push([trackingNumbers, options]);
     return answer(this.script.print?.shift() ?? new TextEncoder().encode("%PDF-1.4 fake"));
   }
 
   getDelivery(trackingNumber: string): Promise<CarrierDeliveryStatus> {
-    this.openCount();
+    this.record.getOpenCounts.push(this.openCount());
     this.record.getCalls.push(trackingNumber);
     return answer(
       this.script.get?.shift() ?? {
@@ -169,8 +172,11 @@ export function fakeRegistration(
     findCalls: [],
     findOpenCounts: [],
     cancelCalls: [],
+    cancelOpenCounts: [],
     printCalls: [],
+    printOpenCounts: [],
     getCalls: [],
+    getOpenCounts: [],
     verifyCalls: 0,
     verifyOpenCounts: [],
   };
