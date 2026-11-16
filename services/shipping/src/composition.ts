@@ -61,6 +61,7 @@ import {
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import { PrismaMerchantCarrierSettingsRepository } from "./infrastructure/prisma-merchant-carrier-settings-repository";
+import { PrismaProcessedCarrierWebhookStore } from "./infrastructure/prisma-processed-carrier-webhook-store";
 import { PrismaShipmentRepository } from "./infrastructure/prisma-shipment-repository";
 import { PrismaShippingZoneRepository } from "./infrastructure/prisma-shipping-zone-repository";
 import {
@@ -160,7 +161,10 @@ function buildController(
   const fulfillmentPort = new InMemoryFulfillmentAdapter();
   const carrierProvider = new InMemoryCarrierProvider();
   const notifications = new InMemoryNotificationAdapter();
-  const processedCarrierWebhooks = new InMemoryProcessedCarrierWebhookStore();
+  const processedCarrierWebhooks =
+    deps.prisma === undefined
+      ? new InMemoryProcessedCarrierWebhookStore()
+      : new PrismaProcessedCarrierWebhookStore(deps.prisma);
 
   const carrierSettingsDeps = {
     settings: carriers.settings,

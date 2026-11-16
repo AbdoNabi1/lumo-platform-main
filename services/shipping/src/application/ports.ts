@@ -35,8 +35,8 @@ export interface CarrierProviderPort {
 
 /** Replay-safe carrier-webhook dedup — unique per `(tenant, carrier, event)`, backing `RecordCarrierWebhook`'s idempotency. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface ProcessedCarrierWebhookStore {
-  hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean>;
-  markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void>;
+  hasProcessed(carrier: string, eventId: string, tenantId: string, tx?: unknown): Promise<boolean>;
+  markProcessed(carrier: string, eventId: string, tenantId: string, tx?: unknown): Promise<void>;
 }
 
 /**

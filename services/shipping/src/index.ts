@@ -86,3 +86,9 @@ export {
   InMemoryCarrierCredentialVault,
   SHIPPING_CREDENTIALS_KEY_ALIAS,
 } from "./infrastructure/envelope-carrier-credential-vault";
+export { RecordCarrierWebhook } from "./application/record-carrier-webhook.use-case";
+export type {
+  RecordCarrierWebhookInput,
+  RecordCarrierWebhookOutput,
+} from "./application/record-carrier-webhook.use-case";
+export { PrismaProcessedCarrierWebhookStore } from "./infrastructure/prisma-processed-carrier-webhook-store";
