@@ -56,7 +56,7 @@ export function publicCarrierWebhookRoutes(admin: WiredAdmin): readonly RouteDef
 
         const webhook = parseBostaWebhook(rawBody);
         if (webhook === null) {
-          return { status: 422, body: { code: "VALIDATION", message: "Not a Bosta webhook" } };
+          return { status: 422, body: { code: "VALIDATION" } };
         }
         const { target } = mapBostaState(webhook.state, webhook.type);
         const recorded = await record({

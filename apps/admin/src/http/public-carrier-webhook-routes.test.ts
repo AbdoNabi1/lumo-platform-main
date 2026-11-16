@@ -201,8 +201,7 @@ describe("public carrier webhook route", () => {
   it("bad JSON from an authenticated sender is 422 VALIDATION and records nothing", async () => {
     const record = vi.fn();
     const res = await call(fake({ record }), good(new TextEncoder().encode("{nope")));
-    expect(res.status).toBe(422);
-    expect(res.body).toMatchObject({ code: "VALIDATION" });
+    expect(res).toEqual({ status: 422, body: { code: "VALIDATION" } });
     expect(record).not.toHaveBeenCalled();
   });
 
