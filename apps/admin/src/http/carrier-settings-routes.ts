@@ -47,22 +47,13 @@ export function carrierSettingsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       permission: "shipping:update_settings",
       idempotent: true,
       summary: "Update carrier settings",
-      schema: { params: z.unknown(), body: z.unknown() },
-      handle: ({ params: rawParams, body: rawBody, context }) => {
-        const parsedParams = params.safeParse(rawParams);
-        const parsedBody = body.safeParse(rawBody);
-        if (!parsedParams.success || !parsedBody.success) {
-          return Promise.resolve({
-            status: 400,
-            body: { code: "VALIDATION", message: "Invalid carrier settings request" },
-          });
-        }
-        return admin.carrierSettings.update(context.principal, {
-          ...parsedBody.data,
-          carrierKey: parsedParams.data.carrierKey,
+      schema: { params, body },
+      handle: ({ params, body, context }) =>
+        admin.carrierSettings.update(context.principal, {
+          ...body,
+          carrierKey: params.carrierKey,
           tenantId: context.tenantId,
-        });
-      },
+        }),
     }),
     defineRoute({
       method: "POST",
@@ -71,20 +62,12 @@ export function carrierSettingsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       permission: "shipping:update_settings",
       idempotent: true,
       summary: "Rotate the carrier webhook secret",
-      schema: { params: z.unknown() },
-      handle: ({ params: rawParams, context }) => {
-        const parsedParams = params.safeParse(rawParams);
-        if (!parsedParams.success) {
-          return Promise.resolve({
-            status: 400,
-            body: { code: "VALIDATION", message: "Invalid carrier key" },
-          });
-        }
-        return admin.carrierSettings.rotateWebhookSecret(context.principal, {
-          carrierKey: parsedParams.data.carrierKey,
+      schema: { params },
+      handle: ({ params, context }) =>
+        admin.carrierSettings.rotateWebhookSecret(context.principal, {
+          carrierKey: params.carrierKey,
           tenantId: context.tenantId,
-        });
-      },
+        }),
     }),
   ] as readonly RouteDefinition[];
 }

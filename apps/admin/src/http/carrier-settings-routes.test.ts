@@ -146,15 +146,54 @@ describe("carrier settings routes", () => {
       { disconnect: true, enabled: true },
       { cod: 1 },
     ]) {
-      expect((await put(app, "bosta", body)).statusCode).toBe(400);
+      const res = await put(app, "bosta", body);
+      expect(res.statusCode).toBe(422);
+      expect(res.json()).toMatchObject({ code: "VALIDATION" });
+      if ("credentials" in body) {
+        expect(res.json().fields).toEqual(
+          expect.arrayContaining([expect.objectContaining({ field: "credentials.apiKey" })]),
+        );
+      }
     }
+  });
+
+  it("does not cache invalid requests under their idempotency key", async () => {
+    keys += 1;
+    const headers = { ...authed, "idempotency-key": `carrier-${keys}` };
+    const invalid = await app.inject({
+      method: "PUT",
+      url: "/api/v1/shipping/carriers/bosta",
+      headers,
+      payload: {},
+    });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json()).toMatchObject({ code: "VALIDATION" });
+
+    const corrected = await app.inject({
+      method: "PUT",
+      url: "/api/v1/shipping/carriers/bosta",
+      headers,
+      payload: { enabled: true },
+    });
+    expect(corrected.statusCode).toBe(200);
   });
 
   it("rejects unknown or malformed carrier keys", async () => {
     const unknown = await put(app, "aramex", { enabled: true });
     expect(unknown.statusCode).toBe(422);
     expect(unknown.json()).toMatchObject({ code: "CARRIER_UNKNOWN" });
-    expect((await put(app, "Bad%20Key", { enabled: true })).statusCode).toBe(400);
+    const malformed = await put(app, "Bad%20Key", { enabled: true });
+    expect(malformed.statusCode).toBe(422);
+    expect(malformed.json()).toMatchObject({ code: "VALIDATION" });
+
+    keys += 1;
+    const malformedRotation = await app.inject({
+      method: "POST",
+      url: "/api/v1/shipping/carriers/Bad%20Key/webhook-secret",
+      headers: { ...authed, "idempotency-key": `carrier-${keys}` },
+    });
+    expect(malformedRotation.statusCode).toBe(422);
+    expect(malformedRotation.json()).toMatchObject({ code: "VALIDATION" });
   });
 
   it("tenant t-2 reads its own empty settings", async () => {
