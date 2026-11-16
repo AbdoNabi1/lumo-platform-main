@@ -198,6 +198,12 @@ import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
 import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
 import { CarrierSettingsAdminController } from "./interfaces/carrier-settings.admin-controller";
+import { CarrierShippingAdminController } from "./interfaces/carrier-shipping.admin-controller";
+import { CarrierOrderAdapter } from "./carrier-shipping/carrier-order.adapter";
+import { CarrierFulfillmentAdapter } from "./carrier-shipping/carrier-fulfillment.adapter";
+import { ShipOrderWithCarrier } from "./carrier-shipping/ship-order-with-carrier";
+// type-only WiredAdmin import inside; no runtime cycle (preflight F23)
+import { resolveLineImages } from "./http/product-images";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
@@ -488,6 +494,7 @@ export interface WiredAdmin {
   /** Plan 3C: Settings → Shipping and delivery (zones and rates). */
   readonly shippingZones: ShippingZonesAdminController;
   readonly carrierSettings: CarrierSettingsAdminController;
+  readonly carrierShipping: CarrierShippingAdminController;
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -1083,6 +1090,28 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const accessControl = deps.accessControl ?? new AllowAllAccessControl();
   const auditTrail = deps.auditTrail ?? new InMemoryAuditTrail();
   const guard = new AdminGuard({ accessControl, auditTrail, clock: deps.clock });
+  const carrierOrders = new CarrierOrderAdapter({
+    orders: orders.orders,
+    payments: payments.payments,
+    lineImageUrls: async (tenantId, lines) => {
+      const images = await resolveLineImages(
+        { mediaImages: mediaLibrary.images, publicReads: { products: catalog.products } } as Pick<
+          WiredAdmin,
+          "mediaImages" | "publicReads"
+        >,
+        tenantId,
+        lines,
+      );
+      return new Map([...images].map(([key, image]) => [key, image?.url ?? null]));
+    },
+  });
+  const carrierFulfillment = new CarrierFulfillmentAdapter(fulfillment.fulfillment);
+  const carrierShipper = new ShipOrderWithCarrier({
+    orders: carrierOrders,
+    fulfillment: carrierFulfillment,
+    shipping: shipping.shipping,
+    lock: deps.distributedLock,
+  });
 
   // ── T5.17 customer authentication (storefront) ──
   /**
@@ -1219,6 +1248,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     shipping: new ShippingAdminController({ shipping: shipping.shipping, guard }),
     shippingZones: new ShippingZonesAdminController({ zones: shipping.zones, guard }),
     carrierSettings: new CarrierSettingsAdminController({ shipping: shipping.shipping, guard }),
+    carrierShipping: new CarrierShippingAdminController({
+      guard,
+      orders: carrierOrders,
+      rawFulfillment: fulfillment.fulfillment,
+      fulfillment: carrierFulfillment,
+      shipping: shipping.shipping,
+      shipper: carrierShipper,
+    }),
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),

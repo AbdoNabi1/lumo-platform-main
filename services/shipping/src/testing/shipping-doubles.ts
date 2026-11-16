@@ -77,6 +77,14 @@ export class PostgresLikeShipmentRepository implements ShipmentRepository {
     );
   }
 
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string): Promise<number> {
+    return Promise.resolve(
+      [...this.bucket(tenantId).values()].filter(
+        (row) => row.shipment.fulfillmentRef === fulfillmentRef,
+      ).length,
+    );
+  }
+
   findByTrackingNumber(
     carrier: string,
     trackingNumber: string,

@@ -37,6 +37,16 @@ beforeEach(() => {
 });
 
 describe("PostgresLikeShipmentRepository", () => {
+  it("counts only the requested tenant and fulfillment", async () => {
+    const repo = new PostgresLikeShipmentRepository();
+    await repo.save(newShipment("a"), "t-1");
+    await repo.save(newShipment("b"), "t-1");
+    await repo.save(newShipment("c"), "t-2");
+    await repo.save(newShipment("d", "other"), "t-1");
+    expect(await repo.countByFulfillmentRef("fulfillment-1", "t-1")).toBe(2);
+    expect(await repo.countByFulfillmentRef("fulfillment-1", "t-2")).toBe(1);
+    expect(await repo.countByFulfillmentRef("fulfillment-1", "t-3")).toBe(0);
+  });
   it("buckets rows by tenant: another tenant's id, ref and tracking number are not found", async () => {
     const repo = new PostgresLikeShipmentRepository();
     await repo.save(labelled("ship-1"), "t-1");

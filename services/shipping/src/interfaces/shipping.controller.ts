@@ -14,6 +14,7 @@ import type {
   VerifyCarrierWebhook,
 } from "../application/carrier-settings.use-cases";
 import type {
+  CountShipmentsByFulfillment,
   GetShipmentByFulfillment,
   GetShipmentByFulfillmentInput,
 } from "../application/get-shipment-by-fulfillment.use-case";
@@ -46,6 +47,7 @@ export interface ShippingControllerDeps {
   readonly retryShipment: RetryShipment;
   readonly recordCarrierWebhook: RecordCarrierWebhook;
   readonly getShipmentByFulfillment: GetShipmentByFulfillment;
+  readonly countShipmentsByFulfillment: CountShipmentsByFulfillment;
   readonly getCarrierSettings: GetCarrierSettings;
   readonly listEnabledCarriers: ListEnabledCarriers;
   readonly updateCarrierSettings: UpdateCarrierSettings;
@@ -103,6 +105,10 @@ export class ShippingController {
 
   async getByFulfillment(input: GetShipmentByFulfillmentInput): Promise<ControllerResponse> {
     return present(await this.deps.getShipmentByFulfillment.execute(input), 200);
+  }
+
+  async countByFulfillment(input: GetShipmentByFulfillmentInput): Promise<ControllerResponse> {
+    return present(await this.deps.countShipmentsByFulfillment.execute(input), 200);
   }
 
   async getCarrierSettings(input: { tenantId: string }): Promise<ControllerResponse> {

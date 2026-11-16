@@ -99,6 +99,16 @@ describe("InMemoryShipmentRepository write-time tenant (ADR-0014 amendment 2026-
 });
 
 describe("InMemoryShipmentRepository lookups (local carriers)", () => {
+  it("counts only shipments for the given tenant and fulfillment", async () => {
+    const shipments = repository();
+    await shipments.save(newShipment("a", "f-1"), "t-1");
+    await shipments.save(newShipment("b", "f-1"), "t-1");
+    await shipments.save(newShipment("c", "f-2"), "t-1");
+    await shipments.save(newShipment("d", "f-1"), "t-2");
+    expect(await shipments.countByFulfillmentRef("f-1", "t-1")).toBe(2);
+    expect(await shipments.countByFulfillmentRef("f-1", "t-2")).toBe(1);
+    expect(await shipments.countByFulfillmentRef("f-1", "t-3")).toBe(0);
+  });
   it("findByTrackingNumber is tenant- and carrier-scoped", async () => {
     const shipments = repository();
     await shipments.save(labelled("ship-bosta", "bosta", "5108002"), "t-1");

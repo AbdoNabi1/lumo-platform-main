@@ -54,6 +54,14 @@ export class InMemoryShipmentRepository implements ShipmentRepository {
     );
   }
 
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string): Promise<number> {
+    return Promise.resolve(
+      [...bucketFor(this.store, tenantId).values()].filter(
+        (s) => s.fulfillmentRef === fulfillmentRef,
+      ).length,
+    );
+  }
+
   findByTrackingNumber(
     carrier: string,
     trackingNumber: string,

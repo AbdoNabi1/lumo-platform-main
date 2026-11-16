@@ -38,7 +38,10 @@ import {
   UpdateRate,
   UpdateZone,
 } from "./application/shipping-zones.use-cases";
-import { GetShipmentByFulfillment } from "./application/get-shipment-by-fulfillment.use-case";
+import {
+  CountShipmentsByFulfillment,
+  GetShipmentByFulfillment,
+} from "./application/get-shipment-by-fulfillment.use-case";
 import { RecordCarrierWebhook } from "./application/record-carrier-webhook.use-case";
 import {
   AdvanceShipment,
@@ -215,6 +218,7 @@ function buildController(
       processedCarrierWebhooks,
     }),
     getShipmentByFulfillment: new GetShipmentByFulfillment({ shipments }),
+    countShipmentsByFulfillment: new CountShipmentsByFulfillment({ shipments }),
     getCarrierSettings: new GetCarrierSettings(carrierSettingsDeps),
     listEnabledCarriers: new ListEnabledCarriers(carrierSettingsDeps),
     updateCarrierSettings: new UpdateCarrierSettings(carrierSettingsDeps),

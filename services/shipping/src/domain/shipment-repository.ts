@@ -26,6 +26,7 @@ export interface ShipmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<Shipment | null>;
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string, tx?: unknown): Promise<number>;
   /** Looks up a carrier's shipment by its tracking number within one tenant (carrier webhooks); newest first. */
   findByTrackingNumber(
     carrier: string,

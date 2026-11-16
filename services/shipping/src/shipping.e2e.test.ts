@@ -31,6 +31,17 @@ async function newShipmentId(app: ReturnType<typeof wire>): Promise<string> {
 }
 
 describe("shipping (end to end)", () => {
+  it("counts shipments for the requested fulfillment and tenant", async () => {
+    const app = wire();
+    await newShipmentId(app);
+    await newShipmentId(app);
+    expect(
+      await app.shipping.countByFulfillment({ tenantId: TENANT, fulfillmentRef: "fulfillment-1" }),
+    ).toEqual({ status: 200, body: { count: 2 } });
+    expect(
+      await app.shipping.countByFulfillment({ tenantId: "other", fulfillmentRef: "fulfillment-1" }),
+    ).toEqual({ status: 200, body: { count: 0 } });
+  });
   it("runs the full Sprint 4.10 lifecycle: create -> label -> carrier -> transit -> deliver, publishing canonical events", async () => {
     const app = wire();
     const id = await newShipmentId(app);

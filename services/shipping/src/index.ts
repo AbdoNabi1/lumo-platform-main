@@ -14,6 +14,7 @@ export type {
   CreateLabelOutput,
   CreateLabelDeps,
 } from "./application/shipment-lifecycle.use-cases";
+export { CountShipmentsByFulfillment } from "./application/get-shipment-by-fulfillment.use-case";
 export { wireShipping } from "./composition";
 export type { ShippingWiringDeps, WiredShipping } from "./composition";
 export { ShippingController } from "./interfaces/shipping.controller";

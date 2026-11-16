@@ -134,6 +134,12 @@ export class PrismaShipmentRepository implements ShipmentRepository {
     return row === null ? null : this.toDomain(row);
   }
 
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string, tx?: unknown): Promise<number> {
+    return readScoped(this.deps.prisma, tenantId, tx, (client) =>
+      client.shipment.count({ where: { tenantId, fulfillmentRef } }),
+    );
+  }
+
   async findByTrackingNumber(
     carrier: string,
     trackingNumber: string,

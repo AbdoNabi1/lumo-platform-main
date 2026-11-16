@@ -56,6 +56,19 @@ beforeEach(() => {
 });
 
 describe("PrismaShipmentRepository finders (local carriers)", () => {
+  it("counts shipments with an explicit tenant and fulfillment filter", async () => {
+    const calls: Args[] = [];
+    const tx = {
+      shipment: {
+        count: (args: Args) => {
+          calls.push(args);
+          return Promise.resolve(2);
+        },
+      },
+    } as unknown as TransactionClient;
+    expect(await repository().countByFulfillmentRef("f-1", "t-1", tx)).toBe(2);
+    expect(calls).toEqual([{ where: { tenantId: "t-1", fulfillmentRef: "f-1" } }]);
+  });
   it("findByTrackingNumber scopes by tenant, carrier and tracking number, newest first", async () => {
     const { tx, calls } = fakeTx(ROW);
 
