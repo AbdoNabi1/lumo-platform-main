@@ -1,12 +1,14 @@
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import {
   Button,
+  Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
   Input,
 } from "@platform/ui";
 import {
@@ -31,6 +33,7 @@ export function CarrierDialogContent({
   const copy = t.carrierSettings;
   const [state, action, pending] = useActionState(saveCarrierAction, initial);
   const [confirm, setConfirm] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const [rotateState, setRotateState] = useState<FormState>(initial);
   const [rotating, startRotation] = useTransition();
   useEffect(() => {
@@ -46,11 +49,7 @@ export function CarrierDialogContent({
     <DialogContent>
       <DialogHeader>
         <DialogTitle>
-          {carrier.key === "bosta" ? (
-            copy.carrierBosta
-          ) : (
-            <bdi dir="auto">{carrier.displayName}</bdi>
-          )}
+          <bdi dir="auto">{carrier.key === "bosta" ? copy.carrierBosta : carrier.displayName}</bdi>
         </DialogTitle>
         <DialogDescription>{copy.subtitle}</DialogDescription>
       </DialogHeader>
@@ -125,21 +124,37 @@ export function CarrierDialogContent({
       </form>
       {carrier.configured && (
         <div>
-          {!confirm ? (
-            <Button type="button" variant="outline" onClick={() => setConfirm(true)}>
-              {copy.rotate}
-            </Button>
-          ) : (
-            <div role="alertdialog" aria-label={copy.rotate}>
-              <p>{copy.confirmRotate}</p>
-              <Button type="button" disabled={rotating} onClick={rotate}>
+          <Dialog open={confirm} onOpenChange={setConfirm}>
+            <DialogTrigger asChild>
+              <Button type="button" variant="outline">
                 {copy.rotate}
               </Button>
-              <Button type="button" variant="outline" onClick={() => setConfirm(false)}>
-                {copy.cancel}
-              </Button>
-            </div>
-          )}
+            </DialogTrigger>
+            <DialogContent
+              onOpenAutoFocus={(event) => {
+                event.preventDefault();
+                cancelRef.current?.focus();
+              }}
+            >
+              <DialogHeader>
+                <DialogTitle>{copy.rotate}</DialogTitle>
+                <DialogDescription>{copy.confirmRotate}</DialogDescription>
+              </DialogHeader>
+              <div className="flex gap-2">
+                <Button
+                  ref={cancelRef}
+                  type="button"
+                  variant="outline"
+                  onClick={() => setConfirm(false)}
+                >
+                  {copy.cancel}
+                </Button>
+                <Button type="button" disabled={rotating} onClick={rotate}>
+                  {copy.rotate}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
           {rotateState.status === "error" && <p role="alert">{rotateState.message}</p>}
         </div>
       )}

@@ -1,7 +1,16 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Button, Dialog } from "@platform/ui";
+import { useRef, useState, useTransition } from "react";
+import {
+  Badge,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@platform/ui";
 import { disconnectCarrierAction } from "@/app/settings/shipping/carrier-actions";
 import type { CarrierSettingsEntryDto } from "@/lib/api/carriers";
 import type { FormState } from "@/lib/api/mutation";
@@ -18,6 +27,7 @@ export function CarriersCard({
   const copy = t.carrierSettings;
   const [editing, setEditing] = useState<CarrierSettingsEntryDto | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
   const [state, setState] = useState<FormState>({ status: "idle" });
   const [pending, startTransition] = useTransition();
   function disconnect(key: string) {
@@ -37,15 +47,13 @@ export function CarriersCard({
         >
           <div>
             <p className="font-medium">
-              {carrier.key === "bosta" ? (
-                copy.carrierBosta
-              ) : (
-                <bdi dir="auto">{carrier.displayName}</bdi>
-              )}
+              <bdi dir="auto">
+                {carrier.key === "bosta" ? copy.carrierBosta : carrier.displayName}
+              </bdi>
             </p>
-            <p className="text-muted-foreground text-sm">
+            <Badge variant={carrier.configured ? "success" : "neutral"}>
               {carrier.configured ? copy.connected : copy.notConnected}
-            </p>
+            </Badge>
             {!carrier.available && <p>{copy.notAvailable}</p>}
           </div>
           <div className="flex gap-2">
@@ -53,22 +61,46 @@ export function CarriersCard({
               {carrier.configured ? copy.settings : copy.connect}
             </Button>
             {carrier.configured && (
-              <Button type="button" variant="outline" onClick={() => setConfirm(carrier.key)}>
-                {copy.disconnect}
-              </Button>
+              <Dialog
+                open={confirm === carrier.key}
+                onOpenChange={(open) => setConfirm(open ? carrier.key : null)}
+              >
+                <DialogTrigger asChild>
+                  <Button type="button" variant="outline">
+                    {copy.disconnect}
+                  </Button>
+                </DialogTrigger>
+                <DialogContent
+                  onOpenAutoFocus={(event) => {
+                    event.preventDefault();
+                    cancelRef.current?.focus();
+                  }}
+                >
+                  <DialogHeader>
+                    <DialogTitle>{copy.disconnect}</DialogTitle>
+                    <DialogDescription>{copy.confirmDisconnect}</DialogDescription>
+                  </DialogHeader>
+                  <div className="flex gap-2">
+                    <Button
+                      ref={cancelRef}
+                      type="button"
+                      variant="outline"
+                      onClick={() => setConfirm(null)}
+                    >
+                      {copy.cancel}
+                    </Button>
+                    <Button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => disconnect(carrier.key)}
+                    >
+                      {copy.disconnect}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
             )}
           </div>
-          {confirm === carrier.key && (
-            <div role="alertdialog" aria-label={copy.disconnect}>
-              <p>{copy.confirmDisconnect}</p>
-              <Button type="button" disabled={pending} onClick={() => disconnect(carrier.key)}>
-                {copy.disconnect}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => setConfirm(null)}>
-                {copy.cancel}
-              </Button>
-            </div>
-          )}
         </div>
       ))}
       {state.status === "error" && <p role="alert">{state.message}</p>}
