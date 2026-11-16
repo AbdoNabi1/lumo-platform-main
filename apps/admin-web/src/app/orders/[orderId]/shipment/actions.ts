@@ -14,7 +14,7 @@ import {
   type CreateShipmentPackageInput,
 } from "@/lib/api/shipping";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
-import { carrierErrorMessage, hasShippingMessage } from "@/lib/shipping/carrier-errors";
+import { carrierErrorMessage } from "@/lib/shipping/carrier-errors";
 import type { MutationResult } from "@/lib/api/client";
 
 /**
@@ -59,9 +59,9 @@ function toShipmentFormState(
 ): FormState {
   if (
     result.outcome !== "ok" &&
+    result.outcome !== "invalid" &&
     "code" in result &&
-    result.code !== "VALIDATION" &&
-    hasShippingMessage(result.code, t)
+    typeof result.code === "string"
   ) {
     return {
       status: "error",

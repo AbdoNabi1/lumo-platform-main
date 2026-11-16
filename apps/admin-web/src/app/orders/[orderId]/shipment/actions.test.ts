@@ -70,3 +70,52 @@ it("other conflicts keep the existing form-state projection", async () => {
   );
   expect(result).toEqual({ status: "error", message: "stale", fieldErrors: {} });
 });
+
+it("a settings-map code is localised through carrierErrorMessage", async () => {
+  shipping.voidShipmentLabel.mockResolvedValue({
+    outcome: "conflict",
+    code: "CARRIER_NOT_AVAILABLE",
+    message: "CARRIER_NOT_AVAILABLE: backend English",
+  });
+  const result = await voidShipmentLabelAction(
+    { status: "idle" },
+    form({ orderId: "o1", shipmentId: "s1" }),
+  );
+  expect(result).toEqual({
+    status: "error",
+    message: "بوسطة مش متاحة على المنصة لسه.",
+    fieldErrors: {},
+  });
+});
+
+it("an unknown code falls back to the localised unexpected message", async () => {
+  shipping.advanceShipment.mockResolvedValue({
+    outcome: "error",
+    code: "SOMETHING_NEW",
+    message: "raw backend english",
+  });
+  const result = await advanceShipmentAction(
+    { status: "idle" },
+    form({ orderId: "o1", shipmentId: "s1", toStatus: "cancelled" }),
+  );
+  expect(result).toEqual({
+    status: "error",
+    message: ar.formErrors.unexpected,
+    fieldErrors: {},
+  });
+});
+
+it("a 422 invalid result keeps its field errors", async () => {
+  shipping.voidShipmentLabel.mockResolvedValue({
+    outcome: "invalid",
+    code: "VALIDATION",
+    message: "bad",
+    fields: [{ field: "shipmentId", message: "bad id" }],
+  });
+  const result = await voidShipmentLabelAction(
+    { status: "idle" },
+    form({ orderId: "o1", shipmentId: "s1" }),
+  );
+  expect(result).toMatchObject({ status: "error" });
+  expect(result.status === "error" && result.fieldErrors).toEqual({ shipmentId: "bad id" });
+});

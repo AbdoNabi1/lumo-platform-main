@@ -98,3 +98,23 @@ it("a whole-run error is shown in the bar", async () => {
   fireEvent.click(screen.getByRole("button", { name: "اشحن مع بوسطة" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("غلط");
 });
+
+it("an all-success run keeps a focusable bar button after the dialog is dismissed", async () => {
+  actions.bulkShipWithCarrierAction.mockResolvedValue({
+    status: "success",
+    shipped: 2,
+    failed: [],
+  });
+  render(ui(2));
+  fireEvent.click(box(1000));
+  fireEvent.click(box(1001));
+  fireEvent.click(screen.getByRole("button", { name: "اشحن مع بوسطة" }));
+  await screen.findByRole("dialog");
+  fireEvent.click(screen.getByRole("button", { name: ar.carrierShipping.close }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  const toolbar = screen.getByRole("toolbar");
+  await waitFor(() => expect(toolbar).toContainElement(document.activeElement as HTMLElement));
+  expect(document.activeElement?.tagName).toBe("BUTTON");
+  fireEvent.click(screen.getByRole("button", { name: ar.carrierShipping.clearSelection }));
+  expect(screen.queryByRole("toolbar")).toBeNull();
+});

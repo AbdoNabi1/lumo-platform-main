@@ -91,8 +91,10 @@ async function shipOne(
   t: Dictionary,
 ): Promise<ShipActionResult> {
   const result = await shipOrderWithCarrier(orderId, carrierKey, newIdempotencyKey());
+  // Any answer from the API may have changed server state (CARRIER_RESULT_UNKNOWN persists a
+  // review-required shipment), so the screens refresh on ok and non-ok alike.
+  revalidateOrder(orderId);
   if (result.outcome === "ok") {
-    revalidateOrder(orderId);
     return { status: "success", trackingNumber: result.data.trackingNumber };
   }
   return { status: "error", message: failureMessage(result, t) };
@@ -124,9 +126,9 @@ export async function bulkShipWithCarrierAction(
       return { status: "error", message: t.formErrors.invalid };
     }
     const result = await shipOrdersWithCarrier(orderIds, carrierKey, newIdempotencyKey());
-    if (result.outcome !== "ok") return { status: "error", message: failureMessage(result, t) };
     revalidatePath("/orders");
     for (const orderId of orderIds) revalidatePath(`/orders/${orderId}`);
+    if (result.outcome !== "ok") return { status: "error", message: failureMessage(result, t) };
     return {
       status: "success",
       shipped: result.data.shipped.length,
@@ -152,10 +154,8 @@ export async function cancelCarrierShipmentAction(
       return { status: "error", message: t.formErrors.invalid, fieldErrors: {} };
     }
     const result = await cancelCarrierShipment(shipmentId, newIdempotencyKey());
-    if (result.outcome === "ok") {
-      revalidateOrder(orderId);
-      return { status: "success" };
-    }
+    revalidateOrder(orderId);
+    if (result.outcome === "ok") return { status: "success" };
     return { status: "error", message: failureMessage(result, t), fieldErrors: {} };
   } catch (caught) {
     unstable_rethrow(caught);
@@ -175,6 +175,7 @@ export async function retryCarrierShipmentAction(
       return { status: "error", message: t.formErrors.invalid };
     }
     const retried = await retryShipment(shipmentId, newIdempotencyKey());
+    revalidateOrder(orderId);
     if (retried.outcome !== "ok") return { status: "error", message: failureMessage(retried, t) };
     return await shipOne(orderId, carrierKey, t);
   } catch (caught) {

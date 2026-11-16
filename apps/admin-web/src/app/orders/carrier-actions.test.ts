@@ -160,3 +160,45 @@ it("a failed retry returns its error and ships nothing", async () => {
   expect(result).toEqual({ status: "error", message: ar.formErrors.forbidden });
   expect(api.shipOrderWithCarrier).not.toHaveBeenCalled();
 });
+
+it("CARRIER_RESULT_UNKNOWN on a single ship still revalidates both screens", async () => {
+  api.shipOrderWithCarrier.mockResolvedValue({
+    outcome: "conflict",
+    code: "CARRIER_RESULT_UNKNOWN",
+    message: "x",
+  });
+  const result = await shipWithCarrierAction("o1", "bosta");
+  expect(result).toEqual({ status: "error", message: ar.carrierShipping.needsReview });
+  expect(revalidatePath).toHaveBeenCalledWith("/orders");
+  expect(revalidatePath).toHaveBeenCalledWith("/orders/o1");
+});
+
+it("a successful retry followed by a failed ship revalidates both screens", async () => {
+  shipping.retryShipment.mockResolvedValue({ outcome: "ok", data: {} });
+  api.shipOrderWithCarrier.mockResolvedValue({
+    outcome: "conflict",
+    code: "CARRIER_RESULT_UNKNOWN",
+    message: "x",
+  });
+  const result = await retryCarrierShipmentAction("o1", "s1", "bosta");
+  expect(result).toEqual({ status: "error", message: ar.carrierShipping.needsReview });
+  expect(revalidatePath).toHaveBeenCalledWith("/orders");
+  expect(revalidatePath).toHaveBeenCalledWith("/orders/o1");
+});
+
+it("a successful retry followed by a thrown ship revalidates and returns the fallback", async () => {
+  shipping.retryShipment.mockResolvedValue({ outcome: "ok", data: {} });
+  api.shipOrderWithCarrier.mockRejectedValue(new Error("boom"));
+  const result = await retryCarrierShipmentAction("o1", "s1", "bosta");
+  expect(result).toEqual({ status: "error", message: ar.formErrors.unexpected });
+  expect(revalidatePath).toHaveBeenCalledWith("/orders");
+  expect(revalidatePath).toHaveBeenCalledWith("/orders/o1");
+});
+
+it("invalid arguments never reach the API or revalidate", async () => {
+  await retryCarrierShipmentAction("../x", "s1", "bosta");
+  await shipWithCarrierAction("o1", "Bad Key");
+  expect(shipping.retryShipment).not.toHaveBeenCalled();
+  expect(api.shipOrderWithCarrier).not.toHaveBeenCalled();
+  expect(revalidatePath).not.toHaveBeenCalled();
+});

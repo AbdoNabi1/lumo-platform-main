@@ -117,11 +117,14 @@ export function OrdersBulkBar({
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Results | null>(null);
   const [open, setOpen] = useState(false);
+  // After an all-success run the selection is empty; the bar stays (so focus has a target) until cleared.
+  const [lingering, setLingering] = useState(false);
+  const clearRef = useRef<HTMLButtonElement>(null);
   const shipRef = useRef<HTMLButtonElement>(null);
   const printRef = useRef<HTMLButtonElement>(null);
   const carrier = carriers[0];
 
-  if (ids.length === 0 && !open) return null;
+  if (ids.length === 0 && !open && !lingering) return null;
 
   function ship(): void {
     if (carrier === undefined) return;
@@ -139,6 +142,7 @@ export function OrdersBulkBar({
         failed: result.failed,
         shippedIds: selected.filter((id) => !failedIds.has(id)),
       });
+      setLingering(true);
       setOpen(true);
     });
   }
@@ -167,16 +171,32 @@ export function OrdersBulkBar({
           type="button"
           size="sm"
           onClick={ship}
-          disabled={pending}
+          disabled={pending || ids.length === 0}
           loading={pending}
         >
           {copy.shipWith.replace("{carrier}", carrierLabel(carrier.key, carrier.displayName, t))}
         </Button>
       )}
-      <Button ref={printRef} type="button" size="sm" variant="outline" onClick={print}>
+      <Button
+        ref={printRef}
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={print}
+        disabled={ids.length === 0}
+      >
         {copy.printWaybills}
       </Button>
-      <Button type="button" size="sm" variant="ghost" onClick={clear}>
+      <Button
+        ref={clearRef}
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setLingering(false);
+          clear();
+        }}
+      >
         {copy.clearSelection}
       </Button>
       {notice === "tooMany" && (
@@ -197,7 +217,8 @@ export function OrdersBulkBar({
         t={t}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          (shipRef.current ?? printRef.current)?.focus();
+          const target = ids.length > 0 ? (shipRef.current ?? printRef.current) : null;
+          (target ?? clearRef.current)?.focus();
         }}
       />
     </div>
