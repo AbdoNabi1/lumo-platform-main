@@ -2,7 +2,9 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { CarriersCard } from "@/components/settings/shipping/carriers-card";
 import { ZonesView } from "@/components/settings/shipping/zones-view";
+import { fetchCarrierSettings } from "@/lib/api/carriers";
 import { fetchShippingZones } from "@/lib/api/shipping-zones";
 import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -19,7 +21,11 @@ export default async function ShippingSettingsPage() {
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
-  const [result, settings] = await Promise.all([fetchShippingZones(), storeSettingsOrDefaults()]);
+  const [result, settings, carriers] = await Promise.all([
+    fetchShippingZones(),
+    storeSettingsOrDefaults(),
+    fetchCarrierSettings(),
+  ]);
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
@@ -31,6 +37,13 @@ export default async function ShippingSettingsPage() {
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t.shippingSettings.title}</h1>
           <p className="text-muted-foreground mt-1 text-sm">{t.shippingSettings.subtitle}</p>
         </header>
+
+        {carriers.outcome === "ok" && <CarriersCard carriers={carriers.data.carriers} t={t} />}
+        {carriers.outcome !== "ok" && carriers.outcome !== "unauthorized" && (
+          <p role="note" className="text-muted-foreground text-sm">
+            {t.shippingSettings.loadError}
+          </p>
+        )}
 
         {result.outcome === "ok" ? (
           <ZonesView

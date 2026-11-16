@@ -49,13 +49,14 @@ export type MutationResult<T> =
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "forbidden" }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "conflict"; readonly message: string }
+  | { readonly outcome: "conflict"; readonly message: string; readonly code?: string }
   | {
       readonly outcome: "invalid";
       readonly message: string;
       readonly fields: readonly FieldIssue[];
+      readonly code?: string;
     }
-  | { readonly outcome: "error"; readonly message: string };
+  | { readonly outcome: "error"; readonly message: string; readonly code?: string };
 
 /**
  * Resolves the same tenant id every admin-web request already sends as the `x-tenant-id` header
@@ -146,6 +147,7 @@ export async function mutateAdminApi<T>(
     readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
     readonly body?: unknown;
     readonly idempotencyKey?: string;
+    readonly timeoutMs?: number;
   },
   isValid: (value: unknown) => value is T,
 ): Promise<MutationResult<T>> {
@@ -160,12 +162,16 @@ export async function mutateAdminApi<T>(
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(`${runtimeApiUrl}${path}`, {
-      method: init.method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      cache: "no-store",
-    });
+    response = await fetchWithTimeout(
+      `${runtimeApiUrl}${path}`,
+      {
+        method: init.method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        cache: "no-store",
+      },
+      init.timeoutMs,
+    );
   } catch (error) {
     return {
       outcome: "error",
@@ -178,23 +184,33 @@ export async function mutateAdminApi<T>(
   if (response.status === 401) return { outcome: "unauthorized" };
   if (response.status === 403) return { outcome: "forbidden" };
   if (response.status === 404) return { outcome: "not_found" };
+  const envelope = parsed as {
+    readonly message?: unknown;
+    readonly code?: unknown;
+    readonly fields?: unknown;
+  } | null;
+  const code = typeof envelope?.code === "string" ? { code: envelope.code } : {};
   if (response.status === 409) {
-    const envelope = parsed as { readonly message?: unknown } | null;
     return {
       outcome: "conflict",
       message: typeof envelope?.message === "string" ? envelope.message : "Conflict",
+      ...code,
     };
   }
   if (response.status === 422) {
-    const envelope = parsed as { readonly message?: unknown; readonly fields?: unknown } | null;
     return {
       outcome: "invalid",
       message: typeof envelope?.message === "string" ? envelope.message : "Validation failed",
       fields: fieldIssuesOf(envelope?.fields),
+      ...code,
     };
   }
   if (!response.ok) {
-    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+    return {
+      outcome: "error",
+      message: `Admin API responded with status ${response.status}`,
+      ...code,
+    };
   }
 
   if (!isValid(parsed)) {

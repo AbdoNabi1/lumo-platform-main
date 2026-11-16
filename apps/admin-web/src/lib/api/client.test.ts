@@ -34,6 +34,24 @@ afterEach(() => {
 });
 
 describe("mutateAdminApi", () => {
+  it("surfaces the carrier error code from a 409 envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "CARRIER_CREDENTIALS_REJECTED",
+          message: "rejected",
+        }),
+      ),
+    );
+    const result = await mutateAdminApi(
+      "/api/v1/shipping/carriers/bosta",
+      { method: "PUT" },
+      isRecord,
+    );
+    expect(result).toMatchObject({ outcome: "conflict", code: "CARRIER_CREDENTIALS_REJECTED" });
+  });
+
   it("maps a 201 with a valid body to ok", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, { id: "product-1" }));
     vi.stubGlobal("fetch", fetchMock);
@@ -57,16 +75,13 @@ describe("mutateAdminApi", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(422, envelope));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await mutateAdminApi(
-      "/api/v1/products",
-      { method: "POST", body: {} },
-      isRecord,
-    );
+    const result = await mutateAdminApi("/api/v1/products", { method: "POST", body: {} }, isRecord);
 
     expect(result).toEqual({
       outcome: "invalid",
       message: "Invalid input",
       fields: [{ field: "sku", message: "must not be empty" }],
+      code: "VALIDATION",
     });
   });
 
@@ -76,13 +91,9 @@ describe("mutateAdminApi", () => {
       .mockResolvedValue(jsonResponse(422, { code: "VALIDATION", message: "bad" }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await mutateAdminApi(
-      "/api/v1/products",
-      { method: "POST", body: {} },
-      isRecord,
-    );
+    const result = await mutateAdminApi("/api/v1/products", { method: "POST", body: {} }, isRecord);
 
-    expect(result).toEqual({ outcome: "invalid", message: "bad", fields: [] });
+    expect(result).toEqual({ outcome: "invalid", message: "bad", fields: [], code: "VALIDATION" });
   });
 
   it("maps a 409 to conflict, using the API's own message", async () => {
@@ -97,7 +108,7 @@ describe("mutateAdminApi", () => {
       isRecord,
     );
 
-    expect(result).toEqual({ outcome: "conflict", message: "already in flight" });
+    expect(result).toEqual({ outcome: "conflict", message: "already in flight", code: "CONFLICT" });
   });
 
   it("maps a 401 to unauthorized", async () => {

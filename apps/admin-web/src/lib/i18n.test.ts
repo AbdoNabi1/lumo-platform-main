@@ -20,6 +20,8 @@ function leaves(value: unknown, path: string[] = []): Leaf[] {
 
 /** Keys whose Arabic value is legitimately identical to English (keyboard glyphs, symbols). */
 const SHARED_VERBATIM = new Set([
+  // Paper size is an international format identifier, not translatable prose.
+  "carrierSettings.a4",
   "topbar.searchHint",
   // Plan 3B — order page templates that carry only placeholders and a symbol, no words: "{status}
   // ({count})", "{price} × {quantity}", and the em dash for "no payment method". Nothing to translate.
