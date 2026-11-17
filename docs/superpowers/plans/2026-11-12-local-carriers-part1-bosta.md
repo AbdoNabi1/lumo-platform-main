@@ -1,6 +1,8 @@
 # Local Carriers — Part 1: Carrier Foundation and Bosta Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **Plan review (Tasks 3–14):** Sol: VERDICT: AGREED (round 3, plan-review-3.md) · OPUS: AGREED (2026-11-16). Cleared for Phase 3 delegation.
 
 **Goal:** A merchant connects their Bosta account once. From then on they can ship one order or up to 50 in one click with a server-computed COD amount, and print waybills (A6 or A4, Arabic or English) from Morbeh. Shipment and fulfillment statuses then follow Bosta's webhooks on their own, and a shipment can be cancelled before pickup.
 
@@ -28,6 +30,40 @@
 **Spec:** `docs/superpowers/specs/2026-11-12-local-carriers-design.md`. §9a amends §6–§8 and wins every conflict. The builder-check questions it answers are in `.superpowers/builder-check-carriers.md` (local only, never staged). Read the spec and this plan together.
 
 The branch `morbeh/local-carriers` is at `10181339` (the spec commit). Where this plan and the spec differ, the Bosta API reference and the code on this branch are the ground truth, and a Ruling below says so.
+
+---
+
+## Plan review amendments for Tasks 3–14 (Opus, 2026-11-16)
+
+Tasks 1–2 are complete (747cc9c5, e6ac19ed, 6ed5e117). The preflight's 26 findings (`.superpowers/sdd/2026-11-12-local-carriers-part1-bosta/preflight.md`, all ACCEPTED) and the carry-forwards from the Task 1/2 reviews are now written **into each task** as an `**Amendments (binding)**` block at the end of the task. Where an amendment and the task text above it disagree, **the amendment wins**. An implementer needs this plan file only. The preflight file is background, not a source of requirements.
+
+**Implementers (pipeline rule: odd → terra, even → sonnet):** T3 terra · T4 sonnet · T5 terra · T6 sonnet · T7 terra · T8 sonnet · T9 terra · T10 sonnet · T11 terra · T12 sonnet · T13 terra · T14 sonnet. The old "Model tier" lines now only say how carefully each task is reviewed.
+
+**Rules for every task 3–14 (on top of the Global Constraints):**
+
+- **A1 (F9).** Every new test file starts with `beforeEach(() => { expect.hasAssertions(); });`. Every `/* … */` test body in this plan is filled with the assertions listed in that task's amendment block. An `it` with no `expect` fails review.
+- **A2.** Work in `F:/New folder/morbeh-carriers` on branch `morbeh/local-carriers-task3-wip` (it holds T1, T2 and the T3 WIP commit 33be124d). Commit only the task's files, by path. Never `git stash`, `checkout`, `reset` or `--no-verify`. Never push or merge.
+- **A3. Code names that exist on the branch (verified 2026-11-16). Use them; never re-create them:**
+  - `services/shipping/src/application/concurrency-retry.ts`: `withConcurrencyRetry`.
+  - `services/shipping/src/domain/errors.ts`: `CarrierError`, `CarrierErrorStatus = 409 | 422 | 503`.
+  - `services/shipping/src/domain/attempt-id.ts`.
+  - `Shipment`: `pendingLabelAttempt()`, `nextLabelReference(base)`, `beginLabelAttempt(reference, at)`, `failLabelAttempt(reference, at)`, `markCarrierResultUnknown(reference, eventId, at)`, `retry(eventId, at)`, `addTrackingEvent(description, at, location?)`, `recordCarrierWebhook(kind, at)`, `markDeliveryFailed(reason, eventId, at)` (records a `carrier`/`failed` attempt carrying `reason`).
+  - `ShipmentRepository`: `findByFulfillmentRef` (newest first), `findByTrackingNumber`.
+  - `testing/shipping-doubles.ts`: `PostgresLikeShipmentRepository` (tenant-bucketed), `TrackingUnitOfWork`.
+  - Fulfillment codes, carried in `BusinessRuleError` **message prefixes** (the envelope `code` is `BUSINESS_RULE`): `STOCK_NOT_RESERVED`, `SHIPMENT_IN_PROGRESS`, `FULFILLMENT_NOT_SHIPPABLE`, `FULFILLMENT_NOT_ATTACHABLE`.
+- **A4. Added to "Not confirmed by the docs":**
+  - **U11 (F1):** `/deliveries/search` is documented under Bearer only. If the API key is refused there, every lost response parks for review (`CARRIER_RESULT_UNKNOWN`), never a second create.
+  - **U12 (F14):** `errorCode` is declared `type: string`, but the examples are numbers. The `/cities` `countryId` parameter is commented out in the YAML (still sent; matching never assumes an Egypt-only list). Mass-AWB has no operation-level security and an undocumented 200.
+- **A6. Validation status (Task 9 review, Opus ruling 2026-11-16).** Admin API routes validate params/body/query **only** through `defineRoute` schemas (`schema: { params, body, query }`), never by parsing inside the handler. A schema failure is the shared transport's **422** `{ code: "VALIDATION", … field issues }`. That is what admin-web's client maps to `MutationResult.outcome = "invalid"`, and the failure is not cached under the idempotency key.
+  - Wherever Tasks 9–14, Global Constraint 6 or Review Focus 1 say an invalid admin-API request (a `cod` key, 51 ids, duplicate ids, a malformed carrier key, a 513-character credential, `{}`, disconnect + another key) is a **400**, read **422** with `code: "VALIDATION"`.
+  - Domain codes keep their statuses (`CARRIER_UNKNOWN` 422, `CARRIER_CREDENTIALS_REJECTED` 409, …).
+  - **Exception:** admin-web's Next.js route handler `GET /orders/awb` (Task 14) keeps its 400 `text/plain`.
+- **A5. Residuals (F7, F19, F26, T2 review), recorded, no code in Part 1:**
+  - Unknown tenants get the transport's 403 `TENANT_UNKNOWN`, not the handler's 401 (pinned in Task 10).
+  - Fulfillment's inventory port is the always-confirmed in-memory adapter, because checkout holds stock, so `STOCK_NOT_RESERVED` can't fire in production.
+  - Ruling 32's lock is best-effort. After a lock loss, two shipments would both send `<n>-1`, and U4 decides.
+  - Public routes are limited to 300/min per (tenant, IP), so a Bosta burst can lose updates to Part 2's poll.
+  - From the T2 review: `reservation_requested` stuck → `SHIPMENT_IN_PROGRESS` with no recovery path. Mirror from `shipment_created` walks `tracking_assigned` without a tracking number (unreachable while attach is atomic).
 
 ---
 
@@ -1239,6 +1275,160 @@ Expected: PASS, and the guard prints only the one known finding.
 
 - [ ] **Step 5: Commit** the shipping files, `packages/db/prisma/schema/shipping.prisma`, the migration folder, the consistency test, `services/shipping/package.json` and `pnpm-lock.yaml`. Message: `feat(shipping): carrier registry, sealed carrier settings and per-call resolver`.
 
+**Amendments (binding) — implementer: terra. Review depth: strong.**
+
+**Start state: a draft exists, and it is untrusted.**
+
+Committed WIP **33be124d**:
+
+- `application/carrier-provider.ts` (+test), `carrier-registry.ts` (+test), `carrier-resolver.ts`, `ports.ts` (`CarrierCredentialVault`);
+- `domain/merchant-carrier-settings.ts` (+test), `merchant-carrier-settings-repository.ts`;
+- `composition.ts` + `composition.carriers.test.ts`, `index.ts`;
+- the migration, the Prisma model, the consistency test;
+- `packages/secrets/src/testing/local-key-wrap-cipher.ts` (+test) exported from the new `@platform/secrets/testing` subpath, with payments' `test-support/local-key-wrap-cipher.ts` reduced to a re-export.
+
+**Untracked** (never committed):
+
+- `domain/value-objects/carrier-key.ts`;
+- `infrastructure/envelope-carrier-credential-vault.ts` (+test), `in-memory-merchant-carrier-settings-repository.ts` (+test), `prisma-merchant-carrier-settings-repository.ts` (+test), `tenant-carrier-resolver.ts` (+test);
+- `testing/carrier-doubles.ts` (+test).
+
+None of it is reviewed. **Read every file against this task text and the amendments below.** Keep what is correct, fix what isn't, and add what is missing. Don't assume a draft test proves its title: check each assertion.
+
+1. **F10 — no copy of `LocalKeyWrapCipher`.** It comes from `@platform/secrets/testing` (this replaces the "copied from payments" line in Files). `carrier-doubles.ts` imports it from there. `packages/secrets/package.json` `exports` has `"./testing"`. Payments still passes: run `pnpm --filter @platform/payments test` and `pnpm --filter @platform/secrets test` in Step 4. Add `packages/secrets/**` and `services/payments/src/test-support/local-key-wrap-cipher.ts` to the commit if the WIP changed them after 33be124d.
+2. **F11 — repository versions (replaces the `save` comment in the interface):**
+   - `settings.version === 0` → `create({ data: { tenantId, enabledCarriers, carrierSettings, version: 1 } })`.
+   - `version n ≥ 1` → `updateMany({ where: { tenantId, version: n }, data: { enabledCarriers, carrierSettings, version: { increment: 1 } } })`. `count === 0` → `ConcurrencyError`.
+   - A Prisma error with `code === "P2002"` on create → `ConcurrencyError`. Any other error is rethrown unchanged.
+   - A `get` after a successful save returns version `n + 1` (or 1 after a create).
+   - `InMemoryMerchantCarrierSettingsRepository` has the same version semantics. It stores a copy per tenant, and its methods are non-`async` and return `Promise.resolve` / `Promise.reject`.
+3. **F11 — `prisma-merchant-carrier-settings-repository.test.ts`.** Use a fake client object with `merchantCarrierSettings: { findUnique, create, updateMany }` as `vi.fn`s, in the style of `prisma-shipping-zone-repository.test.ts`, passed through the same `runReadScoped` / `runInTenantTransaction` seam the repository uses. Cases, input → expected:
+   - (a) save `empty().withCarrier("bosta", stored)` → `create` called once with `version: 1` and `carrierSettings.bosta.webhook.previousValidUntil` as an ISO string when set. Feeding that row back through `findUnique` → `get` returns an equal aggregate with `previousValidUntil` as a `Date` and version 1.
+   - (b) save an aggregate reconstituted at version 1 → `updateMany` called with `where: { tenantId: "t-1", version: 1 }` and `version: { increment: 1 }`.
+   - (c) `updateMany` resolves `{ count: 0 }` → rejects with `ConcurrencyError`.
+   - (d) `create` rejects `{ code: "P2002" }` → rejects with `ConcurrencyError`.
+   - (e) a row whose `carrierSettings` is `{ bosta: { config: {}, sealedCredentials: 5, webhook: { sealedSecret: "ENVELOPE-TEXT" } } }` → `get` rejects with a message matching `/^Corrupt merchant carrier settings/` that does not contain `"ENVELOPE-TEXT"`.
+   - (f) `findUnique` → `null` gives `get` → `null`.
+   - The in-memory repository's test covers (a)–(c) as well, plus "first save of a version-0 aggregate when a row exists → `ConcurrencyError`".
+4. **F3.** `CarrierRejectionCode` stays the literal union. `carrierFailureOf(e)`:
+   - returns `null` unless `e` is a non-null object whose `carrierFailure` is one of the three kinds;
+   - copies `code` only when it is one of the union members (otherwise `code` is absent);
+   - copies `reason` only when it is a string;
+   - copies `timedOut` only when it is a boolean.
+
+   Tests:
+   - `{ carrierFailure: "rejected", code: "NOPE" }` → `{ carrierFailure: "rejected" }`;
+   - `new Error("x")` → `null`;
+   - `{ carrierFailure: "unavailable", timedOut: true }` → same.
+
+5. **Resolver (F9, with the decision below).** Fill the `it.each` and the Ruling 30 case, and add these rows. Each rejects with a `CarrierResolutionError` whose `.code` is the value shown. The harness uses the in-memory repository, `testCarrierVault()` and `fakeRegistration()`.
+
+   | Case                                                                | Purpose           | Expected                                           |
+   | ------------------------------------------------------------------- | ----------------- | -------------------------------------------------- |
+   | key `"aramex"` (not registered)                                     | new_shipment      | `CARRIER_UNKNOWN`                                  |
+   | vault `undefined`                                                   | new_shipment      | `CARRIER_NOT_AVAILABLE`                            |
+   | tenant with no row                                                  | existing_shipment | `CARRIER_NOT_CONFIGURED`                           |
+   | configured, disabled                                                | new_shipment      | `CARRIER_NOT_ENABLED`                              |
+   | configured, disabled                                                | existing_shipment | resolves; `created[0].credentials.apiKey === "k1"` |
+   | sealed credentials lack `apiKey`                                    | existing_shipment | `CARRIER_NOT_CONFIGURED`                           |
+   | sealed credentials were sealed for another tenant (copied envelope) | existing_shipment | `CARRIER_NOT_CONFIGURED`                           |
+
+   **Decision (Opus):** a vault open failure reads as `CARRIER_NOT_CONFIGURED`, with no detail. The merchant re-enters the key; no envelope text leaves the resolver.
+
+6. **Vault tests, in addition to the two above:**
+   - `open("t-1", "bosta", "not-an-envelope")` rejects with exactly `"Carrier credentials could not be opened"`.
+   - `InMemoryCarrierCredentialVault` has `backing === "stub"`, round-trips, and refuses another tenant with the same message.
+   - `EnvelopeCarrierCredentialVault` has `backing === "real"`.
+7. **Registry test, expected messages:**
+   - a duplicate key → throws `/duplicate/i`;
+   - `"Bosta"` and `"b"` → throw `/malformed/i`;
+   - `credentialFields: []` → throws `/credentialFields/`;
+   - `list()` returns registrations in input order;
+   - `get("missing")` is `undefined`.
+8. **`carrier-key.ts` test:**
+   - `isWellFormedCarrierKey` is true for `"bosta"`, `"j_t-1"`;
+   - false for `"Bosta"`, `"b"`, `"1bosta"`, `"bosta:webhook"`, and a 33-character key.
+9. **Coverage:** also run `pnpm --filter @platform/shipping exec vitest run --coverage` in Step 4. Floors 69/69/72/76 must hold.
+10. **Commit:** the files listed above plus the untracked ones, by path. Message as in Step 5. The WIP commit stays in history.
+
+11. **Plan review 1, finding 1: the test-double contract.** `testing/carrier-doubles.ts` must end with exactly these exports. They replace the draft's `FakeCarrierBehaviour` and singular answers. Update `carrier-doubles.test.ts` to match.
+
+    ```ts
+    export interface FakeFailure {
+      readonly fail: "rejected" | "unavailable" | "credentials_rejected";
+      readonly code?: CarrierRejectionCode;
+      readonly reason?: string;
+      readonly timedOut?: boolean;
+    }
+    export interface FakeCarrierScript {
+      /** Each queue is shifted once per call. An empty queue gives the default answer. */
+      readonly prepare?: (CarrierProblem | null | FakeFailure)[]; // default null
+      readonly create?: (CarrierDelivery | FakeFailure)[]; // default { deliveryId: `dlv-${reference}`, trackingNumber: `TN-${reference}` }
+      readonly find?: (readonly CarrierDelivery[] | FakeFailure)[]; // default []
+      readonly cancel?: ("cancelled" | "not_found" | FakeFailure)[]; // default "cancelled"
+      readonly print?: (Uint8Array | FakeFailure)[]; // default the bytes of "%PDF-1.4 fake"
+      readonly get?: (CarrierDeliveryStatus | FakeFailure)[]; // default state 10, target null
+      readonly verify?: "ok" | "credentials_rejected" | "unavailable"; // default "ok"; applies to every call
+    }
+    /** Shared by every provider one registration builds, because the resolver builds a new provider per call. */
+    export interface FakeCarrierRecord {
+      readonly prepareCalls: {
+        readonly request: CarrierParcelRequest;
+        readonly openCountAtCall: number;
+      }[];
+      readonly createCalls: {
+        readonly request: CarrierDeliveryRequest;
+        readonly openCountAtCall: number;
+      }[];
+      readonly findCalls: string[];
+      readonly findOpenCounts: number[];
+      readonly cancelCalls: string[];
+      readonly printCalls: [readonly string[], AwbOptions][];
+      readonly getCalls: string[];
+      verifyCalls: number;
+      readonly verifyOpenCounts: number[];
+    }
+    export class FakeCarrierProvider implements CarrierProvider {
+      constructor(
+        key: string,
+        script: FakeCarrierScript,
+        record: FakeCarrierRecord,
+        openCount: () => number,
+      );
+    }
+    export interface FakeRegistration {
+      readonly registration: CarrierRegistration;
+      readonly created: CarrierBuildContext[];
+      readonly providers: FakeCarrierProvider[];
+      readonly record: FakeCarrierRecord;
+    }
+    export function fakeRegistration(
+      options?: Partial<Omit<CarrierRegistration, "create">> & {
+        readonly script?: FakeCarrierScript;
+        /** e.g. () => unitOfWork.openCount from TrackingUnitOfWork. Default () => 0. */
+        readonly openCount?: () => number;
+      },
+    ): FakeRegistration;
+    export function testCarrierVault(kek?: string): EnvelopeCarrierCredentialVault;
+    export function fixedClock(
+      iso?: string,
+    ): Clock & { advanceMs(ms: number): void; set(next: string | Date): void };
+    export function sequentialIds(): IdGenerator;
+    ```
+
+    **How a `FakeFailure` behaves:** it is thrown as an `Error` with the message `"fake carrier failure"` and the own properties `carrierFailure = fail`, plus `code`, `reason` and `timedOut` when given, so `carrierFailureOf` reads it. A `FakeFailure` in the `prepare` queue is thrown the same way; a `CarrierProblem` there is returned. `verify` `"credentials_rejected"`/`"unavailable"` throws the matching failure. **Every call records `openCount()` at call time.**
+
+    **How later tasks use it:**
+    - In Tasks 4, 7 and 9, `fakeRegistration({ verify: X })` means `fakeRegistration({ script: { verify: X } })`.
+    - A registration is passed as `.registration`.
+    - Harness fields `h.provider.createCalls`/`findCalls`/… mean `h.reg.record.createCalls`/….
+    - Task 7's `labelHarness({ create, find, prepare })` takes the queues of `FakeCarrierScript` (so `prepare` is a one-element array, e.g. `prepare: [{ code, reason }]`). Fix the Task 7 test literals accordingly (e.g. `prepare: [{ code: "ADDRESS_NOT_SHIPPABLE", reason: "PROVINCE_MISSING" }]`).
+
+    **Helper tests:**
+    - (a) script `create: [{ fail: "unavailable", timedOut: true }]` + `find: [[{ deliveryId: "d", trackingNumber: "t" }]]`. Provider 1's `createDelivery` rejects with `carrierFailureOf(e)` deep-equal to `{ carrierFailure: "unavailable", timedOut: true }`. A second provider from the same registration gets `[{ deliveryId: "d", trackingNumber: "t" }]` from `findDeliveriesByReference("1001-1")`. Its `createDelivery` then returns the default. `record.createCalls.length === 2` and `record.findCalls` deep-equals `["1001-1"]`.
+    - (b) `verify: "credentials_rejected"` → `verifyCredentials()` rejects with `carrierFailure "credentials_rejected"`; `record.verifyCalls === 1`.
+    - (c) `openCount: () => 3` → `record.createCalls[0].openCountAtCall === 3`.
+
 ---
 
 ### Task 4: Carrier settings use cases — read, update with verification, rotate, verify webhook
@@ -1439,6 +1629,73 @@ Expected: FAIL (module missing).
 - [ ] **Step 4: Run** `pnpm --filter @platform/shipping test && pnpm --filter @platform/shipping typecheck && pnpm --filter @platform/shipping lint`. Expected: PASS.
 
 - [ ] **Step 5: Commit** with `feat(shipping): carrier settings with verified, sealed credentials and webhook secrets`.
+
+**Amendments (binding) — implementer: sonnet. Review depth: strong.**
+
+1. **`randomSecret`** in tests is a deterministic function returning 43-character base64url strings (e.g. `"s".repeat(42) + n`).
+2. **`UpdateCarrierSettings`, cases to add or fill.** The harness uses the in-memory repository, `testCarrierVault()`, `fakeRegistration({ verify })`, `fixedClock()` and `TrackingUnitOfWork`. Each row is input → expected; "unchanged" means `await h.settings.get("t-1")` deep-equals its value before the call.
+
+   | Input                                                                                         | Expected                                                                                                                                   |
+   | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+   | `carrierKey: "aramex"`                                                                        | err `CARRIER_UNKNOWN`, `httpStatus 422`; nothing saved                                                                                     |
+   | `carrierKey: "Bosta"`                                                                         | err `CARRIER_UNKNOWN`, 422                                                                                                                 |
+   | vault `undefined`                                                                             | err `CARRIER_NOT_AVAILABLE`, 409                                                                                                           |
+   | `{ disconnect: true, enabled: true }`                                                         | err code `VALIDATION` (`ValidationError`)                                                                                                  |
+   | `config` that `parseConfig` refuses with `reason: "awbFormat"`                                | err `CARRIER_CONFIG_INVALID`, 422, `reason "awbFormat"`                                                                                    |
+   | `credentials: { apiKey: "   " }` / 513-char apiKey / `{}`                                     | err `CARRIER_CREDENTIALS_INVALID`, 422; the message doesn't contain the value                                                              |
+   | verify → `unavailable`                                                                        | err `CARRIER_UNAVAILABLE`, 503; nothing saved                                                                                              |
+   | configured carrier, then `{ config: { awbFormat: "A4" } }` only                               | ok; `sealedCredentials` string identical to before; `verifyCredentials` not called again                                                   |
+   | unconfigured, `{ config: {...} }` only                                                        | err `CARRIER_NOT_CONFIGURED`, 409                                                                                                          |
+   | unconfigured, `{ enabled: true }` only                                                        | err `CARRIER_NOT_CONFIGURED`, 409                                                                                                          |
+   | configured, second `{ credentials: { apiKey: "k2" } }`                                        | ok; webhook secret unchanged (`storedWebhookSecret` same as before); credentials reopen as `k2`                                            |
+   | **disconnect** (fill): configured + enabled, then `{ disconnect: true }`                      | ok; DTO entry `{ configured: false, enabled: false, config: null }`; `settings.carrier("bosta")` is `undefined`; `enabledCarriers` is `[]` |
+   | **stale version** (fill): repository wrapper whose `save` rejects `new ConcurrencyError("x")` | `r.ok === false`, `r.error` is the `ConcurrencyError` (presenter → 409); stored settings unchanged                                         |
+   | "verifies outside the transaction"                                                            | the fake provider records `TrackingUnitOfWork`'s open count at `verifyCredentials` → `0`                                                   |
+
+3. **`RotateCarrierWebhookSecret`:**
+   - unconfigured → `CARRIER_NOT_CONFIGURED` (409);
+   - vault undefined → `CARRIER_NOT_AVAILABLE` (409);
+   - success → previous = old sealed secret, `previousValidUntil = now + 7 d`.
+4. **`GetCarrierSettings`:**
+   - returns one entry per registration, in registry order;
+   - an unconfigured entry is `{ configured: false, enabled: false, config: null, available: vault !== undefined, webhookUrl: registration.webhookUrl, capabilities }`;
+   - `version` is 0 when no row exists;
+   - `JSON.stringify(result)` never contains the sealed credentials or the webhook secret.
+5. **`ListEnabledCarriers`:**
+   - lists only carriers that are enabled, configured **and** available (a vault is composed);
+   - with no vault → `{ carriers: [] }`;
+   - each item has exactly the keys `key` and `displayName`.
+6. **`VerifyCarrierWebhook`:** add the cases `presented` of 513 characters → `false`, `""` → `false`, and a vault whose `open` throws → `false` (no throw).
+7. **Controller:** the four `ControllerResponse` methods go through the existing `present`/presenter; `verifyCarrierWebhook` returns the boolean. Export the use cases, the DTO types and `MAX_CARRIER_SECRET_LENGTH` from `src/index.ts`.
+8. **Coverage:** shipping floors hold (`vitest run --coverage` in Step 4).
+
+9. **Plan review 1, finding 2: an omitted config never resets.** This replaces "with `{}` when absent".
+   - `config` absent **and** a stored entry exists → keep `stored.config` unchanged (no `parseConfig` call).
+   - `config` absent on a first configuration → `parseConfig(undefined)` (registration defaults).
+   - `config` present → `parseConfig(config)`.
+
+   **Verification and version handling:**
+   - Before the external verify, read the settings once (outside any transaction) to learn whether a stored entry exists and its config.
+   - The write transaction re-reads, applies, and saves with the version it read, so a concurrent change → `ConcurrencyError` (409). No retry: the merchant re-submits.
+   - Two stored-entry checks are made:
+     - the entry existed at the pre-read but is gone in the transaction (disconnected meanwhile) → `ConcurrencyError`;
+     - a first configuration finds an entry in the transaction → `ConcurrencyError`.
+
+   **Tests:** configured with `config: { awbFormat: "A4", awbLanguage: "en" }`, then
+   - (a) `{ credentials: { apiKey: "k2" } }` only;
+   - (b) `{ enabled: false }` only.
+
+   After each, the DTO entry's `config` still deep-equals `{ awbFormat: "A4", awbLanguage: "en" }`.
+
+10. **Plan review 2: the pre-read snapshot is version-guarded.**
+    - The pre-read captures `preReadVersion = settings?.version ?? 0` together with the config used for verification.
+    - Inside the write transaction, **before applying any change**, compare the re-read version (missing row = 0) with `preReadVersion`. On a mismatch, return the `ConcurrencyError` (409) with no save and no retry. This check covers a disconnect, a reconnect or any other write made during verification.
+    - The repository's save-time guard (`updateMany where version`) still covers changes after the transaction's read.
+    - Requests without credentials make no external call but run the same check.
+    - **Interleaving test:** request A's `verifyCredentials` is held on a deferred promise. While it waits, request B saves `config: { awbFormat: "A6" }` (version → n+1). Then A's verification resolves. Expected:
+      - A returns the `ConcurrencyError`, and its repository `save` was not called;
+      - the stored settings deep-equal those after B (config A6, B's sealed credentials and webhook secret unchanged).
+    - **Second interleaving test:** during A's held verification, B disconnects and C reconnects. A → `ConcurrencyError`, no save by A.
 
 ---
 
@@ -1856,6 +2113,98 @@ Expected: FAIL (modules missing).
 
 - [ ] **Step 5: Commit** `packages/carrier-bosta` and `pnpm-lock.yaml` with `feat(carrier-bosta): egyptian address, phone, cod and state rules for bosta`.
 
+**Amendments (binding) — implementer: terra. Review depth: strong.**
+
+1. **F3:**
+
+   ```ts
+   export type BostaRejectionCode =
+     | "ADDRESS_NOT_SHIPPABLE"
+     | "PHONE_NOT_SHIPPABLE"
+     | "COD_ABOVE_CARRIER_LIMIT"
+     | "COD_INVALID"
+     | "CURRENCY_NOT_SUPPORTED"
+     | "OPEN_PACKAGE_NEEDS_IMAGES"
+     | "CARRIER_REJECTED"
+     | "CARRIER_CANCEL_REFUSED";
+   ```
+
+   `BostaProblem.code` and `BostaApiError.code` are typed `BostaRejectionCode` (not `string`). Export the type from `index.ts`.
+
+2. **F15 — the state map is type-gated (replaces the 21/24/30 and 47 rows):**
+   - 21, 24, 30 → `in_transit`, and 47 → `delivery_failed`, **only when** `type` is `"SEND"`, `"FXF_SEND"` or `undefined`.
+   - Any other type gives `target: null` (a scan).
+   - 41 stays `SEND`-only.
+
+   Add these rows to `states.test.ts`:
+   - `[24, "RTO", null]`
+   - `[47, "RTO", null]`
+   - `[24, undefined, "in_transit"]`
+   - `[30, "FXF_SEND", "in_transit"]`
+   - `[21, "CRP", null]`
+
+3. **Labels** (`label` from `mapBostaState`, from F14):
+
+   | State | Label                                                               |
+   | ----- | ------------------------------------------------------------------- |
+   | 10    | `"Pickup requested"`                                                |
+   | 11    | `"Waiting for route"`                                               |
+   | 20    | `"Route assigned"`                                                  |
+   | 21    | `"Picked up from business"`                                         |
+   | 22    | `"Picking up from consignee"`                                       |
+   | 23    | `"Picked up from consignee"`                                        |
+   | 24    | `"Received at warehouse"`                                           |
+   | 25    | `"Fulfilled"`                                                       |
+   | 30    | `"In transit between hubs"`                                         |
+   | 40    | `"Picking up"`                                                      |
+   | 41    | `"Out for delivery"` (type SEND) / `"Out for return"` (other types) |
+   | 45    | `"Delivered"`                                                       |
+   | 46    | `"Returned to business"`                                            |
+   | 47    | `"Exception"`                                                       |
+   | 48    | `"Terminated"`                                                      |
+   | 49    | `"Canceled"`                                                        |
+   | 60    | `"Returned to stock"`                                               |
+   | 100   | `"Lost"`                                                            |
+   | 101   | `"Damaged"`                                                         |
+   | 102   | `"Investigation"`                                                   |
+   | 103   | `"Awaiting your action"`                                            |
+   | 104   | `"Archived"`                                                        |
+   | 105   | `"On hold"`                                                         |
+   | other | `"Bosta state <n>"`                                                 |
+
+   `bostaScanText`:
+   - is the label;
+   - for 47 with a non-empty `exceptionReason` it is `"Exception: <reason>"`, clipped so the whole string is ≤ 200 characters.
+
+   Tests:
+   - `bostaScanText(24, "SEND", undefined) === "Received at warehouse"`;
+   - `bostaScanText(47, "SEND", "Postponed")` → `"Exception: Postponed"`;
+   - a 300-character reason → length 200;
+   - `bostaScanText(999, "SEND", undefined) === "Bosta state 999"`.
+
+4. **`parseBostaConfig` tests:**
+   - `undefined` / `{}` → ok with `DEFAULT_BOSTA_CONFIG`;
+   - `{ awbFormat: "A4", extra: 1 }` → ok `{ awbFormat: "A4", awbLanguage: "ar", allowToOpenPackage: false }` (no `extra`);
+   - `{ awbFormat: "Z" }` → `{ ok: false, reason: "awbFormat" }`;
+   - `{ awbLanguage: "fr" }` → reason `"awbLanguage"`;
+   - `{ allowToOpenPackage: "yes" }` → reason `"allowToOpenPackage"`;
+   - `"x"` and `[]` → reason `"config"`.
+5. **Fill "allowToOpenPackage …" (F5, Ruling 15).** `cfg = { ...DEFAULT_BOSTA_CONFIG, allowToOpenPackage: true }`.
+   - `packageImages = ["http://a/x.jpg", "https://a/1.jpg", "https://a/1.jpg", ...11 more distinct https URLs]` → `checkParcel` is `null`.
+   - The payload's `deliveryImages` deep-equals `[{ type: "ALLOW_TO_OPEN_THE_PACKAGE", images: <the first 10 distinct https URLs, in order> }]`, with no http URL and `allowToOpenPackage: true`.
+   - `packageImages = ["http://a/x.jpg"]` → `checkParcel` deep-equals `{ code: "OPEN_PACKAGE_NEEDS_IMAGES" }`.
+6. **Fill "drops unknown keys …":**
+   - `{ ...webhook24, extra: "x" }` → deep-equals the same object as the webhook24 case;
+   - `parseBostaWebhook` returns `null` for each of these: `[1]`, `"str"`, the bytes `"{not json"`, an object without `trackingNumber`, `state: "24"` (a string), `trackingNumber: "a b"`, and a valid object padded to 16,385 bytes;
+   - an `exceptionReason` of 300 characters comes back as 200.
+7. **More checks:**
+   - `checkParcel(parcel({ currency: "USD" }))` → `{ code: "CURRENCY_NOT_SUPPORTED" }`;
+   - `address.city: " "` → reason `DISTRICT_MISSING`;
+   - a bad phone → `{ code: "PHONE_NOT_SHIPPABLE" }`;
+   - `describeItems` of 250 characters → 200 characters ending in `"…"`;
+   - `buildDeliveryPayload` with `webhookUrl: null` has neither `webhookUrl` nor `webhookCustomHeaders`.
+8. **`governorates.test.ts`:** also check that every one of the 27 `PROVINCES.EG` ISO codes appears in the candidate table (Arabic name from regions plus `BOSTA_ENGLISH_ALIASES` where listed). The test title already promises this; assert it by iterating the 27 codes.
+
 ---
 
 ### Task 6: `@platform/carrier-bosta` — HTTP client, city directory and `BostaCarrierProvider`
@@ -1976,9 +2325,7 @@ export class BostaCarrierProvider {
     trackingNumbers: readonly string[],
     options: { format?: "A4" | "A6"; lang?: "ar" | "en" },
   ): Promise<Uint8Array>; // defaults from config
-  getDelivery(
-    trackingNumber: string,
-  ): Promise<{
+  getDelivery(trackingNumber: string): Promise<{
     trackingNumber: string;
     stateCode: number;
     stateLabel: string;
@@ -2114,6 +2461,68 @@ Expected: FAIL (modules missing).
 - [ ] **Step 4: Run** the package's test, coverage, typecheck and lint commands (as in Task 5). Expected: PASS, coverage ≥ 80.
 
 - [ ] **Step 5: Commit** with `feat(carrier-bosta): bosta rest client, cached city directory and carrier provider`.
+
+**Amendments (binding) — implementer: sonnet. Review depth: strong.**
+
+1. **F1 — `parseSearchResponse` accepts only recognised shapes (replaces "accepts all three").** For `body` (already JSON-parsed):
+   - `body.success === false` → throw `BostaApiError({ carrierFailure: "unavailable", status: 200, message: "Bosta search response not recognised" })`.
+   - `Array.isArray(body.data)` → use it.
+   - `Array.isArray(body.data?.deliveries)` → use it.
+   - `body.data` is an object with a string `_id` → `[body.data]`.
+   - Anything else (`data: null`, `data: { list: [] }`, a string, a number) → the same throw.
+   - From the recognised list, keep the items whose `businessReference === reference` and that have string `_id` and `trackingNumber` (a numeric `trackingNumber` becomes `String(n)`).
+   - `{ data: [] }` and `{ data: { deliveries: [] } }` → `[]`.
+
+   Test "an unknown shape throws, never []": each bad shape above rejects with `{ carrierFailure: "unavailable" }`. `searchByBusinessReference` with a 401 → `credentials_rejected` (Task 7 treats that as unknown).
+
+2. **F14.** `errorCode` is read as `Number(body.errorCode)`. Test: `{ success: false, errorCode: "3003" }` with 400 → the same classification as the number 3003.
+3. **F3 compile check** in `bosta-carrier-provider.test.ts`: `const problem: { readonly code: BostaRejectionCode; readonly reason?: string } | null = await bosta(fetch).prepare(parcel());`. It must type-check (`typecheck` in Step 4).
+4. **Fill the empty tests.** Expected values:
+   - **401/500/timeout/non-JSON:**
+     - 401 fixture → rejects `{ carrierFailure: "credentials_rejected", status: 401 }`;
+     - 500 → `{ carrierFailure: "unavailable", status: 500 }`;
+     - 200 with body `"<html>"` → `{ carrierFailure: "unavailable" }`;
+     - fetch rejecting `new TypeError("fetch failed")` → `{ carrierFailure: "unavailable", status: 0, timedOut: false }`;
+     - timeout: `vi.useFakeTimers()`, with a fetch that resolves only when its `signal` aborts (it rejects with an `AbortError` on abort); advance 10,000 ms → rejects `{ carrierFailure: "unavailable", status: 0, timedOut: true }` with message `"Bosta request timed out"`;
+     - no error message contains the fixture's `message` text or the API key.
+   - **Prepare finds no city.** Cities fixture = Cairo and Alexandria only; `parcel({ address: { ..., province: "EG-SUZ" } })`.
+     - `prepare` → `{ code: "ADDRESS_NOT_SHIPPABLE", reason: "CITY_NOT_FOUND" }`.
+     - `createDelivery` with that parcel rejects `{ carrierFailure: "rejected", code: "ADDRESS_NOT_SHIPPABLE", reason: "CITY_NOT_FOUND" }`.
+     - `fetch` was called only for `/cities` (1 call per provider when the directory is fresh).
+   - **City cache.** One `BostaCityDirectory(() => now)` shared by two providers with different API keys.
+     - Both `prepare` calls → `fetch` was called for `/cities` once.
+     - Advance `now` by `CITY_CACHE_TTL_MS + 1` → the next `prepare` fetches again.
+     - A first `fetchList` that rejects is not cached: the second call fetches again and succeeds.
+   - **Terminate:**
+     - 200 fixture → `"cancelled"`, method `DELETE`, URL `https://app.bosta.co/api/v2/deliveries/business/5108002/terminate`;
+     - 404 with errorCode 1066 → `"not_found"`;
+     - 404 without 1066, or 400 → rejects `{ carrierFailure: "rejected", code: "CARRIER_CANCEL_REFUSED" }`;
+     - 503 → `unavailable`.
+   - **verifyCredentials:**
+     - `GET https://app.bosta.co/api/v2/pickup-locations` with header `Authorization` equal to the raw key;
+     - 200 → resolves `undefined` (the body is never parsed: give it `"not json"` and it still resolves);
+     - 401 and 403 → `credentials_rejected`;
+     - 500 → `unavailable`.
+   - **Mass-AWB, more cases:**
+     - `[]` → rejects `/50|empty|1/` before any fetch;
+     - a response that is raw `%PDF-1.4…` bytes → returned unchanged;
+     - `{ data: { data: "<base64>" } }` and `{ data: "data:application/pdf;base64,<base64>" }` → decoded PDF;
+     - `{ data: "aGVsbG8=" }` → rejects `{ carrierFailure: "unavailable" }` with message `"Bosta AWB response was not a PDF"`.
+   - **getDelivery:** the fixture → `{ trackingNumber: <fixture tn as string>, stateCode: <fixture code>, stateLabel: mapBostaState(code, type).label, target: mapBostaState(code, type).target }`.
+5. **`createDelivery` with `webhookUrl: null`:** the posted body has no `webhookUrl` key.
+
+6. **Plan review 1, finding 3: an unreadable matching row is never treated as absence.**
+   - Within a recognised list, each element must be an object.
+   - An element whose `businessReference` is not a string → throw `unavailable` ("Bosta search response not recognised").
+   - An element whose `businessReference === reference` but whose `_id` is not a non-empty string, or whose `trackingNumber` is neither a non-empty string nor a finite number → the same throw.
+   - Only well-formed **non-matching** elements are dropped.
+
+   Tests:
+   - `{ data: [{ businessReference: "1001-1", _id: "live", trackingNumber: null }] }` with reference `"1001-1"` → throws `unavailable` (never `[]`);
+   - `{ data: [42] }` → throws;
+   - `{ data: [{ businessReference: "other", _id: "x", trackingNumber: "1" }] }` → `[]`.
+
+   (Task 7 adds the consumer test.)
 
 ---
 
@@ -2370,6 +2779,91 @@ Expected: FAIL.
 
 - [ ] **Step 5: Commit** with `feat(shipping): carrier labels with durable in-flight attempts, cancel and waybills`.
 
+**Amendments (binding) — implementer: terra. Review depth: strong.**
+
+1. **F12 — a new `CreateLabel` carrier-path order. It replaces steps 1–3 above; steps 4–6 keep their content.**
+   - **Step 0, read-only precheck** (one `unitOfWork.run`, no write):
+     - not found → `NotFoundError`;
+     - `label_created` → return `{ status, trackingNumber, carrierDeliveryId, carrierKey }` with **no resolve and no prepare** (Ruling 35);
+     - `exception` → `CarrierError("SHIPMENT_NEEDS_REVIEW", …, 409)`;
+     - an open pending attempt → **resume path**;
+     - otherwise → **fresh path**.
+   - **Resume path:**
+     - `resolve(tenantId, carrierKey, "existing_shipment")`;
+     - then step 4 (grace check, then `findDeliveriesByReference`), with **no `prepare`**.
+     - On a recognised 0-match, run `prepare` first. A problem → `failLabelAttempt(reference)` in a transaction and return `CarrierError(problem.code, …, 422, problem.reason)`. No problem → step 5 with `resumed = true`.
+   - **Fresh path:**
+     - `resolve(…, "new_shipment")`, then `prepare`. A problem → 422 and nothing written; `unavailable` → 503.
+     - Then the begin transaction (inside `withConcurrencyRetry`) re-reads the shipment:
+       - now `label_created` → return the stored label;
+       - now has an open pending attempt → `CARRIER_CREATE_IN_PROGRESS` (409);
+       - `!canTransitionShipment(status, "label_created")` → `BusinessRuleError`;
+       - else `beginLabelAttempt(nextLabelReference(details.reference), now)` and save.
+     - Then step 5 with `resumed = false`.
+2. **F1.** In step 4, **any** search failure, `credentials_rejected` and `rejected` included, goes to step 6 (unknown), never to step 5.
+3. **T1 review carry — settle success guard.** The settle transaction re-reads the shipment:
+   - `label_created` → return the stored label, no write;
+   - `pendingLabelAttempt()?.reference !== reference` (a Retry closed it meanwhile) → write nothing and return `CarrierError("CARRIER_RESULT_UNKNOWN", …, 409)`;
+   - else `createLabel(...)`.
+4. **F2 — legacy paths refuse carrier-managed shipments.** "Carrier-managed" means `shipment.carrier` is set and `registry.has(carrier)`.
+   - `VoidLabelDeps` and the `AdvanceShipment` deps gain `isCarrierManaged: (carrierKey: string) => boolean`. `buildController` passes `(k) => carrierRegistry.has(k)`; it defaults to `() => false` when absent.
+   - `VoidLabel` on a carrier-managed shipment → `CarrierError("CARRIER_USE_CANCEL", "Use the carrier cancel for this shipment", 409)`, with no change and no provider call.
+   - `AdvanceShipment` on a carrier-managed shipment allows **only `voided → created`** (Task 11 uses it to re-ship). Every other target → the same `CARRIER_USE_CANCEL`.
+   - `exception → created` stays with `RetryShipment`.
+5. **Fill the empty tests, and add these.** Expected values:
+   - **4xx closes / resumed 4xx is unknown:**
+     - (a) `create: [{ fail: "rejected", code: "ADDRESS_NOT_SHIPPABLE", reason: "DISTRICT_NOT_FOUND" }]` → err `{ code: "ADDRESS_NOT_SHIPPABLE", reason: "DISTRICT_NOT_FOUND", httpStatus: 422 }`. The label attempts are `[pending "1001-1", failed "1001-1"]`, `pendingLabelAttempt()` is `undefined`, and the status is `created`. A next call with `create` succeeding sends reference `"1001-2"`.
+     - (b) `create: [timeout, { fail: "rejected" }]`, `find: [[]]`, with the clock advanced past the grace → the retry returns `CARRIER_RESULT_UNKNOWN`, `needsCarrierReview === true`, and the create references are `["1001-1", "1001-1"]`.
+   - **Disabled carrier:** the harness has bosta configured but disabled → `CARRIER_NOT_ENABLED`, `httpStatus 409`; 0 attempts; 0 `prepare` calls.
+   - **Legacy path:** no `carrier` field → status `label_created` via `deps.carrierProvider`; the `FakeCarrierProvider` has 0 calls of any kind.
+   - **Credentials rejected:** `create: [{ fail: "credentials_rejected" }]` → `CARRIER_CREDENTIALS_REJECTED` (409); attempt closed as failed.
+   - **Unavailable:** `create: [{ fail: "unavailable" }]` (not timed out) → `CARRIER_UNAVAILABLE` (503); attempt still pending.
+   - **Prepare unavailable:** `prepare` throws `{ carrierFailure: "unavailable" }` → `CARRIER_UNAVAILABLE` (503); 0 attempts.
+   - **F12:** "an already-labelled shipment returns its label with the carrier disabled": ok, 0 resolve calls. "A pending attempt resumes with the carrier disabled": past the grace, `find` returns 1 → ok with that tracking number.
+   - **F1:** "a 401 on search is CARRIER_RESULT_UNKNOWN with no create call": `find: [{ fail: "credentials_rejected" }]` → unknown; `createCalls` length 1 (the original timed-out one).
+   - **Settle guard:** after a pending attempt `"1001-1"`, a test-only hook between the carrier call and the settle runs `retry` on the stored shipment → the result is `CARRIER_RESULT_UNKNOWN` and no label is stored. If the harness can't interleave, use a repository double whose second `findById` returns the retried shipment.
+   - **No call inside a transaction:** every recorded `openCountAtCall` for prepare/create/find is `0`.
+   - **F2:**
+     - "legacy void on a bosta shipment is refused and makes no change": `CARRIER_USE_CANCEL`; status still `label_created`.
+     - "advance voided → created is allowed for a bosta shipment; label_created → in_transit is CARRIER_USE_CANCEL".
+     - "a shipment whose carrier isn't registered keeps the old void".
+6. **`carrier-shipment.use-cases.test.ts`, expected values:**
+   - cancel `label_created` → `cancelCalls` `["5108002"]`; result `{ status: "voided", fulfillmentRef }`;
+   - terminate `"not_found"` → `voided`;
+   - `in_transit` → `CARRIER_CANCEL_NOT_ALLOWED` (409), 0 cancel calls;
+   - already `voided` → ok `voided`, 0 calls;
+   - `rejected` → `CARRIER_CANCEL_REFUSED` (409), status unchanged;
+   - `unavailable` → `CARRIER_UNAVAILABLE` (503), unchanged;
+   - a disabled-but-configured carrier still cancels (`existing_shipment`).
+   - **Print:**
+     - `[]` or 51 ids → `ValidationError`;
+     - `[id, id]` → `printCalls` deep-equals `[[["5108002"], {}]]`;
+     - a `voided` shipment → `AWB_NOT_AVAILABLE` (409);
+     - another tenant's id → `NOT_FOUND`;
+     - two carriers → `AWB_MIXED_CARRIERS` (422);
+     - `{ format: "A4" }` → the provider receives `{ format: "A4" }`.
+     - (The config defaults are applied by the provider, Task 6. This test asserts the use case passes `{}` through when no format is given.)
+7. **Presenter:** `CARRIER_USE_CANCEL` and the other new codes are `CarrierError`s, so they need no new presenter branch. Add one presenter test for `CARRIER_USE_CANCEL` → 409 and `body.code`.
+
+8. **Plan review 1, finding 4: a resumed 401/403 is unknown.** Step 5 becomes:
+   - `credentials_rejected` **not resumed** → `failLabelAttempt` and `CARRIER_CREDENTIALS_REJECTED` (409).
+   - `credentials_rejected` **resumed** → step 6 (unknown); the attempt stays open, and the shipment goes to review.
+
+   Test both: (fresh) as in amendment 5; (resumed) `create: [timeout, { fail: "credentials_rejected" }]`, `find: [[]]`, past the grace → `CARRIER_RESULT_UNKNOWN` and `needsCarrierReview === true`.
+
+9. **Plan review 1, finding 5: the legacy label path gets a safety check.** This amends "byte-for-byte unchanged". When `input.carrier` is absent, before any provider call, the precheck refuses with `CarrierError("CARRIER_USE_CANCEL", "Use the carrier flow for this shipment", 409)`, with no write and no provider call, when either:
+   - (a) the shipment has an open pending label attempt (`pendingLabelAttempt() !== undefined`); or
+   - (b) the shipment is carrier-managed (`shipment.carrier` set and `isCarrierManaged(carrier)`); or its label attempts include any carrier attempt whose `reference` matches `/-\d+$/` (a real-carrier history after a void/retry).
+
+   Every other shipment keeps the old behaviour exactly.
+
+   Tests:
+   - "pending timeout then legacy label → CARRIER_USE_CANCEL; deps.carrierProvider not called; attempts unchanged";
+   - "a carrier label voided by CancelCarrierShipment, advanced to created, then legacy label → refused";
+   - "an unmanaged shipment still labels through the legacy provider".
+
+10. **Plan review 1, finding 3 (consumer):** `find: [{ fail: "unavailable" }]` past the grace → `CARRIER_RESULT_UNKNOWN`, and `record.createCalls.length === 1`.
+
 ---
 
 ### Task 8: Prisma processed-webhook store and the extended `RecordCarrierWebhook`
@@ -2477,6 +2971,35 @@ describe("RecordCarrierWebhook with carrier statuses (§8.5, §9a.4, Ruling 23)"
 - [ ] **Step 4: Run** the shipping test, typecheck and lint commands plus `pnpm --filter @platform/admin exec vitest run src/http/shipping`. Expected: PASS.
 - [ ] **Step 5: Commit** with `feat(shipping): durable carrier webhook dedupe, scans and skip-ahead transitions`.
 
+**Amendments (binding) — implementer: sonnet. Review depth: standard.**
+
+1. **F5 — dedupe inside the aggregate's transaction.**
+   - `ProcessedCarrierWebhookStore` becomes `hasProcessed(carrier, eventId, tenantId, tx?: unknown)` and `markProcessed(carrier, eventId, tenantId, tx?: unknown)`.
+   - `RecordCarrierWebhook` runs read → `hasProcessed(…, tx)` → apply → save → `markProcessed(…, tx)` inside **one** `unitOfWork.run`, wrapped in `withConcurrencyRetry(5, …)`.
+   - The Prisma store uses `tx` when given (exactly as the repository's `readScoped`), else its own `runInTenantTransaction`. The in-memory store ignores `tx`.
+2. **F11 — `prisma-processed-carrier-webhook-store.test.ts`** with a fake client (`processedShippingWebhook: { findUnique, create }`). Expected:
+   - `hasProcessed` → `findUnique({ where: { tenantId_carrier_webhookEventId: { tenantId: "t-1", carrier: "bosta", webhookEventId: "e" } } })`; a row → `true`, `null` → `false`;
+   - `markProcessed` → `create` with `{ tenantId, carrier, webhookEventId }`;
+   - `create` rejecting `{ code: "P2002" }` → resolves;
+   - any other error → rejects with the same error;
+   - with a `tx` object given → the `tx`'s methods are called and the root client's are not.
+3. **F16 — time.** Every transition in the walk, and the scan, use `scan?.occurredAt ?? clock.now()`.
+4. **T1 review carry:**
+   - `carrierPathTo(from, to)` returns `null` for an unreachable target and for `from === to` (`created → created` included). `null` means "record the scan, no status change, `transitions: []`", and it never throws.
+   - A webhook for a `created` shipment adds the tracking event only.
+5. **Output for the mirror (used by Task 10):** `RecordCarrierWebhookOutput` gains `carrier: string`, `trackingNumber: string | null` and `carrierDeliveryId: string | null`, read from the shipment and its label.
+6. **Validation:** both `shipmentId` and `trackingNumber`, or neither → `ValidationError`.
+7. **Fill the empty tests:**
+   - **Impossible transition:** a shipment at `delivered`, `toStatus: "in_transit"` with a scan → ok `{ status: "delivered", transitions: [] }`; `trackingEvents` length 1.
+   - **Duplicate:** the same input twice → the second result is `{ duplicate: true, transitions: [] }`, and `trackingEvents` length stays 1.
+   - **Another tenant:** the shipment is saved for `t-1`; executing with `tenantId: "t-2"` and the same tracking number → err code `NOT_FOUND`.
+   - **delivery_failed:** a shipment at `out_for_delivery`, `toStatus: "delivery_failed"`, `reason: "Postponed by customer"` → `transitions` `["delivery_failed"]`; the last attempt is `{ kind: "carrier", outcome: "failed" }` with reason `"Postponed by customer"`.
+   - **New, "a save that throws leaves the event unprocessed":** a repository whose `save` rejects `new Error("db down")` → the result is an error (or a throw, per the existing pattern). Then `store.hasProcessed("bosta", eventId, T)` is `false`. With a working repository, the same input is processed with `duplicate: false`.
+   - **New, "a scan on a created shipment changes nothing else":** status stays `created`, 1 tracking event.
+8. **Guard:** run `node scripts/dev/check-prisma-tenant-where.mjs` in Step 4 as well.
+
+9. **Plan review 1, finding 7: is this shipment current?** `RecordCarrierWebhookOutput` gains `isCurrentShipment: boolean`. It is `true` when `findByFulfillmentRef(fulfillmentRef, tenantId, tx)` (newest first) returns this shipment's id, read in the same transaction. Test: two shipments A (older, cancelled) and B (newer) for one fulfillment; a webhook for A → `isCurrentShipment: false`, A gets the scan, B is unchanged.
+
 ---
 
 ### Task 9: Admin carrier settings routes, permissions and seed
@@ -2571,6 +3094,20 @@ it("carrier settings are admin-only even though operator has shipping:* (Ruling 
 - [ ] **Step 4: Run** `pnpm --filter @platform/admin exec vitest run src/http src/tenant-mode-guard.test.ts && pnpm --filter @platform/admin typecheck && NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter @platform/admin lint && pnpm --filter @platform/auth test`. Expected: PASS.
 - [ ] **Step 5: Commit** with `feat(admin): carrier settings routes with admin-only permissions`.
 
+**Amendments (binding) — implementer: terra. Review depth: standard.**
+
+1. **F24.** In `scripts/ops/seed-ory-network.mjs`, widen the regeneration comment's grep pattern to `'"[a-z0-9_]+:[a-z_]+"'`, so `shipping:read_settings` and `shipping:update_settings` survive a regeneration.
+2. **Route tests, expected values.** Every mutating request sends an `Idempotency-Key` header, as `shipping-zones-routes.test.ts` does.
+   - **PUT `{ credentials: { apiKey: "bosta-key-123" }, enabled: true }`** → 200. `JSON.stringify(body)` contains neither `"bosta-key-123"` nor the stored webhook secret. A following GET has the same property, and its bosta entry `{ configured: true, enabled: true }`.
+   - **GET** → the entry's `webhookUrl` equals the `fakeRegistration`'s `webhookUrl`.
+   - **A rejected key** (`fakeRegistration({ verify: "credentials_rejected" })`) → 409 with `body.code` `"CARRIER_CREDENTIALS_REJECTED"`.
+   - **Bad bodies:** a 513-character apiKey → 422 `VALIDATION` (A6); body `{}` → 422 `VALIDATION` (A6); `{ disconnect: true, enabled: true }` → 422 `VALIDATION` (A6); `{ cod: 1 }` → 422 `VALIDATION` (A6).
+   - **Unknown carrier:** PUT `/shipping/carriers/aramex` → 422 with `body.code` `"CARRIER_UNKNOWN"`. PUT `/shipping/carriers/Bad%20Key` → 422 `VALIDATION` (A6).
+   - **Tenant t-2:** GET → 200 with `version: 0` and the bosta entry `configured: false`.
+   - **`/enabled`:** → `{ carriers: [{ key: "bosta", displayName }] }`, whose items have exactly those two keys.
+   - **New:** an operator principal on `GET /shipping/carriers` and `PUT` → 403. An operator on `GET /shipping/carriers/enabled` → 200.
+3. **Tenant guard.** `WiredAdmin.carrierSettings` exposes no field named `tenantId`. `src/tenant-mode-guard.test.ts` stays green (already in Step 4).
+
 ---
 
 ### Task 10: The public Bosta webhook route and the fulfillment mirror
@@ -2650,18 +3187,16 @@ it("wrong secret and unknown tenant give the same 401 body (Review Focus 3)", as
   expect(verify).toHaveBeenCalledWith({ tenantId: "t-1", carrierKey: "bosta", presented: "wrong" });
 });
 it("records state 24 as in_transit with a scan, and mirrors the fulfillment", async () => {
-  const record = vi
-    .fn()
-    .mockResolvedValue({
-      status: 200,
-      body: {
-        shipmentId: "s-1",
-        fulfillmentRef: "fo-1",
-        status: "in_transit",
-        duplicate: false,
-        transitions: ["carrier_accepted", "in_transit"],
-      },
-    });
+  const record = vi.fn().mockResolvedValue({
+    status: 200,
+    body: {
+      shipmentId: "s-1",
+      fulfillmentRef: "fo-1",
+      status: "in_transit",
+      duplicate: false,
+      transitions: ["carrier_accepted", "in_transit"],
+    },
+  });
   const mirror = vi.fn().mockResolvedValue({ status: 200, body: {} });
   const [route] = publicCarrierWebhookRoutes(
     fake({ verify: vi.fn().mockResolvedValue(true), record, mirror }),
@@ -2707,6 +3242,55 @@ it("the response body never contains the payload", async () => {
 - [ ] **Step 3: Implement.** Then run `pnpm install --offline` for the new dependency.
 - [ ] **Step 4: Run** the admin test, typecheck and lint commands (as in Task 9). Expected: PASS.
 - [ ] **Step 5: Commit** with `apps/admin/package.json`, `pnpm-lock.yaml` and the message `feat(admin): authenticated bosta webhook route with fulfillment mirror`.
+
+**Amendments (binding) — implementer: sonnet. Review depth: strong.**
+
+1. **F7 — reword Review Focus 3 and the first test's title** to "a wrong secret and a missing secret for a known tenant give the same 401 body". The test's second request becomes `ctx("t-1", {}, body)` (no `authorization`).
+   - Add a transport-level test that pins the real endpoint, in `public-carrier-webhook-routes.e2e.test.ts`. Model it on the multi-tenant setup in `apps/admin/src/http/tenant-lifecycle.e2e.test.ts`, and on `packages/http/src/tenant-gate.test.ts` for the expected bodies. It expects:
+     - a known tenant with a wrong secret → 401 `UNAUTHORIZED_BODY`;
+     - an unknown `x-tenant-id` → 403 with `body.code` `"TENANT_UNKNOWN"`;
+     - no `x-tenant-id` → 403.
+   - If that harness is DB-gated (skipped locally), the test is still written. Say "skipped (DB-gated)" in the report and do not weaken it.
+2. **F16 — mirror on every accepted, non-duplicate webhook.** This replaces step 6's `transitions.length > 0` condition. The mirror call becomes:
+
+   ```ts
+   mirrorFulfillment({
+     tenantId,
+     fulfillmentOrderId: fulfillmentRef,
+     shipmentStatus: status,
+     carrier,
+     ...(trackingNumber ? { trackingNumber } : {}),
+     ...(carrierDeliveryId ? { carrierShipmentId: carrierDeliveryId } : {}),
+   });
+   ```
+
+   It reads `carrier`, `trackingNumber` and `carrierDeliveryId` from Task 8's output.
+
+3. **F16 — the fulfillment half, which Task 2 did not build.** Modify `services/fulfillment/src/application/carrier-fulfillment.use-cases.ts` (+ its test) and the controller pass-through:
+   - `MirrorShipmentStatusInput` gains optional `carrier?: string`, `trackingNumber?: string` and `carrierShipmentId?: string`.
+   - In `MirrorShipmentStatus`, when the fulfillment is at `packing_completed`, the `shipmentStatus` is not one of `created`, `label_created`, `voided` or `cancelled`, and all three fields are present: first apply the same transition `AttachCarrierShipment` applies (reuse its domain calls, not a copy of the use case), then mirror, all in one transaction.
+   - Tests:
+     - `packing_completed` + `in_transit` with the three fields → the final status is `in_transit` and the tracking number is stored;
+     - the same without the fields → `changed: false`;
+     - `packing_completed` + `cancelled` → no attach.
+   - Fulfillment coverage stays ≥ 80 (`pnpm --filter @platform/fulfillment exec vitest run --coverage`). Add `services/fulfillment/**` files to the commit.
+4. **Logger.** `WiredAdmin.carrierWebhooks` gains `readonly logger?: { warn(message: string, meta: Record<string, string>): void }`. `wireAdmin` passes the admin logger if one exists in `composition.ts`; otherwise it omits it, and the route uses a no-op. Tests pass a `vi.fn()` logger.
+5. **Fill the empty tests:**
+   - **Unowned tracking number:** `record` → `{ status: 404, body: {...} }` → the response is exactly `{ status: 200, body: { ignored: true } }`; `mirror` not called.
+   - **Duplicate:** `record` → `{ status: 200, body: { ..., duplicate: true } }` → `{ status: 200, body: { duplicate: true } }`; `mirror` not called.
+   - **Over 16 KiB:** `rawBody` of 16,385 bytes → `{ status: 413, body: { code: "PAYLOAD_TOO_LARGE" } }`; `verify` not called. `rawBody` undefined → the same 413.
+   - **Bad JSON:** a valid secret with `rawBody` `"{nope"` → `{ status: 422, body: { code: "VALIDATION" } }`; `record` not called.
+   - **Mirror failure:** `mirror` rejects → `logger.warn` called with `("carrier webhook: fulfillment mirror failed", { tenantId: "t-1", shipmentId: "s-1", status: "in_transit" })`, and the response is `{ status: 200, body: { ok: true } }`. `mirror` resolving `{ status: 500 }` → the same.
+   - **Payload never echoed:** for the ok, duplicate and ignored answers, `JSON.stringify(res.body)` contains neither `"48089608"` nor `"SEND"`.
+   - **New, scan-only re-mirror:** a webhook whose `record` returns `transitions: []` and `duplicate: false` → `mirror` is still called once.
+   - **New, RTO return leg:** `webhook24` with `type: "RTO"` → `record` called **without** `toStatus`, with scan `"Received at warehouse"`.
+
+6. **Plan review 1, finding 7: predecessors never mirror.**
+   - The route calls `mirrorFulfillment` **only when `isCurrentShipment` is true** (Task 8). Otherwise it answers `200 { ok: true }` without mirroring.
+   - In addition, fulfillment's `MirrorShipmentStatus` refuses to act (returns `changed: false`) when `trackingNumber` is given, the fulfillment already carries a tracking number, and the two differ.
+   - Tests:
+     - route: record → `isCurrentShipment: false` → `mirror` not called, response 200 `{ ok: true }`;
+     - fulfillment: fulfillment at `tracking_assigned` with tracking `"B-1"`, mirror `cancelled` with `trackingNumber "A-1"` → `changed: false`, status still `tracking_assigned`, tracking `"B-1"`.
 
 ---
 
@@ -3110,6 +3694,55 @@ it("a failed order doesn't stop the next", async () => {
 - [ ] **Step 4: Run** `pnpm --filter @platform/admin test && pnpm --filter @platform/admin typecheck && NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter @platform/admin lint && node scripts/ops/check-lint-warnings.mjs`. Expected: PASS, total ≤ 473.
 - [ ] **Step 5: Commit** with `feat(admin): ship orders with a carrier, in bulk, print waybills and cancel`.
 
+**Amendments (binding) — implementer: terra. Review depth: strong.**
+
+1. **P7 — fulfillment errors are read from `body.message`.** `CarrierFulfillmentAdapter` reads the code from the envelope's `body.message` prefix (`/^([A-Z_]+):/`), because `body.code` is `BUSINESS_RULE`. Mapping:
+
+   | Prefix                                     | Result                                                                                                      |
+   | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+   | `STOCK_NOT_RESERVED`                       | `{ code: "STOCK_NOT_RESERVED", httpStatus: 409 }`                                                           |
+   | `SHIPMENT_IN_PROGRESS`                     | `{ code: "SHIPMENT_IN_PROGRESS", httpStatus: 409 }`                                                         |
+   | `FULFILLMENT_NOT_SHIPPABLE`                | `{ code: "ORDER_NOT_SHIPPABLE", httpStatus: 409 }`                                                          |
+   | `FULFILLMENT_NOT_ATTACHABLE` from `attach` | `attach` returns `false` (logged by id)                                                                     |
+   | any other non-2xx                          | `{ code: "ORDER_NOT_SHIPPABLE", httpStatus: 409 }`, unless the status is 404, which gives `ORDER_NOT_FOUND` |
+
+   Test each row.
+
+2. **F4 — a terminal shipment gets a replacement, with a new reference base.**
+   - Phase 2 (step 4): a current shipment in `cancelled` or `closed` creates a **new** shipment for the same fulfillment.
+   - Its label reference base is `${orderNumber}-r${k}`, where `k` is the number of shipments that already exist for the fulfillment. For the first replacement `k = 1`, so Bosta sees `<n>-r1-1`.
+   - Add `ShipmentRepository.countByFulfillmentRef(fulfillmentRef: string, tenantId: string, tx?: unknown): Promise<number>` (Prisma: `count({ where: { tenantId, fulfillmentRef } })`; in-memory and `PostgresLikeShipmentRepository` count their tenant bucket). Add a `CountShipmentsByFulfillment` use case and `ShippingController.countByFulfillment({ tenantId, fulfillmentRef })` → 200 `{ count }`, exported.
+   - `ShipOrderWithCarrier`'s `shipping` `Pick` adds `"countByFulfillment"`.
+   - Statuses `delivered`, `returned` and `out_for_delivery`/`in_transit`/`carrier_accepted` are already refused by the fulfillment check (Ruling 41). If one appears on the shipment anyway → `ORDER_NOT_SHIPPABLE`.
+   - Test: "a carrier-cancelled shipment ships again on a new shipment with reference `<n>-r1-1`" (the `createLabel` input's `carrier.reference` is `"1001-r1"`).
+   - Run the tenant-where guard (`countByFulfillmentRef` names `tenantId`).
+3. **F17 — `BULK_ORDER_RESERVE_MS = 25_000`** (it amends Ruling 36's 15 s; the start threshold is `elapsed > 30 s`). The budget test becomes: each ship advances 20 s; a starts at 0 and b at 20. c is checked at 40 > 30 and is skipped. Expected:
+   - `shipped` order ids `["a", "b"]`;
+   - `failed` = `[{ orderId: "c", code: "CARRIER_TIMEOUT", attempted: false }, { orderId: "d", code: "CARRIER_TIMEOUT", attempted: false }]`;
+   - `ship` called 2 times.
+4. **F22.** The `ShipOutcome` failure branch gains `orderNumber?: string`, set whenever the order was read. `BulkShipResult.failed[]` gains `orderNumber?: string`, copied from the outcome.
+5. **F25.** `decideCodAmount`'s `order` `Pick` adds `"currency"`. After the provider/status check, `intent.currency !== order.currency` → `{ ok: false, code: "COD_AMOUNT_MISMATCH" }`. Test: `cod({ currency: "USD" })` with order currency `"EGP"` → mismatch. The test helper `order()` gains `currency: "EGP"`.
+6. **F23.** At the `./http/product-images` import in `composition.ts`, add the comment `// type-only WiredAdmin import inside; no runtime cycle (preflight F23)`.
+7. **P17.** For `POST /shipments/awb`, `CarrierShippingAdminController.printAwbs` first resolves every selected order → fulfillment → shipment, and collects the order numbers whose shipment is missing or in `created`/`voided`/`cancelled`. If any exist → 409 `{ code: "AWB_NOT_AVAILABLE", message, orderNumbers }`, without calling shipping. For `shipmentIds`, the shipping use case's own `AWB_NOT_AVAILABLE` gives `orderNumbers: []`.
+8. **Fill the empty tests, and add these:**
+   - **Refunded or voided:** `decideCodAmount(order({ paymentStatus: "refunded" }), cod())` and the same with `"voided"` → `{ ok: false, code: "ORDER_NOT_SHIPPABLE" }`.
+   - **A failed order doesn't stop the next:** b → `{ ok: false, code: "ADDRESS_NOT_SHIPPABLE", httpStatus: 422, reason: "CITY_NOT_FOUND", orderNumber: "1002" }`. Expected `shipped` a and c, and `failed` `[{ orderId: "b", code: "ADDRESS_NOT_SHIPPABLE", reason: "CITY_NOT_FOUND", orderNumber: "1002", attempted: true }]`. A `ship` that throws → `{ orderId, code: "CARRIER_UNAVAILABLE", attempted: true }`.
+   - **Lock:** `acquire` called with `("carrier-ship:t-1:o-1", 60_000)`. `release` is called once even when `createLabel` throws. `acquire` → `null` gives `{ ok: false, code: "SHIPMENT_IN_PROGRESS", httpStatus: 409 }` with no order read.
+   - **Already labelled:** `createLabel` returns 200 `label_created` with `trackingNumber "5108002"` → ok with `"5108002"`, and `attach` called again with the same delivery id.
+   - **Routes:** the `cod` body → 400; 51 ids → 400; duplicate ids → 400; another tenant's shipment → 404 on `GET /shipments/:id/awb` and `POST /shipments/:id/cancel`; the AWB answer has `content-type` `application/pdf` and `cache-control` `private, no-store`; an unlabelled order → 409 `{ code: "AWB_NOT_AVAILABLE", orderNumbers: ["1001"] }`; cancel → the fulfillment `detach` is called once with the fulfillment id.
+
+9. **Plan review 1, finding 6: a stable reference base.** This replaces amendment 2's "creating" rule for the reference. The base is derived **on every request** from durable data, never only in the terminal branch:
+   - `k = countByFulfillment(fulfillmentRef) − 1`, counted after any replacement shipment is created. The current shipment is always the newest, so `k` is its 0-based ordinal.
+   - `base = k === 0 ? orderNumber : `${orderNumber}-r${k}``.
+   - The base is passed as `carrier.reference` to `createLabel` in every path: first ship, reuse of a `created` shipment, after a definite failure, after a manual Retry, and after a crash between create and label.
+
+   Tests, each asserting `createLabel`'s `carrier.reference`:
+   - (a) first ship → `"1001"`;
+   - (b) cancelled A, then B created → `"1001-r1"`;
+   - (c) crash after B's create (B exists at `created` with no attempt; the next request) → still `"1001-r1"`;
+   - (d) B's definite failure, then the next ship → `"1001-r1"` (the attempt suffix advances inside shipping: `-r1-2`);
+   - (e) B parked, manual Retry, ship → `"1001-r1"`.
+
 ---
 
 ### Task 12: Runtime composition, config and boot guard
@@ -3198,6 +3831,17 @@ export function assertProductionCarriersConfigured(
 - [ ] **Step 3: Implement.** Run `pnpm install --offline`, then `node scripts/ops/check-env-docs.mjs`.
 - [ ] **Step 4: Run** `pnpm --filter @platform/runtime test && pnpm --filter @platform/runtime typecheck && pnpm --filter @platform/runtime lint && node scripts/ops/check-env-docs.mjs`. Expected: PASS.
 - [ ] **Step 5: Commit** with `feat(runtime): compose bosta behind its own kek and the public api origin`.
+
+**Amendments (binding) — implementer: sonnet. Review depth: standard.**
+
+1. **F13 — the webhook origin must be https outside `local`.** `assertProductionCarriersConfigured`'s `carriers` argument gains `webhookBaseUrl: string | undefined`. Outside `local`, a set URL whose `new URL(v).protocol !== "https:"` refuses boot with `"ADMIN_API_PUBLIC_URL must use https outside local (preflight F13)"`. In `local` it warns, like the other checks. Test both.
+2. **`.env.example`:** the `ADMIN_API_PUBLIC_URL` comment gains the line `# This is the admin API (runtime) origin, NOT admin-web's ADMIN_PUBLIC_URL.`
+3. **F3 — fail first.** Step 2 also runs `pnpm --filter @platform/runtime typecheck`, which is expected to FAIL (`bosta-registration.ts` is missing). In Step 4 it passes with the explicit `: CarrierRegistration` return annotation. Never cast (`as CarrierRegistration`) or use `satisfies`-avoiding tricks: the annotation is the check.
+4. **Test expectations:**
+   - `bostaWebhookUrl("https://api.x.com/")` → `"https://api.x.com/api/v1/public/shipping/webhook/bosta"`.
+   - `create({ config: {}, credentials: { apiKey: "k" }, webhookHeaders: { "x-tenant-id": "t-1", Authorization: "s" } })` → the provider's `key === "bosta"`.
+   - `parseConfig(undefined)` → `{ ok: true, value: { awbFormat: "A6", awbLanguage: "ar", allowToOpenPackage: false } }`.
+   - The guard: KEK only, `APP_ENV` `"production"` → throws the half-configured message; the same in `"local"` → no throw and a warning; a stub vault in production → throws; neither set → passes; an `http://` URL in production → throws the F13 message.
 
 ---
 
@@ -3320,6 +3964,34 @@ export function carrierErrorMessage(code: string | undefined, t: Dictionary): st
 - [ ] **Step 3: Implement.** The page fetches `fetchCarrierSettings()` alongside the zones, and renders `CarriersCard` above `ZonesView`. An `unauthorized` result hides the card. The client components import only _types_ from `@/lib/api/*`.
 - [ ] **Step 4: Run** `pnpm --filter admin-web test && pnpm --filter admin-web typecheck && NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter admin-web lint`, plus the route-contract test and the client-bundle grep. Expected: PASS, three pre-existing grep hits only.
 - [ ] **Step 5: Commit** with `feat(admin-web): connect bosta from settings, shipping`.
+
+**Amendments (binding) — implementer: terra. Review depth: standard.**
+
+1. **F21 — Task 13 creates `apps/admin-web/src/lib/shipping/carrier-errors.ts` (+ `carrier-errors.test.ts`).** Add both to Files and to the commit. It exports:
+   - `export const CARRIER_KEY = /^[a-z][a-z0-9_-]{1,31}$/; // mirrors CARRIER_KEY_PATTERN in services/shipping/src/domain/value-objects/carrier-key.ts`.
+   - `carrierErrorMessage(code, t)`:
+
+     | Code                           | Message                                 |
+     | ------------------------------ | --------------------------------------- |
+     | `CARRIER_CREDENTIALS_REJECTED` | `t.carrierSettings.credentialsRejected` |
+     | `CARRIER_UNAVAILABLE`          | `t.carrierSettings.unavailable`         |
+     | `CARRIER_NOT_AVAILABLE`        | `t.carrierSettings.notAvailable`        |
+     | `CARRIER_NOT_CONFIGURED`       | `t.carrierSettings.notConfigured`       |
+     | anything else or `undefined`   | `t.formErrors.unexpected`               |
+
+   - Tests: each mapped code in `en` and `ar`, plus `"NOPE"` → the fallback.
+   - Every action validates `carrierKey` with `CARRIER_KEY`. admin-web never imports `@platform/shipping`.
+2. **F18.** `updateCarrier` and `rotateCarrierWebhookSecret` pass `timeoutMs: 20_000` to `mutateAdminApi`. `carriers.test.ts` asserts the option on one call of each, by mocking the client module.
+3. **Expected values for the listed tests:**
+   - **Empty API key:** `updateCarrier` is called with an input that has no `credentials` key.
+   - **Invalid `awbFormat`** `"Z"` → `{ status: "error", message: t.formErrors.invalid }`, with 0 API calls.
+   - **Rejected key:** `MutationResult` `{ outcome: "conflict", code: "CARRIER_CREDENTIALS_REJECTED" }` → the message equals `ar.carrierSettings.credentialsRejected` when the locale is ar.
+   - **Thrown error:** the client throws `new Error("x")` → `t.formErrors.unexpected`. A thrown Next redirect error (the same helper the existing action tests use) is rethrown.
+   - **`client.test.ts`:** a 409 with envelope `{ code: "CARRIER_CREDENTIALS_REJECTED", message: "…" }` → `outcome: "conflict"`, `code` the same.
+   - **Dialog:** after save, the stored key string passed in props never appears in `container.innerHTML`; the field's value is `""` and its placeholder is `t.carrierSettings.apiKeySaved`. The copy button writes `webhookUrl` (mock `navigator.clipboard.writeText`). "Rotate" opens a confirm, and the action is not called before confirming.
+4. **i18n.** `lib/i18n.test.ts` parity passes. New ar copy says مربح, never موربيه.
+
+5. **Plan review 1, finding 10: the error-state shape.** Every action that returns `FormState` returns errors as `{ status: "error", message, fieldErrors: {} }`. The expected values in amendment 3 include `fieldErrors: {}`. Never change the global `FormState` type.
 
 ---
 
@@ -3525,6 +4197,54 @@ export async function GET(request: NextRequest): Promise<Response>;
 - [ ] **Step 3: Implement.** Client components import only types from `@/lib/api/*` and call server actions.
 - [ ] **Step 4: Run** `pnpm --filter admin-web test && pnpm --filter admin-web typecheck && NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter admin-web lint`, the route-contract test, the client-bundle grep and `node scripts/ops/check-lint-warnings.mjs`. Expected: PASS, three pre-existing grep hits, total ≤ 473.
 - [ ] **Step 5: Commit** with `feat(admin-web): ship and print with bosta from the order page and orders list`.
+
+**Amendments (binding) — implementer: sonnet. Review depth: standard.**
+
+1. **F21 — `lib/shipping/carrier-errors.ts` already exists (Task 13).** Remove it from Create; **extend** it. `carrierErrorMessage` first checks `t.carrierShipping.errors[code]` (when the key exists), then Task 13's settings map, then the fallback. Both `CARRIER_RESULT_UNKNOWN` and `SHIPMENT_NEEDS_REVIEW` return `t.carrierShipping.needsReview`. `CARRIER_NOT_CONFIGURED` returns the `CARRIER_NOT_ENABLED` text. Extend its test with three shipping codes.
+2. **F2 copy.** Add `errors.CARRIER_USE_CANCEL`:
+   - en: `Use "Cancel shipment" on the order page for Bosta shipments.`
+   - ar: `استخدم «الغي الشحنة» من صفحة الطلب لشحنات بوسطة.`
+
+   The existing technical shipment screen (`components/orders/shipment-lifecycle-actions.tsx`) shows this message when its void/transition action returns that code. Add one test.
+
+3. **F18.** `cancelCarrierShipment` passes `timeoutMs: 30_000`; assert it in `carrier-shipments.test.ts`.
+4. **F22.** The bulk results dialog shows `#<orderNumber>` when the failure carries `orderNumber`, else the order id (this replaces "resolves `orderNumber` from the result where the API provides it"). Test both.
+5. **Retry.** `retryCarrierShipmentAction` calls the existing retry client (`lib/api/shipping.ts`, the function that posts `/shipments/:id/retry`), then `shipOrderWithCarrier`. If the retry is non-ok, its error is returned and nothing ships. The test asserts the call order `[retry, ship]`.
+6. **Expected values for the listed tests:**
+   - **Malformed order id** `"../x"` → `{ status: "error", message: t.formErrors.invalid }`, with 0 API calls.
+   - **51 ids** → the same.
+   - **`ORDER_NOT_PAID`** → `ar.carrierShipping.errors.ORDER_NOT_PAID`.
+   - **Thrown fetch** → `t.formErrors.unexpected`.
+   - **AWB route:**
+     - ok → status 200 with headers `content-type: application/pdf`, `cache-control: private, no-store`, `x-content-type-options: nosniff`;
+     - conflict `orderNumbers ["1001", "1002"]` with locale ar → 409 body `"الطلبات دي لسه مالهاش بوليصة: #1001، #1002"`;
+     - `orderIds=` (empty), or 51 ids → 400, with 0 client calls.
+   - **Selection:** after selecting 2 rows the bar shows `"2 متحدد"` (ar). The 51st checkbox click leaves the count at 50 and shows `tooMany`. Print calls `window.open("/orders/awb?orderIds=a,b", "_blank", …)`.
+   - **Card:** state by state, as listed. The timeline's scan text is inside a `bdi` element with `dir="auto"`.
+7. **Lint cap and client-bundle grep** as in Step 4. `next build` is not a gate (EPERM on this machine).
+
+8. **Plan review 1, finding 8: the card's state/action table.** This replaces the "With no shipment …" bullet. "Ship" means `shipWithCarrierAction`; it is shown only when at least one carrier is enabled and `fulfillmentStatus ∈ {unfulfilled, in_progress}`.
+
+   | Shipment state                                                    | Card shows                                                                                   |
+   | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+   | none                                                              | Ship                                                                                         |
+   | `created` (no label; a timeout or definite refusal left it)       | Ship, labelled `t.carrierShipping.shipWith` (the backend resumes or uses the next reference) |
+   | `label_created`                                                   | tracking + copy + track + print + Cancel (confirm)                                           |
+   | `carrier_accepted` … `delivered` / `delivery_failed` / `returned` | tracking + copy + track + print (no cancel)                                                  |
+   | `voided` (local cancel)                                           | Ship                                                                                         |
+   | `cancelled` (carrier cancel)                                      | Ship (the backend creates the `-r<k>` replacement)                                           |
+   | `closed`                                                          | Ship only when `fulfillmentStatus ∈ {unfulfilled, in_progress}`, else nothing                |
+   | `exception` with `needsReview`                                    | the review note + "Ship again" (retry → ship)                                                |
+   | `exception` without `needsReview`                                 | the review note only                                                                         |
+
+   Component tests: (a) `created` after a timeout shows Ship; (b) `created` after a definite refusal shows Ship; (c) `voided` shows Ship; (d) `cancelled` shows Ship; (e) `needsReview` shows "Ship again" and not Ship.
+
+9. **Plan review 1, finding 9: `CARRIER_USE_CANCEL` travels through the existing actions.**
+   - Add `apps/admin-web/src/app/orders/[orderId]/shipment/actions.ts` (+ its test) to Files.
+   - In its void-label and advance actions, when the `MutationResult` carries `code`, return `{ status: "error", message: carrierErrorMessage(code, t), fieldErrors: {} }`, with `t` from the same locale resolution the file already uses. Every other path is unchanged (`toFormState`).
+   - Test the real action: mock the API client to answer `{ outcome: "conflict", code: "CARRIER_USE_CANCEL", message: "x" }` with the locale ar → the returned message equals `ar.carrierShipping.errors.CARRIER_USE_CANCEL`.
+   - Drop the component-only test from amendment 2.
+10. **Plan review 1, finding 10: the error-state shape.** `cancelCarrierShipmentAction` (a `FormState`) returns `{ status: "error", message, fieldErrors: {} }`. `ShipActionResult` and the bulk union keep `{ status: "error", message }`. Amendment 6's expected values follow each action's declared type.
 
 ---
 
