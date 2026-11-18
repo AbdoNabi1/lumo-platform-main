@@ -18,35 +18,36 @@ const LINE_SEPARATOR = String.fromCharCode(0x2028);
 
 /**
  * Linear-time check that does not depend on how fast the machine is. A wall-clock budget
- * (`< 400 ms`) fails on a shared CI runner that is 3-5x slower than a laptop, so instead this
- * times the same work on an input a quarter the size and on the full input, and requires the
- * full run to cost less than `MAX_SCALING` times the small one. Linear work gives about 4x;
- * quadratic work gives about 16x (and seconds at these sizes) and fails. A generous ceiling still
- * catches a hang.
+ * (`< 400 ms`) fails on a shared CI runner that is 3-5x slower than a laptop, so this times the
+ * same work on an input an eighth the size and on the full input, and requires the full run to
+ * cost less than `MAX_SCALING` times the small one. Linear work gives about 8x (more on a runner with GC pressure), quadratic work
+ * about 64x (seconds at these sizes) and fails; the threshold sits between them with room for
+ * GC and cache noise. Each side takes the fastest of several runs, which discards interference
+ * from other test files running on the same machine. A generous ceiling still catches a hang.
  */
-const SCALING_RUNS = 5;
-const MAX_SCALING = 8;
-/** Timer and GC noise below this is not a scaling signal (a quadratic run is far above it). */
-const NOISE_FLOOR_MS = 5;
+const SCALING_RUNS = 7;
+const SIZE_DIVISOR = 8;
+const MAX_SCALING = 32;
+/** Timer resolution and GC noise below this are not a scaling signal. */
+const NOISE_FLOOR_MS = 3;
 const CEILING_MS = 10_000;
 
-function medianMs(work: () => void): number {
+function fastestMs(work: () => void): number {
   work(); // warm up the JIT, not counted
-  const samples: number[] = [];
+  let best = Number.POSITIVE_INFINITY;
   for (let i = 0; i < SCALING_RUNS; i += 1) {
     const start = performance.now();
     work();
-    samples.push(performance.now() - start);
+    best = Math.min(best, performance.now() - start);
   }
-  samples.sort((a, b) => a - b);
-  return samples[Math.floor(SCALING_RUNS / 2)] ?? 0;
+  return best;
 }
 
 function expectLinearTime(work: (text: string) => void, make: (n: number) => string, n: number) {
-  const small = make(Math.floor(n / 4));
+  const small = make(Math.floor(n / SIZE_DIVISOR));
   const full = make(n);
-  const smallMs = medianMs(() => work(small));
-  const fullMs = medianMs(() => work(full));
+  const smallMs = fastestMs(() => work(small));
+  const fullMs = fastestMs(() => work(full));
   expect(fullMs).toBeLessThan(CEILING_MS);
   expect(fullMs).toBeLessThan(MAX_SCALING * Math.max(smallMs, NOISE_FLOOR_MS));
 }
