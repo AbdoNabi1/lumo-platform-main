@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { TimelineEntryDto } from "@/lib/api/orders";
+import { isolateName } from "@/lib/orders/order-timeline";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrderTimeline } from "./order-timeline";
+
+vi.mock("@/app/orders/annotation-actions", () => ({
+  postOrderCommentAction: vi.fn(),
+  editOrderCommentAction: vi.fn(),
+  deleteOrderCommentAction: vi.fn(),
+}));
 
 const EVENT_TYPES = [
   "placed",
@@ -110,5 +118,106 @@ describe("OrderTimeline — in words (Plan 3B)", () => {
     renderTimeline([entry("created")], "cod", "ar");
 
     expect(screen.getByText("تم إنشاء الطلب")).toBeInTheDocument();
+  });
+});
+
+describe("OrderTimeline — staff comments and activity (order operations Part 2)", () => {
+  const staffLine = (overrides: Partial<TimelineEntryDto>): TimelineEntryDto => ({
+    id: "e-1",
+    kind: "comment",
+    authorName: "Ahmed",
+    body: "Called",
+    data: {},
+    createdAt: "2026-10-19T08:00:00.000Z",
+    editedAt: null,
+    deleted: false,
+    canEdit: false,
+    canDelete: false,
+    ...overrides,
+  });
+
+  function renderMerged(entries: TimelineEntryDto[], canComment = false) {
+    render(
+      <OrderTimeline
+        history={[
+          { type: "created", occurredAt: "2026-10-18T20:00:00.000Z" },
+          { type: "confirmed", occurredAt: "2026-10-18T22:30:00.000Z" },
+        ]}
+        totalMinor={1999}
+        currency="USD"
+        paymentProvider="cod"
+        t={en}
+        locale="en"
+        entries={entries}
+        timeZone="Africa/Cairo"
+        orderId="o-1"
+        canComment={canComment}
+      />,
+    );
+  }
+
+  it("merges events and staff lines newest first, one section per shop day", () => {
+    renderMerged([
+      staffLine({
+        id: "e-2",
+        kind: "tags_added",
+        body: null,
+        data: { tags: ["VIP", "urgent"] },
+        createdAt: "2026-10-19T09:00:00.000Z",
+      }),
+      staffLine({}),
+    ]);
+    expect(screen.getAllByRole("region")).toHaveLength(2);
+    expect(screen.getAllByRole("listitem").map(firstLine)).toEqual([
+      `${isolateName("Ahmed")} added tags ${isolateName("VIP")}, ${isolateName("urgent")}`,
+      "Called",
+      "Order confirmed",
+      "Order placed",
+    ]);
+  });
+
+  it('shows a deleted comment as "Comment deleted" with no buttons', () => {
+    renderMerged([staffLine({ deleted: true, body: null, canEdit: false, canDelete: false })]);
+    expect(screen.getByText("Comment deleted")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  });
+
+  it("names who wrote a deleted comment, and when, with the name isolated from the line", () => {
+    renderMerged([staffLine({ deleted: true, body: null, authorName: "أحمد" })]);
+    const item = screen.getByText("Comment deleted").closest("li") as HTMLElement;
+    expect(item.textContent).toContain("⁨أحمد⁩");
+    expect(item.textContent).toMatch(/⁩ · .*\d/);
+  });
+
+  it("links 'Order created from draft #D3' to its draft, the number isolated (Ruling 24)", () => {
+    renderMerged([
+      staffLine({
+        id: "e-3",
+        kind: "created_from_draft",
+        authorName: null,
+        body: null,
+        data: { draftNumber: "D3", draftId: "d-1" },
+      }),
+      staffLine({ id: "e-4", kind: "archived", body: null, data: {} }),
+    ]);
+    const link = screen.getByRole("link", { name: /Order created from draft/ });
+    expect(link).toHaveAttribute("href", "/draft-orders/d-1");
+    expect(link.textContent).toBe(`Order created from draft ${isolateName("#D3")}`);
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("shows a staff entry of an unknown kind as generic staff activity, never blank", () => {
+    renderMerged([
+      staffLine({ kind: "future_kind" as TimelineEntryDto["kind"], body: null, data: {} }),
+    ]);
+    expect(screen.getByText("Staff activity")).toBeInTheDocument();
+  });
+
+  it("offers the composer only to staff who may comment", () => {
+    renderMerged([], false);
+    expect(screen.queryByPlaceholderText("Leave a comment...")).toBeNull();
+    document.body.innerHTML = "";
+    renderMerged([], true);
+    expect(screen.getByPlaceholderText("Leave a comment...")).toBeInTheDocument();
   });
 });

@@ -34,6 +34,15 @@ afterEach(() => {
 });
 
 describe("mutateAdminApi", () => {
+  it("keeps the HTTP status on an error answer (a 503 is read by status, not by wording)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503, { message: "x" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord);
+
+    expect(result).toMatchObject({ outcome: "error", status: 503 });
+  });
+
   it("maps a 201 with a valid body to ok", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(201, { id: "product-1" }));
     vi.stubGlobal("fetch", fetchMock);

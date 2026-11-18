@@ -1,50 +1,131 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { en } from "@/messages/en";
 
-const request = vi.hoisted(() => ({ token: null as string | null }));
-vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
+const jar = new Map<string, string>();
+const request = vi.hoisted(() => ({ token: null as string | null, locale: "en" as "en" | "ar" }));
 vi.mock("@/lib/request-locale", () => ({
-  getRequestLocale: async () => "en",
+  getRequestLocale: async () => request.locale,
   getPreviewToken: async () => request.token,
 }));
-const runtime = vi.hoisted(() => ({
-  getCheckoutSession: vi.fn(),
-  getPaymentMethods: vi.fn(async () => null),
-  getShippableCountries: vi.fn(async () => null),
+vi.mock("next/headers", () => ({
+  cookies: () =>
+    Promise.resolve({
+      get: (name: string) => (jar.has(name) ? { value: jar.get(name) } : undefined),
+    }),
 }));
-vi.mock("@/lib/runtime-api", () => runtime);
-const resolveCurrentCustomer = vi.hoisted(() =>
-  vi.fn(async () => ({ status: "signed-out" as const })),
-);
+vi.mock("@/lib/runtime-api", () => ({
+  getCheckoutSession: vi.fn().mockResolvedValue({ status: 200, body: { id: "cs-1" } }),
+  getPaymentMethods: vi.fn().mockResolvedValue([]),
+  getShippableCountries: vi.fn().mockResolvedValue(null),
+}));
 vi.mock("@/lib/customer-session", () => ({
   CUSTOMER_SESSION_COOKIE: "customer",
-  resolveCurrentCustomer,
+  resolveCurrentCustomer: vi.fn().mockResolvedValue({ status: "signed-out" }),
 }));
-vi.mock("@/lib/cart", () => ({
-  CHECKOUT_SESSION_COOKIE: "checkout",
-  GUEST_SESSION_COOKIE: "guest",
-}));
-vi.mock("@/components/checkout-view", () => ({ CheckoutView: () => null }));
-const { default: CheckoutPage } = await import("./page");
+vi.mock("@/components/checkout-view", () => ({ CheckoutView: () => <div>checkout-view</div> }));
 
-afterEach(() => vi.clearAllMocks());
+const { default: CheckoutPage } = await import("./page");
+const { getCheckoutSession, getPaymentMethods } = await import("@/lib/runtime-api");
+const { resolveCurrentCustomer } = await import("@/lib/customer-session");
+
+beforeEach(() => {
+  request.token = null;
+  request.locale = "en";
+  jar.clear();
+  jar.set("morbeh-storefront-guest-session", "guest-1");
+  jar.set("morbeh_checkout_session", "cs-1");
+});
+
+describe("/checkout after a recovery link (order operations Part 3)", () => {
+  it("says some items are no longer available when the claim dropped lines", async () => {
+    render(await CheckoutPage({ searchParams: Promise.resolve({ dropped: "1" }) }));
+    expect(screen.getByRole("status")).toHaveTextContent(en.checkout.itemsDropped);
+  });
+
+  it("says nothing otherwise", async () => {
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.queryByText(en.checkout.itemsDropped)).toBeNull();
+  });
+});
+
+describe("/checkout for an invoice (order operations Part 4)", () => {
+  it("offers a way back to the cart on an ordinary checkout", async () => {
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("link", { name: en.checkout.backToCart })).toHaveAttribute(
+      "href",
+      "/cart",
+    );
+  });
+
+  it("has no 'Back to cart' on an invoice checkout — the cart is not involved", async () => {
+    vi.mocked(getCheckoutSession).mockResolvedValueOnce({
+      status: 200,
+      body: { id: "cs-1", draftInvoice: { draftNumber: "D3" } } as never,
+    });
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByText("checkout-view")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: en.checkout.backToCart })).toBeNull();
+  });
+});
+
+describe("/checkout when an invoice's checkout was taken over (task 10 review M4)", () => {
+  const lost = () =>
+    vi.mocked(getCheckoutSession).mockResolvedValueOnce({ status: 404, body: null } as never);
+
+  it("tells the invoice shopper to open their link again — never to start from a cart", async () => {
+    jar.set("morbeh_invoice_checkout", "cs-1");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: en.checkout.invoiceOwnershipErrorTitle }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(en.checkout.invoiceOwnershipErrorBody)).toBeInTheDocument();
+    expect(screen.queryByText(en.checkout.ownershipErrorBody)).toBeNull();
+    expect(screen.queryByRole("link", { name: en.checkout.backToCart })).toBeNull();
+    expect(screen.getByRole("link", { name: en.recovery.backToShop })).toHaveAttribute("href", "/");
+  });
+
+  it("an ordinary checkout started since keeps the cart wording", async () => {
+    jar.set("morbeh_invoice_checkout", "cs-old-invoice");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: en.checkout.ownershipErrorTitle }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(en.checkout.invoiceOwnershipErrorBody)).toBeNull();
+  });
+
+  it("speaks Modern Standard Arabic", async () => {
+    request.locale = "ar";
+    jar.set("morbeh_invoice_checkout", "cs-1");
+    lost();
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
+    expect(
+      screen.getByRole("heading", { name: "تم فتح هذه الفاتورة في مكان آخر" }),
+    ).toBeInTheDocument();
+  });
+});
 
 describe("CheckoutPage in preview (Ruling 15)", () => {
   it("says 'Not available in preview' and reads nothing", async () => {
+    vi.mocked(getPaymentMethods).mockClear();
+    vi.mocked(resolveCurrentCustomer).mockClear();
     request.token = "tok";
-    render(await CheckoutPage());
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(en.preview.unavailable);
-    expect(runtime.getPaymentMethods).not.toHaveBeenCalled();
+    expect(getPaymentMethods).not.toHaveBeenCalled();
     expect(resolveCurrentCustomer).not.toHaveBeenCalled();
   });
 
   it("is the ordinary checkout page otherwise", async () => {
+    vi.mocked(getPaymentMethods).mockClear();
+    jar.clear();
     request.token = null;
-    render(await CheckoutPage());
+    render(await CheckoutPage({ searchParams: Promise.resolve({}) }));
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       en.checkout.ownershipErrorTitle,
     );
-    expect(runtime.getPaymentMethods).toHaveBeenCalledTimes(1);
+    expect(getPaymentMethods).toHaveBeenCalledTimes(1);
   });
 });

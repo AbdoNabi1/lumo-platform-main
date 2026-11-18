@@ -9,6 +9,8 @@ describe("paymentMethodLabel", () => {
     expect(paymentMethodLabel("stripe", en)).toBe("Card (Stripe)");
     expect(paymentMethodLabel("paymob", en)).toBe("Card (Paymob)");
     expect(paymentMethodLabel("cod", ar)).toBe("الدفع عند الاستلام");
+    expect(paymentMethodLabel("manual", en)).toBe("Manual payment");
+    expect(paymentMethodLabel("manual", ar)).toBe("مدفوع يدويًا");
   });
 
   it("shows a method it has no name for as it was recorded", () => {

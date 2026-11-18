@@ -158,7 +158,7 @@ describe("HomeKpis", () => {
 
     expect(screen.getByRole("link", { name: "View orders to fulfill" })).toHaveAttribute(
       "href",
-      "/orders?fulfillment=unfulfilled",
+      "/orders?view=unfulfilled",
     );
   });
 

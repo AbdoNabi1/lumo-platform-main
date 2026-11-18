@@ -45,14 +45,17 @@ export type CheckoutActionResult =
       /** `"ownership"`: no session cookie, or the Runtime API 404'd (stale/cross-session cookie).
        * `"validation"`: the Runtime API 422'd. `"unavailable"`: the Runtime API 409'd (the session
        * can no longer be modified). `"out-of-stock"` (Plan 2B-3): completion refused because a line
-       * is not in stock in the chosen quantity. `"discounts-changed"` (Discounts Part 3): completion
-       * refused because the discounts no longer give the total the shopper reviewed; the session
-       * was revalidated, so the new total is on screen. `"network"`: unreachable or an unexpected status. */
+       * is not in stock in the chosen quantity. `"draft-locked"` (order operations Part 4): the
+       * discount or shipping of an invoice checkout was fixed by the merchant (409 `DRAFT_LOCKED`).
+       * `"discounts-changed"` (Discounts Part 3): completion refused because the discounts no longer
+       * give the total the shopper reviewed; the session was revalidated, so the new total is on screen.
+       * `"network"`: unreachable or an unexpected status. */
       readonly reason:
         | "ownership"
         | "validation"
         | "unavailable"
         | "out-of-stock"
+        | "draft-locked"
         | "discounts-changed"
         | "network";
     };
@@ -140,8 +143,28 @@ function mapFailureStatus(status: number): "ownership" | "validation" | "unavail
 
 function isOutOfStock(body: unknown): boolean {
   if (typeof body !== "object" || body === null) return false;
-  const { message } = body as { readonly message?: unknown };
-  return typeof message === "string" && message.startsWith("OUT_OF_STOCK:");
+  const { message, code } = body as { readonly message?: unknown; readonly code?: unknown };
+  return (
+    code === "OUT_OF_STOCK" || (typeof message === "string" && message.startsWith("OUT_OF_STOCK:"))
+  );
+}
+
+/** A 409 with the code Checkout gives a refusal to change what the merchant fixed on a draft order. */
+function isDraftLocked(body: unknown): boolean {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { readonly code?: unknown }).code === "DRAFT_LOCKED"
+  );
+}
+
+/** The reason for a failed mutating call; only a 409 body is ever read (never echoed). */
+function mutationFailure(response: {
+  readonly status: number;
+  readonly body: unknown;
+}): "ownership" | "validation" | "unavailable" | "draft-locked" | "network" {
+  if (response.status === 409 && isDraftLocked(response.body)) return "draft-locked";
+  return mapFailureStatus(response.status);
 }
 
 function isDiscountsChanged(body: unknown): boolean {
@@ -197,7 +220,7 @@ async function withSession(
 
   const response = await call(sessionRef);
   if (response.status < 200 || response.status >= 300) {
-    return { ok: false, reason: mapFailureStatus(response.status) };
+    return { ok: false, reason: mutationFailure(response) };
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
@@ -398,7 +421,7 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
       revalidatePath("/checkout");
       return { ok: false, reason: "discounts-changed" };
     }
-    return { ok: false, reason: mapFailureStatus(response.status) };
+    return { ok: false, reason: mutationFailure(response) };
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };

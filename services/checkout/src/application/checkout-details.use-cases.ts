@@ -64,6 +64,34 @@ export interface LoadItemsInput {
   }[];
 }
 
+/** The checkout lines for a cart snapshot, each validated (shared by LoadItems and the recovery claim). */
+export function checkoutItemsFrom(
+  raws: LoadItemsInput["items"],
+): Result<CheckoutItem[], DomainError> {
+  const items: CheckoutItem[] = [];
+  for (const raw of raws) {
+    const product = ProductRef.create(raw.productId);
+    if (!product.ok) return err(product.error);
+    const item = CheckoutItem.create(
+      product.value.value,
+      raw.quantity,
+      raw.unitPriceAmountMinor,
+      raw.currency,
+      raw.variantId === undefined
+        ? undefined
+        : {
+            variantRef: raw.variantId,
+            sku: raw.sku ?? "",
+            title: raw.title ?? "",
+            variantTitle: raw.variantTitle ?? null,
+          },
+    );
+    if (!item.ok) return err(item.error);
+    items.push(item.value);
+  }
+  return ok(items);
+}
+
 /** Loads a snapshot of the cart's items into the session (caller-supplied — from Cart, never fetched here). */
 export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput, DomainError> {
   private readonly deps: CheckoutDetailsDeps;
@@ -73,27 +101,9 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
   }
 
   async execute(input: LoadItemsInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
-    const items: CheckoutItem[] = [];
-    for (const raw of input.items) {
-      const product = ProductRef.create(raw.productId);
-      if (!product.ok) return err(product.error);
-      const item = CheckoutItem.create(
-        product.value.value,
-        raw.quantity,
-        raw.unitPriceAmountMinor,
-        raw.currency,
-        raw.variantId === undefined
-          ? undefined
-          : {
-              variantRef: raw.variantId,
-              sku: raw.sku ?? "",
-              title: raw.title ?? "",
-              variantTitle: raw.variantTitle ?? null,
-            },
-      );
-      if (!item.ok) return err(item.error);
-      items.push(item.value);
-    }
+    const built = checkoutItemsFrom(input.items);
+    if (!built.ok) return err(built.error);
+    const items = built.value;
 
     return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
       try {

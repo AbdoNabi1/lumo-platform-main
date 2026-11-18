@@ -3,7 +3,7 @@ import Link from "next/link";
 import { AlertTriangleIcon, ArrowLeftIcon, ShoppingCartIcon } from "lucide-react";
 import { CheckoutView } from "@/components/checkout-view";
 import { StatePanel } from "@/components/state-panel";
-import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE } from "@/lib/cart";
+import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE, INVOICE_CHECKOUT_COOKIE } from "@/lib/cart";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { dictionaryFor } from "@/lib/i18n";
 import { getPreviewToken, getRequestLocale } from "@/lib/request-locale";
@@ -22,7 +22,11 @@ import { getCheckoutSession, getPaymentMethods, getShippableCountries } from "@/
  * Mutation controls (the stepper) live in `CheckoutView`, a Client Component calling the Server
  * Actions in `app/(store)/checkout/actions.ts` directly.
  */
-export default async function CheckoutPage() {
+export default async function CheckoutPage({
+  searchParams,
+}: {
+  readonly searchParams: Promise<{ readonly dropped?: string }>;
+}) {
   const jar = await cookies();
   const locale = await getRequestLocale();
   const t = dictionaryFor(locale);
@@ -37,6 +41,8 @@ export default async function CheckoutPage() {
         />
       </main>
     );
+  // Order operations Part 3: a recovery link's claim could not carry every line over.
+  const { dropped } = await searchParams;
 
   const sessionRef = jar.get(GUEST_SESSION_COOKIE)?.value;
   const checkoutSessionId = jar.get(CHECKOUT_SESSION_COOKIE)?.value;
@@ -45,6 +51,14 @@ export default async function CheckoutPage() {
     sessionRef !== undefined && checkoutSessionId !== undefined
       ? await getCheckoutSession(checkoutSessionId, sessionRef)
       : null;
+  const found =
+    session !== null && session.status >= 200 && session.status < 300 && session.body !== null;
+  // Part 4 (task 10 review M4): this browser's checkout came from an invoice link, so a lost one was
+  // most likely opened by someone else since (the last opener owns it); the cart is not involved.
+  const lostInvoice =
+    !found &&
+    checkoutSessionId !== undefined &&
+    jar.get(INVOICE_CHECKOUT_COOKIE)?.value === checkoutSessionId;
 
   // A signed-in customer's contact email is pre-filled and applied without re-entry. Resolved
   // server-side from their opaque session cookie (a real round trip) — "error"/"signed-out" both
@@ -60,15 +74,34 @@ export default async function CheckoutPage() {
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-6 p-8">
-      <Link href="/cart" className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
-        <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
-        {t.checkout.backToCart}
-      </Link>
+      {/* Part 4: an invoice checkout is the merchant's draft order — the shopper's cart is not involved. */}
+      {session?.body?.draftInvoice == null && !lostInvoice && (
+        <Link
+          href="/cart"
+          className="text-muted-foreground inline-flex items-center gap-1.5 text-sm"
+        >
+          <ArrowLeftIcon aria-hidden="true" className="size-4 rtl:rotate-180" />
+          {t.checkout.backToCart}
+        </Link>
+      )}
 
-      {session === null ||
-      session.status < 200 ||
-      session.status >= 300 ||
-      session.body === null ? (
+      {dropped === "1" && (
+        <p
+          role="status"
+          className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-sm"
+        >
+          {t.checkout.itemsDropped}
+        </p>
+      )}
+
+      {lostInvoice ? (
+        <StatePanel
+          icon={<AlertTriangleIcon className="size-6" />}
+          title={t.checkout.invoiceOwnershipErrorTitle}
+          body={t.checkout.invoiceOwnershipErrorBody}
+          action={{ href: "/", label: t.recovery.backToShop }}
+        />
+      ) : !found ? (
         <StatePanel
           icon={<AlertTriangleIcon className="size-6" />}
           title={t.checkout.ownershipErrorTitle}

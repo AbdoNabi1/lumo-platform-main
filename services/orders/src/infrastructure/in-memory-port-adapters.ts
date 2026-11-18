@@ -7,6 +7,7 @@ import type {
   PaymentVerificationPort,
   ShipmentResult,
   ShippingPort,
+  StaffDirectoryPort,
 } from "../application/ports";
 
 /**
@@ -69,5 +70,23 @@ export class InMemoryNotificationAdapter implements NotificationPort {
 export class InMemoryPaymentVerificationAdapter implements PaymentVerificationPort {
   async hasCapturedPayment(): Promise<boolean> {
     return true;
+  }
+}
+
+/** Offline {@link StaffDirectoryPort}: names are injected (tests, local runs); anyone else has none ("Staff"). */
+export class InMemoryStaffDirectory implements StaffDirectoryPort {
+  private readonly names: Map<string, string>;
+
+  constructor(names: Readonly<Record<string, string>> = {}) {
+    this.names = new Map(Object.entries(names));
+  }
+
+  /** Renames a staff member — history written before keeps the old snapshot. */
+  setName(principalId: string, name: string): void {
+    this.names.set(principalId, name);
+  }
+
+  displayNameOf(principalId: string): Promise<string | null> {
+    return Promise.resolve(this.names.get(principalId) ?? null);
   }
 }

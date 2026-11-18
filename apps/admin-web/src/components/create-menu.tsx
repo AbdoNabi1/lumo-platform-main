@@ -16,7 +16,7 @@ import type { Dictionary } from "@/messages/en";
 export function CreateMenu({ t }: { readonly t: Dictionary }) {
   const items = [
     { id: "product", label: t.topbar.createProduct, href: "/products/new", Icon: PackageIcon },
-    { id: "order", label: t.topbar.createOrder, href: "/orders/new", Icon: ShoppingBagIcon },
+    { id: "order", label: t.topbar.createOrder, href: "/draft-orders/new", Icon: ShoppingBagIcon },
     { id: "discount", label: t.topbar.createDiscount, href: "/discounts/new", Icon: PercentIcon },
   ];
 

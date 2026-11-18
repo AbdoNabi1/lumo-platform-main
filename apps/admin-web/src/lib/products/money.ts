@@ -12,7 +12,8 @@ export function currencyExponent(currency: string): number {
 
 const ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩";
 
-function normalizeDigits(text: string): string {
+/** Arabic-Indic digits to ASCII, the Arabic decimal separator to ".", grouping marks dropped. */
+export function normalizeDigits(text: string): string {
   let out = "";
   for (const char of text) {
     const index = ARABIC_INDIC.indexOf(char);

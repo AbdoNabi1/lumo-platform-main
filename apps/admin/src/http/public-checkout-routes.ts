@@ -1,8 +1,19 @@
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { Cart } from "@platform/cart";
-import { CheckoutSession, type CheckoutAddress, type DiscountCodeOutput } from "@platform/checkout";
-import { NotFoundError, ValidationError, toErrorEnvelope } from "@platform/utils";
+import {
+  CheckoutSession,
+  DRAFT_LOCKED,
+  type CheckoutAddress,
+  type CheckoutController,
+  type DiscountCodeOutput,
+} from "@platform/checkout";
+import {
+  BusinessRuleError,
+  NotFoundError,
+  ValidationError,
+  toErrorEnvelope,
+} from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { withLineImages } from "./product-images";
@@ -159,6 +170,8 @@ export interface PublicCheckoutSessionDto {
   /** The caller's own receipt address (WP-1) — visible only to the session's owner, same as the addresses. */
   readonly contactEmail: string | null;
   readonly orderRef: string | null;
+  /** Part 4: set when this checkout pays a merchant's draft order ("Invoice #D3"); its discount and shipping are fixed. */
+  readonly draftInvoice: { readonly draftNumber: string } | null;
   /** Phase 2: the codes the shopper entered and what was taken off — titles and amounts only. */
   readonly discount: {
     readonly codes: readonly {
@@ -225,6 +238,8 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
     selectedPaymentMethod: session.paymentSelection?.provider ?? null,
     contactEmail: session.contactEmail?.value ?? null,
     orderRef: session.orderRef,
+    draftInvoice:
+      session.draftTerms === undefined ? null : { draftNumber: session.draftTerms.draftNumber },
     // Phase 2: the codes the shopper entered with whether each applies, and what was taken off —
     // titles and amounts only, never promotion internals.
     discount: {
@@ -245,6 +260,33 @@ function toPublicCheckoutSessionDto(session: CheckoutSession): PublicCheckoutSes
 /** The identical envelope every unknown/cross-owned checkout id resolves to — see the file header's ownership model. */
 function notFoundResponse(): AdminResponse {
   return { status: 404, body: toErrorEnvelope(new NotFoundError("Checkout session not found")) };
+}
+
+/** Part 4 (spec §4.4): what the merchant fixed on a draft order's checkout cannot be changed here. */
+export function draftLockedResponse(): AdminResponse {
+  return {
+    status: 409,
+    body: {
+      ...toErrorEnvelope(
+        new BusinessRuleError(`${DRAFT_LOCKED}: the merchant fixed this on the draft order`),
+      ),
+      code: DRAFT_LOCKED,
+    },
+  };
+}
+
+/**
+ * Part 4: the domain's own `DRAFT_LOCKED:` refusal (a 409 business rule) answers with the same
+ * `{ code: "DRAFT_LOCKED" }` as the route's check, so the storefront reads one code either way. A
+ * backstop: the routes refuse a draft session before calling Checkout. Exported for its unit test.
+ */
+export function withDraftLockedCode(response: AdminResponse): AdminResponse {
+  const message = (response.body as { message?: unknown } | null)?.message;
+  return response.status === 409 &&
+    typeof message === "string" &&
+    message.startsWith(`${DRAFT_LOCKED}:`)
+    ? draftLockedResponse()
+    : response;
 }
 
 /** Projects a single-session (non-paginated) controller response through `toDto`, same non-2xx passthrough rule as `public-cart-routes.ts`'s `mapItem`. */
@@ -277,6 +319,29 @@ async function requireOwnedSession(
     return notFoundResponse();
   }
   return session;
+}
+
+/**
+ * The item snapshot a checkout loads from a cart (Plan 2A: the variant snapshot rides along; every key
+ * is absent on a legacy line). Prices come from the cart, which priced them server-side.
+ */
+export function checkoutItemsOf(
+  cart: Cart,
+): Parameters<CheckoutController["loadItems"]>[0]["items"] {
+  return cart.items.map((item) => ({
+    productId: item.productRef.value,
+    quantity: item.quantity.value,
+    unitPriceAmountMinor: item.unitPrice.amountMinor,
+    currency: item.unitPrice.currency,
+    ...(item.variantRef === undefined
+      ? {}
+      : {
+          variantId: item.variantRef,
+          sku: item.sku,
+          title: item.title,
+          variantTitle: item.variantTitle,
+        }),
+  }));
 }
 
 export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
@@ -356,6 +421,8 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        // Ownership first (a stranger still gets the uniform 404), then the draft lock.
+        if (owned.draftTerms !== undefined) return draftLockedResponse();
         const cartResponse = await admin.publicReads.cart.get({
           tenantId: context.tenantId,
           cartId: body.cartId,
@@ -365,27 +432,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         // The cart must also belong to the caller — otherwise a guest could load a stranger's cart
         // contents into their own checkout session. Same 404-on-mismatch rule as everywhere else.
         if (cart.sessionRef !== body.sessionRef) return notFoundResponse();
-        const items = cart.items.map((item) => ({
-          productId: item.productRef.value,
-          quantity: item.quantity.value,
-          unitPriceAmountMinor: item.unitPrice.amountMinor,
-          currency: item.unitPrice.currency,
-          // Plan 2A: carry the variant snapshot; every key is absent on a legacy line.
-          ...(item.variantRef === undefined
-            ? {}
-            : {
-                variantId: item.variantRef,
-                sku: item.sku,
-                title: item.title,
-                variantTitle: item.variantTitle,
-              }),
-        }));
+        const items = checkoutItemsOf(cart);
         const result = await admin.publicReads.checkout.loadItems({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           items,
         });
-        if (result.status < 200 || result.status >= 300) return result;
+        if (result.status < 200 || result.status >= 300) return withDraftLockedCode(result);
         return mapSession(
           await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
           toPublicCheckoutSessionDto,
@@ -511,6 +564,8 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        // A draft's shipping is the merchant's; quoting is read-only in Checkout, so it is refused here.
+        if (owned.draftTerms !== undefined) return draftLockedResponse();
         return admin.publicReads.checkout.requestShippingQuote({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
@@ -534,12 +589,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        if (owned.draftTerms !== undefined) return draftLockedResponse();
         const result = await admin.publicReads.checkout.selectShipping({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           method: body.method,
         });
-        if (result.status < 200 || result.status >= 300) return result;
+        if (result.status < 200 || result.status >= 300) return withDraftLockedCode(result);
         return mapSession(
           await admin.publicReads.checkout.get({ ...params, tenantId: context.tenantId }),
           toPublicCheckoutSessionDto,
@@ -644,12 +700,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        if (owned.draftTerms !== undefined) return draftLockedResponse();
         const result = await admin.publicReads.checkout.addDiscountCode({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           code: body.code,
         });
-        if (result.status < 200 || result.status >= 300) return result;
+        if (result.status < 200 || result.status >= 300) return withDraftLockedCode(result);
         const outcome = result.body as DiscountCodeOutput;
         if (!outcome.applicable) {
           // The reason is a stable token (`not_found`, `minimum_not_met`, …) the storefront words.
@@ -686,12 +743,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        if (owned.draftTerms !== undefined) return draftLockedResponse();
         const result = await admin.publicReads.checkout.removeDiscountCode({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           code: params.code,
         });
-        if (result.status < 200 || result.status >= 300) return result;
+        if (result.status < 200 || result.status >= 300) return withDraftLockedCode(result);
         return mapSession(
           await admin.publicReads.checkout.get({
             tenantId: context.tenantId,
@@ -751,6 +809,8 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         return admin.publicReads.checkout.initiatePayment({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
+          // The shopper's own route: never a staff-recorded (`manual`) payment, whatever is selected.
+          initiatedByStaff: false,
         });
       },
     }),

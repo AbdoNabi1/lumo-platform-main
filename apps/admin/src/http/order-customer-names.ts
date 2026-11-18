@@ -64,3 +64,43 @@ export async function customerNamesFor(
   }
   return names;
 }
+
+/**
+ * The contacts of EVERY order's customer on a page, in ONE Identity read (the export needs the email
+ * even when a recipient was typed). A failed read gives none — the email column is informational.
+ */
+export async function customerContactsFor(
+  admin: Pick<WiredAdmin, "customers">,
+  principal: Principal,
+  tenantId: string,
+  orders: readonly Order[],
+): Promise<ReadonlyMap<string, CustomerContact>> {
+  const found = new Map<string, CustomerContact>();
+  const customerIds = [...new Set(orders.map((order) => order.customerRef))];
+  if (customerIds.length === 0) return found;
+  try {
+    const response = await admin.customers.contactsOfCustomers(principal, {
+      tenantId,
+      customerIds,
+    });
+    if (response.status !== 200) {
+      logger.warn("customer contacts unavailable", { tenantId, status: response.status });
+      return found;
+    }
+    for (const contact of response.body as readonly CustomerContact[])
+      found.set(contact.id, contact);
+  } catch (error) {
+    logger.warn("customer contacts unavailable", {
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return found;
+}
+
+/** The list label of each contact (see `labelOf`): what `customerNameOf` falls back to. */
+export function customerLabelsOf(
+  contacts: ReadonlyMap<string, CustomerContact>,
+): ReadonlyMap<string, string> {
+  return new Map([...contacts].map(([id, contact]) => [id, labelOf(contact)]));
+}

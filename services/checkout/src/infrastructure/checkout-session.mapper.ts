@@ -57,6 +57,12 @@ interface DiscountsJson {
   readonly rejectedAttempts?: number;
   readonly attemptsWindowStartedAt?: string;
 }
+interface DraftTermsJson {
+  readonly draftOrderRef: string;
+  readonly draftNumber: string;
+  readonly discount?: { readonly title: string; readonly amountMinor: number };
+  readonly shipping: { readonly title: string; readonly amountMinor: number };
+}
 interface CheckoutTotalsJson {
   readonly subtotalMinor: number;
   readonly taxMinor: number;
@@ -92,6 +98,11 @@ export interface CheckoutSessionRow {
   readonly totals: CheckoutTotalsJson | Record<string, never>;
   /** Phase 2: `{}` = no codes and no discounts (every session saved before it existed). */
   readonly discounts: DiscountsJson | Record<string, never>;
+  /** Order operations Part 3: optional so rows read before the migration still map. */
+  readonly recoveredFromRef?: string | null;
+  readonly recoveredOrderRef?: string | null;
+  /** Order operations Part 4: `{}` = not a draft order's checkout. Optional like the Part 3 columns. */
+  readonly draftTerms?: DraftTermsJson | Record<string, never>;
   readonly version: number;
 }
 
@@ -201,6 +212,10 @@ export class CheckoutSessionMapper {
           isSet(row.discounts) && row.discounts.attemptsWindowStartedAt !== undefined
             ? new Date(row.discounts.attemptsWindowStartedAt)
             : undefined,
+        recoveredFromRef: row.recoveredFromRef ?? undefined,
+        recoveredOrderRef: row.recoveredOrderRef ?? undefined,
+        draftTerms:
+          row.draftTerms !== undefined && isSet(row.draftTerms) ? row.draftTerms : undefined,
       },
     );
   }
@@ -287,6 +302,12 @@ export class CheckoutSessionMapper {
               }),
             ) as JsonObject)
           : {},
+      recoveredFromRef: session.recoveredFromRef ?? null,
+      recoveredOrderRef: session.recoveredOrderRef ?? null,
+      draftTerms:
+        session.draftTerms === undefined
+          ? {}
+          : (JSON.parse(JSON.stringify(session.draftTerms)) as JsonObject),
       version: 1,
     };
   }

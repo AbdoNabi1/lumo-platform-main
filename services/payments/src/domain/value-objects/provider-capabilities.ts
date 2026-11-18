@@ -14,6 +14,9 @@
  *  - `chargesOffSession` — it can take a payment with no payer present (recurring billing). A
  *    provider without it must never be selectable for recurring billing. Declared now; nothing
  *    implements tokenization here.
+ *  - `recordedByStaff` (optional) — staff RECORD a payment received outside the platform (the draft
+ *    order's "Mark as paid"). Never offered to shoppers, never enabled in settings, never cash a
+ *    courier collects.
  *
  * A capability is a fact about the provider, not a preference: nothing may rank providers by them.
  */
@@ -22,6 +25,14 @@ export interface ProviderCapabilities {
   readonly deliversWebhooks: boolean;
   readonly requiresMerchantCredentials: boolean;
   readonly chargesOffSession: boolean;
+  /**
+   * Order operations Part 4: staff RECORD a payment received outside the platform (bank transfer,
+   * InstaPay, a wallet) — the draft order's "Mark as paid". Never offered to shoppers, never enabled in
+   * settings, accepted for a new payment without enablement (only a staff action selects it). Optional:
+   * absent means false, so existing registrations are unchanged. Reserved for the built-in `manual`
+   * provider: `composePaymentProviderRegistrations` refuses an external registration that declares it.
+   */
+  readonly recordedByStaff?: boolean;
 }
 
 /**
@@ -32,4 +43,13 @@ export interface ProviderCapabilities {
  */
 export function isSettledByOperatorConfirmation(capabilities: ProviderCapabilities): boolean {
   return capabilities.settlesAtPayTime && !capabilities.deliversWebhooks;
+}
+
+/**
+ * Cash the courier collects on delivery: settled by an operator's confirmation, and NOT a payment staff
+ * recorded as already received. The ONE rule the courier's "Collect" amount and the bulk "Mark cash as
+ * received" use (Ruling 9) — a `manual` payment is never cash to collect.
+ */
+export function isCollectedOnDelivery(capabilities: ProviderCapabilities): boolean {
+  return isSettledByOperatorConfirmation(capabilities) && capabilities.recordedByStaff !== true;
 }

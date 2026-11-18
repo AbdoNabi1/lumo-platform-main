@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
 import { CheckoutSession } from "../domain/checkout-session";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
@@ -10,8 +10,12 @@ import type {
 } from "../domain/value-objects/discount-snapshot";
 import { ShippingSelection } from "../domain/value-objects/selections";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
-import { RecalculateTotals, RequestTaxCalculation } from "./checkout-orchestration.use-cases";
-import { AddDiscountCode, RemoveDiscountCode } from "./discount-code.use-cases";
+import {
+  RecalculateTotals,
+  RequestTaxCalculation,
+  ValidatePromotion,
+} from "./checkout-orchestration.use-cases";
+import { AddDiscountCode, refreshDiscounts, RemoveDiscountCode } from "./discount-code.use-cases";
 import type { DiscountEvaluationInput, PromotionValidationPort, TaxCalculationPort } from "./ports";
 
 class FakeSessions implements CheckoutSessionRepository {
@@ -251,5 +255,120 @@ describe("AddDiscountCode / RemoveDiscountCode (Phase 2)", () => {
     await t.recalculate();
     expect(t.session.totals?.discountMinor).toBe(500);
     expect(t.session.discountSnapshot).toBeUndefined();
+  });
+});
+
+describe("refreshDiscounts on a draft order's checkout (spec §4.4 decision)", () => {
+  it("never calls Promotions and keeps the draft's own discount", async () => {
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("01920000-0000-7000-8000-0000000000d2"),
+      "draft:d-1",
+      undefined,
+      "r",
+      "EGP",
+    );
+    session.loadItems([must(CheckoutItem.create("p-1", 2, 25000, "EGP"))]);
+    session.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      discount: { title: "Loyal", amountMinor: 5000 },
+      shipping: { title: "Courier", amountMinor: 4000 },
+    });
+    let calls = 0;
+    const port = {
+      evaluate: async () => {
+        calls += 1;
+        throw new Error("must not be called");
+      },
+    };
+    await refreshDiscounts(session, port as never, "t");
+    expect(calls).toBe(0);
+    expect(session.discountMinor).toBe(5000);
+    expect(session.discountSnapshot?.applied[0]?.promotionId).toBe("draft:d-1");
+  });
+});
+
+describe("a draft order's checkout and the INT4 ceiling (checkout totals are 32-bit)", () => {
+  it("answers an error Result, saves nothing, when tax would push the total over it", async () => {
+    const sessions = new FakeSessions();
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("cs-draft"),
+      "draft:d-1",
+      undefined,
+      "r",
+      "EGP",
+    );
+    session.loadItems([must(CheckoutItem.create("p-1", 1, 2_147_483_647 - 4_000, "EGP"))]);
+    session.setShippingAddress(
+      must(
+        CheckoutAddress.create({
+          line1: "1 Main St",
+          city: "Cairo",
+          postalCode: "",
+          country: "EG",
+        }),
+      ),
+    );
+    session.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      shipping: { title: "Courier", amountMinor: 4_000 },
+    });
+    sessions.store.set("cs-draft", session);
+    const promotionValidation = new FakePromotions();
+    const deps = {
+      sessions,
+      unitOfWork: new InMemoryUnitOfWork(),
+      idGenerator,
+      clock,
+      promotionValidation,
+      taxCalculation: fakeTax,
+    };
+    const save = vi.spyOn(sessions, "save");
+    const result = await new RequestTaxCalculation(deps).execute({
+      tenantId: "t1",
+      checkoutSessionId: "cs-draft",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toMatch(/^DRAFT_TOTAL_TOO_LARGE:/);
+    expect(save).not.toHaveBeenCalled();
+    expect(promotionValidation.calls).toHaveLength(0);
+    expect(session.totals).toBeUndefined();
+  });
+});
+
+describe("ValidatePromotion on a draft order's checkout (spec §4.4)", () => {
+  it("answers DRAFT_LOCKED without asking Promotions, and saves nothing", async () => {
+    const sessions = new FakeSessions();
+    const session = CheckoutSession.start(
+      UniqueEntityId.from("cs-draft-2"),
+      "draft:d-1",
+      undefined,
+      "r",
+      "EGP",
+    );
+    session.loadItems([must(CheckoutItem.create("p-1", 2, 25000, "EGP"))]);
+    session.applyDraftTerms({
+      draftOrderRef: "d-1",
+      draftNumber: "D1",
+      discount: { title: "Loyal", amountMinor: 5000 },
+      shipping: { title: "Courier", amountMinor: 4000 },
+    });
+    sessions.store.set("cs-draft-2", session);
+    const promotionValidation = new FakePromotions();
+    const validate = vi.spyOn(promotionValidation, "validate");
+    const save = vi.spyOn(sessions, "save");
+    const result = await new ValidatePromotion({
+      sessions,
+      unitOfWork: new InMemoryUnitOfWork(),
+      idGenerator,
+      clock,
+      promotionValidation,
+    }).execute({ tenantId: "t1", checkoutSessionId: "cs-draft-2", promotionRef: "p-sale" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toMatch(/^DRAFT_LOCKED:/);
+    expect(validate).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(session.discountMinor).toBe(5000);
   });
 });

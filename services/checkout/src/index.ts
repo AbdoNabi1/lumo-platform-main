@@ -17,6 +17,7 @@ export { CHECKOUT_PUBLISHED_EVENTS } from "./infrastructure/checkout-event-trans
 export type {
   DiscountEvaluationInput,
   DiscountUsagePort,
+  DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderStockReservationPort,
@@ -45,3 +46,48 @@ export {
   normalizeDiscountCode,
 } from "./domain/value-objects/discount-snapshot";
 export type { DiscountCodeInput, DiscountCodeOutput } from "./application/discount-code.use-cases";
+export {
+  CheckoutLink,
+  hashLinkToken,
+  INVOICE_LINK_TTL_MS,
+  isWellFormedLinkToken,
+  RECOVERY_LINK_TTL_MS,
+  type CheckoutLinkPurpose,
+} from "./domain/checkout-link";
+export type { CheckoutLinkRepository } from "./domain/checkout-link-repository";
+export {
+  ABANDONED_AFTER_MINUTES,
+  ABANDONED_PAGE_SIZE_MAX,
+  RECOVERY_FILTERS,
+  type AbandonedCheckoutQueries,
+  type CheckoutSessionRecord,
+  type RecoveryFilter,
+} from "./domain/abandoned-checkouts";
+export {
+  LINK_INVALID,
+  type AbandonedCheckoutListEntry,
+  type GetAbandonedCheckoutOutput,
+  type IssueRecoveryLinkOutput,
+  type ListAbandonedCheckoutsOutput,
+  type ResolveCheckoutLinkOutput,
+  type StartRecoveredCheckoutOutput,
+} from "./application/abandoned-checkouts.use-cases";
+export { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";
+export {
+  DRAFT_LOCKED,
+  DRAFT_SHIPPING_METHOD,
+  draftCartRef,
+  draftPromotionId,
+  isDraftPromotionId,
+  type DraftTerms,
+} from "./domain/value-objects/draft-terms";
+export { checkoutAddressProblem } from "./application/address-province";
+export type {
+  ClaimInvoiceCheckoutInput,
+  DraftLinksInput,
+  EstimateDraftTaxInput,
+  IssueInvoiceLinkOutput,
+  QuoteDraftShippingInput,
+  SelectDraftPaymentInput,
+  StartDraftCheckoutInput,
+} from "./application/draft-checkout.use-cases";
