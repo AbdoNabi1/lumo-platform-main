@@ -59,7 +59,7 @@ export async function revalidateStorefront(shopId?: string): Promise<boolean> {
     await response.body?.cancel().catch(() => undefined);
     if (response.status === 400) {
       console.error(
-        "storefront revalidation refused the shop id: a configuration bug (TENANT_DEFAULT_ID?)",
+        "storefront revalidation refused the shop id: a configuration bug (check the shop tenant id)",
         { status: response.status, shopId: shop },
       );
       return false;

@@ -189,6 +189,15 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
       "middleware's x-shop-id (Plan 1A); the API never defaults a missing tenant.",
   },
   {
+    file: "apps/storefront/src/middleware.ts",
+    line: 'const DEFAULT_SHOP_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";',
+    class: "client-header-source",
+    why:
+      "The shop id the middleware forwards as x-shop-id when STOREFRONT_HOST_ROUTING is off (one " +
+      "storefront deployment, one tenant). When host routing is on it is overwritten by the shop " +
+      "resolved from the request's domain; the API never defaults a missing tenant.",
+  },
+  {
     file: "apps/storefront/src/lib/shop-host.ts",
     line: 'process.env.PLATFORM_TENANT_ID ?? process.env.TENANT_DEFAULT_ID ?? "tenant-local";',
     class: "client-header-source",
