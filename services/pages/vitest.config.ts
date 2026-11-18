@@ -14,11 +14,14 @@ export default defineConfig({
       // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
       // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 64->60 (CI 61.46%), statements 64->60 (CI 61.46%).
       // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: unit tests for the Prisma repositories over createFakePrisma
+      // (prisma-repositories.test.ts) cover what the DATABASE_URL_TEST-gated suite skips in CI.
+      // Measured locally (Windows, a lower bound for CI): lines 88.23%, statements 88.23%, functions 91.34%, branches 92.59%. Ratcheted to 1pt under.
       thresholds: {
-        lines: 60,
-        statements: 60,
-        functions: 63,
-        branches: 80,
+        lines: 87,
+        statements: 87,
+        functions: 90,
+        branches: 91,
       },
     },
 
