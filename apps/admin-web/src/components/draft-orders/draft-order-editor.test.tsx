@@ -155,7 +155,7 @@ describe("DraftOrderEditor", () => {
         locale="en"
       />,
     );
-    expect(note()).toHaveValue("theirs");
+    await waitFor(() => expect(note()).toHaveValue("theirs"));
     expect(screen.queryByText("Unsaved changes")).toBeNull();
   });
 
@@ -291,7 +291,9 @@ describe("DraftOrderEditor", () => {
         locale="en"
       />,
     );
-    expect(screen.getByText("This draft order was completed.")).toBeInTheDocument();
+    // The rerender hands the editor a newer draft, which it adopts in an effect while the failed
+    // action's transition is still settling — so wait for the banner rather than reading it at once.
+    expect(await screen.findByText("This draft order was completed.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith("/orders/o-1"));
     expect(completeDraftOrderAction.mock.calls).toEqual([
