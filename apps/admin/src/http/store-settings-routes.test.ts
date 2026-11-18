@@ -103,20 +103,21 @@ describe("store settings API (Plan 3C)", () => {
       currency: "EGP",
       timezone: "Africa/Cairo",
       weightUnit: "kg",
+      setupGuideDismissedAt: null,
     });
   });
 
   it("saves and reads back, and the public route shows only name and currency", async () => {
     const saved = await put(app, settings);
     expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toEqual(settings);
+    expect(saved.json()).toEqual({ ...settings, setupGuideDismissedAt: null });
 
     const read = await app.inject({
       method: "GET",
       url: "/api/v1/store/settings",
       headers: authed,
     });
-    expect(read.json()).toEqual(settings);
+    expect(read.json()).toEqual({ ...settings, setupGuideDismissedAt: null });
 
     const pub = await app.inject({
       method: "GET",
@@ -164,6 +165,74 @@ describe("store settings API (Plan 3C)", () => {
       detail.json() as { variants: { priceAmountMinor: number; currency: string }[] }
     ).variants[0];
     expect(variant).toMatchObject({ priceAmountMinor: 12_500, currency: "AED" });
+  });
+});
+
+describe("store settings API — setup guide", () => {
+  function dismiss(app: FastifyInstance, headers: Record<string, string>, key: string) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/store/setup-guide/dismiss",
+      headers: { ...headers, "idempotency-key": key },
+    });
+  }
+
+  it("remembers the dismissal, and a settings save keeps it", async () => {
+    const app = await buildApp();
+    try {
+      const headers = { ...authed, "x-tenant-id": "shop-guide" };
+      const dismissed = await dismiss(app, headers, "dismiss-1");
+      expect(dismissed.statusCode).toBe(200);
+      const at = (dismissed.json() as { setupGuideDismissedAt: string | null })
+        .setupGuideDismissedAt;
+      expect(at).not.toBeNull();
+
+      const read = await app.inject({ method: "GET", url: "/api/v1/store/settings", headers });
+      expect(read.json()).toMatchObject({ setupGuideDismissedAt: at });
+
+      expect((await put(app, settings, headers)).statusCode).toBe(200);
+      const after = await app.inject({ method: "GET", url: "/api/v1/store/settings", headers });
+      expect(after.json()).toMatchObject({ setupGuideDismissedAt: at });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("needs settings:update", async () => {
+    const app = await buildApp({
+      authorize: async (_principal, permission) => permission !== "settings:update",
+    });
+    try {
+      expect((await dismiss(app, authed, "dismiss-2")).statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("store settings API — one row per request tenant", () => {
+  it("keeps two shops' settings apart through the same routes", async () => {
+    const app = await buildApp();
+    try {
+      const shopA = { ...authed, "x-tenant-id": "shop-a" };
+      const shopB = { ...authed, "x-tenant-id": "shop-b" };
+      expect((await put(app, { ...settings, storeName: "Shop A" }, shopA)).statusCode).toBe(200);
+      expect((await put(app, { ...settings, storeName: "Shop B" }, shopB)).statusCode).toBe(200);
+
+      const read = (headers: Record<string, string>) =>
+        app.inject({ method: "GET", url: "/api/v1/store/settings", headers });
+      expect((await read(shopA)).json()).toMatchObject({ storeName: "Shop A" });
+      expect((await read(shopB)).json()).toMatchObject({ storeName: "Shop B" });
+
+      const pub = await app.inject({
+        method: "GET",
+        url: "/api/v1/public/store",
+        headers: { "x-tenant-id": "shop-b" },
+      });
+      expect(pub.json()).toEqual({ name: "Shop B", currency: "SAR" });
+    } finally {
+      await app.close();
+    }
   });
 });
 

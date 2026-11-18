@@ -192,3 +192,66 @@ describe("PaymentIntent.requestRefund — totalRefunded <= totalCaptured invaria
     expect(pi.status.value).toBe("refunded");
   });
 });
+
+describe("PaymentIntent attempt ids (payment_attempts.id is @db.Uuid)", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const INTENT_ID = "6f1c2a9e-3b4d-4e5f-8a7b-1234567890ab";
+
+  function lifecycle(): PaymentIntent {
+    const pi = PaymentIntent.createIntent(
+      UniqueEntityId.from(INTENT_ID),
+      "order-3",
+      usd(5000),
+      "stripe",
+    );
+    const pspRef = PspReference.create("psp-ref-3");
+    const method = PaymentMethod.create("tok_abc", "visa");
+    if (!pspRef.ok || !method.ok) throw new Error("invalid fixture");
+    pi.markProcessing("evt-1", new Date(0));
+    pi.authorize(pspRef.value, method.value, 5000, "evt-2", new Date(0));
+    pi.requestCapture("evt-3", new Date(0));
+    pi.markCaptured("evt-4", new Date(0));
+    pi.requestRefund(usd(1000), "evt-5", new Date(0));
+    pi.failRefund("evt-5", "evt-6", new Date(0), "psp_down");
+    pi.requestRefund(usd(1000), "evt-7", new Date(0));
+    pi.completeRefund("evt-7", "evt-8", new Date(0));
+    pi.recordWebhook("stripe", "charge.refunded", "evt-9", new Date(0));
+    return pi;
+  }
+
+  it("gives every attempt a distinct, valid UUID (never `${intentId}${index}`)", () => {
+    const ids = lifecycle().attempts.map((a) => a.id.toString());
+    expect(ids).toHaveLength(5); // authorize, capture, refund failed, refund succeeded, webhook
+    for (const id of ids) expect(id).toMatch(UUID);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.some((id) => id.startsWith(INTENT_ID))).toBe(false);
+  });
+
+  it("derives ids deterministically from (intent id, position) so re-saves stay idempotent", () => {
+    const first = lifecycle().attempts.map((a) => a.id.toString());
+    const second = lifecycle().attempts.map((a) => a.id.toString());
+    expect(second).toEqual(first);
+    // Pinned: SHA-256(`${intentId}:attempt:0`), first 16 bytes, version 5 / variant 10 — the same
+    // derivation as `deterministicEntityId` on morbeh/local-carriers, so the two never diverge.
+    expect(first[0]).toBe("cb4832a0-d9e9-5d32-8a50-c1f47ae086f8");
+  });
+
+  it("continues the sequence after rehydration instead of reusing a persisted id", () => {
+    const original = lifecycle();
+    const rehydrated = PaymentIntent.reconstitute(
+      original.id,
+      original.orderRef,
+      original.amount,
+      original.status,
+      [...original.charges],
+      [...original.refunds],
+      original.version,
+      { provider: original.provider, attempts: original.attempts },
+    );
+    rehydrated.recordWebhook("stripe", "charge.updated", "evt-10", new Date(1));
+    const ids = rehydrated.attempts.map((a) => a.id.toString());
+    expect(ids.slice(0, 5)).toEqual(original.attempts.map((a) => a.id.toString()));
+    expect(ids[5]).toMatch(UUID);
+    expect(new Set(ids).size).toBe(6);
+  });
+});

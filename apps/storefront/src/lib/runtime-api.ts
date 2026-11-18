@@ -846,6 +846,30 @@ export interface CheckoutTotalsSummary {
   readonly taxIncluded?: boolean;
   /** Plan 3C: the name of the shipping rate the shopper chose. */
   readonly shippingName?: string | null;
+  /** Discounts Part 3: what the applied discounts took off the items (absent on an older API). */
+  readonly discountMinor?: number;
+  /** Discounts Part 3: what the applied discounts took off the shipping (absent on an older API). */
+  readonly shippingDiscountMinor?: number;
+}
+
+/** A code the shopper entered and whether it applies; `reason` is a stable token the storefront words. */
+export interface CheckoutDiscountCodeSummary {
+  readonly code: string;
+  readonly applicable: boolean;
+  readonly reason: string | null;
+}
+
+/** One discount that took something off — its title and amount only, never promotion internals. */
+export interface CheckoutAppliedDiscountSummary {
+  readonly title: string;
+  readonly code: string | null;
+  readonly discountClass: string;
+  readonly amountMinor: number;
+}
+
+export interface CheckoutDiscountSummary {
+  readonly codes: readonly CheckoutDiscountCodeSummary[];
+  readonly applied: readonly CheckoutAppliedDiscountSummary[];
 }
 
 export interface CheckoutSessionSummary {
@@ -862,6 +886,10 @@ export interface CheckoutSessionSummary {
   /** The payment method the shopper selected ("cod", "stripe"…), or null before they choose. */
   readonly selectedPaymentMethod: string | null;
   readonly orderRef: string | null;
+  /** Part 4: this checkout pays a merchant's draft order — its discount and shipping are fixed. */
+  readonly draftInvoice?: { readonly draftNumber: string } | null;
+  /** Discounts Part 3: the entered codes and what was taken off (absent on an older API). */
+  readonly discount?: CheckoutDiscountSummary;
 }
 
 export interface ShippingQuoteSummary {
@@ -920,6 +948,50 @@ export function loadCheckoutItems(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/items`,
     { sessionRef, cartId },
   );
+}
+
+/** Order operations Parts 3–4: what a recovery or invoice link holds — shop, items, total; no personal data. */
+export interface CheckoutLinkPreview {
+  readonly purpose: "recovery" | "invoice";
+  /** "D3" for an invoice; null for recovery. */
+  readonly draftNumber: string | null;
+  /** Invoice only: the order was already placed. */
+  readonly completed: boolean;
+  readonly shopName: string;
+  readonly itemCount: number;
+  readonly items: readonly {
+    readonly title: string | null;
+    readonly variantTitle: string | null;
+    readonly quantity: number;
+    readonly imageUrl: string | null;
+  }[];
+  readonly totalMinor: number;
+  /** Invoice only: the tax could not be estimated, so `totalMinor` is the total BEFORE tax. */
+  readonly taxPending: boolean;
+  readonly currency: string;
+}
+
+/** The caller's OWN new (or resumed) checkout, and how many lines could not be sold any more. */
+export interface CheckoutLinkClaim {
+  readonly checkoutSessionId: string;
+  readonly droppedItems: number;
+}
+
+/** A GET with no side effect: safe for page renders and link-preview bots. */
+export function getCheckoutLinkPreview(
+  token: string,
+): Promise<{ readonly status: number; readonly body: CheckoutLinkPreview | null }> {
+  return fetchItem<CheckoutLinkPreview>(
+    `/api/v1/public/checkout-links/${encodeURIComponent(token)}/preview`,
+  );
+}
+
+/** The ONLY call that claims a link — made by the landing page's button (a server action), never a render. */
+export function claimCheckoutLink(
+  token: string,
+  sessionRef: string,
+): Promise<{ readonly status: number; readonly body: CheckoutLinkClaim | null }> {
+  return postItem<CheckoutLinkClaim>("/api/v1/public/checkout-links/claim", { token, sessionRef });
 }
 
 export function setCheckoutBillingAddress(
@@ -998,6 +1070,42 @@ export function selectCheckoutPayment(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment-selection`,
     { sessionRef, paymentMethodRef, provider },
   );
+}
+
+/** Applies a typed discount code. Sends the code only — the runtime re-derives every amount. */
+export function applyCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  return postItem<unknown>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes`,
+    { sessionRef, code },
+  );
+}
+
+/**
+ * Removes a code. The DELETE has no body, so ownership travels in the `x-cart-session` header —
+ * the form `resolveSessionRef` prefers (the querystring one is deprecated and only logs a warning).
+ */
+export async function removeCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  try {
+    const response = await fetch(
+      `${RUNTIME_API_URL}/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes/${encodeURIComponent(code)}`,
+      {
+        method: "DELETE",
+        headers: { "x-tenant-id": await currentTenantId(), "x-cart-session": sessionRef },
+        cache: "no-store",
+      },
+    );
+    return { status: response.status, body: await response.json().catch(() => null) };
+  } catch {
+    return { status: 0, body: null };
+  }
 }
 
 export function recalculateCheckout(

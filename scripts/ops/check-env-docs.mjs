@@ -62,6 +62,10 @@ const ALLOWLIST = {
     ["AWS_SESSION_TOKEN", "prose-only in .env.example by design — optional secret"],
     ["GCP_KMS_ACCESS_TOKEN", "prose-only in .env.example by design — optional secret"],
     ["AZURE_OAUTH_CLIENT_SECRET", "prose-only in .env.example by design — optional secret"],
+    [
+      "ORY_SDK_URL",
+      "read by the scripts/ops/*keto*.mjs operator scripts (Ory Network base URL), not TypeScript",
+    ],
   ],
 };
 

@@ -5,12 +5,14 @@ import {
   AlertTriangleIcon,
   ChevronRightIcon,
   CreditCardIcon,
+  GlobeIcon,
   LanguagesIcon,
   LockIcon,
   MapPinIcon,
   ReceiptIcon,
   StoreIcon,
   TruckIcon,
+  WalletIcon,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -49,6 +51,12 @@ const SECTIONS: readonly SettingsSection[] = [
     body: (t) => t.settingsPage.generalBody,
   },
   {
+    href: "/settings/billing",
+    Icon: WalletIcon,
+    title: (t) => t.settingsPage.billingTitle,
+    body: (t) => t.settingsPage.billingBody,
+  },
+  {
     href: "/settings/payments",
     Icon: CreditCardIcon,
     title: (t) => t.settingsPage.paymentsTitle,
@@ -71,6 +79,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: MapPinIcon,
     title: (t) => t.settingsPage.locationsTitle,
     body: (t) => t.settingsPage.locationsBody,
+  },
+  {
+    href: "/settings/domains",
+    Icon: GlobeIcon,
+    title: (t) => t.settingsPage.domainsTitle,
+    body: (t) => t.settingsPage.domainsBody,
   },
   {
     href: "/locales",

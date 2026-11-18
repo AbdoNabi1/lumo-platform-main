@@ -27,6 +27,10 @@ const SHARED_VERBATIM = new Set([
   "orderPage.unitTimesQuantity",
   "orderPage.noPaymentMethod",
   "securityAuditPage.timelineColumns.sequence",
+  // Order operations Part 3 — abandoned checkouts: the em dash for "no region" and "× {count}" carry
+  // only a symbol and a placeholder, no words. Nothing to translate (same rationale as the 3B entries).
+  "abandonedCheckouts.noRegion",
+  "abandonedCheckouts.items.quantity",
   // The ISO-8601 format token an operator must type literally into the `effectiveFrom`/
   // `effectiveTo` text inputs (`app/pricing/page.tsx`) — a machine format string, not natural
   // language, so it stays identical in both locales, same rationale as `topbar.searchHint`'s
@@ -37,6 +41,9 @@ const SHARED_VERBATIM = new Set([
   "shippingSettings.between",
   "shippingSettings.noCondition",
   "taxSettings.noOverrides",
+  // Settings → Domains: an example hostname typed in Latin letters (hostnames are ASCII); nothing to
+  // translate.
+  "domainsPage.hostnamePlaceholder",
   // T5.9a — the three `ContentBlock` body format names (`ContentCreateForm`'s format `<select>`).
   // "HTML"/"Markdown"/"JSON" are technical format identifiers, not natural-language words, and are
   // conventionally left untransliterated in Arabic UI copy — same rationale as the entries above.

@@ -6,7 +6,7 @@ import { afterEach } from "vitest";
 // with `globals: false`, so unmount between tests explicitly.
 afterEach(cleanup);
 
-// `findBy*` and `waitFor` give up after 1s by default. On a loaded CI runner the editor suites
-// run several times slower than locally (the product editor file takes ~30s there), and a
-// server-action state update or a Radix dialog unmount can land after that second.
-configure({ asyncUtilTimeout: 4000 });
+// `findBy*` and `waitFor` give up after 1s by default. On a loaded CI runner (the whole monorepo's
+// suites at once) server-action mocks and transitions settle later than that, and a different
+// test failed on each run. 5s is still far under the 20s test timeout.
+configure({ asyncUtilTimeout: 5000 });

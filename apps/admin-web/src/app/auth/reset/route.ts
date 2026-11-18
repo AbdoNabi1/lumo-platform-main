@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isNativeAuth, nativeTenantId } from "@/lib/auth/native";
+import { completeMerchantReset } from "@/lib/auth/merchant";
 import { completeReset } from "@/lib/auth/password-reset";
 import { requireProdEnv } from "@/lib/env";
 import { publicOrigin } from "@/lib/public-origin";
@@ -20,12 +21,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!isNativeAuth()) return NextResponse.redirect(new URL("/login", origin), 303);
   const form = await request.formData();
   const token = field(form, "token");
+  const store = field(form, "store");
   const password = field(form, "password");
   const confirm = field(form, "confirm");
 
   const back = (reason: string): NextResponse => {
     const url = new URL("/reset-password", origin);
     if (token.length > 0) url.searchParams.set("token", token);
+    if (store.length > 0) url.searchParams.set("store", store);
     url.searchParams.set("error", reason);
     return NextResponse.redirect(url, 303);
   };
@@ -33,12 +36,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (token.length === 0) return back("invalid");
   if (password !== confirm) return back("mismatch");
 
-  const result = await completeReset({
+  const base = {
     runtimeUrl: requireProdEnv("RUNTIME_API_URL", "http://localhost:3080"),
     tenantId: nativeTenantId(),
     token,
     password,
-  });
+  };
+  // A merchant's emailed link carries the store; the platform team's link does not.
+  const result =
+    store.length > 0 ? await completeMerchantReset({ ...base, store }) : await completeReset(base);
   if (result === "done") return NextResponse.redirect(new URL("/login?reset=done", origin), 303);
   return back(result);
 }

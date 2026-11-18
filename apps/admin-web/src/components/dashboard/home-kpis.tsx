@@ -85,7 +85,7 @@ export function HomeKpis({
           title={t.kpi.ordersToFulfill}
           value={formatNumber(locale, current.ordersToFulfill)}
           hint={t.kpi.ordersToFulfillHint}
-          href="/orders?fulfillment=unfulfilled"
+          href="/orders?view=unfulfilled"
           hrefLabel={t.kpi.viewOrdersToFulfill}
           t={t}
           locale={locale}

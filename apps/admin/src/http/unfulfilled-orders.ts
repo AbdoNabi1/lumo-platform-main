@@ -35,26 +35,21 @@ export async function listUnfulfilledOrders(
   admin: Pick<WiredAdmin, "orders">,
   principal: Principal,
   tenantId: string,
-  query: {
-    readonly first?: number;
-    readonly after?: string;
-    readonly search?: string;
-    readonly status?: Parameters<WiredAdmin["orders"]["listOrders"]>[1]["status"];
-  },
+  query: Omit<Parameters<WiredAdmin["orders"]["listOrders"]>[1], "tenantId">,
 ): Promise<UnfulfilledOrdersResult> {
-  const limit = query.first ?? DEFAULT_PAGE;
+  const { first, after, ...filters } = query;
+  const limit = first ?? DEFAULT_PAGE;
   const matches: Order[] = [];
-  let cursor = query.after;
+  let cursor = after;
   let scanned = 0;
   let exhausted = false;
 
   while (matches.length <= limit && scanned < UNFULFILLED_SCAN_CAP) {
     const response = await admin.orders.listOrders(principal, {
+      ...filters,
       tenantId,
       first: Math.min(BATCH, UNFULFILLED_SCAN_CAP - scanned),
       ...(cursor === undefined ? {} : { after: cursor }),
-      ...(query.search === undefined ? {} : { search: query.search }),
-      ...(query.status === undefined ? {} : { status: query.status }),
     });
     if (response.status !== 200) return { ok: false, response };
 

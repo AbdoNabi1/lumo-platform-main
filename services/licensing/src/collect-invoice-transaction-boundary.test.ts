@@ -42,6 +42,10 @@ class PostgresLikeInvoiceRepository implements InvoiceRepository {
     return this.rows.get(id) ?? null;
   }
 
+  async listByTenantRef(): Promise<readonly Invoice[]> {
+    return [];
+  }
+
   size(): number {
     return this.rows.size;
   }
