@@ -21,10 +21,13 @@ const LINE_SEPARATOR = String.fromCharCode(0x2028);
  * (`< 400 ms`) fails on a shared CI runner that is 3-5x slower than a laptop, so instead this
  * times the same work on an input a quarter the size and on the full input, and requires the
  * full run to cost less than `MAX_SCALING` times the small one. Linear work gives about 4x;
- * quadratic work gives about 16x and fails. A generous ceiling still catches a hang.
+ * quadratic work gives about 16x (and seconds at these sizes) and fails. A generous ceiling still
+ * catches a hang.
  */
 const SCALING_RUNS = 5;
 const MAX_SCALING = 8;
+/** Timer and GC noise below this is not a scaling signal (a quadratic run is far above it). */
+const NOISE_FLOOR_MS = 5;
 const CEILING_MS = 10_000;
 
 function medianMs(work: () => void): number {
@@ -45,7 +48,7 @@ function expectLinearTime(work: (text: string) => void, make: (n: number) => str
   const smallMs = medianMs(() => work(small));
   const fullMs = medianMs(() => work(full));
   expect(fullMs).toBeLessThan(CEILING_MS);
-  expect(fullMs).toBeLessThan(MAX_SCALING * Math.max(smallMs, 1));
+  expect(fullMs).toBeLessThan(MAX_SCALING * Math.max(smallMs, NOISE_FLOOR_MS));
 }
 
 describe("parseRichText — blocks (spec 2.1)", () => {
@@ -248,42 +251,31 @@ describe("parseRichText — inline", () => {
 });
 
 describe("parseRichText — hostile sizes run in linear time", () => {
-  const timed = (text: string) => {
-    const start = performance.now();
-    parseRichText(text);
-    return performance.now() - start;
-  };
-  it.each([
-    ["100k unclosed **", "**".repeat(50_000)],
-    ["100k [", "[".repeat(100_000)],
-    ["25k [a](", "[a](".repeat(25_000)],
-    ["50k ](", "](".repeat(50_000)],
-    ["alternating * and **", "*a **b ".repeat(14_000)],
-    ["one 100k line", "x".repeat(100_000)],
-    ["50k list items", "- a\n1. b\n".repeat(12_500)],
+  const repeat = (unit: string) => (n: number) => unit.repeat(n);
+  it.each<[string, (n: number) => string, number]>([
+    ["100k unclosed **", repeat("**"), 50_000],
+    ["100k [", repeat("["), 100_000],
+    ["25k [a](", repeat("[a]("), 25_000],
+    ["50k ](", repeat("]("), 50_000],
+    ["alternating * and **", repeat("*a **b "), 14_000],
+    ["one 100k line", repeat("x"), 100_000],
+    ["50k lines", repeat("a\n"), 50_000],
+    ["50k list items", repeat("- a\n1. b\n"), 12_500],
     // Preflight 6: nested link frames with element children.
-    ["14k [**a**", "[**a** ".repeat(14_000)],
-    ["16k [*a*", "[*a* ".repeat(16_000)],
-    ["deep nesting", `${"[**[*".repeat(5_000)}x${"*](/a)**](/b)".repeat(5_000)}`],
-    ["100k *", "*".repeat(100_000)],
-    ["100k \\", "\\".repeat(100_000)],
-    ["100k ]", "]".repeat(100_000)],
-    ["nested unsafe links", "[[x](javascript:a)](".repeat(5_000)],
-    ["100k headings and rules", "## a\n---\n".repeat(10_000)],
+    ["14k [**a**", repeat("[**a** "), 14_000],
+    ["16k [*a*", repeat("[*a* "), 16_000],
+    ["deep nesting", (n) => `${"[**[*".repeat(n)}x${"*](/a)**](/b)".repeat(n)}`, 5_000],
+    ["100k *", repeat("*"), 100_000],
+    ["100k \\", repeat("\\"), 100_000],
+    ["100k ]", repeat("]"), 100_000],
+    ["nested unsafe links", repeat("[[x](javascript:a)]("), 5_000],
+    ["100k headings and rules", repeat("## a\n---\n"), 10_000],
     // `.` does not match a line separator: the block patterns must not backtrack over spaces.
-    ["heading of 99k spaces", `## ${" ".repeat(99_000)}a${LINE_SEPARATOR}b`],
-    ["list item of 99k spaces", `- ${" ".repeat(99_000)}a${LINE_SEPARATOR}b`],
-    ["ordered item of 99k spaces", `1. ${" ".repeat(99_000)}a${LINE_SEPARATOR}b`],
-  ])("%s parses in under 400 ms", (_name, text) => {
-    expect(timed(text)).toBeLessThan(400);
-  });
-
-  it("50k lines parse in linear time", () => {
-    expectLinearTime(
-      (text) => parseRichText(text),
-      (n) => "a\n".repeat(n),
-      50_000,
-    );
+    ["heading of 99k spaces", (n) => `## ${" ".repeat(n)}a${LINE_SEPARATOR}b`, 99_000],
+    ["list item of 99k spaces", (n) => `- ${" ".repeat(n)}a${LINE_SEPARATOR}b`, 99_000],
+    ["ordered item of 99k spaces", (n) => `1. ${" ".repeat(n)}a${LINE_SEPARATOR}b`, 99_000],
+  ])("%s parses in linear time", (_name, make, n) => {
+    expectLinearTime((text) => parseRichText(text), make, n);
   });
 
   it("reads at most RICH_TEXT_MAX.body characters", () => {
@@ -292,7 +284,11 @@ describe("parseRichText — hostile sizes run in linear time", () => {
       { type: "paragraph", children: [t("a".repeat(RICH_TEXT_MAX.body))] },
     ]);
     expect(parsed.unsafeLinkLines).toEqual([]);
-    expect(timed("[**a** ".repeat(100_000))).toBeLessThan(400);
+    expectLinearTime(
+      (text) => parseRichText(text),
+      (n) => "[**a** ".repeat(n),
+      100_000,
+    );
   });
 
   it("a paragraph or a list holds at most 1,000 lines; the next one starts a new block", () => {
@@ -444,26 +440,14 @@ describe("renderRichText — hostile sizes", () => {
   const renderDeep = (text: string, depth: number): Node[] =>
     depth === 0 ? renderRichText(parseRichText(text).document, h) : renderDeep(text, depth - 1);
 
-  it.each([
-    ["25k list items", "- a\n".repeat(25_000)],
-    ["25k emphasis", "*a* ".repeat(25_000)],
-    ["14k [**a**", "[**a** ".repeat(14_000)],
-  ])("%s renders in under 400 ms without overflowing the call stack", (_name, text) => {
-    const start = performance.now();
-    expect(() => renderDeep(text, 2_000)).not.toThrow();
-    expect(performance.now() - start).toBeLessThan(400);
-  });
-});
-
-describe("renderRichText — linear time", () => {
-  const render = (text: string) => renderRichText(parseRichText(text).document, h);
-
-  it("50k short lines render in linear time", () => {
-    expectLinearTime(render, (n) => "a\n".repeat(n), 50_000);
-  });
-
-  it("14k links render in linear time", () => {
-    expectLinearTime(render, (n) => "[a](/x)".repeat(n), 14_000);
+  it.each<[string, (n: number) => string, number]>([
+    ["50k short lines", (n) => "a\n".repeat(n), 50_000],
+    ["25k list items", (n) => "- a\n".repeat(n), 25_000],
+    ["25k emphasis", (n) => "*a* ".repeat(n), 25_000],
+    ["14k links", (n) => "[a](/x)".repeat(n), 14_000],
+    ["14k [**a**", (n) => "[**a** ".repeat(n), 14_000],
+  ])("%s render in linear time without overflowing the call stack", (_name, make, n) => {
+    expectLinearTime((text) => expect(() => renderDeep(text, 2_000)).not.toThrow(), make, n);
   });
 });
 
@@ -488,16 +472,15 @@ describe("review fix round 1", () => {
   });
 
   it("escapeRichText runs in linear time on hostile values", () => {
-    for (const value of [
-      " ".repeat(100_000),
-      "\n".repeat(100_000),
-      "1".repeat(100_000),
-      LINE_SEPARATOR.repeat(100_000),
-      `\u00a0${LINE_SEPARATOR}`.repeat(50_000),
-    ]) {
-      const start = performance.now();
-      escapeRichText(`${value}x`);
-      expect(performance.now() - start).toBeLessThan(400);
+    const hostile: [(n: number) => string, number][] = [
+      [(n) => " ".repeat(n), 100_000],
+      [(n) => "\n".repeat(n), 100_000],
+      [(n) => "1".repeat(n), 100_000],
+      [(n) => LINE_SEPARATOR.repeat(n), 100_000],
+      [(n) => `\u00a0${LINE_SEPARATOR}`.repeat(n), 50_000],
+    ];
+    for (const [make, n] of hostile) {
+      expectLinearTime((text) => escapeRichText(`${text}x`), make, n);
     }
   });
 
