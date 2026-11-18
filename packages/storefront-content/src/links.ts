@@ -72,16 +72,141 @@ function parseUrl(raw: string, base?: string): URL | null {
   }
 }
 
+// RFC 3492 Punycode parameters.
+const PUNY_BASE = 36;
+const PUNY_TMIN = 1;
+const PUNY_TMAX = 26;
+const PUNY_SKEW = 38;
+const PUNY_DAMP = 700;
+const PUNY_INITIAL_BIAS = 72;
+const PUNY_INITIAL_N = 128;
+
+function punyAdapt(delta: number, points: number, first: boolean): number {
+  let d = first ? Math.floor(delta / PUNY_DAMP) : delta >> 1;
+  d += Math.floor(d / points);
+  let k = 0;
+  while (d > ((PUNY_BASE - PUNY_TMIN) * PUNY_TMAX) >> 1) {
+    d = Math.floor(d / (PUNY_BASE - PUNY_TMIN));
+    k += PUNY_BASE;
+  }
+  return k + Math.floor(((PUNY_BASE - PUNY_TMIN + 1) * d) / (d + PUNY_SKEW));
+}
+
+function punyThreshold(k: number, bias: number): number {
+  if (k <= bias) return PUNY_TMIN;
+  return k >= bias + PUNY_TMAX ? PUNY_TMAX : k - bias;
+}
+
+function punyDigit(char: string): number {
+  const code = char.charCodeAt(0);
+  if (code >= 0x30 && code <= 0x39) return code - 0x30 + 26; // 0-9
+  if (code >= 0x61 && code <= 0x7a) return code - 0x61; // a-z
+  return -1;
+}
+
+/** The code points an RFC 3492 payload decodes to (lower-case input), or null when malformed. */
+function punyDecode(payload: string): number[] | null {
+  const delimiter = payload.lastIndexOf("-");
+  const output: number[] = [];
+  for (const char of delimiter > 0 ? payload.slice(0, delimiter) : "") {
+    output.push(char.charCodeAt(0));
+  }
+  let n = PUNY_INITIAL_N;
+  let bias = PUNY_INITIAL_BIAS;
+  let i = 0;
+  let index = delimiter > 0 ? delimiter + 1 : 0;
+  while (index < payload.length) {
+    const previous = i;
+    let weight = 1;
+    for (let k = PUNY_BASE; ; k += PUNY_BASE) {
+      if (index >= payload.length) return null;
+      const digit = punyDigit(payload.charAt(index));
+      index += 1;
+      if (digit < 0) return null;
+      i += digit * weight;
+      const t = punyThreshold(k, bias);
+      if (digit < t) break;
+      weight *= PUNY_BASE - t;
+    }
+    const length = output.length + 1;
+    bias = punyAdapt(i - previous, length, previous === 0);
+    n += Math.floor(i / length);
+    if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff)) return null;
+    i %= length;
+    output.splice(i, 0, n);
+    i += 1;
+  }
+  return output;
+}
+
+/** RFC 3492 encoding of code points (the inverse of `punyDecode`), lower case. */
+function punyEncode(input: readonly number[]): string {
+  const basic = input.filter((cp) => cp < PUNY_INITIAL_N);
+  let output = String.fromCharCode(...basic);
+  let handled = basic.length;
+  if (basic.length > 0) output += "-";
+  let n = PUNY_INITIAL_N;
+  let delta = 0;
+  let bias = PUNY_INITIAL_BIAS;
+  const digitChar = (d: number): string => String.fromCharCode(d < 26 ? d + 0x61 : d - 26 + 0x30);
+  while (handled < input.length) {
+    const next = Math.min(...input.filter((cp) => cp >= n));
+    delta += (next - n) * (handled + 1);
+    n = next;
+    for (const cp of input) {
+      if (cp < n) delta += 1;
+      if (cp !== n) continue;
+      let q = delta;
+      for (let k = PUNY_BASE; ; k += PUNY_BASE) {
+        const t = punyThreshold(k, bias);
+        if (q < t) break;
+        output += digitChar(t + ((q - t) % (PUNY_BASE - t)));
+        q = Math.floor((q - t) / (PUNY_BASE - t));
+      }
+      output += digitChar(q);
+      bias = punyAdapt(delta, handled + 1, handled === basic.length);
+      delta = 0;
+      handled += 1;
+    }
+    delta += 1;
+    n += 1;
+  }
+  return output;
+}
+
+/**
+ * Whether a host label is well formed. An `xn--` label must be a canonical Punycode encoding of
+ * a label that has a non-ASCII character, does not start or end with a hyphen and is not itself
+ * an `xn--` label. Checked here rather than left to the URL parser, because parsers differ by
+ * Node version: Node 22 turns `ßxn--.example` into `xn--xn---una.example` and accepts it,
+ * Node 24 refuses it, and both must give the same answer.
+ */
+function hasWellFormedLabels(hostname: string): boolean {
+  for (const label of hostname.split(".")) {
+    if (!label.toLowerCase().startsWith("xn--")) continue;
+    const payload = label.slice(4).toLowerCase();
+    const decoded = punyDecode(payload);
+    if (decoded === null || decoded.length === 0) return false;
+    if (decoded.every((cp) => cp < PUNY_INITIAL_N)) return false;
+    if (decoded[0] === 0x2d || decoded[decoded.length - 1] === 0x2d) return false;
+    if (String.fromCodePoint(...decoded.slice(0, 4)).toLowerCase() === "xn--") return false;
+    if (punyEncode(decoded) !== payload) return false;
+  }
+  return true;
+}
+
 /**
  * The parsed `href`, which must itself parse back to the same `href` (review M1): some IDN hosts
  * normalise to a punycode form the parser then refuses, and a stored or rendered value must pass
- * these same rules again.
+ * these same rules again. The host's punycode labels are also checked explicitly
+ * (`hasWellFormedLabels`), so the answer does not depend on the Node version's URL parser.
  */
 function normalizeHttps(raw: string): string | null {
   const url = parseUrl(raw);
   if (url === null || url.protocol !== "https:") return null;
   if (url.username !== "" || url.password !== "") return null;
   if (url.hostname === "" || url.href.length > LINK_URL_MAX) return null;
+  if (!hasWellFormedLabels(url.hostname)) return null;
   return parseUrl(url.href)?.href === url.href ? url.href : null;
 }
 
