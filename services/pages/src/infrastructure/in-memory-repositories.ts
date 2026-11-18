@@ -7,6 +7,16 @@ import { pageHandleOf } from "../domain/page-content";
 import type { PageRepository, TemplateRepository } from "../domain/repositories";
 import type { Template } from "../domain/template";
 
+/**
+ * Runs `fn` and settles the returned promise with its result or its thrown error, exactly as an
+ * `async` method would, without an `async` function that has no `await` (`require-await`, see
+ * `scripts/ops/check-lint-warnings.mjs`).
+ */
+const settle = <T>(fn: () => T): Promise<T> =>
+  new Promise<T>((resolve) => {
+    resolve(fn());
+  });
+
 /** A detached copy at `version`, so callers never mutate stored state before saving (like a row). */
 function copyOf(page: Page, version: number): Page {
   return Page.reconstitute(
@@ -107,28 +117,32 @@ export class InMemoryPageRepository implements PageRepository {
     return null;
   }
 
-  async findByIds(ids: readonly string[], tenantId: string): Promise<readonly Page[]> {
-    const found: Page[] = [];
-    for (const id of new Set(ids)) {
-      const entry = this.store.get(id);
-      if (entry !== undefined && entry.tenantId === tenantId) {
-        found.push(copyOf(entry.page, entry.page.version));
+  findByIds(ids: readonly string[], tenantId: string): Promise<readonly Page[]> {
+    return settle(() => {
+      const found: Page[] = [];
+      for (const id of new Set(ids)) {
+        const entry = this.store.get(id);
+        if (entry !== undefined && entry.tenantId === tenantId) {
+          found.push(copyOf(entry.page, entry.page.version));
+        }
       }
-    }
-    return found;
+      return found;
+    });
   }
 
-  async listPublished(tenantId: string, limit: number): Promise<readonly Page[]> {
-    return [...this.store.values()]
-      .filter(
-        (entry) =>
-          entry.tenantId === tenantId &&
-          entry.page.status === "published" &&
-          pageHandleOf(entry.page.routePath.value) !== null,
-      )
-      .map((entry) => copyOf(entry.page, entry.page.version))
-      .sort((a, b) => compareRoutePaths(a, b))
-      .slice(0, limit);
+  listPublished(tenantId: string, limit: number): Promise<readonly Page[]> {
+    return settle(() => {
+      return [...this.store.values()]
+        .filter(
+          (entry) =>
+            entry.tenantId === tenantId &&
+            entry.page.status === "published" &&
+            pageHandleOf(entry.page.routePath.value) !== null,
+        )
+        .map((entry) => copyOf(entry.page, entry.page.version))
+        .sort((a, b) => compareRoutePaths(a, b))
+        .slice(0, limit);
+    });
   }
 
   async list(page: CursorPage, tenantId: string): Promise<Paginated<Page>> {

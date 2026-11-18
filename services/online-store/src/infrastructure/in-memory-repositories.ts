@@ -17,6 +17,16 @@ import { StorefrontAccess, type AccessSnapshot } from "../domain/storefront-acce
 import { StorefrontPreferences, type PreferencesSnapshot } from "../domain/storefront-preferences";
 import { StorefrontTheme, type ThemeRelease, type ThemeSnapshot } from "../domain/storefront-theme";
 
+/**
+ * Runs `fn` and settles the returned promise with its result or its thrown error, exactly as an
+ * `async` method would, without an `async` function that has no `await` (`require-await`, see
+ * `scripts/ops/check-lint-warnings.mjs`).
+ */
+const settle = <T>(fn: () => T): Promise<T> =>
+  new Promise<T>((resolve) => {
+    resolve(fn());
+  });
+
 /** A single-row-per-shop store with the Prisma repository's insert/guarded-update semantics. */
 class Rows<S extends { readonly version: number; readonly persisted: boolean }> {
   private readonly rows = new Map<string, S>();
@@ -41,63 +51,81 @@ class Rows<S extends { readonly version: number; readonly persisted: boolean }> 
 
 export class InMemoryPreferencesRepository implements PreferencesRepository {
   private readonly rows = new Rows<PreferencesSnapshot>();
-  async get(tenantId: string): Promise<StorefrontPreferences> {
-    const row = this.rows.get(tenantId);
-    return row === undefined
-      ? StorefrontPreferences.defaults()
-      : StorefrontPreferences.reconstitute(row);
+  get(tenantId: string): Promise<StorefrontPreferences> {
+    return settle(() => {
+      const row = this.rows.get(tenantId);
+      return row === undefined
+        ? StorefrontPreferences.defaults()
+        : StorefrontPreferences.reconstitute(row);
+    });
   }
-  async save(p: StorefrontPreferences, tenantId: string): Promise<void> {
-    this.rows.save(tenantId, p.snapshot(), "Storefront preferences");
+  save(p: StorefrontPreferences, tenantId: string): Promise<void> {
+    return settle(() => {
+      this.rows.save(tenantId, p.snapshot(), "Storefront preferences");
+    });
   }
 }
 
 export class InMemoryAccessRepository implements AccessRepository {
   private readonly rows = new Rows<AccessSnapshot>();
-  async get(tenantId: string): Promise<StorefrontAccess> {
-    const row = this.rows.get(tenantId);
-    return row === undefined ? StorefrontAccess.defaults() : StorefrontAccess.reconstitute(row);
+  get(tenantId: string): Promise<StorefrontAccess> {
+    return settle(() => {
+      const row = this.rows.get(tenantId);
+      return row === undefined ? StorefrontAccess.defaults() : StorefrontAccess.reconstitute(row);
+    });
   }
-  async save(a: StorefrontAccess, tenantId: string): Promise<void> {
-    this.rows.save(tenantId, a.snapshot(), "Storefront access");
+  save(a: StorefrontAccess, tenantId: string): Promise<void> {
+    return settle(() => {
+      this.rows.save(tenantId, a.snapshot(), "Storefront access");
+    });
   }
 }
 
 export class InMemoryThemeRepository implements ThemeRepository {
   private readonly rows = new Rows<ThemeSnapshot>();
-  async get(tenantId: string): Promise<StorefrontTheme> {
-    const row = this.rows.get(tenantId);
-    return row === undefined ? StorefrontTheme.initial() : StorefrontTheme.reconstitute(row);
+  get(tenantId: string): Promise<StorefrontTheme> {
+    return settle(() => {
+      const row = this.rows.get(tenantId);
+      return row === undefined ? StorefrontTheme.initial() : StorefrontTheme.reconstitute(row);
+    });
   }
-  async save(t: StorefrontTheme, tenantId: string): Promise<void> {
-    this.rows.save(tenantId, t.snapshot(), "Storefront theme");
+  save(t: StorefrontTheme, tenantId: string): Promise<void> {
+    return settle(() => {
+      this.rows.save(tenantId, t.snapshot(), "Storefront theme");
+    });
   }
 }
 
 export class InMemoryThemeReleaseRepository implements ThemeReleaseRepository {
   private readonly rows: { tenantId: string; release: ThemeRelease }[] = [];
-  async append(release: ThemeRelease, tenantId: string): Promise<void> {
-    if (
-      this.rows.some(
-        (r) => r.tenantId === tenantId && r.release.releaseNumber === release.releaseNumber,
-      )
-    ) {
-      throw new ConcurrencyError("Release number already used");
-    }
-    this.rows.push({ tenantId, release });
+  append(release: ThemeRelease, tenantId: string): Promise<void> {
+    return settle(() => {
+      if (
+        this.rows.some(
+          (r) => r.tenantId === tenantId && r.release.releaseNumber === release.releaseNumber,
+        )
+      ) {
+        throw new ConcurrencyError("Release number already used");
+      }
+      this.rows.push({ tenantId, release });
+    });
   }
-  async list(tenantId: string, limit: number): Promise<readonly ThemeRelease[]> {
-    return this.rows
-      .filter((r) => r.tenantId === tenantId)
-      .map((r) => r.release)
-      .sort((a, b) => b.releaseNumber - a.releaseNumber)
-      .slice(0, limit);
+  list(tenantId: string, limit: number): Promise<readonly ThemeRelease[]> {
+    return settle(() => {
+      return this.rows
+        .filter((r) => r.tenantId === tenantId)
+        .map((r) => r.release)
+        .sort((a, b) => b.releaseNumber - a.releaseNumber)
+        .slice(0, limit);
+    });
   }
-  async get(releaseNumber: number, tenantId: string): Promise<ThemeRelease | null> {
-    return (
-      this.rows.find((r) => r.tenantId === tenantId && r.release.releaseNumber === releaseNumber)
-        ?.release ?? null
-    );
+  get(releaseNumber: number, tenantId: string): Promise<ThemeRelease | null> {
+    return settle(() => {
+      return (
+        this.rows.find((r) => r.tenantId === tenantId && r.release.releaseNumber === releaseNumber)
+          ?.release ?? null
+      );
+    });
   }
   async pruneBeyond(keep: number, tenantId: string): Promise<number> {
     const kept = new Set((await this.list(tenantId, keep)).map((r) => r.id));
@@ -113,29 +141,31 @@ export class InMemoryThemeReleaseRepository implements ThemeReleaseRepository {
 
 export class InMemoryPreviewTokenRepository implements PreviewTokenRepository {
   private readonly rows: { tenantId: string; record: PreviewTokenRecord }[] = [];
-  async insert(record: PreviewTokenRecord, tenantId: string): Promise<void> {
-    this.rows.push({ tenantId, record });
+  insert(record: PreviewTokenRecord, tenantId: string): Promise<void> {
+    return settle(() => {
+      this.rows.push({ tenantId, record });
+    });
   }
-  async findActive(
-    tokenHash: string,
-    tenantId: string,
-    now: Date,
-  ): Promise<PreviewTokenRecord | null> {
-    return (
-      this.rows.find(
-        (r) =>
-          r.tenantId === tenantId && r.record.tokenHash === tokenHash && r.record.expiresAt > now,
-      )?.record ?? null
-    );
+  findActive(tokenHash: string, tenantId: string, now: Date): Promise<PreviewTokenRecord | null> {
+    return settle(() => {
+      return (
+        this.rows.find(
+          (r) =>
+            r.tenantId === tenantId && r.record.tokenHash === tokenHash && r.record.expiresAt > now,
+        )?.record ?? null
+      );
+    });
   }
-  async deleteExpired(tenantId: string, now: Date): Promise<number> {
-    const before = this.rows.length;
-    for (let i = this.rows.length - 1; i >= 0; i -= 1) {
-      const row = this.rows[i];
-      if (row !== undefined && row.tenantId === tenantId && row.record.expiresAt <= now)
-        this.rows.splice(i, 1);
-    }
-    return before - this.rows.length;
+  deleteExpired(tenantId: string, now: Date): Promise<number> {
+    return settle(() => {
+      const before = this.rows.length;
+      for (let i = this.rows.length - 1; i >= 0; i -= 1) {
+        const row = this.rows[i];
+        if (row !== undefined && row.tenantId === tenantId && row.record.expiresAt <= now)
+          this.rows.splice(i, 1);
+      }
+      return before - this.rows.length;
+    });
   }
   /** Test seam: every stored record, across shops (to assert only hashes are stored). */
   all(): readonly PreviewTokenRecord[] {
@@ -187,52 +217,68 @@ class KeyedRows<S extends { readonly version: number; readonly persisted: boolea
 export class InMemoryMenuRepository implements MenuRepository {
   private readonly rows = new KeyedRows<MenuSnapshot>();
 
-  async list(tenantId: string): Promise<readonly Menu[]> {
-    return this.rows
-      .all(tenantId)
-      .sort((a, b) => (a.handle < b.handle ? -1 : a.handle > b.handle ? 1 : 0))
-      .map((row) => Menu.reconstitute(copyOf(row)));
+  list(tenantId: string): Promise<readonly Menu[]> {
+    return settle(() => {
+      return this.rows
+        .all(tenantId)
+        .sort((a, b) => (a.handle < b.handle ? -1 : a.handle > b.handle ? 1 : 0))
+        .map((row) => Menu.reconstitute(copyOf(row)));
+    });
   }
 
-  async get(handle: string, tenantId: string): Promise<Menu | null> {
-    const row = this.rows.get(tenantId, handle);
-    return row === undefined ? null : Menu.reconstitute(copyOf(row));
+  get(handle: string, tenantId: string): Promise<Menu | null> {
+    return settle(() => {
+      const row = this.rows.get(tenantId, handle);
+      return row === undefined ? null : Menu.reconstitute(copyOf(row));
+    });
   }
 
-  async countCustom(tenantId: string): Promise<number> {
-    return this.rows.all(tenantId).filter((row) => !isDefaultMenuHandle(row.handle)).length;
+  countCustom(tenantId: string): Promise<number> {
+    return settle(() => {
+      return this.rows.all(tenantId).filter((row) => !isDefaultMenuHandle(row.handle)).length;
+    });
   }
 
-  async save(menu: Menu, tenantId: string): Promise<void> {
-    const snapshot = menu.snapshot();
-    if (snapshot.id === null) throw menuNeedsId();
-    const current = this.rows.get(tenantId, snapshot.handle);
-    // A menu deleted and re-created under this handle is another row (the Prisma where names the id).
-    if (snapshot.persisted && current !== undefined && current.id !== snapshot.id) {
-      throw new ConcurrencyError("Menu was modified concurrently");
-    }
-    this.rows.save(tenantId, snapshot.handle, snapshot, "Menu");
+  save(menu: Menu, tenantId: string): Promise<void> {
+    return settle(() => {
+      const snapshot = menu.snapshot();
+      if (snapshot.id === null) throw menuNeedsId();
+      const current = this.rows.get(tenantId, snapshot.handle);
+      // A menu deleted and re-created under this handle is another row (the Prisma where names the id).
+      if (snapshot.persisted && current !== undefined && current.id !== snapshot.id) {
+        throw new ConcurrencyError("Menu was modified concurrently");
+      }
+      this.rows.save(tenantId, snapshot.handle, snapshot, "Menu");
+    });
   }
 
-  async remove(handle: string, tenantId: string): Promise<boolean> {
-    return this.rows.remove(tenantId, handle);
+  remove(handle: string, tenantId: string): Promise<boolean> {
+    return settle(() => {
+      return this.rows.remove(tenantId, handle);
+    });
   }
 }
 
 export class InMemoryPolicyRepository implements PolicyRepository {
   private readonly rows = new KeyedRows<PolicySnapshot>();
 
-  async list(tenantId: string): Promise<readonly StorePolicy[]> {
-    return POLICY_TYPES.map((type) => this.read(type, tenantId));
+  list(tenantId: string): Promise<readonly StorePolicy[]> {
+    return settle(() => {
+      return POLICY_TYPES.map((type) => this.read(type, tenantId));
+    });
   }
 
-  async get(type: PolicyType, tenantId: string): Promise<StorePolicy> {
-    return this.read(type, tenantId);
+  get(type: PolicyType, tenantId: string): Promise<StorePolicy> {
+    return settle(() => {
+      return this.read(type, tenantId);
+    });
   }
 
-  async save(policy: StorePolicy, tenantId: string): Promise<void> {
-    const snapshot = policy.snapshot();
-    this.rows.save(tenantId, snapshot.type, snapshot, "Policy");
+  save(policy: StorePolicy, tenantId: string): Promise<void> {
+    return settle(() => {
+      const snapshot = policy.snapshot();
+      this.rows.save(tenantId, snapshot.type, snapshot, "Policy");
+    });
   }
 
   private read(type: PolicyType, tenantId: string): StorePolicy {
