@@ -12,10 +12,35 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { CreateOrderFromCheckout } from "./application/create-order-from-checkout.use-case";
+import {
+  CompleteDraftFromCheckout,
+  CreateDraftOrder,
+  DeleteDraftOrder,
+  GetDraftOrder,
+  ListDraftOrders,
+  MarkDraftInvoiceSent,
+  SetDraftCheckout,
+  UpdateDraftOrder,
+} from "./application/draft-orders.use-cases";
 import { GetOrder } from "./application/get-order.use-case";
 import { GetSalesSummary } from "./application/get-sales-summary.use-case";
 import { ListOrders } from "./application/list-orders.use-case";
 import { MarkOrderPaid } from "./application/mark-order-paid.use-case";
+import {
+  AddOrderTags,
+  ArchiveOrders,
+  GetOrderAnnotations,
+  RemoveOrderTags,
+  SuggestOrderTags,
+  UnarchiveOrders,
+  UpdateOrderNote,
+} from "./application/order-annotations.use-cases";
+import {
+  AddOrderComment,
+  DeleteOrderComment,
+  EditOrderComment,
+  ListOrderTimeline,
+} from "./application/order-timeline.use-cases";
 import {
   AdvanceOrder,
   RequestFulfillment,
@@ -25,7 +50,10 @@ import { PlaceOrder } from "./application/place-order.use-case";
 import { RecordCheckoutPayment } from "./application/record-checkout-payment.use-case";
 import { RefundOrder } from "./application/refund-order.use-case";
 import type { SalesSummaryQuery } from "./application/sales-summary";
+import type { DraftNumberAllocator, DraftOrderRepository } from "./domain/draft-order-repository";
+import type { OrderAnnotationRepository } from "./domain/order-annotations";
 import type { OrderRepository } from "./domain/order-repository";
+import type { OrderTimelineRepository } from "./domain/order-timeline";
 import type {
   InventoryPort,
   NotificationPort,
@@ -36,9 +64,14 @@ import type {
   StockReleasePort,
   PaymentVerificationPort,
   ShippingPort,
+  StaffDirectoryPort,
 } from "./application/ports";
+import { InMemoryDraftNumberAllocator } from "./infrastructure/in-memory-draft-number-allocator";
+import { InMemoryDraftOrderRepository } from "./infrastructure/in-memory-draft-order-repository";
+import { InMemoryOrderAnnotationRepository } from "./infrastructure/in-memory-order-annotation-repository";
 import { InMemoryOrderNumberAllocator } from "./infrastructure/in-memory-order-number-allocator";
 import { InMemoryOrderRepository } from "./infrastructure/in-memory-order-repository";
+import { InMemoryOrderTimelineRepository } from "./infrastructure/in-memory-order-timeline-repository";
 import { InMemorySalesSummaryQuery } from "./infrastructure/in-memory-sales-summary-query";
 import {
   InMemoryInventoryAdapter,
@@ -46,14 +79,19 @@ import {
   InMemoryPaymentAdapter,
   InMemoryPaymentVerificationAdapter,
   InMemoryShippingAdapter,
+  InMemoryStaffDirectory,
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   ORDERS_PUBLISHED_EVENTS,
   OrderEventTranslator,
 } from "./infrastructure/order-event-translator";
+import { PrismaDraftNumberAllocator } from "./infrastructure/prisma-draft-number-allocator";
+import { PrismaDraftOrderRepository } from "./infrastructure/prisma-draft-order-repository";
+import { PrismaOrderAnnotationRepository } from "./infrastructure/prisma-order-annotation-repository";
 import { PrismaOrderNumberAllocator } from "./infrastructure/prisma-order-number-allocator";
 import { PrismaOrderRepository } from "./infrastructure/prisma-order-repository";
+import { PrismaOrderTimelineRepository } from "./infrastructure/prisma-order-timeline-repository";
 import { PrismaSalesSummaryQuery } from "./infrastructure/prisma-sales-summary-query";
 import { OrderController } from "./interfaces/order.controller";
 
@@ -95,6 +133,11 @@ export interface OrdersWiringDeps {
    * tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
+  /**
+   * Order operations Part 2: whose name a timeline line shows. Absent ⇒ `InMemoryStaffDirectory()`
+   * (no names: "Staff"); `apps/admin` supplies the Security-backed adapter in production.
+   */
+  readonly staffDirectory?: StaffDirectoryPort;
 }
 
 export interface WiredOrders {
@@ -109,6 +152,10 @@ function buildController(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   orderNumbers: OrderNumberAllocator,
   sales: SalesSummaryQuery,
+  annotations: OrderAnnotationRepository,
+  timeline: OrderTimelineRepository,
+  drafts: DraftOrderRepository,
+  draftNumbers: DraftNumberAllocator,
   deps: OrdersWiringDeps,
 ): OrderController {
   const paymentPort = deps.paymentPort ?? new InMemoryPaymentAdapter();
@@ -116,6 +163,30 @@ function buildController(
   const shippingPort = deps.shippingPort ?? new InMemoryShippingAdapter();
   const notifications = deps.notifications ?? new InMemoryNotificationAdapter();
   const paymentVerification = deps.paymentVerification ?? new InMemoryPaymentVerificationAdapter();
+  const staff = deps.staffDirectory ?? new InMemoryStaffDirectory();
+  const annotationDeps = {
+    annotations,
+    unitOfWork,
+    clock: deps.clock,
+    activity: { timeline, staff, idGenerator: deps.idGenerator },
+  };
+  const timelineDeps = {
+    annotations,
+    timeline,
+    staff,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    unitOfWork,
+  };
+  const draftDeps = {
+    drafts,
+    draftNumbers,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    annotations,
+    activity: { timeline, staff, idGenerator: deps.idGenerator },
+  };
 
   return new OrderController({
     placeOrder: new PlaceOrder({
@@ -183,6 +254,25 @@ function buildController(
     getOrder: new GetOrder({ orders }),
     listOrders: new ListOrders({ orders }),
     getSalesSummary: new GetSalesSummary({ sales }),
+    archiveOrders: new ArchiveOrders(annotationDeps),
+    unarchiveOrders: new UnarchiveOrders(annotationDeps),
+    getOrderAnnotations: new GetOrderAnnotations({ annotations }),
+    updateOrderNote: new UpdateOrderNote(annotationDeps),
+    addOrderTags: new AddOrderTags(annotationDeps),
+    removeOrderTags: new RemoveOrderTags(annotationDeps),
+    suggestOrderTags: new SuggestOrderTags({ annotations }),
+    addOrderComment: new AddOrderComment(timelineDeps),
+    editOrderComment: new EditOrderComment(timelineDeps),
+    deleteOrderComment: new DeleteOrderComment(timelineDeps),
+    listOrderTimeline: new ListOrderTimeline({ timeline }),
+    createDraftOrder: new CreateDraftOrder(draftDeps),
+    updateDraftOrder: new UpdateDraftOrder(draftDeps),
+    deleteDraftOrder: new DeleteDraftOrder(draftDeps),
+    getDraftOrder: new GetDraftOrder({ drafts }),
+    listDraftOrders: new ListDraftOrders({ drafts }),
+    markDraftInvoiceSent: new MarkDraftInvoiceSent(draftDeps),
+    setDraftCheckout: new SetDraftCheckout(draftDeps),
+    completeDraftFromCheckout: new CompleteDraftFromCheckout(draftDeps),
   });
 }
 
@@ -213,6 +303,10 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
         unitOfWork,
         new PrismaOrderNumberAllocator(),
         new PrismaSalesSummaryQuery({ prisma: deps.prisma }),
+        new PrismaOrderAnnotationRepository({ prisma: deps.prisma }),
+        new PrismaOrderTimelineRepository({ prisma: deps.prisma }),
+        new PrismaDraftOrderRepository({ prisma: deps.prisma }),
+        new PrismaDraftNumberAllocator(),
         deps,
       ),
       drainOutbox: async () => 0,
@@ -236,7 +330,14 @@ export function wireOrders(deps: OrdersWiringDeps): WiredOrders {
     orders,
     unitOfWork,
     new InMemoryOrderNumberAllocator(),
-    new InMemorySalesSummaryQuery({ ordersOf: (tenantId) => orders.ordersOf(tenantId) }),
+    new InMemorySalesSummaryQuery({
+      ordersOf: (tenantId) => orders.ordersOf(tenantId),
+      isArchived: (orderId, tenantId) => orders.archivedAtOf(orderId, tenantId) !== null,
+    }),
+    new InMemoryOrderAnnotationRepository({ orders }),
+    new InMemoryOrderTimelineRepository(),
+    new InMemoryDraftOrderRepository(),
+    new InMemoryDraftNumberAllocator(),
     deps,
   );
 

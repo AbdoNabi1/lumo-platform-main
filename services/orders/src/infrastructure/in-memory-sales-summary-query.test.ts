@@ -428,4 +428,17 @@ describe("InMemorySalesSummaryQuery", () => {
     expect(summary.openOrderIds).toEqual(["mine"]);
     expect(summary.topProducts).toHaveLength(1);
   });
+
+  it("leaves archived orders out of the open orders (order operations Part 1)", async () => {
+    const orders = [
+      order({ id: "open", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
+      order({ id: "archived", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
+    ];
+    const summary = await new InMemorySalesSummaryQuery({
+      ordersOf: () => orders,
+      isArchived: (orderId) => orderId === "archived",
+    }).summarize({ ...RANGE, includeOpenOrderIds: true });
+
+    expect(summary.openOrderIds).toEqual(["open"]);
+  });
 });

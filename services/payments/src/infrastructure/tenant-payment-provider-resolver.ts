@@ -54,6 +54,11 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
   ): Promise<PaymentProvider> {
     const registration = this.registered(provider);
     const settings = await this.settingsOf(tenantId);
+    // Ruling 8: a staff-recorded payment is never enabled in settings (it cannot be), and only a staff
+    // action on a draft order's checkout ever selects it.
+    if (registration.capabilities.recordedByStaff === true) {
+      return registration.create(await this.contextFor(tenantId, registration, settings));
+    }
     if (!settings.isEnabled(provider)) {
       throw new PaymentProviderUnavailableError(provider, "the merchant has not enabled it");
     }
@@ -102,6 +107,7 @@ export class TenantPaymentProviderResolver implements PaymentProviderResolver {
     return this.deps.registry.get(provider)?.capabilities;
   }
 
+  /** Internal only: lists every registration, `manual` included. Never list it to merchants or shoppers. */
   describe(): ProviderAvailability {
     return {
       providers: this.deps.registry.list().map((registration) => ({

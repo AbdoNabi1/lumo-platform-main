@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { OrderDetailDto } from "@/lib/api/orders";
 import type { PaymentIntentDto } from "@/lib/api/payments";
+import { formatCurrency } from "@/lib/format";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { OrderPaymentCard } from "./order-payment-card";
@@ -220,6 +221,64 @@ describe("OrderPaymentCard — the payment card like Shopify's (Plan 3B)", () =>
         order({ paymentStatus: "paid", status: "payment_received" }),
         intent({ status: "captured", capturedAmountMinor: 45000 }),
       );
+
+      expect(markAsPaid()).toBeNull();
+    });
+
+    it("is offered to an admin for a pending staff-recorded (manual) payment — a draft's Mark as paid that stopped half-way", async () => {
+      fetchPaymentIntent.mockResolvedValue({
+        outcome: "ok",
+        paymentIntent: intent({ provider: "manual" }),
+      });
+      render(
+        await OrderPaymentCard({
+          order: order({ paymentProvider: "manual" }),
+          t: en,
+          locale: "en",
+          canMarkCashReceived: true,
+        }),
+      );
+
+      expect(markAsPaid()).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: en.orderPage.markAsPaid })).toBeInTheDocument();
+    });
+
+    it("words a manual payment's confirmation as the payment the merchant recorded, not cash", async () => {
+      fetchPaymentIntent.mockResolvedValue({
+        outcome: "ok",
+        paymentIntent: intent({ provider: "manual" }),
+      });
+      render(
+        await OrderPaymentCard({
+          order: order({ paymentProvider: "manual" }),
+          t: ar,
+          locale: "ar",
+          canMarkCashReceived: true,
+        }),
+      );
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      fireEvent.click(screen.getByRole("button", { name: ar.orderPage.markAsPaid }));
+      expect(confirm.mock.calls[0]?.[0]).toBe(
+        ar.orderDetail.confirmPaymentRecorded.replace(
+          "{amount}",
+          formatCurrency("ar", 45000, "EGP"),
+        ),
+      );
+      confirm.mockRestore();
+    });
+
+    it("keeps the cash wording for cash on delivery", async () => {
+      await renderCard(order());
+      const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+      fireEvent.click(screen.getByRole("button", { name: en.orderPage.markAsPaid }));
+      expect(confirm.mock.calls[0]?.[0]).toBe(
+        en.orderDetail.confirmCashReceived.replace("{amount}", formatCurrency("en", 45000, "EGP")),
+      );
+      confirm.mockRestore();
+    });
+
+    it("keeps a pending manual payment's confirmation from non-admins (the confirm permission)", async () => {
+      await renderCard(order({ paymentProvider: "manual" }), intent({ provider: "manual" }));
 
       expect(markAsPaid()).toBeNull();
     });

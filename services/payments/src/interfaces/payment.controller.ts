@@ -30,6 +30,10 @@ import type {
   UpdateMerchantPaymentSettings,
   UpdateMerchantPaymentSettingsInput,
 } from "../application/merchant-payment-settings.use-cases";
+import type {
+  GetPaymentIntentsByIds,
+  GetPaymentIntentsByIdsInput,
+} from "../application/get-payment-intents-by-ids.use-case";
 import type { RecordWebhook, RecordWebhookInput } from "../application/record-webhook.use-case";
 import type {
   VerifyPaymentWebhook,
@@ -50,6 +54,7 @@ export interface PaymentControllerDeps {
   readonly refundPaymentLifecycle: RefundPaymentLifecycle;
   readonly recordWebhook: RecordWebhook;
   readonly getPaymentIntent: GetPaymentIntent;
+  readonly getPaymentIntentsByIds: GetPaymentIntentsByIds;
   readonly confirmCodCollection: ConfirmCodCollection;
   readonly getMerchantPaymentSettings: GetMerchantPaymentSettings;
   readonly updateMerchantPaymentSettings: UpdateMerchantPaymentSettings;
@@ -108,6 +113,11 @@ export class PaymentController {
 
   async getPaymentIntent(input: GetPaymentIntentInput): Promise<ControllerResponse> {
     return present(await this.deps.getPaymentIntent.execute(input), 200);
+  }
+
+  /** Order operations Part 1: many intents' summaries in one read. */
+  async getPaymentIntentsByIds(input: GetPaymentIntentsByIdsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getPaymentIntentsByIds.execute(input), 200);
   }
 
   /** The only thing that settles a cash-on-delivery payment (WP-13). */

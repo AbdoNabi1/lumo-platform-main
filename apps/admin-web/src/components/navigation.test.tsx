@@ -136,4 +136,54 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(within(tools).getByRole("link", { name: en.nav.featureFlags })).toBeInTheDocument();
     expect(within(tools).getByRole("link", { name: en.nav.security })).toBeInTheDocument();
   });
+
+  it("lists Abandoned checkouts under Orders while an Orders page is current (order operations Part 3)", () => {
+    renderNav("orders");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "href",
+      "/abandoned-checkouts",
+    );
+  });
+
+  it("marks Abandoned checkouts current on its own pages and keeps Orders in view", () => {
+    renderNav("abandoned-checkouts");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks Drafts current on its own pages and keeps Orders in view (order operations Part 4)", () => {
+    renderNav("draft-orders");
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "href",
+      "/draft-orders",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("Orders' sub-pages are Drafts, then Part 3's Abandoned checkouts", () => {
+    expect(PRIMARY_NAV.find((item) => item.id === "orders")?.children?.map((c) => c.id)).toEqual([
+      "draft-orders",
+      "abandoned-checkouts",
+    ]);
+  });
+});
+
+describe("Orders children (Shopify order)", () => {
+  it("lists Drafts, then Abandoned checkouts", () => {
+    const orders = PRIMARY_NAV.find((item) => item.id === "orders");
+    expect(orders?.children?.map((child) => child.href)).toEqual([
+      "/draft-orders",
+      "/abandoned-checkouts",
+    ]);
+  });
 });

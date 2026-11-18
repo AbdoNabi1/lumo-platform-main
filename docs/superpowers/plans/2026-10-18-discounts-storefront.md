@@ -33,30 +33,60 @@
 ### Task 1: Transport and server actions for discount codes
 
 **Files:**
+
 - Modify: `apps/storefront/src/lib/runtime-api.ts` (types + two functions)
 - Modify: `apps/storefront/src/app/checkout/actions.ts` (two actions; `completeCheckout` maps `DISCOUNTS_CHANGED`)
 - Test: `apps/storefront/src/app/checkout/actions.test.ts`, and the runtime-api test file if one covers checkout transport (grep `startCheckout` in `src/lib/*.test.ts`)
 
 **Interfaces — Produces:**
+
 ```ts
 // runtime-api.ts
-export interface CheckoutDiscountCodeSummary { readonly code: string; readonly applicable: boolean; readonly reason: string | null }
-export interface CheckoutAppliedDiscountSummary { readonly title: string; readonly code: string | null; readonly discountClass: string; readonly amountMinor: number }
-export interface CheckoutDiscountSummary { readonly codes: readonly CheckoutDiscountCodeSummary[]; readonly applied: readonly CheckoutAppliedDiscountSummary[] }
+export interface CheckoutDiscountCodeSummary {
+  readonly code: string;
+  readonly applicable: boolean;
+  readonly reason: string | null;
+}
+export interface CheckoutAppliedDiscountSummary {
+  readonly title: string;
+  readonly code: string | null;
+  readonly discountClass: string;
+  readonly amountMinor: number;
+}
+export interface CheckoutDiscountSummary {
+  readonly codes: readonly CheckoutDiscountCodeSummary[];
+  readonly applied: readonly CheckoutAppliedDiscountSummary[];
+}
 // CheckoutTotalsSummary gains: readonly discountMinor?: number; readonly shippingDiscountMinor?: number;
 // CheckoutSessionSummary gains: readonly discount?: CheckoutDiscountSummary;   (optional: older APIs)
-export function applyCheckoutDiscountCode(checkoutSessionId: string, sessionRef: string, code: string): Promise<{ status: number; body: unknown }>;
-export function removeCheckoutDiscountCode(checkoutSessionId: string, sessionRef: string, code: string): Promise<{ status: number; body: unknown }>;
+export function applyCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ status: number; body: unknown }>;
+export function removeCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ status: number; body: unknown }>;
 // actions.ts
 export type DiscountCodeActionResult =
   | { readonly ok: true; readonly checkoutSessionId: string }
   | { readonly ok: false; readonly reason: "rejected"; readonly rejection: string } // the runtime's token, e.g. "minimum_not_met"
   | { readonly ok: false; readonly reason: "ownership" | "validation" | "unavailable" | "network" };
-export async function applyDiscountCode(checkoutSessionId: string, code: string): Promise<DiscountCodeActionResult>;
-export async function removeDiscountCode(checkoutSessionId: string, code: string): Promise<CheckoutActionResult>;
+export async function applyDiscountCode(
+  checkoutSessionId: string,
+  code: string,
+): Promise<DiscountCodeActionResult>;
+export async function removeDiscountCode(
+  checkoutSessionId: string,
+  code: string,
+): Promise<CheckoutActionResult>;
 // CheckoutActionResult's failure union gains "discounts-changed" (from completeCheckout only).
 ```
+
 Behaviour:
+
 - `applyCheckoutDiscountCode` POSTs `{ sessionRef, code }` with the same helper/headers the other checkout writes use (read how `selectCheckoutShipping` posts). `removeCheckoutDiscountCode` sends DELETE to `/api/v1/public/checkouts/${encodeURIComponent(id)}/discount-codes/${encodeURIComponent(code)}?sessionRef=${encodeURIComponent(sessionRef)}` — check how other DELETEs/reads pass the session (the `x-cart-session` header is used on reads at line ~910); send BOTH the header and the query param only if the runtime's `resolveSessionRef` reads one of them — read `resolveSessionRef` in `apps/admin/src/http/public-checkout-routes.ts` and send exactly what it accepts.
 - `applyDiscountCode`: trim the code; empty → `{ ok:false, reason:"validation" }` without calling the runtime. 422 whose envelope has `fields[0].field === "code"` → `{ ok:false, reason:"rejected", rejection: fields[0].message }`; other 422 → `validation`; other statuses through the existing `mapFailureStatus`; success → `revalidatePath("/checkout")`.
 - `completeCheckout`: 409 with message starting `DISCOUNTS_CHANGED:` → `{ ok:false, reason:"discounts-changed" }` and `revalidatePath("/checkout")` (the session totals changed); keep `OUT_OF_STOCK:` handling first-class as today.
@@ -70,6 +100,7 @@ Behaviour:
 ### Task 2: Discount code field, chips and totals in the checkout summary
 
 **Files:**
+
 - Modify: `apps/storefront/src/components/checkout-view.tsx` (summary area — `SummaryBody`, `ErrorBanner`/error reasons, `placeOrder`)
 - Create (if it keeps checkout-view from growing further): `apps/storefront/src/components/checkout-discount-code.tsx`
 - Modify: `apps/storefront/src/messages/en.ts`, `apps/storefront/src/messages/ar.ts` (a `checkout.discount` block)
@@ -78,6 +109,7 @@ Behaviour:
 **Interfaces — Consumes:** Task 1 actions and types.
 
 Behaviour (Shopify's order summary):
+
 - Under the line items: a "Discount code" input with an **Apply** button (disabled while empty or pending). On submit call `applyDiscountCode`; on ok clear the input and refresh the session (use the same refresh mechanism the view already uses after other actions — `router.refresh()` or its existing session reload; read the file). On `rejected` show the reason's message under the field (`role="alert"`), keep the typed code. On other failures show the existing error banner reason.
 - Applied codes as chips (tag icon + code + × button with an accessible label "Remove code X"); × calls `removeDiscountCode` then refreshes. A code with `applicable: false` shows its chip with a muted style and the note "Not applicable: <reason message>".
 - Totals: after Subtotal, one row per `discount.applied` entry with `discountClass !== "shipping"` (the runtime classes are `"product"`, `"order"`, `"shipping"`): label = code (or title for an automatic discount, i.e. `code === null`), value = "−" + formatted amount. Shipping row: when `totals.shippingDiscountMinor > 0` and it covers the whole `totals.shippingMinor`, show "Free" (and optionally the struck-through original); when it covers part, show the shipping minus the discount. Grand total ALWAYS `totals.grandTotalMinor` when totals exist (no client arithmetic with discounts).

@@ -226,6 +226,12 @@ export interface PaymentInitiationPort {
     readonly provider: string;
     readonly amountMinor: number;
     readonly currency: string;
+    /**
+     * True only when the session being paid is a DRAFT order's (`draftTerms` present), read from the
+     * session by `InitiatePayment` — it lets Payments open a staff-recorded (`manual`) payment. Absent
+     * or false for every shopper checkout (order operations Part 4, Ruling 8).
+     */
+    readonly allowStaffRecorded?: boolean;
   }): Promise<{
     readonly paymentIntentId: string;
     readonly status: string;
@@ -233,4 +239,19 @@ export interface PaymentInitiationPort {
     /** Where the shopper completes an online payment (a hosted-checkout URL / client secret). Absent for cash on delivery. */
     readonly clientHandle?: string;
   }>;
+}
+
+/**
+ * Order operations Part 4 (spec §4.6 decision): tells Orders a draft order's checkout became an order.
+ * Best effort; safe to repeat, because Orders changes nothing when the same order completes the same
+ * draft again; a refusal is thrown with its reason, which Checkout logs. `actorRef` is the staff
+ * member when the merchant completed it, absent when the shopper paid through the invoice link.
+ */
+export interface DraftOrderCompletionPort {
+  complete(input: {
+    readonly tenantId: string;
+    readonly draftOrderRef: string;
+    readonly orderRef: string;
+    readonly actorRef?: string;
+  }): Promise<void>;
 }

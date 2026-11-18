@@ -257,6 +257,13 @@ export class ValidatePromotion implements UseCase<
       if (!loaded.ok) return err(loaded.error);
       const session = loaded.value;
 
+      // Part 4 (spec §4.4): promotions are not evaluated for a draft order's checkout.
+      if (session.draftTerms !== undefined) {
+        return err(
+          new BusinessRuleError("DRAFT_LOCKED: the discount of a draft order's checkout is fixed"),
+        );
+      }
+
       const result = await this.deps.promotionValidation.validate(
         session.items,
         session.customerRef,
