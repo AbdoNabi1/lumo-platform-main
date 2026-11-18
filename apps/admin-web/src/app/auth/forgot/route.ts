@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isNativeAuth, nativeTenantId } from "@/lib/auth/native";
+import { requestMerchantReset } from "@/lib/auth/merchant";
 import { requestReset } from "@/lib/auth/password-reset";
 import { requireProdEnv } from "@/lib/env";
 import { publicOrigin } from "@/lib/public-origin";
@@ -20,12 +21,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!isNativeAuth()) return NextResponse.redirect(new URL("/login", origin), 303);
   const email = field(await request.formData(), "email").trim();
   if (email.length < 3) return NextResponse.redirect(new URL("/forgot-password", origin), 303);
-  const result = await requestReset({
+  const input = {
     runtimeUrl: requireProdEnv("RUNTIME_API_URL", "http://localhost:3080"),
     tenantId: nativeTenantId(),
     email,
-  });
-  if (result === "limited") {
+  };
+  // The address may belong to a merchant or to the platform team: ask both directories.
+  const [merchant, staff] = await Promise.all([requestMerchantReset(input), requestReset(input)]);
+  if (merchant === "limited" || staff === "limited") {
     return NextResponse.redirect(new URL("/forgot-password?error=limited", origin), 303);
   }
   // "sent" and "unavailable" look the same to the visitor: nothing here confirms an account.

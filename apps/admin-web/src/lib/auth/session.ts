@@ -16,6 +16,8 @@ export interface AdminSession {
   readonly roles: readonly string[];
   /** From Kratos identity traits (identity.schema.json's only trait) — real, never invented. */
   readonly email: string | undefined;
+  /** The store this user signed in to: the `tenant_id` claim of the native token. */
+  readonly tenantId: string | undefined;
 }
 
 /** Highest of the known role tiers present in `roles`, or `undefined` if none are recognized. */
@@ -59,7 +61,8 @@ export async function readSession(): Promise<AdminSession | null> {
     const roles = readRolesClaim(claims);
     const kind = readStringClaim(claims, "kind") ?? "customer";
     const email = readStringClaim(claims, "email");
-    return { token, principalId: payload.sub, kind, roles, email };
+    const tenantId = readStringClaim(claims, "tenant_id");
+    return { token, principalId: payload.sub, kind, roles, email, tenantId };
   } catch {
     return null;
   }

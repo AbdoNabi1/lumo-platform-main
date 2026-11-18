@@ -47,6 +47,17 @@ describe("online-store cross-context adapters", () => {
     expect(await tenancyShopHost(list).primaryHostname("t-1")).toBeNull();
   });
 
+  it("forwards each request tenant when reading store identity", async () => {
+    const getPublicStore = vi.fn(async (tenantId: string) => ({
+      status: 200,
+      body: { name: tenantId },
+    }));
+    const identity = tenancyStoreIdentity(getPublicStore);
+    expect(await identity.storeName("tenant-a")).toBe("tenant-a");
+    expect(await identity.storeName("tenant-b")).toBe("tenant-b");
+    expect(getPublicStore.mock.calls).toEqual([["tenant-a"], ["tenant-b"]]);
+  });
+
   it("reads the store name, empty when unreadable", async () => {
     expect(
       await tenancyStoreIdentity(async () => ({

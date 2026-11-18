@@ -100,6 +100,34 @@ describe("readSession", () => {
   });
 });
 
+describe("readSession tenant", () => {
+  it("reads the store from the tenant_id claim", async () => {
+    cookiesMock.mockResolvedValue(cookieJar("good.token.here"));
+    jwtVerifyMock.mockResolvedValue({ payload: { sub: "identity-1", tenant_id: "shop-b" } });
+    const { readSession } = await import("./session");
+
+    expect((await readSession())?.tenantId).toBe("shop-b");
+  });
+
+  it("reads tenant_id nested under ext, like the other claims", async () => {
+    cookiesMock.mockResolvedValue(cookieJar("good.token.here"));
+    jwtVerifyMock.mockResolvedValue({
+      payload: { sub: "identity-1", ext: { tenant_id: "shop-c" } },
+    });
+    const { readSession } = await import("./session");
+
+    expect((await readSession())?.tenantId).toBe("shop-c");
+  });
+
+  it("leaves tenantId undefined when the token has no tenant_id claim", async () => {
+    cookiesMock.mockResolvedValue(cookieJar("good.token.here"));
+    jwtVerifyMock.mockResolvedValue({ payload: { sub: "identity-1" } });
+    const { readSession } = await import("./session");
+
+    expect((await readSession())?.tenantId).toBeUndefined();
+  });
+});
+
 describe("highestRole", () => {
   it("returns undefined when no role in the list is recognized", async () => {
     const { highestRole } = await import("./session");

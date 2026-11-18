@@ -48,9 +48,10 @@ describe("TenancyAdminController.getStoreRegion (Plan 3D: the zone and currency 
       },
     });
 
-    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff);
+    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff, "t-1");
 
     expect(asked).toEqual(["orders:read"]);
+    expect(getStoreSettings).toHaveBeenCalledWith("t-1");
     expect(response).toEqual({
       status: 200,
       body: { currency: "EGP", timezone: "Africa/Cairo" },
@@ -61,7 +62,7 @@ describe("TenancyAdminController.getStoreRegion (Plan 3D: the zone and currency 
     const { guard } = guardAnswering(false);
     const getStoreSettings = vi.fn();
 
-    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff);
+    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff, "t-1");
 
     expect(response.status).toBe(403);
     expect(getStoreSettings).not.toHaveBeenCalled();
@@ -71,7 +72,7 @@ describe("TenancyAdminController.getStoreRegion (Plan 3D: the zone and currency 
     const { guard } = guardAnswering(true);
     const getStoreSettings = vi.fn().mockResolvedValue({ status: 500, body: { message: "down" } });
 
-    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff);
+    const response = await controllerWith(guard, getStoreSettings).getStoreRegion(staff, "t-1");
 
     expect(response.status).toBe(500);
   });

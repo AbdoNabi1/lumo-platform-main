@@ -76,6 +76,11 @@ export const EXEMPTIONS = {
     cls: "platform-global",
     reason: "Plan is platform-owned catalogue data readable by every merchant",
   },
+  "services/licensing/src/infrastructure/prisma-repositories.ts|plan.findMany": {
+    cls: "platform-global",
+    reason:
+      "listPublished: the public plan catalogue shown at sign-up; Plan has no tenant_id by design",
+  },
   // `where` is built by the caller and TYPED to carry the tenant: `{ readonly tenantId: string } & ...`.
   "services/fulfillment/src/infrastructure/prisma-fulfillment-order-repository.ts|fulfillmentOrder.findFirst":
     {
@@ -107,6 +112,12 @@ export const EXEMPTIONS = {
     cls: "typed-where",
     reason:
       "ConsentProjectionStore port, not Prisma; the tenant is an explicit argument (readEnvelopeTenant)",
+  },
+  // Not a Prisma call: the Promotions CONTROLLER (`deps.promotions`), whose update takes `tenantId` in
+  // its input and scopes the repository write itself.
+  "apps/admin/src/interfaces/discounts/discounts.admin-controller.ts|promotions.update": {
+    cls: "typed-where",
+    reason: "PromotionsController.update, not Prisma; tenantId is a required field of its input",
   },
   // G-75 and G-76 (both classes of "a row addressed by id alone") closed 2026-09-27: the tracking
   // store's findFirst now names the tenant, and the two upserts became updateMany-scoped-to-tenant +

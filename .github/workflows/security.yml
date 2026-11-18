@@ -60,7 +60,7 @@ jobs:
           tags: morbeh-runtime:scan
           cache-from: type=gha
       - name: Trivy scan (image)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0 (the un-prefixed 0.24.0 tag no longer resolves)
         with:
           image-ref: morbeh-runtime:scan
           format: sarif

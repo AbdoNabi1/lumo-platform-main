@@ -37,6 +37,8 @@ const STAFF_LOGIN_WINDOW_MS = 15 * 60 * 1000;
  * normalisation `staffIdentifier` applies) and counts every attempt, successful or not, whether or not
  * the account exists — so a refusal reveals nothing about the account.
  */
+export { rateLimited } from "./rate-limited-response";
+
 export function publicStaffAuthRoutes(
   admin: WiredAdmin,
   rateLimiter?: RateLimiter,

@@ -32,7 +32,9 @@ export async function revalidateStorefront(shopId?: string): Promise<boolean> {
     }
     let shop: string;
     try {
-      shop = shopId ?? currentTenantRef();
+      // main made the request tenant async (per-request shop resolution); await it so a rejection
+      // lands in this catch instead of escaping as an unhandled promise.
+      shop = shopId ?? (await currentTenantRef());
     } catch (error) {
       // `requireProdEnv`'s message names the missing variable; it holds no secret.
       console.error("storefront revalidation skipped: no shop id", {

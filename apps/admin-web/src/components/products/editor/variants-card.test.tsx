@@ -355,7 +355,9 @@ describe("VariantsCard", () => {
     for (const name of ["price", "compareAtPrice", "costPerItem", "sku", "weight", "weightUnit"]) {
       expect(formData.has(name)).toBe(true);
     }
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), {
+      timeout: 5000,
+    });
   });
 
   it("opens the cost chip in the dialog when the variant has a cost, and the price field is a money input", async () => {

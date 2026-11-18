@@ -69,12 +69,14 @@ export function tenancyShopHost(
   };
 }
 
-/** Spec "what stays pinned" 1: tenancy's store name (pinned to the deployment tenant today). */
-export function tenancyStoreIdentity(getPublicStore: () => Promise<Response>): StoreIdentityPort {
+/** Resolve the store name for the tenant supplied by each caller. */
+export function tenancyStoreIdentity(
+  getPublicStore: (tenantId: string) => Promise<Response>,
+): StoreIdentityPort {
   return {
-    storeName: async () => {
+    storeName: async (tenantId) => {
       try {
-        const res = await getPublicStore();
+        const res = await getPublicStore(tenantId);
         const name = res.status === 200 ? (res.body as { name?: unknown } | null)?.name : undefined;
         return typeof name === "string" ? name.trim() : "";
       } catch {

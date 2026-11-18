@@ -134,6 +134,31 @@ describe("createAdminHttpApi — single mode is unchanged", () => {
   });
 });
 
+describe("createAdminHttpApi — merchant sign-up availability", () => {
+  const signup = {
+    method: "POST" as const,
+    url: "/api/v1/public/merchant-signup",
+    headers: { "content-type": "application/json" },
+    payload: {
+      storeName: "Nour Store",
+      email: "owner@nour.test",
+      password: "correct-horse-1",
+      country: "SA",
+    },
+  };
+
+  it("is unavailable (503) in single mode: no platform tenant is passed to the routes", async () => {
+    const { deps } = harness();
+    const app = await boot({ ...deps, tenantId: "tenant-local" });
+    const res = await app.inject({
+      ...signup,
+      headers: { ...signup.headers, "x-tenant-id": "tenant-local" },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json()).toMatchObject({ code: "SIGNUP_UNAVAILABLE" });
+  });
+});
+
 describe("pinRoutesToTenant", () => {
   const route = defineRoute({
     method: "GET",

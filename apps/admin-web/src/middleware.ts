@@ -53,6 +53,8 @@ const PUBLIC_PREFIXES = [
   "/consent",
   "/auth/callback",
   "/auth/native-login",
+  "/signup",
+  "/auth/signup",
   "/forgot-password",
   "/reset-password",
   "/auth/forgot",

@@ -63,6 +63,15 @@ describe("middleware", () => {
     expect(jwtVerifyMock).not.toHaveBeenCalled();
   });
 
+  it.each(["/signup", "/auth/signup"])(
+    "%s is public for visitors without a session",
+    async (path) => {
+      const response = await middleware(requestFor(path));
+      expect(response.headers.get("location")).toBeNull();
+      expect(jwtVerifyMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("the dependency-free health probe bypasses the auth gate", async () => {
     const response = await middleware(requestFor("/api/healthz"));
     expect(response.headers.get("location")).toBeNull();

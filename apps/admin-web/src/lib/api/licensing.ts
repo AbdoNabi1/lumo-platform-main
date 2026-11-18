@@ -82,7 +82,7 @@ export type FetchUsageCountersResult =
  * usage as zero, which `docs/plans/README.md` rule #4 forbids.
  */
 export async function fetchUsageCounters(): Promise<FetchUsageCountersResult> {
-  const tenantRef = currentTenantRef();
+  const tenantRef = await currentTenantRef();
 
   const settled = await Promise.all(
     LICENSING_USAGE_RESOURCES.map(async (resource) => {

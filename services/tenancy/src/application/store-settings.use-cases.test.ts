@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ValidationError } from "@platform/utils";
 import { InMemoryStoreSettingsRepository } from "../infrastructure/in-memory-repositories";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
-import { GetPublicStore, GetStoreSettings, UpdateStoreSettings } from "./store-settings.use-cases";
+import {
+  DismissSetupGuide,
+  GetPublicStore,
+  GetStoreSettings,
+  UpdateStoreSettings,
+} from "./store-settings.use-cases";
 
 function harness() {
   const settings = new InMemoryStoreSettingsRepository();
@@ -15,7 +20,9 @@ function harness() {
   };
 }
 
+const TENANT = "shop-1";
 const input = {
+  tenantId: TENANT,
   storeName: "Lumo",
   contactEmail: "hello@lumo.test",
   currency: "SAR",
@@ -25,7 +32,7 @@ const input = {
 
 describe("GetStoreSettings", () => {
   it("returns the defaults when the shop has saved nothing", async () => {
-    const result = await harness().get.execute({});
+    const result = await harness().get.execute({ tenantId: TENANT });
     expect(result).toEqual({
       ok: true,
       value: {
@@ -34,6 +41,7 @@ describe("GetStoreSettings", () => {
         currency: "EGP",
         timezone: "Africa/Cairo",
         weightUnit: "kg",
+        setupGuideDismissedAt: null,
       },
     });
   });
@@ -44,7 +52,7 @@ describe("UpdateStoreSettings", () => {
     const h = harness();
     const saved = await h.update.execute(input);
     expect(saved.ok).toBe(true);
-    const read = await h.get.execute({});
+    const read = await h.get.execute({ tenantId: TENANT });
     expect(read.ok && read.value).toMatchObject({ storeName: "Lumo", currency: "SAR" });
   });
 
@@ -52,7 +60,7 @@ describe("UpdateStoreSettings", () => {
     const h = harness();
     await h.update.execute(input);
     await h.update.execute({ ...input, currency: "AED", contactEmail: null });
-    const read = await h.get.execute({});
+    const read = await h.get.execute({ tenantId: TENANT });
     expect(read.ok && read.value).toMatchObject({ currency: "AED", contactEmail: null });
   });
 
@@ -60,7 +68,7 @@ describe("UpdateStoreSettings", () => {
     const h = harness();
     const result = await h.update.execute({ ...input, currency: "XXX" });
     expect(!result.ok && result.error).toBeInstanceOf(ValidationError);
-    const read = await h.get.execute({});
+    const read = await h.get.execute({ tenantId: TENANT });
     expect(read.ok && read.value.currency).toBe("EGP");
   });
 });
@@ -69,12 +77,71 @@ describe("GetPublicStore", () => {
   it("exposes only the name and the currency", async () => {
     const h = harness();
     await h.update.execute(input);
-    const result = await h.publicStore.execute({});
+    const result = await h.publicStore.execute({ tenantId: TENANT });
     expect(result).toEqual({ ok: true, value: { name: "Lumo", currency: "SAR" } });
   });
 
   it("answers with the defaults before anything is saved", async () => {
-    const result = await harness().publicStore.execute({});
+    const result = await harness().publicStore.execute({ tenantId: TENANT });
     expect(result).toEqual({ ok: true, value: { name: "", currency: "EGP" } });
+  });
+});
+
+describe("per-store isolation", () => {
+  it("keeps each store's settings apart", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    const update = new UpdateStoreSettings({ settings, unitOfWork });
+    const get = new GetStoreSettings({ settings });
+    const base = { contactEmail: null, timezone: "Africa/Cairo", weightUnit: "kg" };
+    await update.execute({ tenantId: "shop-a", storeName: "A", currency: "EGP", ...base });
+    await update.execute({ tenantId: "shop-b", storeName: "B", currency: "SAR", ...base });
+    const a = await get.execute({ tenantId: "shop-a" });
+    const b = await get.execute({ tenantId: "shop-b" });
+    expect(a.ok && a.value.storeName).toBe("A");
+    expect(b.ok && b.value.currency).toBe("SAR");
+    const c = await get.execute({ tenantId: "shop-c" });
+    expect(c.ok && c.value.storeName).toBe(""); // defaults, never another store's row
+  });
+});
+
+describe("DismissSetupGuide", () => {
+  it("a settings save keeps the setup guide dismissed", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
+    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock });
+    const update = new UpdateStoreSettings({ settings, unitOfWork });
+    const dismissed = await dismiss.execute({ tenantId: "shop-a" });
+    expect(dismissed.ok && dismissed.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+    const saved = await update.execute({
+      tenantId: "shop-a",
+      storeName: "A",
+      contactEmail: null,
+      currency: "EGP",
+      timezone: "Africa/Cairo",
+      weightUnit: "kg",
+    });
+    expect(saved.ok && saved.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+  });
+
+  it("keeps the first timestamp when dismissed again", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    let now = new Date("2026-10-16T10:00:00.000Z");
+    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock: { now: () => now } });
+    await dismiss.execute({ tenantId: "shop-a" });
+    now = new Date("2026-10-17T10:00:00.000Z");
+    const again = await dismiss.execute({ tenantId: "shop-a" });
+    expect(again.ok && again.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
+  });
+
+  it("dismisses per shop", async () => {
+    const settings = new InMemoryStoreSettingsRepository();
+    const unitOfWork = new InMemoryUnitOfWork();
+    const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
+    await new DismissSetupGuide({ settings, unitOfWork, clock }).execute({ tenantId: "shop-a" });
+    const other = await new GetStoreSettings({ settings }).execute({ tenantId: "shop-b" });
+    expect(other.ok && other.value.setupGuideDismissedAt).toBeNull();
   });
 });

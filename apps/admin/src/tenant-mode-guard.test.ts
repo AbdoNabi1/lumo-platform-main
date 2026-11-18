@@ -209,6 +209,23 @@ describe("assertMultiTenantReady", () => {
     ]);
   });
 
+  it("finds no pin under merchantOnboarding, which holds only closures and plain config", () => {
+    const graph = wireAdmin({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: ids,
+      clock,
+      prisma: {} as unknown as Database,
+      tenantId: "tenant-local",
+      platformTenantId: "tenant-platform",
+      defaultPlanKey: "basic",
+      platformStoreDomain: "morbeh.test",
+    });
+    expect(graph.merchantOnboarding).toBeDefined();
+    const paths = findConstructionTimeTenants(graph, []);
+    expect(paths.filter((path) => path.startsWith("merchantOnboarding"))).toEqual([]);
+    expect(() => assertMultiTenantReady({ resolvers: realChain, graph })).not.toThrow();
+  });
+
   it("does not exempt a second context that pins a tenant", () => {
     const graph = {
       ...pinnedProductionShapedGraph(),

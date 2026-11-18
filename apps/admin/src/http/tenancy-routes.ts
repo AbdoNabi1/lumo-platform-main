@@ -4,7 +4,6 @@ import { AuthorizationError } from "@platform/utils";
 import type { Tenant, Workspace } from "@platform/tenancy";
 import type { WiredAdmin } from "../composition";
 import { mapPage } from "./public-catalog-routes";
-import { storeSettingsRoutes } from "./store-settings-routes";
 
 const pageQuery = z.object({
   first: z.coerce.number().int().positive().optional(),
@@ -381,9 +380,6 @@ export function tenancyRoutes(
       schema: { querystring: resolveHostQuery },
       handle: ({ query }) => admin.tenancy.resolveHost({ hostname: query.host }),
     }),
-    // Plan 3C: the store settings live in the tenancy context, so under TENANT_MODE=multi they are
-    // pinned with the rest of these routes (fail closed) — see pinRoutesToTenant below.
-    ...storeSettingsRoutes(admin),
   ] as readonly RouteDefinition[];
 }
 
