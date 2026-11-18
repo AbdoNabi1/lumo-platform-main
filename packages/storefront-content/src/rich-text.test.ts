@@ -18,19 +18,26 @@ const LINE_SEPARATOR = String.fromCharCode(0x2028);
 
 /**
  * Linear-time check that does not depend on how fast the machine is. A wall-clock budget
- * (`< 400 ms`) fails on a shared CI runner that is 3-5x slower than a laptop, so this times the
- * same work on an input an eighth the size and on the full input, and requires the full run to
- * cost less than `MAX_SCALING` times the small one. Linear work gives about 8x (more on a runner with GC pressure), quadratic work
- * about 64x (seconds at these sizes) and fails; the threshold sits between them with room for
- * GC and cache noise. Each side takes the fastest of several runs, which discards interference
- * from other test files running on the same machine. A generous ceiling still catches a hang.
+ * (`< 400 ms`) fails on a shared CI runner that is 3-10x slower than a laptop and noisy, so this
+ * asserts two things instead:
+ *  1. The full input finishes under a generous ceiling. Every case here is tuned to the input cap
+ *     (about 100k characters); a quadratic parser needs 10^10 steps for that and takes tens of
+ *     seconds, so the ceiling catches it with an order of magnitude to spare.
+ *  2. When the full run is long enough to measure (`MEASURABLE_MS`), it costs less than
+ *     `MAX_SCALING` times the same work on an eighth of the input. Linear work gives about 8x,
+ *     quadratic about 64x. Below that duration the ratio is timer, JIT and GC noise (a run that
+ *     fits in the young generation is cheaper per item than one that does not), so it is not
+ *     asserted.
+ * Each side takes the fastest of several runs, which discards interference from other test files
+ * running on the same machine.
  */
 const SCALING_RUNS = 7;
 const SIZE_DIVISOR = 8;
 const MAX_SCALING = 32;
 /** Timer resolution and GC noise below this are not a scaling signal. */
 const NOISE_FLOOR_MS = 3;
-const CEILING_MS = 10_000;
+const MEASURABLE_MS = 500;
+const CEILING_MS = 5_000;
 
 function fastestMs(work: () => void): number {
   work(); // warm up the JIT, not counted
@@ -49,7 +56,9 @@ function expectLinearTime(work: (text: string) => void, make: (n: number) => str
   const smallMs = fastestMs(() => work(small));
   const fullMs = fastestMs(() => work(full));
   expect(fullMs).toBeLessThan(CEILING_MS);
-  expect(fullMs).toBeLessThan(MAX_SCALING * Math.max(smallMs, NOISE_FLOOR_MS));
+  if (fullMs > MEASURABLE_MS) {
+    expect(fullMs).toBeLessThan(MAX_SCALING * Math.max(smallMs, NOISE_FLOOR_MS));
+  }
 }
 
 describe("parseRichText — blocks (spec 2.1)", () => {
