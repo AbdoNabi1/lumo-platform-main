@@ -15,7 +15,7 @@ vi.mock("@/lib/storefront-revalidate", () => ({ revalidateStorefront: side.reval
 vi.mock("next/cache", () => ({ revalidatePath: side.revalidatePath }));
 const actions = await import("./actions");
 
-const KEY = "0123456789abcdef0123456789abcdef";
+const KEY = "ab".repeat(16); // fixture idempotency key, not a credential
 
 beforeEach(() => {
   expect.hasAssertions();
