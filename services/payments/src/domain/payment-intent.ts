@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { AggregateRoot, BusinessRuleError, Money, UniqueEntityId } from "@platform/domain";
 import { Charge } from "./charge";
 import { PaymentCaptured } from "./events/payment-captured.event";
@@ -27,6 +28,32 @@ function must<T>(result: Result<T, { message: string }>): T {
     throw new BusinessRuleError("Invalid PSP token derived at capture time");
   }
   return result.value;
+}
+
+/**
+ * Id of the attempt at `position` in an intent's append-only attempt log: an RFC-4122-shaped
+ * (version nibble 5, variant 10) UUID made from the first 16 bytes of
+ * SHA-256(`${intentId}:attempt:${position}`).
+ *
+ * `payment_attempts.id` is `@db.Uuid`. The previous id, `${intentId}${position}`, was 37 characters
+ * with 13 hex digits in its last group, so Postgres rejected the insert and any save after an
+ * authorize, capture, refund or webhook failed. Deterministic rather than random so a re-save of
+ * the same in-memory intent produces the same ids and `createMany({ skipDuplicates: true })` stays
+ * idempotent; rehydrated attempts keep their persisted ids, and a new one takes the next position.
+ *
+ * Byte-for-byte the same derivation as `deterministicEntityId` (being added to `@platform/domain`
+ * for shipping and fulfillment on `morbeh/local-carriers`), so payments can switch to that shared
+ * helper once it lands without changing a single id.
+ */
+function attemptId(intentId: string, position: number): string {
+  const bytes = createHash("sha256")
+    .update(`${intentId}:attempt:${position}`)
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 interface PaymentIntentProps {
@@ -496,7 +523,7 @@ export class PaymentIntent extends AggregateRoot<PaymentIntentProps> {
   ): void {
     this.props.attempts.push(
       PaymentAttempt.create(
-        UniqueEntityId.from(this.id.toString() + this.props.attempts.length),
+        UniqueEntityId.from(attemptId(this.id.toString(), this.props.attempts.length)),
         kind,
         outcome,
         occurredAt,
