@@ -4,7 +4,7 @@ import { ConcurrencyError, type DomainError } from "@platform/utils";
 import { type WhatsAppConnectionDto, connectionDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
 import { conflict, emit, isMetaError, metaConflictCode } from "./support";
-import { connectionUnchanged, loadActiveConnection } from "./template-support";
+import { loadActiveConnection } from "./template-support";
 
 export interface TenantInput {
   tenantId: string;
@@ -53,36 +53,49 @@ export class RefreshWhatsAppStatus implements UseCase<
       failureCode = metaConflictCode(error);
     }
 
-    return deps.unitOfWork.run(tenantId, async (tx) => {
-      // The snapshot rule: a version/phone/WABA change or a disconnect makes this refresh obsolete (no write).
-      if (!(await connectionUnchanged(deps, tenantId, snapshot, tx, { allowError: true }))) {
-        return err(conflict("CONNECTION_CHANGED"));
-      }
-      const row = await deps.connections.get(tenantId, tx);
-      if (row === null) return err(conflict("CONNECTION_CHANGED"));
-      const now = deps.clock.now();
-      if (info === null) {
-        await deps.connections.save(
-          { ...row, status: "error", lastError: failureCode },
-          row.version,
-          tx,
-        );
-        return err(conflict(failureCode ?? "META_ERROR"));
-      }
-      const next = {
-        ...row,
-        status: "connected" as const,
-        displayPhoneNumber:
-          info.displayPhoneNumber === "" ? row.displayPhoneNumber : info.displayPhoneNumber,
-        verifiedName: info.verifiedName === "" ? row.verifiedName : info.verifiedName,
-        qualityRating: info.qualityRating,
-        messagingLimitTier: info.messagingLimitTier,
-        lastStatusSyncAt: now,
-        lastError: null,
-      };
-      await deps.connections.save(next, row.version, tx);
-      return ok(connectionDto({ ...next, version: row.version + 1 }, true));
-    });
+    try {
+      return await deps.unitOfWork.run(tenantId, async (tx) => {
+        // The snapshot rule on ONE checked row: the status, version, phone and WABA captured before the Meta call must
+        // still be the stored ones, and the write CAS-es exactly that captured version (never a version re-read after
+        // the check, which a concurrent disconnect or switch could already have bumped).
+        const row = await deps.connections.get(tenantId, tx);
+        if (
+          row === null ||
+          row.status !== snapshot.status ||
+          row.version !== snapshot.version ||
+          row.phoneNumberId !== snapshot.phoneNumberId ||
+          row.wabaId !== snapshot.wabaId
+        ) {
+          return err(conflict("CONNECTION_CHANGED"));
+        }
+        const now = deps.clock.now();
+        if (info === null) {
+          await deps.connections.save(
+            { ...row, status: "error", lastError: failureCode },
+            snapshot.version,
+            tx,
+          );
+          return err(conflict(failureCode ?? "META_ERROR"));
+        }
+        const next = {
+          ...row,
+          status: "connected" as const,
+          displayPhoneNumber:
+            info.displayPhoneNumber === "" ? row.displayPhoneNumber : info.displayPhoneNumber,
+          verifiedName: info.verifiedName === "" ? row.verifiedName : info.verifiedName,
+          qualityRating: info.qualityRating,
+          messagingLimitTier: info.messagingLimitTier,
+          lastStatusSyncAt: now,
+          lastError: null,
+        };
+        await deps.connections.save(next, snapshot.version, tx);
+        return ok(connectionDto({ ...next, version: snapshot.version + 1 }, true));
+      });
+    } catch (error) {
+      // A lost CAS: a concurrent write moved the row after it was validated. Nothing was written.
+      if (error instanceof ConcurrencyError) return err(conflict("CONNECTION_CHANGED"));
+      throw error;
+    }
   }
 }
 

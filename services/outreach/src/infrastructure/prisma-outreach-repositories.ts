@@ -485,6 +485,16 @@ export class PrismaContactRepository implements ContactRepository {
     });
   }
 
+  async clearSessionWindows(tenantId: string, tx?: unknown): Promise<number> {
+    const cleared = await withClient(this.deps.prisma, tenantId, tx, (c) =>
+      c.contact.updateMany({
+        where: { tenantId, lastInboundAt: { not: null } },
+        data: { lastInboundAt: null, version: { increment: 1 } },
+      }),
+    );
+    return cleared.count;
+  }
+
   async listConsentEvents(
     tenantId: string,
     contactId: string,

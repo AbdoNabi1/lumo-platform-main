@@ -1734,6 +1734,28 @@ export function runOutreachRepositoryContract(
         expect(await r.contacts.findByPhone(tenant, c.phoneE164!)).toBeNull();
         await close();
       });
+
+      it("clearSessionWindows clears every window of ONE tenant, bumps the version, and rolls back with the unit of work", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [a, b] = [uid("t"), uid("t")];
+        const at = new Date("2026-11-19T09:00:00.000Z");
+        const withWindow = contact(a, { lastInboundAt: at });
+        const withoutWindow = contact(a, { lastInboundAt: null });
+        const other = contact(b, { lastInboundAt: at });
+        for (const c of [withWindow, withoutWindow, other]) await r.contacts.save(c, 0);
+        await rollsBack(r.unitOfWork, a, async (tx) => {
+          expect(await r.contacts.clearSessionWindows(a, tx)).toBe(1);
+        });
+        expect((await r.contacts.findById(a, withWindow.id))?.lastInboundAt).toEqual(at);
+        expect(await r.contacts.clearSessionWindows(a)).toBe(1);
+        const cleared = await r.contacts.findById(a, withWindow.id);
+        expect(cleared).toMatchObject({ lastInboundAt: null, version: 2 });
+        expect((await r.contacts.findById(a, withoutWindow.id))?.version).toBe(1);
+        expect((await r.contacts.findById(b, other.id))?.lastInboundAt).toEqual(at);
+        expect(await r.contacts.clearSessionWindows(a)).toBe(0);
+        await close();
+      });
     });
 
     describe("OutboundMessageRepository", () => {

@@ -542,6 +542,18 @@ export class InMemoryContactRepository implements ContactRepository {
     });
   }
 
+  clearSessionWindows(tenantId: string, tx?: unknown): Promise<number> {
+    return this.store.access(tx, (t) => {
+      let cleared = 0;
+      for (const c of this.store.contacts.values()) {
+        if (c.tenantId !== tenantId || c.lastInboundAt === null) continue;
+        this.store.contacts.set(c.id, { ...c, lastInboundAt: null, version: c.version + 1 }, t);
+        cleared += 1;
+      }
+      return cleared;
+    });
+  }
+
   listConsentEvents(
     tenantId: string,
     contactId: string,

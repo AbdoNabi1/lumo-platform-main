@@ -6,6 +6,7 @@ import { deferred, flush } from "../testing/fake-ports";
 import {
   createOutreachKit,
   seedConnection,
+  seedContact,
   seedSendScenario,
   T1,
   T2,
@@ -19,7 +20,9 @@ import {
   GetWhatsAppConnection,
   RefreshWhatsAppStatus,
 } from "./connection.use-cases";
-import { SendWhatsAppTemplate } from "./send.use-cases";
+import { SendWhatsAppSessionMessage, SendWhatsAppTemplate } from "./send.use-cases";
+import { ProcessWhatsAppWebhook } from "./webhook.use-case";
+import { messagesPayload, seconds, textMessage } from "../testing/webhook-fixtures";
 
 const input = (over: Record<string, unknown> = {}) => ({
   tenantId: T1,
@@ -854,5 +857,357 @@ describe("DisconnectWhatsApp and AbandonWhatsAppOnboarding", () => {
         }),
       ).status,
     ).toBe("disconnected");
+  });
+});
+
+/** Runs `after(row)` right after the FIRST in-transaction read of the connection row (a concurrent commit lands there). */
+function afterFirstTransactionalRead(
+  kit: OutreachKit,
+  after: (r: WhatsAppConnectionRecord) => void,
+): void {
+  const real = kit.mem.connections;
+  let fired = false;
+  kit.deps.connections = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "get") {
+        return async (tenantId: string, tx?: unknown) => {
+          const r = await target.get(tenantId, tx);
+          if (tx !== undefined && !fired && r !== null) {
+            fired = true;
+            after(r);
+          }
+          return r;
+        };
+      }
+      const v = Reflect.get(target, prop) as unknown;
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+  });
+}
+
+describe("RefreshWhatsAppStatus — one checked row, CAS on the captured version (C1)", () => {
+  const disconnectConcurrently = (kit: OutreachKit) =>
+    afterFirstTransactionalRead(kit, (r) =>
+      kit.mem.store.connections.set(
+        T1,
+        { ...r, status: "disconnected", sealedCredentials: "", version: r.version + 1 },
+        undefined,
+      ),
+    );
+
+  it("a disconnect landing between the validation and the save is CONNECTION_CHANGED with no write", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    kit.whatsapp.set("getPhone", () => ({
+      phoneNumberId: "phone-1",
+      displayPhoneNumber: "+20 101 234 5678",
+      verifiedName: "Shop",
+      qualityRating: "RED",
+      messagingLimitTier: "TIER_2K",
+    }));
+    disconnectConcurrently(kit);
+    expect(
+      errorOf(await new RefreshWhatsAppStatus(kit.deps).execute({ tenantId: T1 })).message,
+    ).toBe("CONNECTION_CHANGED");
+    expect(await row(kit)).toMatchObject({
+      status: "disconnected",
+      qualityRating: "GREEN",
+      sealedCredentials: "",
+    });
+  });
+
+  it("the Meta-failure branch is guarded the same way: no error status over a disconnected row", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    kit.whatsapp.set("getPhone", () => {
+      throw metaError("190", 401);
+    });
+    disconnectConcurrently(kit);
+    expect(
+      errorOf(await new RefreshWhatsAppStatus(kit.deps).execute({ tenantId: T1 })).message,
+    ).toBe("CONNECTION_CHANGED");
+    expect(await row(kit)).toMatchObject({ status: "disconnected", lastError: null });
+  });
+
+  it("a switch to other assets between the validation and the save is refused and keeps the new row", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    afterFirstTransactionalRead(kit, (r) =>
+      kit.mem.store.connections.set(
+        T1,
+        { ...r, phoneNumberId: "phone-9", wabaId: "waba-9", version: r.version + 1 },
+        undefined,
+      ),
+    );
+    expect(
+      errorOf(await new RefreshWhatsAppStatus(kit.deps).execute({ tenantId: T1 })).message,
+    ).toBe("CONNECTION_CHANGED");
+    expect(await row(kit)).toMatchObject({ phoneNumberId: "phone-9", qualityRating: "GREEN" });
+  });
+});
+
+describe("ConnectWhatsApp — ownership is revalidated after every async gap (I3)", () => {
+  it("an abandon during the exchange stops the owner before listPhoneNumberIds", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const gate = deferred<{ accessToken: string }>();
+    kit.whatsapp.once("exchangeCode", () => gate.promise);
+    const a = connect(kit);
+    await flush();
+    okValue(
+      await new AbandonWhatsAppOnboarding(kit.deps).execute({
+        tenantId: T1,
+        expectedVersion: (await row(kit)).version,
+      }),
+    );
+    gate.resolve({ accessToken: "late" });
+    expect(errorOf(await a).message).toBe("CONNECTION_CHANGED");
+    expect(kit.whatsapp.count("listPhoneNumberIds")).toBe(0);
+    expect(kit.whatsapp.mutations).toBe(0);
+    expect((await row(kit)).status).toBe("disconnected");
+  });
+
+  it("a takeover during the exchange stops the old owner before listPhoneNumberIds", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const gate = deferred<{ accessToken: string }>();
+    kit.whatsapp.once("exchangeCode", () => gate.promise);
+    const a = connect(kit);
+    await flush();
+    sleepPast(kit);
+    okValue(await connect(kit, { code: "c" }));
+    const before = kit.whatsapp.total;
+    gate.resolve({ accessToken: "late" });
+    expect(errorOf(await a).message).toBe("CONNECTION_CHANGED");
+    expect(kit.whatsapp.total).toBe(before);
+    expect(kit.whatsapp.count("registerPhone")).toBe(1);
+  });
+
+  it("a registered resume whose exchange failed re-checks ownership before getPhone", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    kit.whatsapp.once("getPhone", () => {
+      throw metaError("500", 500);
+    });
+    errorOf(await connect(kit));
+    kit.whatsapp.once("exchangeCode", () => {
+      throw metaError("100");
+    });
+    const gate = deferred<string[]>();
+    kit.whatsapp.once("listPhoneNumberIds", () => gate.promise);
+    const b = connect(kit, { code: "c2" });
+    await flush();
+    okValue(
+      await new AbandonWhatsAppOnboarding(kit.deps).execute({
+        tenantId: T1,
+        expectedVersion: (await row(kit)).version,
+      }),
+    );
+    gate.resolve(["phone-1"]);
+    expect(errorOf(await b).message).toBe("CONNECTION_CHANGED");
+    expect(kit.whatsapp.count("getPhone")).toBe(1);
+  });
+
+  it("a lease that expires between the finalize read and its write: the connection is not finalized and nothing is claimed", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const real = kit.mem.connections;
+    kit.deps.connections = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "writeAsLeaseOwner") {
+          return (...args: Parameters<typeof real.writeAsLeaseOwner>) => {
+            if (args[0].status === "connected") kit.clock.advance(ONBOARDING_LEASE_MS + 1);
+            return target.writeAsLeaseOwner(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    expect(errorOf(await connect(kit)).message).toBe("CONNECTION_CHANGED");
+    expect(await row(kit)).toMatchObject({ status: "onboarding", onboardingStage: "registered" });
+    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(kit.events.ofType("outreach.whatsapp.connected")).toHaveLength(0);
+  });
+
+  it("a failure recorded after the lease expired is not written (the failure write is lease-checked too)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    kit.whatsapp.once("subscribeApp", () => {
+      kit.clock.advance(ONBOARDING_LEASE_MS + 1);
+      throw metaError("100");
+    });
+    expect(errorOf(await connect(kit)).message).toBe("CONNECTION_CHANGED");
+    expect((await row(kit)).onboardingFailure).toBeNull();
+  });
+});
+
+describe("ConnectWhatsApp — a persisted stage with unusable credentials fails closed (I8)", () => {
+  const seedOnboarding = async (
+    kit: OutreachKit,
+    stage: WhatsAppConnectionRecord["onboardingStage"],
+    sealed: string,
+  ): Promise<void> => {
+    await kit.mem.connections.save(
+      {
+        tenantId: T1,
+        status: "onboarding",
+        wabaId: "waba-1",
+        phoneNumberId: "phone-1",
+        displayPhoneNumber: null,
+        verifiedName: null,
+        qualityRating: null,
+        messagingLimitTier: null,
+        sealedCredentials: sealed,
+        connectedAt: null,
+        disconnectedAt: null,
+        lastStatusSyncAt: null,
+        lastError: null,
+        onboardingAttemptId: "att-1",
+        onboardingStage: stage,
+        onboardingFailure: null,
+        onboardingLeaseOwner: null,
+        onboardingLeaseUntil: null,
+        version: 1,
+      },
+      0,
+    );
+  };
+  const stages = ["verified", "subscribed", "registering", "registered"] as const;
+
+  it.each(stages)(
+    "stage %s with an unreadable envelope: CREDENTIALS_UNAVAILABLE, no PIN drawn, no stage reset, no Meta call",
+    async (stage) => {
+      expect.hasAssertions();
+      const kit = createOutreachKit();
+      await seedOnboarding(kit, stage, "garbage-not-sealed");
+      const pins = kit.pins.length;
+      expect(errorOf(await connect(kit)).message).toBe("CREDENTIALS_UNAVAILABLE");
+      expect(kit.pins).toHaveLength(pins);
+      expect(kit.whatsapp.total).toBe(0);
+      expect(kit.vault.sealCalls).toHaveLength(0);
+      expect(await row(kit)).toMatchObject({
+        onboardingStage: stage,
+        sealedCredentials: "garbage-not-sealed",
+        onboardingFailure: "CREDENTIALS_UNAVAILABLE",
+        onboardingLeaseOwner: null,
+      });
+    },
+  );
+
+  it.each(stages)(
+    "stage %s with a sealed envelope holding an invalid PIN: same refusal, nothing replaced",
+    async (stage) => {
+      expect.hasAssertions();
+      const kit = createOutreachKit();
+      const sealed = await kit.vault.seal(T1, "whatsapp", { accessToken: "tok", pin: "12" });
+      kit.vault.sealCalls.length = 0;
+      await seedOnboarding(kit, stage, sealed);
+      const pins = kit.pins.length;
+      expect(errorOf(await connect(kit)).message).toBe("CREDENTIALS_UNAVAILABLE");
+      expect(kit.pins).toHaveLength(pins);
+      expect(kit.whatsapp.total).toBe(0);
+      expect(kit.vault.sealCalls).toHaveLength(0);
+      expect(await row(kit)).toMatchObject({ onboardingStage: stage, sealedCredentials: sealed });
+    },
+  );
+
+  it("only the stage-null placeholder (no credentials yet) may be sealed initially with a fresh PIN", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedOnboarding(kit, null, "");
+    const dto = okValue(await connect(kit));
+    expect(dto.status).toBe("connected");
+    expect(registerPins(kit)).toEqual(["123456"]);
+  });
+});
+
+describe("ConnectWhatsApp — switching assets clears the session windows (I4)", () => {
+  const inbound = async (kit: OutreachKit, phone: string, waba: string, id: string) =>
+    okValue(
+      await new ProcessWhatsAppWebhook(kit.deps).execute({
+        payload: messagesPayload(
+          phone,
+          {
+            messages: [
+              textMessage({
+                id,
+                from: "201012345678",
+                timestamp: seconds(kit.clock.now()) - 60,
+                body: "hello",
+              }),
+            ],
+          },
+          waba,
+        ),
+      }),
+    );
+  const reply = (kit: OutreachKit, key: string) =>
+    new SendWhatsAppSessionMessage(kit.deps).execute({
+      tenantId: T1,
+      to: "01012345678",
+      text: "hi",
+      idempotencyKey: key,
+    });
+
+  it("inbound on A → switch to B → session refused until an inbound arrives on B", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedContact(kit, { phone: "+201012345678", transactional: "allowed" });
+    await inbound(kit, "phone-1", "waba-1", "wamid.inA");
+    expect(okValue(await reply(kit, "k-a")).status).toBe("accepted");
+
+    kit.whatsapp.phoneIds = ["phone-2"];
+    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    expect(errorOf(await reply(kit, "k-b1")).message).toBe("SESSION_WINDOW_CLOSED");
+    expect((await kit.mem.contacts.findByPhone(T1, "+201012345678"))?.lastInboundAt).toBeNull();
+
+    await inbound(kit, "phone-2", "waba-2", "wamid.inB");
+    expect(okValue(await reply(kit, "k-b2")).status).toBe("accepted");
+  });
+
+  it("clears the windows of every contact of the shop, and of no other shop", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const at = new Date(kit.clock.now().getTime() - 3_600_000);
+    await seedContact(kit, { phone: "+201012345678", lastInboundAt: at });
+    await seedContact(kit, { phone: "+201112345678", lastInboundAt: at });
+    await seedContact(kit, { tenantId: T2, phone: "+201212345678", lastInboundAt: at });
+    kit.whatsapp.phoneIds = ["phone-2"];
+    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    const windows = kit.mem.store.contacts
+      .values()
+      .map((c) => `${c.tenantId}:${c.lastInboundAt === null}`);
+    expect(windows.sort()).toEqual([`${T1}:true`, `${T1}:true`, `${T2}:false`]);
+  });
+
+  it("a same-asset reconnect keeps the windows (the window is still that number's)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const at = new Date(kit.clock.now().getTime() - 3_600_000);
+    await seedContact(kit, { phone: "+201012345678", lastInboundAt: at });
+    okValue(await connect(kit));
+    expect((await kit.mem.contacts.findByPhone(T1, "+201012345678"))?.lastInboundAt).toEqual(at);
+  });
+
+  it("a failed switch that is later resumed still ends with cleared windows", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const at = new Date(kit.clock.now().getTime() - 3_600_000);
+    await seedContact(kit, { phone: "+201012345678", lastInboundAt: at });
+    kit.whatsapp.phoneIds = ["phone-2"];
+    kit.whatsapp.once("registerPhone", () => {
+      throw metaError("100");
+    });
+    errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    okValue(await connect(kit, { code: "c2", wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    expect((await kit.mem.contacts.findByPhone(T1, "+201012345678"))?.lastInboundAt).toBeNull();
   });
 });

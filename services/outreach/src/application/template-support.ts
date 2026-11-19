@@ -1,6 +1,7 @@
 import { ok, err, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
 import type {
+  ConnectionStatus,
   FetchedTemplate,
   TemplateCategoryValue,
   TemplateStatus,
@@ -63,7 +64,12 @@ export interface ActiveConnection {
   row: WhatsAppConnectionRecord;
   token: string;
   /** Captured BEFORE the external call; compared in the final transaction (snapshot rule). */
-  snapshot: { version: number; phoneNumberId: string; wabaId: string };
+  snapshot: {
+    version: number;
+    phoneNumberId: string;
+    wabaId: string;
+    status: ConnectionStatus;
+  };
 }
 
 /**
@@ -91,7 +97,12 @@ export async function loadActiveConnection(
   return ok({
     row,
     token,
-    snapshot: { version: row.version, phoneNumberId: row.phoneNumberId, wabaId: row.wabaId },
+    snapshot: {
+      version: row.version,
+      phoneNumberId: row.phoneNumberId,
+      wabaId: row.wabaId,
+      status: row.status,
+    },
   });
 }
 

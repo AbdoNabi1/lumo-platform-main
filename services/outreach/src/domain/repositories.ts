@@ -331,6 +331,12 @@ export interface ContactRepository {
   /** Writes ONLY the three consent columns (use with a record produced by `applyConsent`). The row must exist. */
   saveConsent(r: ContactRecord, expectedVersion: number, tx?: unknown): Promise<void>;
   appendConsent(e: ConsentEventRecord, tx?: unknown): Promise<void>;
+  /**
+   * Sets `lastInboundAt = NULL` on every contact of the tenant that has one (the customer-service window opened on a
+   * business number never applies to a different number). Tenant-scoped, bumps each touched row's version (so a
+   * concurrent writer holding the old version loses its CAS), writes nothing else. Returns the number of rows cleared.
+   */
+  clearSessionWindows(tenantId: string, tx?: unknown): Promise<number>;
   /** Oldest first. */
   listConsentEvents(
     tenantId: string,

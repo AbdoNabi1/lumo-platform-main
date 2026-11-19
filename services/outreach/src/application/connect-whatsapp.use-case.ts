@@ -144,17 +144,21 @@ export class ConnectWhatsApp implements UseCase<
 
     const stageAtStart: OnboardingStage | null =
       kind === "resume" ? (prior?.onboardingStage ?? null) : null;
-    // The PIN is known (and must be kept) once it may have been registered with Meta.
-    const pinMayBeRegistered =
-      kind === "reconnect" ||
-      (kind === "resume" && (stageAtStart === "registering" || stageAtStart === "registered"));
+    // A persisted stage (or a connected row) owns sealed credentials: they are never replaced and the stage never
+    // regresses. Only the intentional stage-null placeholder (created holding the lease, before any token existed)
+    // may be sealed for the first time.
+    const needsSealedCredentials =
+      kind === "reconnect" || (kind === "resume" && stageAtStart !== null);
     const sealedSecrets =
       (kind === "resume" || kind === "reconnect") &&
       prior !== null &&
       prior.sealedCredentials !== ""
         ? await openSecrets(deps, tenantId, prior.sealedCredentials)
         : null;
-    if (pinMayBeRegistered && (sealedSecrets === null || !PIN_PATTERN.test(sealedSecrets.pin))) {
+    if (
+      needsSealedCredentials &&
+      (sealedSecrets === null || !PIN_PATTERN.test(sealedSecrets.pin))
+    ) {
       return fail("CREDENTIALS_UNAVAILABLE");
     }
 
@@ -164,6 +168,8 @@ export class ConnectWhatsApp implements UseCase<
     if (exchanged.ok) token = exchanged.value.accessToken;
     else if (kind === "resume" && sealedSecrets !== null) token = sealedSecrets.accessToken;
     else return fail(metaConflictCode(exchanged.error));
+    // Ownership is re-validated after the exchange, BEFORE the next Meta call: an abandon or a takeover meanwhile stops us.
+    if ((await this.write(lease, () => ({}))) === "lost") return stop();
 
     // 3. The phone must belong to the WABA.
     const members = await meta(() => whatsapp.listPhoneNumberIds(waba, token));
@@ -173,6 +179,10 @@ export class ConnectWhatsApp implements UseCase<
     // 4. Persist the attempt (sealed token + PIN) before any remote mutation.
     let pin: string;
     let stage: OnboardingStage;
+    // True once a lease-checked write ran AFTER the membership read (the last async gap before the stage machine).
+    let ownerChecked = false;
+    // An asset switch (the row's previous assets differ): a window opened on the old number never applies to the new one.
+    const switchesAssets = prior !== null && !sameAssets(prior, phone, waba);
     if (
       kind === "resume" &&
       sealedSecrets !== null &&
@@ -186,6 +196,7 @@ export class ConnectWhatsApp implements UseCase<
         if (sealed === null) return fail("CREDENTIALS_UNAVAILABLE");
         const resealed = await this.write(lease, () => ({ sealedCredentials: sealed }));
         if (resealed === "lost") return stop();
+        ownerChecked = true;
       }
     } else {
       pin = kind === "reconnect" && sealedSecrets !== null ? sealedSecrets.pin : deps.randomPin();
@@ -210,6 +221,7 @@ export class ConnectWhatsApp implements UseCase<
             if (switchingLive && prior !== null) {
               await deps.directory.release(prior.phoneNumberId, tenantId, tx);
             }
+            if (switchesAssets) await deps.contacts.clearSessionWindows(tenantId, tx);
           },
         },
       );
@@ -217,6 +229,7 @@ export class ConnectWhatsApp implements UseCase<
       lease.phoneNumberId = phone;
       lease.wabaId = waba;
       stage = "verified";
+      ownerChecked = true;
     }
 
     // 5. Stage machine: continue at the first incomplete step.
@@ -241,6 +254,9 @@ export class ConnectWhatsApp implements UseCase<
       stage = "registering";
     } else if (stage === "registering") {
       if ((await this.write(lease, () => ({}))) === "lost") return stop();
+    } else if (stage === "registered" && !ownerChecked) {
+      // A registered resume whose exchange failed made no write since the membership read: check before getPhone.
+      if ((await this.write(lease, () => ({}))) === "lost") return stop();
     }
     if (stage === "registering") {
       const registered = await meta(() => whatsapp.registerPhone(phone, pin, token));
@@ -263,7 +279,7 @@ export class ConnectWhatsApp implements UseCase<
     // 6. Read the phone, then finalize.
     const phoneInfo = await meta(() => whatsapp.getPhone(phone, token));
     if (!phoneInfo.ok) return fail(metaConflictCode(phoneInfo.error));
-    return this.finalize(lease, phoneInfo.value, prior);
+    return this.finalize(lease, phoneInfo.value, prior, switchesAssets);
   }
 
   /** One transaction: classify the persisted row, enforce the directory precheck and take (or refuse) the lease. */
@@ -439,6 +455,7 @@ export class ConnectWhatsApp implements UseCase<
     lease: Lease,
     info: WhatsAppPhoneInfo,
     prior: WhatsAppConnectionRecord | null,
+    switchesAssets: boolean,
   ): Promise<Result<WhatsAppConnectionDto, DomainError>> {
     const { deps } = this;
     const { tenantId, phoneNumberId, wabaId } = lease;
@@ -479,6 +496,8 @@ export class ConnectWhatsApp implements UseCase<
         if (claim !== "claimed") {
           throw new NotClaimed(claim === "phone_in_use" ? "PHONE_IN_USE" : "WABA_IN_USE");
         }
+        // Switching to DIFFERENT assets: no contact's window opened on the old number counts for the new one.
+        if (switchesAssets) await deps.contacts.clearSessionWindows(tenantId, tx);
         await emit(deps, tx, tenantId, "outreach.whatsapp.connected", tenantId, {
           phoneNumberId,
           wabaId,

@@ -754,6 +754,21 @@ describe("PrismaContactRepository arguments", () => {
     expect(Object.keys((calls[0]?.args as { data: Args }).data)).toHaveLength(4);
   });
 
+  it("clearSessionWindows is one tenant-filtered updateMany that nulls the window and bumps the version", async () => {
+    expect.hasAssertions();
+    const { tx, calls } = recordingClient({ "contact.updateMany": [{ count: 3 }] });
+    expect(await repo.clearSessionWindows("t-1", tx)).toBe(3);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      model: "contact",
+      method: "updateMany",
+      args: {
+        where: { tenantId: "t-1", lastInboundAt: { not: null } },
+        data: { lastInboundAt: null, version: { increment: 1 } },
+      },
+    });
+  });
+
   it("a colliding create is a ConcurrencyError; a collision with nothing readable is an unexpected conflict", async () => {
     expect.hasAssertions();
     const collides = recordingClient({
