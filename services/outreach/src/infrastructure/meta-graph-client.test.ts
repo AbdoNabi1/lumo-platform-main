@@ -32,6 +32,15 @@ async function caught(promise: Promise<unknown>): Promise<unknown> {
   return undefined;
 }
 
+const malformedPaging: unknown[] = [
+  { cursors: "invalid" },
+  { cursors: [] },
+  { cursors: null },
+  { cursors: { after: 42 } },
+  { cursors: { before: 42 } },
+  { cursors: { after: null } },
+];
+
 const templateItem = (n: number, extra: Record<string, unknown> = {}) => ({
   id: `100${n}`,
   name: `tpl_${n}`,
@@ -244,6 +253,46 @@ describe("MetaGraphClient.listPhoneNumberIds", () => {
     }
     expect(h.calls).toHaveLength(5);
   });
+  it("rejects malformed paging.cursors as incomplete, on page one and after a valid first page", async () => {
+    expect.hasAssertions();
+    const next = `${BASE}/99/phone_numbers?fields=id&after=CURSOR`;
+    for (const paging of malformedPaging) {
+      const first = make([{ status: 200, json: { data: [], paging } }]);
+      const firstError = await caught(first.client.listPhoneNumberIds("99", TOKEN));
+      expect(firstError).toBeInstanceOf(MetaApiError);
+      expect(firstError).toMatchObject({
+        code: "PHONE_LIST_INCOMPLETE",
+        httpStatus: 200,
+        message: "Phone number list incomplete: invalid paging schema",
+      });
+      const second = make([
+        { status: 200, json: { data: [{ id: "111" }], paging: { next } } },
+        { status: 200, json: { data: [{ id: "222" }], paging } },
+      ]);
+      expect(await caught(second.client.listPhoneNumberIds("99", TOKEN))).toMatchObject({
+        code: "PHONE_LIST_INCOMPLETE",
+        httpStatus: 200,
+        message: "Phone number list incomplete: invalid paging schema",
+      });
+      expect(second.h.calls).toHaveLength(2);
+    }
+  });
+  it("still accepts absent cursors and a terminal page with valid cursors", async () => {
+    expect.hasAssertions();
+    const { client } = make([
+      { status: 200, json: { data: [{ id: "1" }] } },
+      { status: 200, json: { data: [{ id: "2" }], paging: {} } },
+      { status: 200, json: { data: [{ id: "3" }], paging: { cursors: {} } } },
+      {
+        status: 200,
+        json: { data: [{ id: "4" }], paging: { cursors: { before: "B", after: "A" } } },
+      },
+    ]);
+    expect(await client.listPhoneNumberIds("99", TOKEN)).toEqual(["1"]);
+    expect(await client.listPhoneNumberIds("99", TOKEN)).toEqual(["2"]);
+    expect(await client.listPhoneNumberIds("99", TOKEN)).toEqual(["3"]);
+    expect(await client.listPhoneNumberIds("99", TOKEN)).toEqual(["4"]);
+  });
 });
 
 describe("MetaGraphClient.listTemplates", () => {
@@ -448,6 +497,44 @@ describe("MetaGraphClient.listTemplates", () => {
       expect(h.calls).toHaveLength(1);
     }
   });
+  it("rejects malformed paging.cursors as incomplete instead of certifying an empty snapshot", async () => {
+    expect.hasAssertions();
+    const next = `${BASE}/77/message_templates?fields=${FIELDS}&limit=100&after=C1`;
+    for (const paging of malformedPaging) {
+      const first = make([{ status: 200, json: { data: [], paging } }]);
+      const firstError = await caught(first.client.listTemplates("77", TOKEN));
+      expect(firstError).toBeInstanceOf(MetaApiError);
+      expect(firstError).toMatchObject({
+        code: "TEMPLATE_SYNC_INCOMPLETE",
+        httpStatus: 200,
+        message: "Template sync incomplete: invalid paging schema",
+      });
+      const second = make([
+        { status: 200, json: { data: [templateItem(1)], paging: { next } } },
+        { status: 200, json: { data: [templateItem(2)], paging } },
+      ]);
+      expect(await caught(second.client.listTemplates("77", TOKEN))).toMatchObject({
+        code: "TEMPLATE_SYNC_INCOMPLETE",
+        httpStatus: 200,
+        message: "Template sync incomplete: invalid paging schema",
+      });
+      expect(second.h.calls).toHaveLength(2);
+    }
+  });
+  it("still accepts absent cursors and a terminal page with valid cursors", async () => {
+    expect.hasAssertions();
+    const { client } = make([
+      { status: 200, json: { data: [templateItem(1)] } },
+      { status: 200, json: { data: [templateItem(2)], paging: { cursors: {} } } },
+      {
+        status: 200,
+        json: { data: [templateItem(3)], paging: { cursors: { before: "B", after: "A" } } },
+      },
+    ]);
+    expect((await client.listTemplates("77", TOKEN)).map((t) => t.id)).toEqual(["1001"]);
+    expect((await client.listTemplates("77", TOKEN)).map((t) => t.id)).toEqual(["1002"]);
+    expect((await client.listTemplates("77", TOKEN)).map((t) => t.id)).toEqual(["1003"]);
+  });
   it("throws TEMPLATE_SYNC_INCOMPLETE on an invalid schema", async () => {
     expect.hasAssertions();
     const bad: unknown[] = [
@@ -589,19 +676,185 @@ describe("MetaGraphClient template writes", () => {
       httpStatus: 0,
     });
   });
-  it("uses a string error.code and ignores an unusable error.message", async () => {
+  it("falls back to HTTP_<status> for a non-numeric error.code and ignores an unusable error.message", async () => {
     expect.hasAssertions();
     const { client } = make([
       { status: 400, json: { error: { code: "OAuthException", message: 42 } } },
       { status: 400, json: { error: { code: {}, message: "x" } } },
     ]);
     expect(await caught(client.deleteTemplate("77", TOKEN, "n"))).toMatchObject({
-      code: "OAuthException",
+      code: "HTTP_400",
       message: "Meta request failed (HTTP 400)",
     });
     expect(await caught(client.deleteTemplate("77", TOKEN, "n"))).toMatchObject({
       code: "HTTP_400",
     });
+  });
+  it("accepts only safe-integer provider codes and falls back to HTTP_<status> otherwise", async () => {
+    expect.hasAssertions();
+    const bad: unknown[] = [
+      "OAuthException",
+      "",
+      " 100",
+      "10 0",
+      "1e3",
+      "0x10",
+      "-5",
+      "+5",
+      "12.5",
+      "١٢٣",
+      "99999999999999999999",
+      1.5,
+      -0.5,
+      1e21,
+      Number.MAX_SAFE_INTEGER + 2,
+      true,
+      null,
+      [100],
+      { code: 100 },
+    ];
+    const { client } = make(bad.map((code) => ({ status: 400, json: { error: { code } } })));
+    for (let i = 0; i < bad.length; i++) {
+      expect(await caught(client.deleteTemplate("77", TOKEN, "n"))).toMatchObject({
+        code: "HTTP_400",
+        httpStatus: 400,
+      });
+    }
+    const good = make([
+      { status: 400, json: { error: { code: "0131026" } } },
+      { status: 400, json: { error: { code: 133005 } } },
+    ]);
+    expect(await caught(good.client.deleteTemplate("77", TOKEN, "n"))).toMatchObject({
+      code: "131026",
+    });
+    expect(await caught(good.client.deleteTemplate("77", TOKEN, "n"))).toMatchObject({
+      code: "133005",
+    });
+  });
+  it("applies the same code sanitisation to rejected sends and keeps retryability by numeric code", async () => {
+    expect.hasAssertions();
+    const { client } = make([
+      { status: 400, json: { error: { code: "OAuthException", message: "m" } } },
+      { status: 400, json: { error: { code: 1.5, message: "m" } } },
+      { status: 400, json: { error: { code: "0130429", message: "m" } } },
+    ]);
+    const send = () => client.sendText("555", TOKEN, { to: "2010", text: "x", correlationId: "c" });
+    expect(await send()).toEqual({
+      kind: "rejected",
+      code: "HTTP_400",
+      message: "m",
+      retryable: false,
+    });
+    expect(await send()).toMatchObject({ code: "HTTP_400", retryable: false });
+    expect(await send()).toMatchObject({ code: "130429", retryable: true });
+  });
+  it("never forwards a code that equals or contains a known secret, even when numeric", async () => {
+    expect.hasAssertions();
+    const send = make([
+      { status: 400, json: { error: { code: 4455, message: "m" } } },
+      { status: 400, json: { error: { code: "4455", message: "m" } } },
+    ]);
+    const secretToken = "4455";
+    expect(
+      await send.client.sendText("555", secretToken, { to: "2010", text: "x", correlationId: "c" }),
+    ).toEqual({ kind: "rejected", code: "HTTP_400", message: "m", retryable: false });
+    expect(
+      await send.client.sendText("555", secretToken, { to: "2010", text: "x", correlationId: "c" }),
+    ).toMatchObject({ code: "HTTP_400" });
+    const pin = make([
+      { status: 400, json: { error: { code: 1234567, message: "m" } } },
+      { status: 400, json: { error: { code: 133005, message: "m" } } },
+    ]);
+    expect(await caught(pin.client.registerPhone("555", "234", TOKEN))).toMatchObject({
+      code: "HTTP_400",
+    });
+    expect(await caught(pin.client.registerPhone("555", "234", TOKEN))).toMatchObject({
+      code: "133005",
+    });
+  });
+  it("discloses no token, app secret, authorization code or PIN anywhere in a send outcome", async () => {
+    expect.hasAssertions();
+    const send = make([
+      { status: 400, json: { error: { code: "test-token", message: "x" } } },
+      { status: 400, json: { error: { code: TOKEN, message: `bad ${TOKEN}` } } },
+      { status: 400, json: { error: { code: `${TOKEN}`.toUpperCase(), message: TOKEN } } },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      const outcome = await send.client.sendText("555", TOKEN, {
+        to: "2010",
+        text: "x",
+        correlationId: "c",
+      });
+      const serialized = JSON.stringify(outcome);
+      expect(outcome).toMatchObject({ kind: "rejected", code: "HTTP_400" });
+      expect(serialized).not.toContain(TOKEN);
+      expect(serialized).not.toContain(APP_SECRET);
+    }
+    const probe = make([{ status: 400, json: { error: { code: "test-token", message: "x" } } }]);
+    const probeOutcome = await probe.client.sendText("555", "test-token", {
+      to: "2010",
+      text: "x",
+      correlationId: "c",
+    });
+    expect(probeOutcome).toEqual({
+      kind: "rejected",
+      code: "HTTP_400",
+      message: "x",
+      retryable: false,
+    });
+    expect(JSON.stringify(probeOutcome)).not.toContain("test-token");
+  });
+  it("discloses no PIN or token anywhere in a thrown registerPhone error", async () => {
+    expect.hasAssertions();
+    const pin = "pin-123456";
+    const { client } = make([
+      { status: 400, json: { error: { code: pin, message: `pin ${pin}` } } },
+      { status: 400, json: { error: { code: TOKEN, message: `t ${TOKEN}` } } },
+      { status: 400, json: { error: { code: `${pin}${TOKEN}`, message: `${pin} ${TOKEN}` } } },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      const error = await caught(client.registerPhone("555", pin, TOKEN));
+      expect(error).toBeInstanceOf(MetaApiError);
+      const e = error as MetaApiError;
+      const serialized = JSON.stringify({
+        name: e.name,
+        code: e.code,
+        message: e.message,
+        httpStatus: e.httpStatus,
+      });
+      expect(e.code).toBe("HTTP_400");
+      expect(serialized).not.toContain(pin);
+      expect(serialized).not.toContain(TOKEN);
+      expect(serialized).not.toContain("123456");
+    }
+  });
+  it("discloses no app secret or authorization code anywhere in a thrown exchangeCode error", async () => {
+    expect.hasAssertions();
+    const authCode = "secretCode";
+    const { client } = make([
+      {
+        status: 400,
+        json: {
+          error: { code: `${APP_SECRET}-${authCode}`, message: `${APP_SECRET} ${authCode}` },
+        },
+      },
+      { status: 400, json: { error: { code: APP_SECRET, message: "x" } } },
+      { status: 400, json: { error: { code: authCode, message: "x" } } },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      const error = await caught(client.exchangeCode(authCode));
+      expect(error).toBeInstanceOf(MetaApiError);
+      const e = error as MetaApiError;
+      const serialized = JSON.stringify({
+        name: e.name,
+        code: e.code,
+        message: e.message,
+        httpStatus: e.httpStatus,
+      });
+      expect(e.code).toBe("HTTP_400");
+      expect(serialized).not.toContain(APP_SECRET);
+      expect(serialized).not.toContain(authCode);
+    }
   });
 });
 

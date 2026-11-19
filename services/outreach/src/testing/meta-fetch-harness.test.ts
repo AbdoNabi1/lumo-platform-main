@@ -24,6 +24,57 @@ describe("createMetaFetchHarness", () => {
     });
     expect(harness.calls[1]?.url).toBe("https://graph.facebook.com/url");
   });
+  it("records a JSON body owned by a Request input and leaves its stream readable", async () => {
+    expect.hasAssertions();
+    const harness = createMetaFetchHarness([{ status: 200, json: {} }]);
+    const request = new Request("https://graph.facebook.com/owned", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ a: 1, nested: { b: [2] } }),
+    });
+    await harness.fetchImpl(request);
+    expect(harness.calls[0]).toMatchObject({
+      url: "https://graph.facebook.com/owned",
+      method: "POST",
+      body: { a: 1, nested: { b: [2] } },
+    });
+    expect(request.bodyUsed).toBe(false);
+    expect(await request.json()).toEqual({ a: 1, nested: { b: [2] } });
+  });
+  it("records a non-JSON body owned by a Request input verbatim", async () => {
+    expect.hasAssertions();
+    const harness = createMetaFetchHarness([{ status: 200, json: {} }]);
+    await harness.fetchImpl(
+      new Request("https://graph.facebook.com/owned", { method: "POST", body: "plain text" }),
+    );
+    expect(harness.calls[0]?.body).toBe("plain text");
+  });
+  it("lets init.body override the body owned by a Request input", async () => {
+    expect.hasAssertions();
+    const harness = createMetaFetchHarness([{ status: 200, json: {} }]);
+    await harness.fetchImpl(
+      new Request("https://graph.facebook.com/owned", {
+        method: "POST",
+        body: JSON.stringify({ from: "request" }),
+      }),
+      { body: JSON.stringify({ from: "init" }) },
+    );
+    expect(harness.calls[0]?.body).toEqual({ from: "init" });
+  });
+  it("records a Request-owned body before throwing on an exhausted queue", async () => {
+    expect.hasAssertions();
+    const harness = createMetaFetchHarness([]);
+    await expect(
+      harness.fetchImpl(
+        new Request("https://graph.facebook.com/owned", {
+          method: "POST",
+          body: JSON.stringify({ kept: true }),
+        }),
+      ),
+    ).rejects.toThrow("harness exhausted");
+    expect(harness.calls).toHaveLength(1);
+    expect(harness.calls[0]?.body).toEqual({ kept: true });
+  });
   it("records requests before consuming queued responses and exhausted calls", async () => {
     expect.hasAssertions();
     const harness = createMetaFetchHarness([

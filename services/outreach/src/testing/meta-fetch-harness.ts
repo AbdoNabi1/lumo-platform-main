@@ -14,7 +14,12 @@ export function createMetaFetchHarness(responses: FakeResponse[]): {
   const fetchImpl: typeof fetch = async (input, init) => {
     const request = input instanceof Request ? input : undefined;
     const headers = Object.fromEntries(new Headers(init?.headers ?? request?.headers).entries());
-    const rawBody = init?.body;
+    // An explicit init.body overrides; otherwise a Request input owns the body (clone so the caller's stream survives).
+    let rawBody: unknown = init?.body;
+    if (init?.body === undefined && request !== undefined) {
+      const text = await request.clone().text();
+      rawBody = text.length > 0 ? text : undefined;
+    }
     let body: unknown = rawBody;
     if (typeof rawBody === "string") {
       try {

@@ -37,11 +37,24 @@ function redact(text: string, secrets: readonly string[]): string {
   return out;
 }
 
-function errorCode(payload: unknown): string | null {
+/**
+ * The only provider text allowed through the code-only channel: a finite safe integer (or a strictly decimal string of
+ * one), normalised to its digits. Anything else — or a value equal to / containing a known secret — gets the
+ * `HTTP_<status>` fallback, so a malformed provider response can never smuggle a credential into a code.
+ */
+function errorCode(payload: unknown, status: number, secrets: readonly string[]): string {
+  const fallback = `HTTP_${status}`;
   const error = isRecord(payload) ? payload.error : undefined;
-  const code = isRecord(error) ? error.code : undefined;
-  if (typeof code === "number" && Number.isFinite(code)) return String(code);
-  return typeof code === "string" && code.length > 0 ? code : null;
+  const raw = isRecord(error) ? error.code : undefined;
+  let number: number | null = null;
+  if (typeof raw === "number") number = raw;
+  else if (typeof raw === "string" && /^[0-9]+$/.test(raw)) number = Number(raw);
+  if (number === null || !Number.isSafeInteger(number)) return fallback;
+  const code = String(number);
+  const leaks = [code, typeof raw === "string" ? raw : code].some((candidate) =>
+    secrets.some((secret) => secret.length > 0 && candidate.includes(secret)),
+  );
+  return leaks ? fallback : code;
 }
 
 function errorText(payload: unknown, status: number, secrets: readonly string[]): string {
@@ -150,7 +163,7 @@ export class MetaGraphClient implements WhatsAppCloudApiPort {
     }
     if (result.status < 200 || result.status >= 300) {
       throw new MetaApiError(
-        errorCode(result.payload) ?? `HTTP_${result.status}`,
+        errorCode(result.payload, result.status, secrets),
         errorText(result.payload, result.status, secrets),
         result.status,
       );
@@ -249,7 +262,12 @@ export class MetaGraphClient implements WhatsAppCloudApiPort {
       }
       const paging = body.paging === undefined ? {} : body.paging;
       if (!isRecord(paging)) throw fail("invalid paging schema", result.status);
-      const cursors = isRecord(paging.cursors) ? paging.cursors : {};
+      // Absent cursor metadata is fine; PRESENT metadata must be well-formed or the enumeration is not certifiable.
+      const cursors = paging.cursors === undefined ? {} : paging.cursors;
+      if (!isRecord(cursors)) throw fail("invalid paging schema", result.status);
+      for (const field of [cursors.before, cursors.after])
+        if (field !== undefined && typeof field !== "string")
+          throw fail("invalid paging schema", result.status);
       const after = str(cursors.after);
       if (after !== null) {
         const key = `cursor:${after}`;
@@ -448,7 +466,7 @@ export class MetaGraphClient implements WhatsAppCloudApiPort {
         : { kind: "unknown", message: "Meta returned no message id" };
     }
     if (status >= 400 && status < 500) {
-      const code = errorCode(payload) ?? `HTTP_${status}`;
+      const code = errorCode(payload, status, [token]);
       return {
         kind: "rejected",
         code,
