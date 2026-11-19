@@ -7,13 +7,13 @@ import {
   NotFoundError,
   ValidationError,
 } from "@platform/utils";
-import { applyConsent, type Channel, type ConsentSource, type Purpose } from "../domain/consent";
+import type { Channel, ConsentSource, Purpose } from "../domain/consent";
 import { toE164 } from "../domain/phone";
 import type { ContactRecord } from "../domain/repositories";
-import { consentStateOf, findOrCreateContact } from "./contact-support";
+import { applyConsentInTx, findOrCreateContact } from "./contact-support";
 import { type ContactDto, contactDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
-import { emit, normalizeEmail } from "./support";
+import { normalizeEmail } from "./support";
 
 export interface UpsertContactInput {
   tenantId: string;
@@ -144,43 +144,18 @@ export class RecordConsent implements UseCase<RecordConsentInput, ContactDto, Do
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const contact = await this.deps.contacts.findById(tenantId, input.contactId, tx);
         if (contact === null) return err(new NotFoundError("Contact not found"));
-        const applied = applyConsent(consentStateOf(contact), {
-          channel: input.channel,
-          purpose: input.purpose,
-          action: input.action,
-          source: input.source,
-        });
-        const next: ContactRecord = { ...contact, ...applied.state };
+        let next: ContactRecord;
         try {
-          if (applied.changed.length > 0) {
-            await this.deps.contacts.saveConsent(next, contact.version, tx);
-          }
-        } catch (error) {
-          if (error instanceof ConcurrencyError && attempt < 2) continue;
-          throw error;
-        }
-        await this.deps.contacts.appendConsent(
-          {
-            id: this.deps.idGenerator.generate(),
-            tenantId,
-            contactId: contact.id,
+          next = await applyConsentInTx(this.deps, tx, contact, {
             channel: input.channel,
             purpose: input.purpose,
             action: input.action,
             source: input.source,
             evidence,
-            occurredAt: this.deps.clock.now(),
-          },
-          tx,
-        );
-        for (const change of applied.changed) {
-          await emit(this.deps, tx, tenantId, "outreach.contact.consent_changed", contact.id, {
-            contactId: contact.id,
-            channel: change.channel,
-            purpose: change.purpose,
-            action: change.action,
-            source: input.source,
           });
+        } catch (error) {
+          if (error instanceof ConcurrencyError && attempt < 2) continue;
+          throw error;
         }
         return ok(contactDto(next));
       }

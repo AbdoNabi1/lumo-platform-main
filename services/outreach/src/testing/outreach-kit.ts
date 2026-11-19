@@ -3,6 +3,7 @@ import type { OutreachEventSink } from "../application/events";
 import type { OutreachDeps } from "../application/outreach-deps";
 import type { MetaTemplateRecord } from "../application/ports";
 import type {
+  ContactRecord,
   TemplateCategoryValue,
   TemplateRecord,
   TemplateStatus,
@@ -182,4 +183,59 @@ export function metaTemplate(
     qualityScore: null,
     ...over,
   };
+}
+
+export interface SeedContactOptions {
+  tenantId?: string;
+  phone?: string | null;
+  email?: string | null;
+  transactional?: "allowed" | "revoked" | "unknown";
+  marketing?: "granted" | "revoked" | "unknown";
+  lastInboundAt?: Date | null;
+}
+
+export async function seedContact(
+  kit: OutreachKit,
+  opts: SeedContactOptions = {},
+): Promise<ContactRecord> {
+  const tenantId = opts.tenantId ?? T1;
+  const phone = opts.phone === undefined ? "+201012345678" : opts.phone;
+  const record: ContactRecord = {
+    id: `contact-${phone ?? opts.email ?? "x"}`,
+    tenantId,
+    phoneE164: phone,
+    email: opts.email ?? null,
+    customerRef: null,
+    displayName: null,
+    whatsappMarketing: "unknown",
+    whatsappTransactional: "unknown",
+    emailMarketing: "unknown",
+    lastInboundAt: opts.lastInboundAt ?? null,
+    version: 1,
+  };
+  await kit.mem.contacts.save(record, 0);
+  const consent = {
+    ...record,
+    whatsappMarketing: opts.marketing ?? "unknown",
+    whatsappTransactional: opts.transactional ?? "unknown",
+  };
+  await kit.mem.contacts.saveConsent(consent, 1);
+  const stored = await kit.mem.contacts.findById(tenantId, record.id);
+  if (stored === null) throw new Error("seedContact failed");
+  return stored;
+}
+
+/** A connected shop, an APPROVED template known to Meta, and a recipient allowed to receive utility messages. */
+export async function seedSendScenario(
+  kit: OutreachKit,
+  opts: { category?: TemplateCategoryValue; contact?: SeedContactOptions } = {},
+): Promise<{ conn: WhatsAppConnectionRecord; tpl: TemplateRecord; contact: ContactRecord }> {
+  const conn = await seedConnection(kit);
+  const tpl = await seedTemplate(
+    kit,
+    opts.category === undefined ? {} : { category: opts.category },
+  );
+  kit.whatsapp.templates = [metaTemplate(tpl)];
+  const contact = await seedContact(kit, { transactional: "allowed", ...opts.contact });
+  return { conn, tpl, contact };
 }
