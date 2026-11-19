@@ -23,6 +23,7 @@
     "@platform/domain-events": "workspace:*",
     "@platform/messaging": "workspace:*",
     "@platform/repository": "workspace:*",
+    "@platform/storefront-content": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/utils": "workspace:*",
     "@prisma/client": "^6.5.0"

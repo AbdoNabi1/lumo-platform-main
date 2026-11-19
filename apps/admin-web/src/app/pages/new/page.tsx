@@ -30,7 +30,7 @@ export default async function NewPagePage() {
 
         <Card>
           <CardContent>
-            <PageCreateForm t={t} />
+            <PageCreateForm t={t} locale={locale} />
           </CardContent>
         </Card>
       </div>

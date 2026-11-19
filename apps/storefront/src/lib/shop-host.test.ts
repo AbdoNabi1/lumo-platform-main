@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { createShopResolver, normalizeHost, type ResolvedShop } from "./shop-host";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createShopResolver,
+  fetchShopFromRuntime,
+  normalizeHost,
+  type ResolvedShop,
+} from "./shop-host";
 
 const shop: ResolvedShop = {
   shopId: "shop-1",
@@ -55,5 +60,38 @@ describe("createShopResolver", () => {
     await expect(resolve("acme.com")).rejects.toThrow("runtime down");
     await expect(resolve("acme.com")).rejects.toThrow("runtime down");
     expect(calls).toBe(2);
+  });
+});
+
+describe("fetchShopFromRuntime", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("asks the Runtime under the platform tenant, uncached, under a timeout", async () => {
+    const fetchMock = vi.fn(
+      async (_url: string, _init: RequestInit) =>
+        new Response(JSON.stringify(shop), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchShopFromRuntime("https://rt.test", "platform")("acme.com")).toEqual(shop);
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe("https://rt.test/api/v1/public/domains/resolve?host=acme.com");
+    expect(init?.headers).toEqual({ "x-tenant-id": "platform" });
+    expect(init?.cache).toBe("no-store");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("gives up on a hung Runtime after its timeout, so every page is not held", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      ),
+    );
+    await expect(
+      fetchShopFromRuntime("https://rt.test", "platform", 20)("acme.com"),
+    ).rejects.toThrow();
   });
 });

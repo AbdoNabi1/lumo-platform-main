@@ -1,4 +1,11 @@
-import { getAdminApi, mutateAdminApi, sendAdminBinary, type MutationResult } from "./client";
+import {
+  getAdminApi,
+  mutateAdminApi,
+  sendAdminBinary,
+  type ApiResult,
+  type MutationResult,
+} from "./client";
+import type { OnlineStoreImageDto } from "./online-store";
 
 /**
  * Media asset download links (T3.6) — `GET /media/assets/:mediaAssetId/download-url`
@@ -9,9 +16,9 @@ import { getAdminApi, mutateAdminApi, sendAdminBinary, type MutationResult } fro
  * the asset id doesn't exist, otherwise always resolves `ok({ url })` via `ObjectStoragePort.
  * getDownloadUrl(asset.storageKey)`.
  *
- * There is no `GET /media/assets` list endpoint (see `docs/plans/BLOCKERS.md`), so this module
- * exposes only the single-asset lookup — callers must already know the media asset id, which the
- * Product Detail screen does (`product.mediaAssetIds` from `GET /products/:productId`).
+ * `GET /media/assets` lists the library (cursor pages; each item carries a resolved `image` for
+ * an active image asset since Part 3), read by `fetchLibraryImages` below. Single-asset lookups
+ * need the media asset id, which the Product Detail screen has (`product.mediaAssetIds`).
  *
  * In `local` (the only env this repo runs test/dev in), the object storage port is
  * `InMemoryObjectStorage`, whose `getDownloadUrl` returns a URL template that was never wired to
@@ -79,6 +86,10 @@ export type UploadProductImageResult =
   | { readonly outcome: "unavailable" }
   | { readonly outcome: "too_large" }
   | { readonly outcome: "unsupported" }
+  // The product route never answers 422 or 409 in practice; `uploadProductImageAction` maps both
+  // to "failed" through its default branch.
+  | { readonly outcome: "invalid"; readonly code: string; readonly detail: unknown }
+  | { readonly outcome: "conflict" }
   | { readonly outcome: "error"; readonly message: string };
 
 /**
@@ -116,4 +127,75 @@ export function updateMediaAlt(
     { method: "PATCH", body: { alt }, idempotencyKey },
     (_value): _value is unknown => true,
   );
+}
+
+/** One pickable library image: the asset id (what a section stores), its name and its picture. */
+export interface LibraryImageDto {
+  readonly id: string;
+  readonly name: string;
+  readonly image: OnlineStoreImageDto;
+}
+
+export interface LibraryImagesPage {
+  readonly items: readonly LibraryImageDto[];
+  readonly endCursor: string | null;
+  readonly hasNextPage: boolean;
+}
+
+const LIBRARY_PAGE_SIZE = 24;
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const isNumOrNull = (v: unknown): v is number | null => v === null || typeof v === "number";
+
+interface RawLibraryPage {
+  readonly items: readonly unknown[];
+  readonly pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null };
+}
+
+function isRawLibraryPage(value: unknown): value is RawLibraryPage {
+  if (!isObj(value) || !Array.isArray(value["items"])) return false;
+  const info = value["pageInfo"];
+  return (
+    isObj(info) &&
+    typeof info["hasNextPage"] === "boolean" &&
+    (info["endCursor"] === null || typeof info["endCursor"] === "string")
+  );
+}
+
+/** An active asset with a resolved picture; anything else (or a malformed row) is skipped. */
+function toLibraryImage(raw: unknown): LibraryImageDto | null {
+  if (!isObj(raw) || raw["status"] !== "active") return null;
+  const image = raw["image"];
+  const id = raw["id"];
+  if (typeof id !== "string" || !isObj(image) || typeof image["url"] !== "string") return null;
+  const { alt, width, height } = image;
+  if ((alt !== null && typeof alt !== "string") || !isNumOrNull(width) || !isNumOrNull(height))
+    return null;
+  return {
+    id,
+    name: typeof raw["name"] === "string" ? raw["name"] : "",
+    image: { id, url: image["url"], alt, width, height },
+  };
+}
+
+/**
+ * `GET /media/assets?first=24[&after=]` (`media_library:read`), oldest first. Keeps the active
+ * assets that resolved to a picture and drops `storageKey` (and everything else) from the rows.
+ * `hasNextPage` comes from the API, so a page of non-images is not mistaken for the end.
+ */
+export async function fetchLibraryImages(
+  after: string | null,
+): Promise<ApiResult<LibraryImagesPage>> {
+  const query = new URLSearchParams({ first: String(LIBRARY_PAGE_SIZE) });
+  if (after !== null) query.set("after", after);
+  const result = await getAdminApi(`/api/v1/media/assets?${query}`, isRawLibraryPage);
+  if (result.outcome !== "ok") return result;
+  return {
+    outcome: "ok",
+    data: {
+      items: result.data.items.flatMap((row) => toLibraryImage(row) ?? []),
+      endCursor: result.data.pageInfo.endCursor,
+      hasNextPage: result.data.pageInfo.hasNextPage,
+    },
+  };
 }

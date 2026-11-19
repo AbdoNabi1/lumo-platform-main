@@ -21,9 +21,17 @@ function leaves(value: unknown, path: string[] = []): Leaf[] {
 const SHARED_VERBATIM = new Set<string>([]);
 
 describe("locales", () => {
-  it("offers exactly the two validated locales, defaulting to English", () => {
+  it("offers exactly the two validated locales, defaulting to Arabic", () => {
     expect([...LOCALES]).toEqual(["en", "ar"]);
-    expect(DEFAULT_LOCALE).toBe("en");
+    expect(DEFAULT_LOCALE).toBe("ar"); // Decision 11: Arabic when the shop saved no preference
+  });
+
+  it("never uses the retired brand spelling (the brand is مربح)", () => {
+    // Built from code points, so a grep of apps/ for the retired spelling stays empty (GC 9).
+    const retired = String.fromCodePoint(0x645, 0x648, 0x631, 0x628, 0x64a, 0x647);
+    expect(JSON.stringify(ar)).not.toContain(retired);
+    expect(ar.brand).toBe("مربح");
+    expect(en.brand).toBe("Morbeh");
   });
 
   it("recognises supported locales and rejects anything else", () => {

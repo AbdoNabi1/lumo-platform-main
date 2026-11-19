@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { FastifyInstance } from "fastify";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type { RouteDefinition } from "@platform/http";
 import { wireAdmin, type WiredAdmin } from "../composition";
 import { pagesRoutes } from "./pages-routes";
+import { buildOnlineStoreApp, headersFor, type StaffRole } from "./testing/online-store-harness";
 
 /**
  * Phase 4 T4.6 — regression guard for the new Pages/Templates read routes (list/get, both
@@ -145,5 +147,144 @@ describe("pages routes — read side (Phase 4 T4.6)", () => {
       {},
     );
     expect(templateNotFound.status).toBe(404);
+  });
+});
+
+describe("the pages route table (Part 2, spec 2.6)", () => {
+  const routes = pagesRoutes({} as WiredAdmin);
+
+  it("adds the content route: pages:update_page, idempotent, strict and version-guarded", () => {
+    const route = routes.find((r) => r.method === "PUT" && r.path === "/pages/:pageId/content");
+    expect(route).toBeDefined();
+    expect(route?.permission).toBe("pages:update_page");
+    expect(route?.idempotent).toBe(true);
+    const ok = { title: {}, body: {}, metaDescription: {}, expectedVersion: 0 };
+    expect(route?.schema.body?.safeParse(ok).success).toBe(true);
+    for (const bad of [
+      { ...ok, extra: 1 },
+      { ...ok, expectedVersion: -1 },
+      { ...ok, expectedVersion: 1.5 },
+      { ...ok, expectedVersion: "1" },
+      { ...ok, title: { en: "x", fr: "y" } },
+      { ...ok, body: { en: "x".repeat(120_001) } },
+      { title: {}, body: {}, expectedVersion: 0 },
+    ]) {
+      expect(route?.schema.body?.safeParse(bad).success, JSON.stringify(bad).slice(0, 80)).toBe(
+        false,
+      );
+    }
+  });
+});
+
+describe("page content over HTTP (Part 2, spec 2.4 and 2.6)", () => {
+  let app: FastifyInstance;
+  let key = 0;
+  beforeAll(async () => {
+    app = await buildOnlineStoreApp({ serializer: new InMemoryEventSerializer() });
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const send = (role: StaffRole, method: "GET" | "PUT" | "POST", url: string, payload?: object) =>
+    app.inject({
+      method,
+      url: `/api/v1${url}`,
+      headers: headersFor(role, method === "GET" ? {} : { "idempotency-key": `pg-${(key += 1)}` }),
+      ...(payload === undefined ? {} : { payload }),
+    });
+
+  it("create accepts content; the DTO gains the content fields and the version", async () => {
+    const created = await send("operator", "POST", "/pages", {
+      name: "About",
+      routePath: "/pages/about",
+      title: { en: "About us" },
+      body: { en: "Hello" },
+      metaDescription: { ar: "عنا" },
+    });
+    expect(created.statusCode).toBe(201);
+    const { pageId } = created.json<{ pageId: string }>();
+    const read = await send("viewer", "GET", `/pages/${pageId}`);
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toEqual({
+      id: pageId,
+      name: "About",
+      routePath: "/pages/about",
+      templateRef: null,
+      experienceRef: null,
+      seoProfileRef: null,
+      localeRef: null,
+      status: "draft",
+      title: { en: "About us" },
+      body: { en: "Hello" },
+      metaDescription: { ar: "عنا" },
+      publishedAt: null,
+      version: 1,
+      updatedAt: "2026-10-27T10:00:00.000Z",
+    });
+  });
+
+  it("content update needs pages:update_page and bumps the version", async () => {
+    const { pageId } = (
+      await send("operator", "POST", "/pages", { name: "FAQ", routePath: "/pages/faq" })
+    ).json<{ pageId: string }>();
+    const content = {
+      title: { en: "FAQ" },
+      body: { en: "Ask us." },
+      metaDescription: {},
+      expectedVersion: 1,
+    };
+    expect((await send("viewer", "PUT", `/pages/${pageId}/content`, content)).statusCode).toBe(403);
+    const saved = await send("operator", "PUT", `/pages/${pageId}/content`, content);
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toEqual({ pageId, version: 2 });
+    const read = await send("viewer", "GET", `/pages/${pageId}`);
+    expect(read.json()).toMatchObject({
+      title: { en: "FAQ" },
+      body: { en: "Ask us." },
+      version: 2,
+    });
+
+    const stale = await send("operator", "PUT", `/pages/${pageId}/content`, content);
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: "VERSION_CONFLICT" });
+    const missing = await send("operator", "PUT", "/pages/nope/content", content);
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ code: "PAGE_NOT_FOUND" });
+    const unsafe = await send("operator", "PUT", `/pages/${pageId}/content`, {
+      ...content,
+      body: { en: "[x](javascript:alert(1))" },
+      expectedVersion: 2,
+    });
+    expect(unsafe.statusCode).toBe(422);
+    expect(unsafe.json()).toMatchObject({
+      code: "INVALID_CONTENT",
+      fields: [{ field: "body.en", message: "UNSAFE_LINK" }],
+    });
+  });
+
+  it("the list omits body but keeps the rest of the DTO", async () => {
+    const list = await send("viewer", "GET", "/pages");
+    expect(list.statusCode).toBe(200);
+    const items = list.json<{ items: Record<string, unknown>[] }>().items;
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item).not.toHaveProperty("body");
+      expect(Object.keys(item).sort()).toEqual([
+        "experienceRef",
+        "id",
+        "localeRef",
+        "metaDescription",
+        "name",
+        "publishedAt",
+        "routePath",
+        "seoProfileRef",
+        "status",
+        "templateRef",
+        "title",
+        "updatedAt",
+        "version",
+      ]);
+    }
   });
 });

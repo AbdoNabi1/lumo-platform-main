@@ -15,6 +15,10 @@ import type {
   GetCollectionBySlugInput,
 } from "../application/get-collection-by-slug.use-case";
 import type {
+  GetCollectionsByIds,
+  GetCollectionsByIdsInput,
+} from "../application/get-collections-by-ids.use-case";
+import type {
   ListCollectionProducts,
   ListCollectionProductsInput,
 } from "../application/list-collection-products.use-case";
@@ -60,6 +64,7 @@ export interface CollectionControllerDeps {
   readonly deleteCollection: DeleteCollection;
   readonly listCollections: ListCollections;
   readonly getCollectionBySlug: GetCollectionBySlug;
+  readonly getCollectionsByIds: GetCollectionsByIds;
   readonly listCollectionProducts: ListCollectionProducts;
 }
 
@@ -119,6 +124,11 @@ export class CollectionController {
 
   async getBySlug(input: GetCollectionBySlugInput): Promise<ControllerResponse> {
     return present(await this.deps.getCollectionBySlug.execute(input), 200);
+  }
+
+  /** The tenant's collections among `ids` (a bounded batch); unknown ids are skipped. */
+  async getByIds(input: GetCollectionsByIdsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getCollectionsByIds.execute(input), 200);
   }
 
   /** Paginated, published-only products in one collection's curated order (T5.20). */

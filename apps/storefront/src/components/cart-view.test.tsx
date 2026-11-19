@@ -4,8 +4,8 @@ import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import type { ResolvedCartLine } from "@/lib/cart";
 import type { CartSummary } from "@/lib/runtime-api";
-import type { CartActionResult } from "@/app/cart/actions";
-import type { CheckoutActionResult } from "@/app/checkout/actions";
+import type { CartActionResult } from "@/app/(store)/cart/actions";
+import type { CheckoutActionResult } from "@/app/(store)/checkout/actions";
 import { CartView } from "./cart-view";
 
 const changeQuantity =
@@ -21,7 +21,7 @@ const removeItem =
   vi.fn<(cartId: string, productId: string, variantId?: string) => Promise<CartActionResult>>();
 const clearCart = vi.fn<(cartId: string) => Promise<CartActionResult>>();
 
-vi.mock("@/app/cart/actions", () => ({
+vi.mock("@/app/(store)/cart/actions", () => ({
   changeQuantity: (cartId: string, productId: string, quantity: number, variantId?: string) =>
     changeQuantity(cartId, productId, quantity, variantId),
   removeItem: (cartId: string, productId: string, variantId?: string) =>
@@ -30,7 +30,7 @@ vi.mock("@/app/cart/actions", () => ({
 }));
 
 const startCheckout = vi.fn<(cartId: string) => Promise<CheckoutActionResult>>();
-vi.mock("@/app/checkout/actions", () => ({
+vi.mock("@/app/(store)/checkout/actions", () => ({
   startCheckout: (cartId: string) => startCheckout(cartId),
 }));
 

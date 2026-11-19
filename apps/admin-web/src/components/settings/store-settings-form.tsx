@@ -5,12 +5,12 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Input } from "@platfo
 import { CURRENCY_CODES } from "@platform/regions";
 import { saveStoreSettingsAction } from "@/app/settings/general/actions";
 import { Field, NativeSelect } from "@/components/products/editor/field";
-import type { FormState } from "@/lib/api/mutation";
+import type { LiveSaveState } from "@/lib/api/mutation";
 import type { StoreSettingsDto, WeightUnit } from "@/lib/api/store-settings";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
-const INITIAL_STATE: FormState = { status: "idle" };
+const INITIAL_STATE: LiveSaveState = { status: "idle" };
 const FORM_ID = "store-settings";
 
 interface Values {
@@ -228,7 +228,7 @@ export function StoreSettingsForm({
         )}
         {state.status === "success" && !dirty && (
           <p role="status" className="text-muted-foreground me-auto text-sm">
-            {copy.saved}
+            {"liveDelayed" in state ? copy.savedLiveDelayed : copy.saved}
           </p>
         )}
         {dirty && <span className="text-muted-foreground text-sm">{copy.unsaved}</span>}

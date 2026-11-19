@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type { RouteDefinition } from "@platform/http";
@@ -128,5 +128,75 @@ describe("media library routes — read side (Phase 4 T4.14)", () => {
       {},
     );
     expect(notFound.status).toBe(404);
+  });
+});
+
+describe("media library list — image urls (Part 3, Ruling 19)", () => {
+  const asset = (id: string, contentType: string | undefined, status = "active") => ({
+    id: { toString: () => id },
+    name: `${id}.bin`,
+    storageKey: `tenants/t/${id}`,
+    folderRef: undefined,
+    status: { value: status },
+    contentType,
+  });
+
+  function fakeAdmin(items: unknown[], resolve: (ids: readonly string[]) => Map<string, unknown>) {
+    const execute = vi.fn(async (input: { ids: readonly string[] }) => resolve(input.ids));
+    const admin = {
+      mediaLibrary: {
+        listMediaAssets: async () => ({
+          status: 200,
+          body: { items, pageInfo: { hasNextPage: false, endCursor: null } },
+        }),
+      },
+      mediaImages: { execute },
+    } as unknown as WiredAdmin;
+    return { admin, execute };
+  }
+
+  it("resolves a page in one batched read, maps image only for image assets, and null for an id the resolver omits", async () => {
+    expect.hasAssertions();
+    const { admin, execute } = fakeAdmin(
+      [
+        asset("a1", "image/png"),
+        asset("a2", "application/pdf"),
+        asset("a3", undefined),
+        asset("a4", "image/jpeg"),
+      ],
+      (ids) =>
+        new Map(
+          ids
+            .filter((id) => id !== "a4") // the resolver omits a4 (as it does for an archived asset)
+            .map((id) => [id, { id, url: `https://cdn/${id}`, alt: "x", width: 1, height: 2 }]),
+        ),
+    );
+    const route = byPathAndMethod(mediaLibraryRoutes(admin), "GET", "/media/assets");
+    const response = await call(route, {}, {});
+    const items = (response.body as { items: Record<string, unknown>[] }).items;
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0]![0].ids).toEqual(["a1", "a4"]);
+    expect(items.map((i) => i["image"])).toEqual([
+      { url: "https://cdn/a1", alt: "x", width: 1, height: 2 },
+      null,
+      null,
+      null,
+    ]);
+    expect(items[0]).toMatchObject({
+      id: "a1",
+      name: "a1.bin",
+      storageKey: "tenants/t/a1",
+      folderRef: null,
+      status: "active",
+    });
+  });
+
+  it("makes no resolve call when no asset is an image", async () => {
+    expect.hasAssertions();
+    const { admin, execute } = fakeAdmin([asset("a2", "text/plain")], () => new Map());
+    const route = byPathAndMethod(mediaLibraryRoutes(admin), "GET", "/media/assets");
+    const response = await call(route, {}, {});
+    expect(execute).not.toHaveBeenCalled();
+    expect((response.body as { items: { image: unknown }[] }).items[0]!.image).toBeNull();
   });
 });

@@ -459,7 +459,8 @@ describe("merchant login", () => {
     const refused = await call(login, { email: "a@B.test", password: "x" });
     expect(refused.status).toBe(429);
     expect(new Set(limiter.keys)).toEqual(new Set(["rl:merchant-login:a@b.test|10|900000"]));
-  });
+    // 11 password-hashing logins: ~0.8 s on a laptop, over the 5 s default on a loaded CI runner.
+  }, 30_000);
 });
 
 describe("merchant password reset", () => {

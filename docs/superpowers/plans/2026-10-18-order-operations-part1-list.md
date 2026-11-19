@@ -15,11 +15,11 @@
 Copied verbatim from the spec; every task's requirements include them.
 
 1. **Migrations:** hand-written, additive SQL in `packages/db/prisma/schema/migrations/<ts>_<name>/
-   migration.sql`, never run against a real DB by the agent (owner deploys from Railway's Console
+migration.sql`, never run against a real DB by the agent (owner deploys from Railway's Console
    before the release that reads them). Every new tenant table: `tenant_id TEXT NOT NULL`, `ENABLE` +
    `FORCE ROW LEVEL SECURITY`, `DROP POLICY IF EXISTS tenant_isolation …; CREATE POLICY
-   tenant_isolation … FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)) WITH CHECK
-   (same)` — exactly as `20261012000000_order_numbers`. Prisma models updated in the matching
+tenant_isolation … FOR ALL USING (tenant_id = current_setting('app.tenant_id', true)) WITH CHECK
+(same)` — exactly as `20261012000000_order_numbers`. Prisma models updated in the matching
    `*.prisma` file.
 2. **Per-request tenant (ADR-0014):** new repositories take `tenantId` per call, reads go through
    `runReadScoped` (or the caller's `tx`), writes through the unit of work; nothing is pinned at
@@ -30,10 +30,10 @@ Copied verbatim from the spec; every task's requirements include them.
    `messages/en.ts` and `messages/ar.ts`; logical CSS (`ms-`/`pe-`/`start`/`end`, `rtl:` flips); one
    idempotency key per submit (`newIdempotencyKey()`).
 4. **Public routes:** `public: true`, ownership by `sessionRef` from `x-cart-session`/body, uniform 404,
-   `.strict()` bodies, DTOs never carry `sessionRef`. *(No public route in Part 1.)*
+   `.strict()` bodies, DTOs never carry `sessionRef`. _(No public route in Part 1.)_
 5. **Shopify placement and wording:** the sidebar's Orders item gets children **Drafts** and
    **Abandoned checkouts**, in that order (Shopify's). Labels below are Shopify's English and the
-   matching Arabic. *(No sidebar change in Part 1.)*
+   matching Arabic. _(No sidebar change in Part 1.)_
 
 Anti-goals that bind Part 1 (verbatim):
 
@@ -44,12 +44,12 @@ Anti-goals that bind Part 1 (verbatim):
 
 Permissions (verbatim rows used by Part 1):
 
-| Permission | Who has it today via the role table | Used by |
-| --- | --- | --- |
-| `orders:read` | viewer, operator, admin | lists, detail, drafts list/detail, abandoned list/detail, packing slips |
-| `orders:archive` | operator, admin | archive / unarchive (single and bulk) |
-| `orders:export` | operator, admin | export rows |
-| `payments:confirm_cod_collection` | admin | bulk "Mark cash as received"; draft "Mark as paid" (checked in addition to `orders:complete_draft`) |
+| Permission                        | Who has it today via the role table | Used by                                                                                             |
+| --------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `orders:read`                     | viewer, operator, admin             | lists, detail, drafts list/detail, abandoned list/detail, packing slips                             |
+| `orders:archive`                  | operator, admin                     | archive / unarchive (single and bulk)                                                               |
+| `orders:export`                   | operator, admin                     | export rows                                                                                         |
+| `payments:confirm_cod_collection` | admin                               | bulk "Mark cash as received"; draft "Mark as paid" (checked in addition to `orders:complete_draft`) |
 
 Security and multi-tenancy (verbatim bullets that bind Part 1):
 
@@ -105,7 +105,7 @@ line names the task whose tests pin it.
 1. **A merchant types a phone the Egyptian way** (`010 1234 5678` or `01012345678`) for an order stored
    as `+201012345678` → the order is found. Pinned in **Task 1** (`phoneSearchNeedles` tests and the
    shared list case "search matches the phone typed with the national leading 0").
-2. **Archiving an open, unfulfilled order** → it disappears from Home's "Orders to fulfill" count *and*
+2. **Archiving an open, unfulfilled order** → it disappears from Home's "Orders to fulfill" count _and_
    from the Unfulfilled tab, which still agree. Pinned in **Task 2** (sales-summary tests) and **Task 3**
    (`order-views.e2e.test.ts` "archiving removes an order from the card and the tab together").
 3. **The Payments read fails while exporting or printing slips** → the export/slips request fails
@@ -120,15 +120,18 @@ line names the task whose tests pin it.
 ## File Structure
 
 **packages/db**
+
 - `prisma/schema/migrations/20261018000000_order_archive/migration.sql` — new column + index.
 - `prisma/schema/orders.prisma` — `Order.archivedAt`.
 - `src/schema-migration-consistency.test.ts` — asserts the column is migrated.
 
 **packages/auth**
+
 - `src/role-table-access-control.test.ts` — pins operator/viewer/admin for the new permissions (no
   code change: `orders:*` already covers them).
 
 **services/orders**
+
 - `src/domain/order-statuses.ts` — event-type sets behind the SQL predicates.
 - `src/domain/order-repository.ts` — `OrderListQuery` additions, `ORDER_LIST_MAX_PAGE_SIZE`.
 - `src/domain/order-search.ts` — `phoneSearchNeedles`, `matchesOrderSearch` (in-memory mirror).
@@ -142,12 +145,14 @@ line names the task whose tests pin it.
 - `src/interfaces/order.controller.ts`, `src/composition.ts`, `src/index.ts` — wiring/exports.
 
 **services/payments**
+
 - `src/domain/payment-intent-repository.ts` — `PaymentIntentBatchReader`.
 - `src/application/get-payment-intents-by-ids.use-case.ts` — `GetPaymentIntentsByIds`, `PaymentIntentSummary`.
 - `src/infrastructure/prisma-payment-intent-repository.ts`, `in-memory-payment-intent-repository.ts` — `findByIds`.
 - `src/interfaces/payment.controller.ts`, `src/composition.ts`, `src/index.ts`.
 
 **apps/admin**
+
 - `src/http/order-views.ts` — `ORDER_VIEWS`, `ORDER_STATUS_VALUES`, `viewFilters`, `listOrdersForView`, `orderAnnotationsFor`.
 - `src/http/order-payment-intents.ts` — `paymentIntentsOfOrders` (one batched read).
 - `src/http/order-bulk-actions.ts` — the per-action runners.
@@ -162,6 +167,7 @@ line names the task whose tests pin it.
   `paymentIntentsOf`, `authorizeBulkAction`.
 
 **apps/admin-web**
+
 - `src/lib/api/orders.ts` — view, `archivedAt`, bulk, archive, export rows, packing slips.
 - `src/lib/orders/order-views.ts` — `ORDER_VIEWS`, `parseOrderView`, `ordersViewHref`, `parseOrderIds`, `ORDERS_PAGE_SIZE`.
 - `src/lib/orders/zoned-time.ts` — shop-time-zone day/time helpers.
@@ -205,6 +211,7 @@ EOF
 Model tier: **most-capable** (two stores must implement identical query semantics).
 
 **Files:**
+
 - Create: `packages/db/prisma/schema/migrations/20261018000000_order_archive/migration.sql`
 - Modify: `packages/db/prisma/schema/orders.prisma` (model `Order`)
 - Modify: `packages/db/src/schema-migration-consistency.test.ts`
@@ -220,6 +227,7 @@ Model tier: **most-capable** (two stores must implement identical query semantic
 - Modify: `services/orders/src/infrastructure/prisma-order-repository.integration.test.ts`
 
 **Interfaces:**
+
 - Consumes: existing `OrderListQuery`, `derivePaymentStatus`, `isOpenOrder`, `CANCELLED_EVENT_TYPE`,
   `CLOSED_EVENT_TYPE`, `REFUNDED_EVENT_TYPES`, `OrderMapper`, `buildPaginatedPage`, `decodeCursor`.
 - Produces:
@@ -300,10 +308,27 @@ import {
 } from "./order-statuses";
 
 const EVERY_EVENT_TYPE: readonly OrderEventType[] = [
-  "placed", "paid", "refunded", "created", "confirmed", "cancelled", "held", "resumed",
-  "awaiting_payment", "payment_requested", "payment_received", "payment_failed",
-  "ready_for_fulfillment", "fulfillment_requested", "fulfilled", "partially_fulfilled",
-  "delivered", "return_requested", "returned", "refund_requested", "closed",
+  "placed",
+  "paid",
+  "refunded",
+  "created",
+  "confirmed",
+  "cancelled",
+  "held",
+  "resumed",
+  "awaiting_payment",
+  "payment_requested",
+  "payment_received",
+  "payment_failed",
+  "ready_for_fulfillment",
+  "fulfillment_requested",
+  "fulfilled",
+  "partially_fulfilled",
+  "delivered",
+  "return_requested",
+  "returned",
+  "refund_requested",
+  "closed",
 ];
 
 describe("the event-type sets behind the list's SQL predicates (order operations Part 1)", () => {
@@ -777,9 +802,7 @@ export function orderListWhere(
   return {
     tenantId,
     ...(id.lt !== undefined || id.in !== undefined ? { id } : {}),
-    ...(query.archived === undefined
-      ? {}
-      : { archivedAt: query.archived ? { not: null } : null }),
+    ...(query.archived === undefined ? {} : { archivedAt: query.archived ? { not: null } : null }),
     ...(search.length > 0
       ? {
           OR: [
@@ -1477,6 +1500,7 @@ EOF
 Model tier: **standard**.
 
 **Files:**
+
 - Create: `services/orders/src/domain/order-annotations.ts`
 - Create: `services/orders/src/infrastructure/in-memory-order-annotation-repository.ts`
 - Create: `services/orders/src/infrastructure/prisma-order-annotation-repository.ts`
@@ -1487,6 +1511,7 @@ Model tier: **standard**.
 - Modify: `services/orders/src/infrastructure/in-memory-sales-summary-query.ts`, `in-memory-sales-summary-query.test.ts`
 
 **Interfaces:**
+
 - Consumes (Task 1): `InMemoryOrderRepository.hasOrder/archivedAtOf/writeArchivedAt`, `uuidsOf`, Prisma `Order.archivedAt`.
 - Produces:
   - `interface OrderAnnotations { readonly archivedAt: Date | null }`
@@ -1608,7 +1633,11 @@ async function wire(orderIds: readonly string[] = ["o-1", "o-2"]) {
   };
 }
 
-const input = (orderIds: readonly string[]) => ({ tenantId: TENANT, orderIds, actorRef: "staff-1" });
+const input = (orderIds: readonly string[]) => ({
+  tenantId: TENANT,
+  orderIds,
+  actorRef: "staff-1",
+});
 
 describe("ArchiveOrders / UnarchiveOrders (order operations Part 1)", () => {
   it("archives each order and reports it changed, with the archive time", async () => {
@@ -1916,7 +1945,11 @@ async function setArchiveState(
 }
 
 /** Shopify's Archive for one or many orders (spec §1.2). Idempotent; never touches the aggregate. */
-export class ArchiveOrders implements UseCase<ArchiveOrdersInput, ArchiveOrdersOutput, DomainError> {
+export class ArchiveOrders implements UseCase<
+  ArchiveOrdersInput,
+  ArchiveOrdersOutput,
+  DomainError
+> {
   private readonly deps: OrderAnnotationsDeps;
 
   constructor(deps: OrderAnnotationsDeps) {
@@ -2005,7 +2038,11 @@ async function annotationLayers(): Promise<
   const memoryOrders = repository();
   await memoryOrders.save(placeOrder(VICTIM), "tenant-b");
   return [
-    ["prisma over fake-prisma", new PrismaOrderAnnotationRepository({ prisma: fake.database }), fake.database],
+    [
+      "prisma over fake-prisma",
+      new PrismaOrderAnnotationRepository({ prisma: fake.database }),
+      fake.database,
+    ],
     ["in-memory", new InMemoryOrderAnnotationRepository({ orders: memoryOrders }), undefined],
   ];
 }
@@ -2013,9 +2050,14 @@ async function annotationLayers(): Promise<
 describe("order annotations tenant isolation (order operations Part 1)", () => {
   it("tenant A can neither archive nor read tenant B's order; B can archive its own", async () => {
     for (const [layer, annotations, tx] of await annotationLayers()) {
-      expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-a", tx), layer).toEqual([]);
+      expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-a", tx), layer).toEqual(
+        [],
+      );
       expect((await annotations.annotationsOf([VICTIM], "tenant-a", tx)).size, layer).toBe(0);
-      expect((await annotations.annotationsOf([VICTIM], "tenant-b", tx)).get(VICTIM), layer).toEqual({
+      expect(
+        (await annotations.annotationsOf([VICTIM], "tenant-b", tx)).get(VICTIM),
+        layer,
+      ).toEqual({
         archivedAt: null,
       });
       expect(await annotations.setArchived([VICTIM], new Date(1), "tenant-b", tx), layer).toEqual([
@@ -2036,31 +2078,31 @@ Append to `services/orders/src/infrastructure/prisma-sales-summary-query.test.ts
 `describe`:
 
 ```ts
-  it("leaves archived orders out of the open orders (Home's card = the Unfulfilled tab)", async () => {
-    const withOpen = fakeDatabase([[], [], [], []]);
-    await new PrismaSalesSummaryQuery({ prisma: withOpen.database }).summarize({
-      ...RANGE,
-      includeOpenOrderIds: true,
-    });
-    expect(withOpen.calls[3]?.sql).toContain('o."archived_at" IS NULL');
+it("leaves archived orders out of the open orders (Home's card = the Unfulfilled tab)", async () => {
+  const withOpen = fakeDatabase([[], [], [], []]);
+  await new PrismaSalesSummaryQuery({ prisma: withOpen.database }).summarize({
+    ...RANGE,
+    includeOpenOrderIds: true,
   });
+  expect(withOpen.calls[3]?.sql).toContain('o."archived_at" IS NULL');
+});
 ```
 
 Append to `services/orders/src/infrastructure/in-memory-sales-summary-query.test.ts`:
 
 ```ts
-  it("leaves archived orders out of the open orders (order operations Part 1)", async () => {
-    const orders = [
-      order({ id: "open", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
-      order({ id: "archived", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
-    ];
-    const summary = await new InMemorySalesSummaryQuery({
-      ordersOf: () => orders,
-      isArchived: (orderId) => orderId === "archived",
-    }).summarize({ ...RANGE, includeOpenOrderIds: true });
+it("leaves archived orders out of the open orders (order operations Part 1)", async () => {
+  const orders = [
+    order({ id: "open", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
+    order({ id: "archived", createdAt: "2026-10-10T09:00:00Z", totalMinor: 1 }),
+  ];
+  const summary = await new InMemorySalesSummaryQuery({
+    ordersOf: () => orders,
+    isArchived: (orderId) => orderId === "archived",
+  }).summarize({ ...RANGE, includeOpenOrderIds: true });
 
-    expect(summary.openOrderIds).toEqual(["open"]);
-  });
+  expect(summary.openOrderIds).toEqual(["open"]);
+});
 ```
 
 Run both files: `pnpm --filter @platform/orders exec vitest run src/infrastructure/prisma-sales-summary-query.test.ts src/infrastructure/in-memory-sales-summary-query.test.ts`
@@ -2137,6 +2179,7 @@ and the methods:
 ```
 
 `services/orders/src/composition.ts`:
+
 - `buildController(orders, unitOfWork, orderNumbers, sales, annotations: OrderAnnotationRepository, deps)`
   and inside `new OrderController({ … })`:
 
@@ -2150,19 +2193,19 @@ and the methods:
 - In-memory branch:
 
 ```ts
-  const orders = new InMemoryOrderRepository({ outbox: outboxWriter, context });
-  const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(
-    orders,
-    unitOfWork,
-    new InMemoryOrderNumberAllocator(),
-    new InMemorySalesSummaryQuery({
-      ordersOf: (tenantId) => orders.ordersOf(tenantId),
-      isArchived: (orderId, tenantId) => orders.archivedAtOf(orderId, tenantId) !== null,
-    }),
-    new InMemoryOrderAnnotationRepository({ orders }),
-    deps,
-  );
+const orders = new InMemoryOrderRepository({ outbox: outboxWriter, context });
+const unitOfWork = new InMemoryUnitOfWork();
+const controller = buildController(
+  orders,
+  unitOfWork,
+  new InMemoryOrderNumberAllocator(),
+  new InMemorySalesSummaryQuery({
+    ordersOf: (tenantId) => orders.ordersOf(tenantId),
+    isArchived: (orderId, tenantId) => orders.archivedAtOf(orderId, tenantId) !== null,
+  }),
+  new InMemoryOrderAnnotationRepository({ orders }),
+  deps,
+);
 ```
 
 `services/orders/src/index.ts` — add:
@@ -2206,6 +2249,7 @@ EOF
 Model tier: **standard**.
 
 **Files:**
+
 - Create: `apps/admin/src/http/order-views.ts`
 - Create: `apps/admin/src/http/order-operations-routes.ts`
 - Create: `apps/admin/src/http/testing/orders-harness.ts`
@@ -2216,6 +2260,7 @@ Model tier: **standard**.
 - Modify: `packages/auth/src/role-table-access-control.test.ts`
 
 **Interfaces:**
+
 - Consumes (Task 2): `OrderController.archiveOrders/unarchiveOrders/orderAnnotations`, `ArchiveOrdersOutput`, `OrderAnnotations`.
 - Produces:
   - `OrdersAdminController.archiveOrders(principal, input: ArchiveOrdersInput)` (`orders:archive`), `.unarchiveOrders(principal, input)` (`orders:archive`), `.orderAnnotations(principal, { tenantId, orderIds })` (`orders:read`).
@@ -2230,17 +2275,17 @@ Model tier: **standard**.
 Append to `packages/auth/src/role-table-access-control.test.ts`, inside `describe("RoleTableAccessControl")`:
 
 ```ts
-  it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
-    const op = who(["operator"]);
-    const viewer = who(["viewer"]);
-    expect(await acl.authorize(op, "orders:archive")).toBe(true);
-    expect(await acl.authorize(op, "orders:export")).toBe(true);
-    expect(await acl.authorize(viewer, "orders:archive")).toBe(false);
-    expect(await acl.authorize(viewer, "orders:export")).toBe(false);
-    expect(await acl.authorize(viewer, "orders:read")).toBe(true);
-    expect(await acl.authorize(op, "payments:confirm_cod_collection")).toBe(false);
-    expect(await acl.authorize(who(["admin"]), "payments:confirm_cod_collection")).toBe(true);
-  });
+it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
+  const op = who(["operator"]);
+  const viewer = who(["viewer"]);
+  expect(await acl.authorize(op, "orders:archive")).toBe(true);
+  expect(await acl.authorize(op, "orders:export")).toBe(true);
+  expect(await acl.authorize(viewer, "orders:archive")).toBe(false);
+  expect(await acl.authorize(viewer, "orders:export")).toBe(false);
+  expect(await acl.authorize(viewer, "orders:read")).toBe(true);
+  expect(await acl.authorize(op, "payments:confirm_cod_collection")).toBe(false);
+  expect(await acl.authorize(who(["admin"]), "payments:confirm_cod_collection")).toBe(true);
+});
 ```
 
 Run: `pnpm --filter @platform/auth exec vitest run src/role-table-access-control.test.ts`
@@ -2250,42 +2295,43 @@ is not a viewer permission. No production change in `packages/auth`.
 - [ ] **Step 2: Write the failing controller tests**
 
 In `apps/admin/src/interfaces/orders.admin-controller.test.ts`:
+
 - add `"archiveOrders", "unarchiveOrders", "orderAnnotations"` to the `expect.arrayContaining([...])`
   list of the prototype walk, and add `actorRef: "staff-1"` to the input bag it passes;
 - append:
 
 ```ts
-  describe("archive (order operations Part 1)", () => {
-    it("archive and unarchive ask for orders:archive and pass the input through", async () => {
-      const { guard, asked } = guardAnswering(true);
-      const archiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
-      const unarchiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
-      const target = controller(guard, {
-        orders: { archiveOrders, unarchiveOrders } as unknown as OrderController,
-      });
-      const input = { tenantId: "t-1", orderIds: ["o-1"], actorRef: "staff-1" };
-
-      await target.archiveOrders(staff, input);
-      await target.unarchiveOrders(staff, input);
-
-      expect(asked).toEqual(["orders:archive", "orders:archive"]);
-      expect(archiveOrders).toHaveBeenCalledWith(input);
-      expect(unarchiveOrders).toHaveBeenCalledWith(input);
+describe("archive (order operations Part 1)", () => {
+  it("archive and unarchive ask for orders:archive and pass the input through", async () => {
+    const { guard, asked } = guardAnswering(true);
+    const archiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
+    const unarchiveOrders = vi.fn().mockResolvedValue({ status: 200, body: { results: [] } });
+    const target = controller(guard, {
+      orders: { archiveOrders, unarchiveOrders } as unknown as OrderController,
     });
+    const input = { tenantId: "t-1", orderIds: ["o-1"], actorRef: "staff-1" };
 
-    it("reads annotations under orders:read", async () => {
-      const { guard, asked } = guardAnswering(true);
-      const orderAnnotations = vi.fn().mockResolvedValue({ status: 200, body: new Map() });
-      const target = controller(guard, {
-        orders: { orderAnnotations } as unknown as OrderController,
-      });
+    await target.archiveOrders(staff, input);
+    await target.unarchiveOrders(staff, input);
 
-      await target.orderAnnotations(staff, { tenantId: "t-1", orderIds: ["o-1"] });
-
-      expect(asked).toEqual(["orders:read"]);
-      expect(orderAnnotations).toHaveBeenCalledWith({ tenantId: "t-1", orderIds: ["o-1"] });
-    });
+    expect(asked).toEqual(["orders:archive", "orders:archive"]);
+    expect(archiveOrders).toHaveBeenCalledWith(input);
+    expect(unarchiveOrders).toHaveBeenCalledWith(input);
   });
+
+  it("reads annotations under orders:read", async () => {
+    const { guard, asked } = guardAnswering(true);
+    const orderAnnotations = vi.fn().mockResolvedValue({ status: 200, body: new Map() });
+    const target = controller(guard, {
+      orders: { orderAnnotations } as unknown as OrderController,
+    });
+
+    await target.orderAnnotations(staff, { tenantId: "t-1", orderIds: ["o-1"] });
+
+    expect(asked).toEqual(["orders:read"]);
+    expect(orderAnnotations).toHaveBeenCalledWith({ tenantId: "t-1", orderIds: ["o-1"] });
+  });
+});
 ```
 
 Run: `pnpm --filter @platform/admin exec vitest run src/interfaces/orders.admin-controller.test.ts`
@@ -2343,9 +2389,24 @@ import { wireAdmin, type WiredAdmin } from "../../composition";
 export const HARNESS_NOW = new Date("2026-07-05T00:00:00.000Z");
 export const HARNESS_TENANT = "shop-a";
 
-export const adminStaff: Principal = { id: "staff-admin", kind: "staff", roles: ["admin"], tenantId: HARNESS_TENANT };
-export const operatorStaff: Principal = { id: "staff-op", kind: "staff", roles: ["operator"], tenantId: HARNESS_TENANT };
-export const viewerStaff: Principal = { id: "staff-viewer", kind: "staff", roles: ["viewer"], tenantId: HARNESS_TENANT };
+export const adminStaff: Principal = {
+  id: "staff-admin",
+  kind: "staff",
+  roles: ["admin"],
+  tenantId: HARNESS_TENANT,
+};
+export const operatorStaff: Principal = {
+  id: "staff-op",
+  kind: "staff",
+  roles: ["operator"],
+  tenantId: HARNESS_TENANT,
+};
+export const viewerStaff: Principal = {
+  id: "staff-viewer",
+  kind: "staff",
+  roles: ["viewer"],
+  tenantId: HARNESS_TENANT,
+};
 
 export function buildOrdersAdmin(): WiredAdmin {
   let n = 0;
@@ -2363,7 +2424,10 @@ export function buildOrdersAdmin(): WiredAdmin {
 }
 
 /** A legacy `placed` order (payment pending, open, unfulfilled) — returns its id. */
-export async function placeTestOrder(admin: WiredAdmin, tenantId = HARNESS_TENANT): Promise<string> {
+export async function placeTestOrder(
+  admin: WiredAdmin,
+  tenantId = HARNESS_TENANT,
+): Promise<string> {
   const response = await admin.orders.placeOrder(adminStaff, {
     tenantId,
     customerRef: "customer-1",
@@ -2431,7 +2495,13 @@ async function listed(admin: WiredAdmin, query: Record<string, string>): Promise
 }
 
 async function archive(admin: WiredAdmin, orderId: string, principal = adminStaff) {
-  return callRoute(adminRoutes(admin), "POST", "/orders/:orderId/archive", { params: { orderId } }, principal);
+  return callRoute(
+    adminRoutes(admin),
+    "POST",
+    "/orders/:orderId/archive",
+    { params: { orderId } },
+    principal,
+  );
 }
 
 describe("GET /orders views (order operations Part 1, on the real in-memory composition)", () => {
@@ -2442,10 +2512,22 @@ describe("GET /orders views (order operations Part 1, on the real in-memory comp
     const cancelled = await placeTestOrder(admin);
     const archived = await placeTestOrder(admin);
     expect(
-      (await admin.orders.markOrderPaid(adminStaff, { tenantId: HARNESS_TENANT, orderId: paid, paymentRef: "pay-1" })).status,
+      (
+        await admin.orders.markOrderPaid(adminStaff, {
+          tenantId: HARNESS_TENANT,
+          orderId: paid,
+          paymentRef: "pay-1",
+        })
+      ).status,
     ).toBe(200);
     expect(
-      (await admin.orders.advanceOrder(adminStaff, { tenantId: HARNESS_TENANT, orderId: cancelled, toStatus: "cancelled" })).status,
+      (
+        await admin.orders.advanceOrder(adminStaff, {
+          tenantId: HARNESS_TENANT,
+          orderId: cancelled,
+          toStatus: "cancelled",
+        })
+      ).status,
     ).toBe(200);
     expect((await archive(admin, archived)).status).toBe(200);
 
@@ -2469,8 +2551,12 @@ describe("GET /orders views (order operations Part 1, on the real in-memory comp
     expect(byId.get(kept)).toBeNull();
     expect(byId.get(archived)).toBe(HARNESS_NOW.toISOString());
 
-    const detail = await callRoute(adminRoutes(admin), "GET", "/orders/:orderId", { params: { orderId: archived } });
-    expect((detail.body as { archivedAt: string | null }).archivedAt).toBe(HARNESS_NOW.toISOString());
+    const detail = await callRoute(adminRoutes(admin), "GET", "/orders/:orderId", {
+      params: { orderId: archived },
+    });
+    expect((detail.body as { archivedAt: string | null }).archivedAt).toBe(
+      HARNESS_NOW.toISOString(),
+    );
   });
 });
 
@@ -2481,9 +2567,14 @@ describe("POST /orders/:orderId/archive and /unarchive", () => {
 
     const first = await archive(admin, orderId);
     const again = await archive(admin, orderId);
-    const undone = await callRoute(adminRoutes(admin), "POST", "/orders/:orderId/unarchive", { params: { orderId } });
+    const undone = await callRoute(adminRoutes(admin), "POST", "/orders/:orderId/unarchive", {
+      params: { orderId },
+    });
 
-    expect(first).toEqual({ status: 200, body: { orderId, archivedAt: HARNESS_NOW.toISOString() } });
+    expect(first).toEqual({
+      status: 200,
+      body: { orderId, archivedAt: HARNESS_NOW.toISOString() },
+    });
     expect(again).toEqual(first);
     expect(undone).toEqual({ status: 200, body: { orderId, archivedAt: null } });
   });
@@ -2505,7 +2596,9 @@ describe("POST /orders/:orderId/archive and /unarchive", () => {
   it("declares orders:archive on both routes", () => {
     const routes = adminRoutes(buildOrdersAdmin());
     for (const path of ["/orders/:orderId/archive", "/orders/:orderId/unarchive"]) {
-      expect(routes.find((r) => r.method === "POST" && r.path === path)?.permission).toBe("orders:archive");
+      expect(routes.find((r) => r.method === "POST" && r.path === path)?.permission).toBe(
+        "orders:archive",
+      );
     }
   });
 });
@@ -2526,7 +2619,9 @@ describe("Home's Orders to fulfill and the Unfulfilled tab stay one definition (
     const tab = await listed(admin, { view: "unfulfilled" });
 
     expect(tab).toEqual([kept]);
-    expect((card.body as { current: { ordersToFulfill: number } }).current.ordersToFulfill).toBe(tab.length);
+    expect((card.body as { current: { ordersToFulfill: number } }).current.ordersToFulfill).toBe(
+      tab.length,
+    );
   });
 });
 ```
@@ -2581,7 +2676,9 @@ type ListInput = Parameters<WiredAdmin["orders"]["listOrders"]>[1];
 export type OrderListFilters = Omit<ListInput, "tenantId" | "archived" | "open" | "paymentStatus">;
 
 /** Each tab as repository predicates; `unfulfilled` adds the Fulfillment-side check in `listUnfulfilledOrders`. */
-export function viewFilters(view: OrderView): Pick<ListInput, "archived" | "open" | "paymentStatus"> {
+export function viewFilters(
+  view: OrderView,
+): Pick<ListInput, "archived" | "open" | "paymentStatus"> {
   switch (view) {
     case "all":
       return {};
@@ -2726,7 +2823,8 @@ export function orderOperationsRoutes(admin: WiredAdmin): readonly RouteDefiniti
       version: 1,
       permission: "orders:archive",
       idempotent: true,
-      summary: "Archive an order (Shopify's reversible Archive; the lifecycle and version are untouched)",
+      summary:
+        "Archive an order (Shopify's reversible Archive; the lifecycle and version are untouched)",
       schema: { params: orderIdParams },
       handle: ({ params, context }) =>
         setOneArchived(admin, context.principal, context.tenantId, params.orderId, true),
@@ -2800,20 +2898,18 @@ In `apps/admin/src/http/admin-routes.ts`:
       },
 ```
 
-   Update the route `summary` to "List orders by Shopify view (all/unfulfilled/unpaid/open/archived), most recent first".
-6. `OrderDetailDto` gains `readonly archivedAt: string | null;`; `toOrderDetailDto` takes a trailing
-   `archivedAt: Date | null` and sets `archivedAt: archivedAt?.toISOString() ?? null`. In the
-   `GET /orders/:orderId` handler, after the fulfillment read:
+Update the route `summary` to "List orders by Shopify view (all/unfulfilled/unpaid/open/archived), most recent first". 6. `OrderDetailDto` gains `readonly archivedAt: string | null;`; `toOrderDetailDto` takes a trailing
+`archivedAt: Date | null` and sets `archivedAt: archivedAt?.toISOString() ?? null`. In the
+`GET /orders/:orderId` handler, after the fulfillment read:
 
 ```ts
-        const annotations = await orderAnnotationsFor(admin, context.principal, context.tenantId, [
-          order.id.toString(),
-        ]);
-        if (!annotations.ok) return annotations.response;
+const annotations = await orderAnnotationsFor(admin, context.principal, context.tenantId, [
+  order.id.toString(),
+]);
+if (!annotations.ok) return annotations.response;
 ```
 
-   and pass `annotations.byOrder.get(order.id.toString())?.archivedAt ?? null` to `toOrderDetailDto`.
-7. In `adminRoutes`' returned list, add `...orderOperationsRoutes(admin),` next to `...fulfillmentRoutes(admin),`.
+and pass `annotations.byOrder.get(order.id.toString())?.archivedAt ?? null` to `toOrderDetailDto`. 7. In `adminRoutes`' returned list, add `...orderOperationsRoutes(admin),` next to `...fulfillmentRoutes(admin),`.
 
 - [ ] **Step 10: Run the e2e test and the whole admin suite**
 
@@ -2844,6 +2940,7 @@ EOF
 Model tier: **cheap** (mechanical, fully specified).
 
 **Files:**
+
 - Modify: `services/payments/src/domain/payment-intent-repository.ts`
 - Modify: `services/payments/src/infrastructure/prisma-payment-intent-repository.ts`
 - Modify: `services/payments/src/infrastructure/in-memory-payment-intent-repository.ts`
@@ -2854,6 +2951,7 @@ Model tier: **cheap** (mechanical, fully specified).
 - Create: `apps/admin/src/http/order-payment-intents.ts`, `apps/admin/src/http/order-payment-intents.test.ts`
 
 **Interfaces:**
+
 - Consumes: `PaymentIntent` getters (`id`, `orderRef`, `provider`, `status.value`, `amount.amountMinor`, `amount.currency`), `ProviderCapabilityLookup`, `isSettledByOperatorConfirmation`.
 - Produces:
   - `interface PaymentIntentBatchReader { findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly PaymentIntent[]> }` (implemented by both repositories; a separate port so the many test doubles of `PaymentIntentRepository` need no change).
@@ -2912,10 +3010,22 @@ async function wire() {
     }),
     context: rootEventContext({ generate: () => "evt" }),
   });
-  await intents.save(PaymentIntent.createIntent(UniqueEntityId.from("i-cod"), "o-1", egp(45000), "cod"), "t-a");
-  await intents.save(PaymentIntent.createIntent(UniqueEntityId.from("i-card"), "o-2", egp(1000), "stripe"), "t-a");
-  await intents.save(PaymentIntent.createIntent(UniqueEntityId.from("i-gone"), "o-3", egp(1), "retired"), "t-a");
-  await intents.save(PaymentIntent.createIntent(UniqueEntityId.from("i-theirs"), "o-9", egp(1), "cod"), "t-b");
+  await intents.save(
+    PaymentIntent.createIntent(UniqueEntityId.from("i-cod"), "o-1", egp(45000), "cod"),
+    "t-a",
+  );
+  await intents.save(
+    PaymentIntent.createIntent(UniqueEntityId.from("i-card"), "o-2", egp(1000), "stripe"),
+    "t-a",
+  );
+  await intents.save(
+    PaymentIntent.createIntent(UniqueEntityId.from("i-gone"), "o-3", egp(1), "retired"),
+    "t-a",
+  );
+  await intents.save(
+    PaymentIntent.createIntent(UniqueEntityId.from("i-theirs"), "o-9", egp(1), "cod"),
+    "t-b",
+  );
   return intents;
 }
 
@@ -2926,9 +3036,36 @@ describe("GetPaymentIntentsByIds (order operations Part 1)", () => {
       paymentIntentIds: ["i-cod", "i-card", "i-gone"],
     });
     expect(result.ok && result.value).toEqual([
-      { id: "i-cod", orderRef: "o-1", provider: "cod", status: "created", amountMinor: 45000, currency: "EGP", settlesAtPayTime: true, settledByOperatorConfirmation: true },
-      { id: "i-card", orderRef: "o-2", provider: "stripe", status: "created", amountMinor: 1000, currency: "EGP", settlesAtPayTime: false, settledByOperatorConfirmation: false },
-      { id: "i-gone", orderRef: "o-3", provider: "retired", status: "created", amountMinor: 1, currency: "EGP", settlesAtPayTime: false, settledByOperatorConfirmation: false },
+      {
+        id: "i-cod",
+        orderRef: "o-1",
+        provider: "cod",
+        status: "created",
+        amountMinor: 45000,
+        currency: "EGP",
+        settlesAtPayTime: true,
+        settledByOperatorConfirmation: true,
+      },
+      {
+        id: "i-card",
+        orderRef: "o-2",
+        provider: "stripe",
+        status: "created",
+        amountMinor: 1000,
+        currency: "EGP",
+        settlesAtPayTime: false,
+        settledByOperatorConfirmation: false,
+      },
+      {
+        id: "i-gone",
+        orderRef: "o-3",
+        provider: "retired",
+        status: "created",
+        amountMinor: 1,
+        currency: "EGP",
+        settlesAtPayTime: false,
+        settledByOperatorConfirmation: false,
+      },
     ]);
   });
 
@@ -2975,7 +3112,11 @@ Append to `services/payments/src/domain/payment-intent-repository.ts`:
  * tests stay valid. Ids of other shops and unknown ids are simply absent from the answer.
  */
 export interface PaymentIntentBatchReader {
-  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly PaymentIntent[]>;
+  findByIds(
+    ids: readonly string[],
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<readonly PaymentIntent[]>;
 }
 ```
 
@@ -3052,7 +3193,10 @@ export class GetPaymentIntentsByIds implements UseCase<
     if (ids.length > MAX_PAYMENT_INTENTS_PER_READ) {
       return err(
         new ValidationError(`At most ${MAX_PAYMENT_INTENTS_PER_READ} payment intents per read`, [
-          { field: "paymentIntentIds", message: `must hold at most ${MAX_PAYMENT_INTENTS_PER_READ} ids` },
+          {
+            field: "paymentIntentIds",
+            message: `must hold at most ${MAX_PAYMENT_INTENTS_PER_READ} ids`,
+          },
         ]),
       );
     }
@@ -3203,23 +3347,26 @@ In `apps/admin/src/interfaces/orders.admin-controller.test.ts`: widen the `payme
 `"paymentIntentsOf"` to the prototype list and `paymentIntentIds: ["p-1"]` to the input bag, and append:
 
 ```ts
-  describe("paymentIntentsOf (order operations Part 1)", () => {
-    it("asks for orders:read and reads every intent in one call", async () => {
-      const { guard, asked } = guardAnswering(true);
-      const getPaymentIntentsByIds = vi.fn().mockResolvedValue({ status: 200, body: [] });
-      const target = controller(guard, {
-        payments: { getPaymentIntentsByIds } as unknown as Pick<
-          PaymentController,
-          "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
-        >,
-      });
+describe("paymentIntentsOf (order operations Part 1)", () => {
+  it("asks for orders:read and reads every intent in one call", async () => {
+    const { guard, asked } = guardAnswering(true);
+    const getPaymentIntentsByIds = vi.fn().mockResolvedValue({ status: 200, body: [] });
+    const target = controller(guard, {
+      payments: { getPaymentIntentsByIds } as unknown as Pick<
+        PaymentController,
+        "getPaymentIntent" | "refundLifecycle" | "getPaymentIntentsByIds"
+      >,
+    });
 
-      await target.paymentIntentsOf(staff, { tenantId: "t-1", paymentIntentIds: ["p-1", "p-2"] });
+    await target.paymentIntentsOf(staff, { tenantId: "t-1", paymentIntentIds: ["p-1", "p-2"] });
 
-      expect(asked).toEqual(["orders:read"]);
-      expect(getPaymentIntentsByIds).toHaveBeenCalledWith({ tenantId: "t-1", paymentIntentIds: ["p-1", "p-2"] });
+    expect(asked).toEqual(["orders:read"]);
+    expect(getPaymentIntentsByIds).toHaveBeenCalledWith({
+      tenantId: "t-1",
+      paymentIntentIds: ["p-1", "p-2"],
     });
   });
+});
 ```
 
 `apps/admin/src/http/order-payment-intents.test.ts`:
@@ -3243,10 +3390,17 @@ describe("paymentIntentsOfOrders", () => {
     const intent = { id: "i-1", orderRef: "o-1" };
     const { admin, paymentIntentsOf } = adminAnswering({ status: 200, body: [intent] });
 
-    const found = await paymentIntentsOfOrders(admin, principal, "t-1", [order("i-1"), order(undefined), order("i-1")]);
+    const found = await paymentIntentsOfOrders(admin, principal, "t-1", [
+      order("i-1"),
+      order(undefined),
+      order("i-1"),
+    ]);
 
     expect(paymentIntentsOf).toHaveBeenCalledTimes(1);
-    expect(paymentIntentsOf).toHaveBeenCalledWith(principal, { tenantId: "t-1", paymentIntentIds: ["i-1"] });
+    expect(paymentIntentsOf).toHaveBeenCalledWith(principal, {
+      tenantId: "t-1",
+      paymentIntentIds: ["i-1"],
+    });
     expect(found.ok && found.byId.get("i-1")).toEqual(intent);
   });
 
@@ -3308,7 +3462,9 @@ export async function paymentIntentsOfOrders(
   | { readonly ok: false; readonly response: AdminResponse }
 > {
   const paymentIntentIds = [
-    ...new Set(orders.flatMap((order) => (order.paymentRef === undefined ? [] : [order.paymentRef]))),
+    ...new Set(
+      orders.flatMap((order) => (order.paymentRef === undefined ? [] : [order.paymentRef])),
+    ),
   ];
   if (paymentIntentIds.length === 0) return { ok: true, byId: new Map() };
   const response = await admin.orders.paymentIntentsOf(principal, { tenantId, paymentIntentIds });
@@ -3343,6 +3499,7 @@ EOF
 Model tier: **most-capable** (money and stock actions; per-order skip rules must be exact).
 
 **Files:**
+
 - Create: `apps/admin/src/interfaces/bulk-order-actions.ts`
 - Modify: `apps/admin/src/interfaces/orders.admin-controller.ts`, `orders.admin-controller.test.ts`
 - Create: `apps/admin/src/http/order-bulk-actions.ts`, `apps/admin/src/http/order-bulk-actions.test.ts`
@@ -3350,6 +3507,7 @@ Model tier: **most-capable** (money and stock actions; per-order skip rules must
 - Create: `apps/admin/src/http/order-operations-routes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `archiveOrders/unarchiveOrders/listOrders/requestPaymentCapture/fulfillmentsOfOrders/paymentIntentsOf` (OrdersAdminController), `admin.fulfillment.create`, `admin.payments.confirmCodCollection`, `fulfillmentStatusesOf`, `paymentIntentsOfOrders` (Task 4), `isOpenOrder`, `derivePaymentStatus`, harness (Task 3).
 - Produces:
   - `BULK_ORDER_ACTIONS = ["archive","unarchive","fulfill","capture_payments","mark_cod_collected"] as const`, `type BulkOrderAction`, `BULK_ACTION_PERMISSIONS: Readonly<Record<BulkOrderAction, Permission>>`.
@@ -3390,24 +3548,26 @@ In `orders.admin-controller.test.ts`: add `"authorizeBulkAction"` to the prototy
 `action: "archive"` to the input bag, and append:
 
 ```ts
-  describe("authorizeBulkAction (order operations Part 1)", () => {
-    it.each([
-      ["archive", "orders:archive"],
-      ["unarchive", "orders:archive"],
-      ["fulfill", "fulfillment:create"],
-      ["capture_payments", "orders:request_payment_capture"],
-      ["mark_cod_collected", "payments:confirm_cod_collection"],
-    ] as const)("%s asks for %s", async (action, permission) => {
-      const { guard, asked } = guardAnswering(true);
-      expect(await controller(guard).authorizeBulkAction(staff, { action })).toBeNull();
-      expect(asked).toEqual([permission]);
-    });
-
-    it("answers 403 when the caller lacks the action's permission", async () => {
-      const { guard } = guardAnswering(false);
-      expect((await controller(guard).authorizeBulkAction(staff, { action: "archive" }))?.status).toBe(403);
-    });
+describe("authorizeBulkAction (order operations Part 1)", () => {
+  it.each([
+    ["archive", "orders:archive"],
+    ["unarchive", "orders:archive"],
+    ["fulfill", "fulfillment:create"],
+    ["capture_payments", "orders:request_payment_capture"],
+    ["mark_cod_collected", "payments:confirm_cod_collection"],
+  ] as const)("%s asks for %s", async (action, permission) => {
+    const { guard, asked } = guardAnswering(true);
+    expect(await controller(guard).authorizeBulkAction(staff, { action })).toBeNull();
+    expect(asked).toEqual([permission]);
   });
+
+  it("answers 403 when the caller lacks the action's permission", async () => {
+    const { guard } = guardAnswering(false);
+    expect(
+      (await controller(guard).authorizeBulkAction(staff, { action: "archive" }))?.status,
+    ).toBe(403);
+  });
+});
 ```
 
 Run: `pnpm --filter @platform/admin exec vitest run src/interfaces/orders.admin-controller.test.ts`
@@ -3488,8 +3648,11 @@ function stubAdmin(orders: readonly Order[]) {
   };
 }
 
-const run = (action: keyof typeof BULK_RUNNERS, admin: ReturnType<typeof stubAdmin>, orderIds: readonly string[]) =>
-  BULK_RUNNERS[action]({ admin: admin as never, principal, tenantId: "t-1", orderIds });
+const run = (
+  action: keyof typeof BULK_RUNNERS,
+  admin: ReturnType<typeof stubAdmin>,
+  orderIds: readonly string[],
+) => BULK_RUNNERS[action]({ admin: admin as never, principal, tenantId: "t-1", orderIds });
 
 describe("bulk fulfill (Fulfill items)", () => {
   it("opens a fulfillment for every item of each eligible order, and skips or fails the rest", async () => {
@@ -3504,11 +3667,13 @@ describe("bulk fulfill (Fulfill items)", () => {
       status: 200,
       body: [{ orderRef: "o-2", status: { value: "picking_started" } }],
     });
-    admin.fulfillment.create.mockImplementation(async (_p: unknown, input: { orderRef: string }) => {
-      if (input.orderRef === "o-5") return { status: 409, body: { message: "Out of stock" } };
-      if (input.orderRef === "o-6") throw new Error("boom");
-      return { status: 201, body: {} };
-    });
+    admin.fulfillment.create.mockImplementation(
+      async (_p: unknown, input: { orderRef: string }) => {
+        if (input.orderRef === "o-5") return { status: 409, body: { message: "Out of stock" } };
+        if (input.orderRef === "o-6") throw new Error("boom");
+        return { status: 201, body: {} };
+      },
+    );
 
     const outcome = await run("fulfill", admin, ["o-1", "o-2", "o-3", "o-4", "o-5", "o-6"]);
 
@@ -3539,7 +3704,10 @@ describe("bulk fulfill (Fulfill items)", () => {
   it("answers a failed list read as the response, touching nothing", async () => {
     const admin = stubAdmin([]);
     admin.orders.listOrders.mockResolvedValue({ status: 500, body: {} });
-    expect(await run("fulfill", admin, ["o-1"])).toEqual({ ok: false, response: { status: 500, body: {} } });
+    expect(await run("fulfill", admin, ["o-1"])).toEqual({
+      ok: false,
+      response: { status: 500, body: {} },
+    });
     expect(admin.fulfillment.create).not.toHaveBeenCalled();
   });
 });
@@ -3562,7 +3730,10 @@ describe("bulk capture_payments (Capture payments)", () => {
       { orderId: "o-4", outcome: "skipped", reason: "order_not_open" },
     ]);
     expect(admin.orders.requestPaymentCapture).toHaveBeenCalledTimes(1);
-    expect(admin.orders.requestPaymentCapture).toHaveBeenCalledWith(principal, { tenantId: "t-1", orderId: "o-1" });
+    expect(admin.orders.requestPaymentCapture).toHaveBeenCalledWith(principal, {
+      tenantId: "t-1",
+      orderId: "o-1",
+    });
   });
 });
 
@@ -3581,7 +3752,13 @@ describe("bulk mark_cod_collected (Mark cash as received)", () => {
       status: 200,
       body: [
         cod(),
-        cod({ id: "i-2", orderRef: "o-2", provider: "stripe", settlesAtPayTime: false, settledByOperatorConfirmation: false }),
+        cod({
+          id: "i-2",
+          orderRef: "o-2",
+          provider: "stripe",
+          settlesAtPayTime: false,
+          settledByOperatorConfirmation: false,
+        }),
         cod({ id: "i-3", orderRef: "o-3", status: "captured" }),
         cod({ id: "i-4", orderRef: "someone-else" }),
         cod({ id: "i-5", orderRef: "o-5" }),
@@ -3662,7 +3839,12 @@ Expected: FAIL — module not found.
 
 ```ts
 import type { Principal } from "@platform/contracts";
-import { derivePaymentStatus, isOpenOrder, type ArchiveOrdersOutput, type Order } from "@platform/orders";
+import {
+  derivePaymentStatus,
+  isOpenOrder,
+  type ArchiveOrdersOutput,
+  type Order,
+} from "@platform/orders";
 import type { Paginated } from "@platform/types";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
@@ -3742,7 +3924,8 @@ async function perOrder(
 async function loadOrders(
   context: BulkContext,
 ): Promise<
-  { readonly ok: true; readonly byId: ReadonlyMap<string, Order> } | { readonly ok: false; readonly response: AdminResponse }
+  | { readonly ok: true; readonly byId: ReadonlyMap<string, Order> }
+  | { readonly ok: false; readonly response: AdminResponse }
 > {
   const response = await context.admin.orders.listOrders(context.principal, {
     tenantId: context.tenantId,
@@ -3778,12 +3961,9 @@ function archiveRunner(archive: boolean): BulkRunner {
 const fulfillRunner: BulkRunner = async (context) => {
   const loaded = await loadOrders(context);
   if (!loaded.ok) return loaded;
-  const statuses = await fulfillmentStatusesOf(
-    context.admin,
-    context.principal,
-    context.tenantId,
-    [...loaded.byId.keys()],
-  );
+  const statuses = await fulfillmentStatusesOf(context.admin, context.principal, context.tenantId, [
+    ...loaded.byId.keys(),
+  ]);
   if (!statuses.ok) return { ok: false, response: statuses.response };
   const results = await perOrder(context.orderIds, async (orderId) => {
     const order = loaded.byId.get(orderId);
@@ -3817,7 +3997,8 @@ const capturePaymentsRunner: BulkRunner = async (context) => {
     const order = loaded.byId.get(orderId);
     if (order === undefined) return failed(orderId, "not_found");
     if (!isOpenOrder(order.history)) return skipped(orderId, "order_not_open");
-    if (derivePaymentStatus(order.history) !== "pending") return skipped(orderId, "payment_not_pending");
+    if (derivePaymentStatus(order.history) !== "pending")
+      return skipped(orderId, "payment_not_pending");
     if (order.paymentRef !== undefined) return skipped(orderId, "payment_already_requested");
     const response = await context.admin.orders.requestPaymentCapture(context.principal, {
       tenantId: context.tenantId,
@@ -3847,17 +4028,15 @@ const NOT_COLLECTIBLE = new Set([
 const markCodCollectedRunner: BulkRunner = async (context) => {
   const loaded = await loadOrders(context);
   if (!loaded.ok) return loaded;
-  const intents = await paymentIntentsOfOrders(
-    context.admin,
-    context.principal,
-    context.tenantId,
-    [...loaded.byId.values()],
-  );
+  const intents = await paymentIntentsOfOrders(context.admin, context.principal, context.tenantId, [
+    ...loaded.byId.values(),
+  ]);
   if (!intents.ok) return intents;
   const results = await perOrder(context.orderIds, async (orderId) => {
     const order = loaded.byId.get(orderId);
     if (order === undefined) return failed(orderId, "not_found");
-    if (derivePaymentStatus(order.history) !== "pending") return skipped(orderId, "payment_not_pending");
+    if (derivePaymentStatus(order.history) !== "pending")
+      return skipped(orderId, "payment_not_pending");
     const intent = order.paymentRef === undefined ? undefined : intents.byId.get(order.paymentRef);
     if (
       intent === undefined ||
@@ -3909,14 +4088,20 @@ import {
 } from "./testing/orders-harness";
 
 interface BulkBody {
-  readonly results: readonly { readonly orderId: string; readonly outcome: string; readonly reason?: string }[];
+  readonly results: readonly {
+    readonly orderId: string;
+    readonly outcome: string;
+    readonly reason?: string;
+  }[];
 }
 
 const bulk = (admin: WiredAdmin, body: unknown, principal = adminStaff) =>
   callRoute(adminRoutes(admin), "POST", "/orders/bulk", { body }, principal);
 
 async function archivedIds(admin: WiredAdmin): Promise<string[]> {
-  const list = await callRoute(adminRoutes(admin), "GET", "/orders", { query: { view: "archived" } });
+  const list = await callRoute(adminRoutes(admin), "GET", "/orders", {
+    query: { view: "archived" },
+  });
   return (list.body as { items: { id: string }[] }).items.map((item) => item.id).sort();
 }
 
@@ -3924,7 +4109,13 @@ describe("POST /orders/bulk body (order operations Part 1)", () => {
   const ids = (count: number) => Array.from({ length: count }, (_, i) => `o-${i}`);
 
   it("accepts 1 to 50 ids for each known action", () => {
-    for (const action of ["archive", "unarchive", "fulfill", "capture_payments", "mark_cod_collected"]) {
+    for (const action of [
+      "archive",
+      "unarchive",
+      "fulfill",
+      "capture_payments",
+      "mark_cod_collected",
+    ]) {
       expect(bulkOrdersBody.safeParse({ action, orderIds: ids(50) }).success, action).toBe(true);
     }
   });
@@ -3933,7 +4124,9 @@ describe("POST /orders/bulk body (order operations Part 1)", () => {
     expect(bulkOrdersBody.safeParse({ action: "archive", orderIds: ids(51) }).success).toBe(false);
     expect(bulkOrdersBody.safeParse({ action: "archive", orderIds: [] }).success).toBe(false);
     expect(bulkOrdersBody.safeParse({ action: "cancel", orderIds: ids(1) }).success).toBe(false);
-    expect(bulkOrdersBody.safeParse({ action: "archive", orderIds: ids(1), tags: ["vip"] }).success).toBe(false);
+    expect(
+      bulkOrdersBody.safeParse({ action: "archive", orderIds: ids(1), tags: ["vip"] }).success,
+    ).toBe(false);
   });
 });
 
@@ -3974,19 +4167,28 @@ describe("POST /orders/bulk on the real in-memory composition", () => {
   it("refuses a viewer before touching any order", async () => {
     const admin = buildOrdersAdmin();
     const orderId = await placeTestOrder(admin);
-    expect((await bulk(admin, { action: "archive", orderIds: [orderId] }, viewerStaff)).status).toBe(403);
+    expect(
+      (await bulk(admin, { action: "archive", orderIds: [orderId] }, viewerStaff)).status,
+    ).toBe(403);
     expect(await archivedIds(admin)).toEqual([]);
   });
 
   it("checks each action's own permission: an operator archives but cannot mark cash received", async () => {
     const admin = buildOrdersAdmin();
     const orderId = await placeTestOrder(admin);
-    expect((await bulk(admin, { action: "mark_cod_collected", orderIds: [orderId] }, operatorStaff)).status).toBe(403);
-    expect((await bulk(admin, { action: "archive", orderIds: [orderId] }, operatorStaff)).status).toBe(200);
+    expect(
+      (await bulk(admin, { action: "mark_cod_collected", orderIds: [orderId] }, operatorStaff))
+        .status,
+    ).toBe(403);
+    expect(
+      (await bulk(admin, { action: "archive", orderIds: [orderId] }, operatorStaff)).status,
+    ).toBe(200);
   });
 
   it("is idempotent by key at the transport", () => {
-    const route = adminRoutes(buildOrdersAdmin()).find((r) => r.method === "POST" && r.path === "/orders/bulk");
+    const route = adminRoutes(buildOrdersAdmin()).find(
+      (r) => r.method === "POST" && r.path === "/orders/bulk",
+    );
     expect(route?.idempotent).toBe(true);
   });
 });
@@ -4076,11 +4278,13 @@ EOF
 Model tier: **standard**.
 
 **Files:**
+
 - Create: `apps/admin/src/http/order-export-rows.ts`, `apps/admin/src/http/order-export-rows.test.ts`
 - Modify: `apps/admin/src/http/order-customer-names.ts`, `order-customer-names.test.ts`
 - Modify: `apps/admin/src/http/order-operations-routes.ts`, `order-operations-routes.test.ts`
 
 **Interfaces:**
+
 - Consumes: `listOrdersForView`, `orderAnnotationsFor`, `ORDER_VIEWS`, `ORDER_STATUS_VALUES` (Task 3), `paymentIntentsOfOrders` (Task 4), `customerNameOf`, `customerNamesFor`, `derivePaymentStatus`.
 - Produces:
   - `OrderExportRowDto` (exactly the spec's shape; `customerName: string | null`, `tags: readonly string[]` = `[]`, `note: string | null` = `null` in Part 1), `PackingSlipDto = { orderId; orderNumber; createdAt; shipTo: { name: string | null; phone: string | null; line1; line2: string | null; city; province: string | null; postalCode; country }; lines: { title; variantTitle: string | null; sku: string | null; quantity }[]; note: string | null; codAmountMinor: number; currency }`.
@@ -4126,10 +4330,24 @@ function stubOrder(overrides: Record<string, unknown> = {}): Order {
       country: "EG",
     },
     items: [
-      { snapshot: { name: "T-shirt", variantTitle: "L", sku: "SKU-1" }, quantity: 2, lineTotal: { amountMinor: 40000 } },
-      { snapshot: { name: "Cap", variantTitle: undefined, sku: undefined }, quantity: 1, lineTotal: { amountMinor: 5000 } },
+      {
+        snapshot: { name: "T-shirt", variantTitle: "L", sku: "SKU-1" },
+        quantity: 2,
+        lineTotal: { amountMinor: 40000 },
+      },
+      {
+        snapshot: { name: "Cap", variantTitle: undefined, sku: undefined },
+        quantity: 1,
+        lineTotal: { amountMinor: 5000 },
+      },
     ],
-    totals: { subtotalMinor: 45000, shippingMinor: 5000, discountMinor: 0, totalMinor: 50000, shippingMethod: "standard" },
+    totals: {
+      subtotalMinor: 45000,
+      shippingMinor: 5000,
+      discountMinor: 0,
+      totalMinor: 50000,
+      shippingMethod: "standard",
+    },
     totalAmount: () => ({ amountMinor: 50000 }),
     ...overrides,
   } as unknown as Order;
@@ -4145,8 +4363,18 @@ const cod: PaymentIntentSummary = {
   settlesAtPayTime: true,
   settledByOperatorConfirmation: true,
 };
-const card: PaymentIntentSummary = { ...cod, provider: "stripe", settlesAtPayTime: false, settledByOperatorConfirmation: false };
-const contact: CustomerContact = { id: "c-1", name: "Mona", email: "mona@example.com", isGuest: false };
+const card: PaymentIntentSummary = {
+  ...cod,
+  provider: "stripe",
+  settlesAtPayTime: false,
+  settledByOperatorConfirmation: false,
+};
+const contact: CustomerContact = {
+  id: "c-1",
+  name: "Mona",
+  email: "mona@example.com",
+  isGuest: false,
+};
 
 describe("codAmountOf (spec §1.4)", () => {
   it("is the total while a cash-on-delivery payment is pending, else 0", () => {
@@ -4154,7 +4382,10 @@ describe("codAmountOf (spec §1.4)", () => {
     expect(codAmountOf(stubOrder(), card)).toBe(0);
     expect(codAmountOf(stubOrder(), undefined)).toBe(0);
     expect(
-      codAmountOf(stubOrder({ history: [...PENDING, { type: "payment_received", occurredAt: PLACED_AT }] }), cod),
+      codAmountOf(
+        stubOrder({ history: [...PENDING, { type: "payment_received", occurredAt: PLACED_AT }] }),
+        cod,
+      ),
     ).toBe(0);
   });
 });
@@ -4222,8 +4453,16 @@ describe("toOrderExportRowDto", () => {
 
   it("names the customer by label when the shopper typed no recipient", () => {
     const row = toOrderExportRowDto(
-      stubOrder({ shippingAddress: { line1: "1 Nile St", city: "Cairo", postalCode: "", country: "EG" } }),
-      { fulfillmentStatus: "unfulfilled", contact, customerLabels: new Map([["c-1", "Mona"]]), intent: undefined, annotations: undefined },
+      stubOrder({
+        shippingAddress: { line1: "1 Nile St", city: "Cairo", postalCode: "", country: "EG" },
+      }),
+      {
+        fulfillmentStatus: "unfulfilled",
+        contact,
+        customerLabels: new Map([["c-1", "Mona"]]),
+        intent: undefined,
+        annotations: undefined,
+      },
     );
     expect(row).toMatchObject({ customerName: "Mona", phone: null, line2: null, province: null });
   });
@@ -4231,7 +4470,13 @@ describe("toOrderExportRowDto", () => {
 
 describe("toPackingSlipDto", () => {
   it("carries the ship-to block, the lines and the cash to collect", () => {
-    expect(toPackingSlipDto(stubOrder(), { customerLabels: new Map(), intent: cod, annotations: undefined })).toEqual({
+    expect(
+      toPackingSlipDto(stubOrder(), {
+        customerLabels: new Map(),
+        intent: cod,
+        annotations: undefined,
+      }),
+    ).toEqual({
       orderId: "o-1",
       orderNumber: "1001",
       createdAt: "2026-10-18T09:05:00.000Z",
@@ -4354,7 +4599,8 @@ export interface PackingSlipFacts {
 
 /** What the courier collects: the order total while a payment settled only by an operator's confirmation (cash on delivery) is pending. */
 export function codAmountOf(order: Order, intent: PaymentIntentSummary | undefined): number {
-  return derivePaymentStatus(order.history) === "pending" && intent?.settledByOperatorConfirmation === true
+  return derivePaymentStatus(order.history) === "pending" &&
+    intent?.settledByOperatorConfirmation === true
     ? order.totalAmount().amountMinor
     : 0;
 }
@@ -4394,7 +4640,8 @@ export function toOrderExportRowDto(order: Order, facts: OrderExportFacts): Orde
     items: linesOf(order),
     itemCount: order.items.reduce((sum, item) => sum + item.quantity, 0),
     subtotalMinor:
-      totals?.subtotalMinor ?? order.items.reduce((sum, item) => sum + item.lineTotal.amountMinor, 0),
+      totals?.subtotalMinor ??
+      order.items.reduce((sum, item) => sum + item.lineTotal.amountMinor, 0),
     shippingMinor: totals?.shippingMinor ?? 0,
     discountMinor: totals?.discountMinor ?? 0,
     totalMinor: order.totalAmount().amountMinor,
@@ -4454,14 +4701,22 @@ describe("customerContactsFor / customerLabelsOf (export emails)", () => {
       order("c-1", null),
     ]);
 
-    expect(contactsOfCustomers).toHaveBeenCalledWith(principal, { tenantId: "tenant-a", customerIds: ["c-1", "c-2"] });
+    expect(contactsOfCustomers).toHaveBeenCalledWith(principal, {
+      tenantId: "tenant-a",
+      customerIds: ["c-1", "c-2"],
+    });
     expect(found.get("c-1")?.email).toBe("a@example.com");
-    expect([...customerLabelsOf(found)]).toEqual([["c-1", "Alice"], ["c-2", "g@example.com"]]);
+    expect([...customerLabelsOf(found)]).toEqual([
+      ["c-1", "Alice"],
+      ["c-2", "g@example.com"],
+    ]);
   });
 
   it("gives no contacts, rather than failing, when Identity cannot be read", async () => {
     const { admin } = adminAnswering(new Error("down"));
-    expect((await customerContactsFor(admin, principal, "tenant-a", [order("c-1", null)])).size).toBe(0);
+    expect(
+      (await customerContactsFor(admin, principal, "tenant-a", [order("c-1", null)])).size,
+    ).toBe(0);
   });
 });
 ```
@@ -4485,12 +4740,16 @@ export async function customerContactsFor(
   const customerIds = [...new Set(orders.map((order) => order.customerRef))];
   if (customerIds.length === 0) return found;
   try {
-    const response = await admin.customers.contactsOfCustomers(principal, { tenantId, customerIds });
+    const response = await admin.customers.contactsOfCustomers(principal, {
+      tenantId,
+      customerIds,
+    });
     if (response.status !== 200) {
       logger.warn("customer contacts unavailable", { tenantId, status: response.status });
       return found;
     }
-    for (const contact of response.body as readonly CustomerContact[]) found.set(contact.id, contact);
+    for (const contact of response.body as readonly CustomerContact[])
+      found.set(contact.id, contact);
   } catch (error) {
     logger.warn("customer contacts unavailable", {
       tenantId,
@@ -4529,9 +4788,16 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
     const schema = route?.schema.querystring;
     expect(schema?.safeParse({ first: "250" }).success).toBe(true);
     expect(schema?.safeParse({ first: "251" }).success).toBe(false);
-    expect(schema?.safeParse({ ids: Array.from({ length: 51 }, (_, i) => `o-${i}`).join(",") }).success).toBe(false);
-    expect(schema?.safeParse({ createdFrom: "2026-10-02T00:00:00Z", createdTo: "2026-10-01T00:00:00Z" }).success).toBe(false);
-    expect(schema?.safeParse({ view: "unpaid", search: "mona", status: "placed" }).success).toBe(true);
+    expect(
+      schema?.safeParse({ ids: Array.from({ length: 51 }, (_, i) => `o-${i}`).join(",") }).success,
+    ).toBe(false);
+    expect(
+      schema?.safeParse({ createdFrom: "2026-10-02T00:00:00Z", createdTo: "2026-10-01T00:00:00Z" })
+        .success,
+    ).toBe(false);
+    expect(schema?.safeParse({ view: "unpaid", search: "mona", status: "placed" }).success).toBe(
+      true,
+    );
   });
 
   it("pages, narrows to ids and filters by date on the real composition", async () => {
@@ -4541,9 +4807,14 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
     const c = await placeTestOrder(admin);
     const routes = adminRoutes(admin);
     const rows = async (query: Record<string, string>) => {
-      const response = await callRoute(routes, "GET", "/orders/export-rows", { query: routeOf("/orders/export-rows")?.schema.querystring?.parse(query) });
+      const response = await callRoute(routes, "GET", "/orders/export-rows", {
+        query: routeOf("/orders/export-rows")?.schema.querystring?.parse(query),
+      });
       expect(response.status).toBe(200);
-      return response.body as { items: { orderId: string; codAmountMinor: number; tags: string[] }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
+      return response.body as {
+        items: { orderId: string; codAmountMinor: number; tags: string[] }[];
+        pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      };
     };
 
     const first = await rows({ first: "2" });
@@ -4551,8 +4822,13 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
     expect(first.pageInfo.hasNextPage).toBe(true);
     const rest = await rows({ first: "2", after: first.pageInfo.endCursor ?? "" });
     expect(rest.items.map((r) => r.orderId)).toEqual([a]);
-    expect((await rows({ ids: `${a},${c}` })).items.map((r) => r.orderId).sort()).toEqual([a, c].sort());
-    expect((await rows({ createdFrom: "2026-07-04T00:00:00Z", createdTo: "2026-07-06T00:00:00Z" })).items).toHaveLength(3);
+    expect((await rows({ ids: `${a},${c}` })).items.map((r) => r.orderId).sort()).toEqual(
+      [a, c].sort(),
+    );
+    expect(
+      (await rows({ createdFrom: "2026-07-04T00:00:00Z", createdTo: "2026-07-06T00:00:00Z" }))
+        .items,
+    ).toHaveLength(3);
     expect((await rows({ createdFrom: "2026-07-06T00:00:00Z" })).items).toHaveLength(0);
     expect(first.items[0]).toMatchObject({ codAmountMinor: 0, tags: [] });
   });
@@ -4571,17 +4847,26 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
     } as unknown as Order;
     const admin = {
       orders: {
-        listOrders: vi.fn().mockResolvedValue({ status: 200, body: { items: [order], pageInfo: { hasNextPage: false, endCursor: null } } }),
+        listOrders: vi
+          .fn()
+          .mockResolvedValue({
+            status: 200,
+            body: { items: [order], pageInfo: { hasNextPage: false, endCursor: null } },
+          }),
         fulfillmentsOfOrders: vi.fn().mockResolvedValue({ status: 200, body: [] }),
         orderAnnotations: vi.fn().mockResolvedValue({ status: 200, body: new Map() }),
-        paymentIntentsOf: vi.fn().mockResolvedValue({ status: 503, body: { message: "payments down" } }),
+        paymentIntentsOf: vi
+          .fn()
+          .mockResolvedValue({ status: 503, body: { message: "payments down" } }),
       },
       customers: { contactsOfCustomers: vi.fn().mockResolvedValue({ status: 200, body: [] }) },
     } as unknown as WiredAdmin;
     const routes = orderOperationsRoutes(admin);
 
     const exported = await callRoute(routes, "GET", "/orders/export-rows", { query: {} });
-    const slips = await callRoute(routes, "GET", "/orders/packing-slips", { query: { ids: ["o-1"] } });
+    const slips = await callRoute(routes, "GET", "/orders/packing-slips", {
+      query: { ids: ["o-1"] },
+    });
 
     expect(exported).toEqual({ status: 503, body: { message: "payments down" } });
     expect(slips).toEqual({ status: 503, body: { message: "payments down" } });
@@ -4590,7 +4875,9 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
 
 describe("GET /orders/packing-slips", () => {
   it("is readable by anyone who reads orders, and caps at 50 ids", () => {
-    const route = adminRoutes(buildOrdersAdmin()).find((r) => r.method === "GET" && r.path === "/orders/packing-slips");
+    const route = adminRoutes(buildOrdersAdmin()).find(
+      (r) => r.method === "GET" && r.path === "/orders/packing-slips",
+    );
     expect(route?.permission).toBe("orders:read");
     const ids = (count: number) => Array.from({ length: count }, (_, i) => `o-${i}`).join(",");
     expect(route?.schema.querystring?.safeParse({ ids: ids(50) }).success).toBe(true);
@@ -4604,12 +4891,20 @@ describe("GET /orders/packing-slips", () => {
     const b = await placeTestOrder(admin);
     const theirs = await placeTestOrder(admin, "shop-b");
 
-    const response = await callRoute(adminRoutes(admin), "GET", "/orders/packing-slips", {
-      query: { ids: [b, theirs, a] },
-    }, viewerStaff);
+    const response = await callRoute(
+      adminRoutes(admin),
+      "GET",
+      "/orders/packing-slips",
+      {
+        query: { ids: [b, theirs, a] },
+      },
+      viewerStaff,
+    );
 
     expect(response.status).toBe(200);
-    expect((response.body as { slips: { orderId: string }[] }).slips.map((s) => s.orderId)).toEqual([b, a]);
+    expect((response.body as { slips: { orderId: string }[] }).slips.map((s) => s.orderId)).toEqual(
+      [b, a],
+    );
   });
 });
 ```
@@ -4629,7 +4924,12 @@ import type { Order } from "@platform/orders";
 import { customerContactsFor, customerLabelsOf, customerNamesFor } from "./order-customer-names";
 import { toOrderExportRowDto, toPackingSlipDto } from "./order-export-rows";
 import { paymentIntentsOfOrders } from "./order-payment-intents";
-import { listOrdersForView, ORDER_STATUS_VALUES, ORDER_VIEWS, orderAnnotationsFor } from "./order-views";
+import {
+  listOrdersForView,
+  ORDER_STATUS_VALUES,
+  ORDER_VIEWS,
+  orderAnnotationsFor,
+} from "./order-views";
 ```
 
 then the schemas:
@@ -4639,7 +4939,14 @@ then the schemas:
 function commaIds(max: number) {
   return z
     .string()
-    .transform((raw) => [...new Set(raw.split(",").map((id) => id.trim()).filter((id) => id.length > 0))])
+    .transform((raw) => [
+      ...new Set(
+        raw
+          .split(",")
+          .map((id) => id.trim())
+          .filter((id) => id.length > 0),
+      ),
+    ])
     .pipe(z.array(z.string()).min(1).max(max));
 }
 
@@ -4784,6 +5091,7 @@ EOF
 Model tier: **standard**.
 
 **Files:**
+
 - Modify: `apps/admin-web/src/lib/api/orders.ts`, `apps/admin-web/src/lib/api/orders.test.ts`
 - Create: `apps/admin-web/src/lib/orders/order-views.ts`, `apps/admin-web/src/lib/orders/order-views.test.ts`
 - Create: `apps/admin-web/src/components/orders/orders-view-tabs.tsx`, `orders-view-tabs.test.tsx`
@@ -4797,6 +5105,7 @@ Model tier: **standard**.
 - Modify: `apps/admin-web/src/messages/en.ts`, `apps/admin-web/src/messages/ar.ts`
 
 **Interfaces:**
+
 - Consumes: `GET /orders?view=` + `archivedAt` (Task 3), `POST /orders/bulk` (Task 5).
 - Produces:
   - `lib/api/orders.ts`: `type OrderView`, `OrdersListQuery.view?` (the `fulfillment` field is removed), `OrderListItemDto.archivedAt?: string | null`, `BULK_ORDER_ACTIONS`, `type BulkOrderAction`, `BulkOrderResultDto`, `bulkOrders(action, orderIds, idempotencyKey): Promise<MutationResult<{ results: readonly BulkOrderResultDto[] }>>`.
@@ -4831,7 +5140,9 @@ describe("parseOrderView", () => {
 describe("ordersViewHref", () => {
   it("keeps the search and status, drops the cursor, and leaves All without a view param", () => {
     expect(ordersViewHref("all", {})).toBe("/orders");
-    expect(ordersViewHref("unpaid", { q: "mona", status: "placed" })).toBe("/orders?view=unpaid&q=mona&status=placed");
+    expect(ordersViewHref("unpaid", { q: "mona", status: "placed" })).toBe(
+      "/orders?view=unpaid&q=mona&status=placed",
+    );
     expect(ordersViewHref("all", { q: "mona" })).toBe("/orders?q=mona");
   });
 });
@@ -4859,13 +5170,22 @@ Run: `pnpm --filter admin-web exec vitest run src/lib/orders/order-views.test.ts
 import type { OrderView } from "@/lib/api/orders";
 
 /** Shopify's default views, in Shopify's order (spec §1.1). */
-export const ORDER_VIEWS: readonly OrderView[] = ["all", "unfulfilled", "unpaid", "open", "archived"];
+export const ORDER_VIEWS: readonly OrderView[] = [
+  "all",
+  "unfulfilled",
+  "unpaid",
+  "open",
+  "archived",
+];
 
 /** Shopify's orders page size (spec §1.5). */
 export const ORDERS_PAGE_SIZE = 50;
 
 /** `?view=` wins; Home's old `?fulfillment=unfulfilled` links read as the Unfulfilled tab; else All. */
-export function parseOrderView(params: { readonly view?: string; readonly fulfillment?: string }): OrderView {
+export function parseOrderView(params: {
+  readonly view?: string;
+  readonly fulfillment?: string;
+}): OrderView {
   const view = ORDER_VIEWS.find((candidate) => candidate === params.view);
   if (view !== undefined) return view;
   return params.fulfillment === "unfulfilled" ? "unfulfilled" : "all";
@@ -4887,7 +5207,14 @@ export function ordersViewHref(
 /** A `?ids=a,b` list: trimmed, deduped, 1..max ids, else null. */
 export function parseOrderIds(raw: string | undefined, max: number): readonly string[] | null {
   if (raw === undefined) return null;
-  const ids = [...new Set(raw.split(",").map((id) => id.trim()).filter((id) => id.length > 0))];
+  const ids = [
+    ...new Set(
+      raw
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0),
+    ),
+  ];
   return ids.length === 0 || ids.length > max ? null : ids;
 }
 ```
@@ -4929,7 +5256,9 @@ export interface BulkOrderResultDto {
   readonly reason?: string;
 }
 
-function isBulkResults(value: unknown): value is { readonly results: readonly BulkOrderResultDto[] } {
+function isBulkResults(
+  value: unknown,
+): value is { readonly results: readonly BulkOrderResultDto[] } {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -4956,7 +5285,11 @@ Append to `apps/admin-web/src/lib/api/orders.test.ts` (add `bulkOrders` to the d
 ```ts
 describe("fetchOrdersPage view (order operations Part 1)", () => {
   it("sends ?view= for a tab, and nothing for All", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchOrdersPage({ view: "unpaid", first: 50 });
@@ -5092,10 +5425,19 @@ describe("OrdersViewTabs (order operations Part 1)", () => {
     render(<OrdersViewTabs current="unpaid" q="mona" status={undefined} t={en} />);
 
     const links = screen.getAllByRole("link");
-    expect(links.map((link) => link.textContent)).toEqual(["All", "Unfulfilled", "Unpaid", "Open", "Archived"]);
+    expect(links.map((link) => link.textContent)).toEqual([
+      "All",
+      "Unfulfilled",
+      "Unpaid",
+      "Open",
+      "Archived",
+    ]);
     expect(screen.getByRole("link", { name: "Unpaid" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "All" })).not.toHaveAttribute("aria-current");
-    expect(screen.getByRole("link", { name: "Archived" })).toHaveAttribute("href", "/orders?view=archived&q=mona");
+    expect(screen.getByRole("link", { name: "Archived" })).toHaveAttribute(
+      "href",
+      "/orders?view=archived&q=mona",
+    );
     expect(screen.getByRole("link", { name: "All" })).toHaveAttribute("href", "/orders?q=mona");
   });
 
@@ -5182,7 +5524,10 @@ export function OrdersViewTabs({
   readonly t: Dictionary;
 }) {
   return (
-    <nav aria-label={t.ordersPage.tabsLabel} className="border-border flex gap-1 overflow-x-auto border-b">
+    <nav
+      aria-label={t.ordersPage.tabsLabel}
+      className="border-border flex gap-1 overflow-x-auto border-b"
+    >
       {ORDER_VIEWS.map((view) => {
         const active = view === current;
         return (
@@ -5231,7 +5576,9 @@ export async function runBulkOrderAction(
   orderIds: readonly string[],
 ): Promise<BulkActionState> {
   const t = await formErrorDictionary();
-  const ids = [...new Set(orderIds.filter((id): id is string => typeof id === "string" && id.length > 0))];
+  const ids = [
+    ...new Set(orderIds.filter((id): id is string => typeof id === "string" && id.length > 0)),
+  ];
   if (!isBulkOrderAction(action) || ids.length === 0 || ids.length > MAX_BULK_ORDERS) {
     return { status: "error", message: t.invalid };
   }
@@ -5250,6 +5597,7 @@ Run the two test files — Expected: PASS.
 - [ ] **Step 6: Write the failing table tests**
 
 In `apps/admin-web/src/components/orders/orders-table.test.tsx`:
+
 - add at the top:
 
 ```tsx
@@ -5257,13 +5605,17 @@ const actions = vi.hoisted(() => ({ runBulkOrderAction: vi.fn() }));
 vi.mock("@/app/orders/actions", () => actions);
 ```
 
-  (and `vi`, `fireEvent`, `waitFor` to the imports);
+(and `vi`, `fireEvent`, `waitFor` to the imports);
+
 - the existing header-order test's expected array gains a leading `""` (the checkbox column);
 - append:
 
 ```tsx
 describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
-  const two = () => [order(), order({ id: "order-2", orderNumber: "1002", archivedAt: "2026-10-18T09:00:00.000Z" })];
+  const two = () => [
+    order(),
+    order({ id: "order-2", orderNumber: "1002", archivedAt: "2026-10-18T09:00:00.000Z" }),
+  ];
 
   it("shows an Archived badge next to an archived order's number", () => {
     renderTable(two());
@@ -5303,7 +5655,12 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
     const { rerender } = render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} />);
     fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
     rerender(
-      <OrdersTable orders={[order({ id: "order-3", orderNumber: "1003" })]} t={en} locale="en" now={NOW} />,
+      <OrdersTable
+        orders={[order({ id: "order-3", orderNumber: "1003" })]}
+        t={en}
+        locale="en"
+        now={NOW}
+      />,
     );
     expect(screen.queryByRole("toolbar")).toBeNull();
     expect(screen.getByRole("checkbox", { name: "Select order 1003" })).not.toBeChecked();
@@ -5321,7 +5678,9 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
     fireEvent.click(screen.getByRole("button", { name: "Archive orders" }));
 
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1 orders updated · 1 skipped"));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("1 orders updated · 1 skipped"),
+    );
     expect(actions.runBulkOrderAction).toHaveBeenCalledWith("archive", ["order-1", "order-2"]);
     expect(screen.getByText("#1002 — Already archived")).toBeInTheDocument();
     expect(screen.queryByRole("toolbar")).toBeNull();
@@ -5332,7 +5691,11 @@ describe("OrdersTable selection and bulk bar (order operations Part 1)", () => {
     renderTable(two());
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
     fireEvent.click(screen.getByRole("button", { name: "Print packing slips" }));
-    expect(open).toHaveBeenCalledWith("/orders/packing-slips?ids=order-1,order-2", "_blank", "noopener");
+    expect(open).toHaveBeenCalledWith(
+      "/orders/packing-slips?ids=order-1,order-2",
+      "_blank",
+      "noopener",
+    );
   });
 });
 ```
@@ -5372,7 +5735,13 @@ function MenuButton({
   readonly onClick: () => void;
 }) {
   return (
-    <Button type="button" variant="ghost" className="w-full justify-start" disabled={disabled} onClick={onClick}>
+    <Button
+      type="button"
+      variant="ghost"
+      className="w-full justify-start"
+      disabled={disabled}
+      onClick={onClick}
+    >
       {children}
     </Button>
   );
@@ -5409,18 +5778,38 @@ export function OrdersBulkBar({
       onFinished({ state, orderNumbers });
     });
   const printSlips = () => {
-    window.open(`/orders/packing-slips?ids=${orderIds.map(encodeURIComponent).join(",")}`, "_blank", "noopener");
+    window.open(
+      `/orders/packing-slips?ids=${orderIds.map(encodeURIComponent).join(",")}`,
+      "_blank",
+      "noopener",
+    );
   };
 
   return (
-    <div role="toolbar" aria-label={b.toolbarLabel} className="flex flex-wrap items-center gap-2 py-1">
+    <div
+      role="toolbar"
+      aria-label={b.toolbarLabel}
+      className="flex flex-wrap items-center gap-2 py-1"
+    >
       <span className="text-foreground me-2 text-sm font-semibold">
         {b.selectedCount.replace("{count}", formatNumber(locale, selected.length))}
       </span>
-      <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => run("fulfill")}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={isPending}
+        onClick={() => run("fulfill")}
+      >
         {b.fulfillItems}
       </Button>
-      <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => run("capture_payments")}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={isPending}
+        onClick={() => run("capture_payments")}
+      >
         {b.capturePayments}
       </Button>
       <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={printSlips}>
@@ -5435,13 +5824,21 @@ export function OrdersBulkBar({
           <MoreHorizontalIcon aria-hidden="true" className="size-4" />
         </summary>
         <div className="border-border bg-card absolute end-0 z-20 mt-2 flex min-w-56 flex-col gap-1 rounded-xl border p-2 shadow-lg">
-          <MenuButton disabled={isPending} onClick={() => run("archive")}>{b.archive}</MenuButton>
-          <MenuButton disabled={isPending} onClick={() => run("unarchive")}>{b.unarchive}</MenuButton>
+          <MenuButton disabled={isPending} onClick={() => run("archive")}>
+            {b.archive}
+          </MenuButton>
+          <MenuButton disabled={isPending} onClick={() => run("unarchive")}>
+            {b.unarchive}
+          </MenuButton>
           {onExportSelected !== undefined && (
-            <MenuButton disabled={isPending} onClick={onExportSelected}>{b.exportSelected}</MenuButton>
+            <MenuButton disabled={isPending} onClick={onExportSelected}>
+              {b.exportSelected}
+            </MenuButton>
           )}
           {canMarkCashReceived && (
-            <MenuButton disabled={isPending} onClick={() => run("mark_cod_collected")}>{b.markCashReceived}</MenuButton>
+            <MenuButton disabled={isPending} onClick={() => run("mark_cod_collected")}>
+              {b.markCashReceived}
+            </MenuButton>
           )}
         </div>
       </details>
@@ -5473,7 +5870,9 @@ export function BulkResultNote({
   if (state.status === "error") {
     return (
       <div className="border-border flex items-start gap-3 border-b px-4 py-3 sm:px-5">
-        <p role="alert" className="text-destructive min-w-0 flex-1 text-sm">{state.message}</p>
+        <p role="alert" className="text-destructive min-w-0 flex-1 text-sm">
+          {state.message}
+        </p>
         {dismiss}
       </div>
     );
@@ -5548,7 +5947,14 @@ function SelectAllCheckbox({
     if (ref.current !== null) ref.current.indeterminate = indeterminate;
   }, [indeterminate]);
   return (
-    <input ref={ref} type="checkbox" className="accent-primary relative z-10 size-4" checked={checked} onChange={onChange} aria-label={label} />
+    <input
+      ref={ref}
+      type="checkbox"
+      className="accent-primary relative z-10 size-4"
+      checked={checked}
+      onChange={onChange}
+      aria-label={label}
+    />
   );
 }
 
@@ -5583,7 +5989,8 @@ export function OrdersTable({
 
   const selectedOrders = orders.filter((order) => selected.has(order.id));
   const allSelected = orders.length > 0 && selectedOrders.length === orders.length;
-  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(orders.map((order) => order.id)));
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(orders.map((order) => order.id)));
   const toggleOne = (orderId: string) =>
     setSelected((previous) => {
       const next = new Set(previous);
@@ -5604,7 +6011,12 @@ export function OrdersTable({
   return (
     <div className="flex flex-col">
       {outcome !== null && (
-        <BulkResultNote outcome={outcome} t={t} locale={locale} onDismiss={() => setOutcome(null)} />
+        <BulkResultNote
+          outcome={outcome}
+          t={t}
+          locale={locale}
+          onDismiss={() => setOutcome(null)}
+        />
       )}
       <Table aria-label={t.ordersPage.title}>
         <TableHeader>
@@ -5646,13 +6058,18 @@ export function OrdersTable({
                     className="accent-primary size-4"
                     checked={selected.has(order.id)}
                     onChange={() => toggleOne(order.id)}
-                    aria-label={t.ordersPage.selectOrder.replace("{orderNumber}", order.orderNumber)}
+                    aria-label={t.ordersPage.selectOrder.replace(
+                      "{orderNumber}",
+                      order.orderNumber,
+                    )}
                   />
                 </TableCell>
                 <TableCell className="font-semibold">
                   <span className="inline-flex items-center gap-2">
                     {/* … the existing stretched Link to /orders/{id} … */}
-                    {order.archivedAt ? <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge> : null}
+                    {order.archivedAt ? (
+                      <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge>
+                    ) : null}
                   </span>
                 </TableCell>
                 {/* … the seven remaining existing cells, unchanged … */}
@@ -5672,6 +6089,7 @@ export function OrdersTable({
 - [ ] **Step 8: Wire the page, the Filter button and Home's link**
 
 `apps/admin-web/src/app/orders/page.tsx`:
+
 - imports: drop `UnfulfilledFilterNote`; add `OrdersViewTabs`, `parseOrderView`, `ORDERS_PAGE_SIZE`,
   `highestRole, readSession` from `@/lib/auth/session`, `type OrderView`;
 - `const PAGE_SIZE = ORDERS_PAGE_SIZE;` (20 → 50);
@@ -5679,10 +6097,10 @@ export function OrdersTable({
 - in the page:
 
 ```tsx
-  const params = await searchParams;
-  const view = parseOrderView(params);
-  const session = await readSession();
-  const canMarkCashReceived = highestRole(session?.roles ?? []) === "admin";
+const params = await searchParams;
+const view = parseOrderView(params);
+const session = await readSession();
+const canMarkCashReceived = highestRole(session?.roles ?? []) === "admin";
 ```
 
 - header: title only (drop the subtitle `<p>`, Shopify shows none) and the buttons; then
@@ -5697,16 +6115,18 @@ export function OrdersTable({
 Filter disclosure (no behaviour change to `pushParams`, which already keeps `view`):
 
 ```tsx
-      <details className="relative">
-        <summary className="border-input bg-card text-foreground hover:border-foreground/40 focus-visible:ring-ring inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-xl border px-3.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
-          <FilterIcon aria-hidden="true" className="size-4" />
-          {t.ordersPage.filter}
-          {currentStatus.length > 0 && <span aria-hidden="true" className="bg-primary size-2 rounded-full" />}
-        </summary>
-        <div className="border-border bg-card absolute start-0 z-20 mt-2 flex min-w-64 flex-col gap-2 rounded-xl border p-3 shadow-lg">
-          {/* the existing <Label htmlFor="orders-status-filter"> and <select id="orders-status-filter">, unchanged */}
-        </div>
-      </details>
+<details className="relative">
+  <summary className="border-input bg-card text-foreground hover:border-foreground/40 focus-visible:ring-ring inline-flex h-9 cursor-pointer list-none items-center gap-2 rounded-xl border px-3.5 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 [&::-webkit-details-marker]:hidden">
+    <FilterIcon aria-hidden="true" className="size-4" />
+    {t.ordersPage.filter}
+    {currentStatus.length > 0 && (
+      <span aria-hidden="true" className="bg-primary size-2 rounded-full" />
+    )}
+  </summary>
+  <div className="border-border bg-card absolute start-0 z-20 mt-2 flex min-w-64 flex-col gap-2 rounded-xl border p-3 shadow-lg">
+    {/* the existing <Label htmlFor="orders-status-filter"> and <select id="orders-status-filter">, unchanged */}
+  </div>
+</details>
 ```
 
 (`FilterIcon` from `lucide-react`.)
@@ -5742,6 +6162,7 @@ EOF
 Model tier: **standard** (pure functions carry the risk; each is pinned by unit tests).
 
 **Files:**
+
 - Create: `apps/admin-web/src/lib/orders/zoned-time.ts`, `zoned-time.test.ts`
 - Create: `apps/admin-web/src/lib/orders/orders-csv.ts`, `orders-csv.test.ts`
 - Create: `apps/admin-web/src/lib/orders/orders-export.ts`, `orders-export.test.ts`
@@ -5752,6 +6173,7 @@ Model tier: **standard** (pure functions carry the risk; each is pinned by unit 
 - Modify: `apps/admin-web/src/messages/en.ts`, `ar.ts`
 
 **Interfaces:**
+
 - Consumes: `GET /orders/export-rows` (Task 6), `parseOrderView`, `parseOrderIds`, `ORDERS_PAGE_SIZE` (Task 7), `storeSettingsOrDefaults`, `provinceName` (`@platform/regions`), `paymentMethodLabel`, `currencyExponent` (`@/lib/products/money`).
 - Produces:
   - `zoned-time.ts`: `zonedDay(instant: Date, timeZone): string` (`yyyy-mm-dd`), `zonedDateTimeLabel(iso: string, timeZone): string` (`yyyy-mm-dd HH:mm`), `startOfZonedDay(day: string, timeZone): Date`, `nextDay(day): string`, `isCalendarDay(value): boolean`.
@@ -5767,7 +6189,13 @@ Model tier: **standard** (pure functions carry the risk; each is pinned by unit 
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { isCalendarDay, nextDay, startOfZonedDay, zonedDateTimeLabel, zonedDay } from "./zoned-time";
+import {
+  isCalendarDay,
+  nextDay,
+  startOfZonedDay,
+  zonedDateTimeLabel,
+  zonedDay,
+} from "./zoned-time";
 
 describe("shop time-zone helpers (order export)", () => {
   it("prints an instant as the shop's local date and time", () => {
@@ -5780,7 +6208,9 @@ describe("shop time-zone helpers (order export)", () => {
   });
 
   it("finds the instant a shop-local day starts", () => {
-    expect(startOfZonedDay("2026-10-18", "Asia/Riyadh").toISOString()).toBe("2026-10-17T21:00:00.000Z");
+    expect(startOfZonedDay("2026-10-18", "Asia/Riyadh").toISOString()).toBe(
+      "2026-10-17T21:00:00.000Z",
+    );
     expect(startOfZonedDay("2026-10-18", "UTC").toISOString()).toBe("2026-10-18T00:00:00.000Z");
   });
 
@@ -5825,8 +6255,16 @@ function partsIn(instant: Date, timeZone: string): ZonedParts {
     second: "2-digit",
     hourCycle: "h23",
   }).formatToParts(instant);
-  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
-  return { year: get("year"), month: get("month"), day: get("day"), hour: get("hour"), minute: get("minute"), second: get("second") };
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
+  return {
+    year: get("year"),
+    month: get("month"),
+    day: get("day"),
+    hour: get("hour"),
+    minute: get("minute"),
+    second: get("second"),
+  };
 }
 
 /** The shop's calendar day (`yyyy-mm-dd`) of an instant. */
@@ -5844,7 +6282,14 @@ export function zonedDateTimeLabel(iso: string, timeZone: string): string {
 /** How far the zone's wall clock is ahead of UTC at `instant`, in ms. */
 function offsetMs(instant: Date, timeZone: string): number {
   const p = partsIn(instant, timeZone);
-  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+  const wall = Date.UTC(
+    Number(p.year),
+    Number(p.month) - 1,
+    Number(p.day),
+    Number(p.hour),
+    Number(p.minute),
+    Number(p.second),
+  );
   return wall - Math.floor(instant.getTime() / 1000) * 1000;
 }
 
@@ -6034,11 +6479,17 @@ export interface OrderExportQuery {
 }
 
 export type FetchOrderExportRowsResult =
-  | { readonly outcome: "ok"; readonly items: readonly OrderExportRowDto[]; readonly pageInfo: OrdersPageInfo }
+  | {
+      readonly outcome: "ok";
+      readonly items: readonly OrderExportRowDto[];
+      readonly pageInfo: OrdersPageInfo;
+    }
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "error"; readonly message: string };
 
-function isExportRowsPage(value: unknown): value is { items: readonly OrderExportRowDto[]; pageInfo: OrdersPageInfo } {
+function isExportRowsPage(
+  value: unknown,
+): value is { items: readonly OrderExportRowDto[]; pageInfo: OrdersPageInfo } {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -6048,7 +6499,9 @@ function isExportRowsPage(value: unknown): value is { items: readonly OrderExpor
 }
 
 /** One page of export rows (`orders:export`). Server-only, like every `lib/api` call. */
-export async function fetchOrderExportRows(query: OrderExportQuery): Promise<FetchOrderExportRowsResult> {
+export async function fetchOrderExportRows(
+  query: OrderExportQuery,
+): Promise<FetchOrderExportRowsResult> {
   const params = new URLSearchParams();
   if (query.view !== undefined && query.view !== "all") params.set("view", query.view);
   if (query.search !== undefined) params.set("search", query.search);
@@ -6058,10 +6511,17 @@ export async function fetchOrderExportRows(query: OrderExportQuery): Promise<Fet
   if (query.createdTo !== undefined) params.set("createdTo", query.createdTo);
   if (query.first !== undefined) params.set("first", String(query.first));
   if (query.after !== undefined) params.set("after", query.after);
-  const result = await getAdminApi(`/api/v1/orders/export-rows?${params.toString()}`, isExportRowsPage);
-  if (result.outcome === "ok") return { outcome: "ok", items: result.data.items, pageInfo: result.data.pageInfo };
+  const result = await getAdminApi(
+    `/api/v1/orders/export-rows?${params.toString()}`,
+    isExportRowsPage,
+  );
+  if (result.outcome === "ok")
+    return { outcome: "ok", items: result.data.items, pageInfo: result.data.pageInfo };
   if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
-  return { outcome: "error", message: result.outcome === "not_found" ? "Not found" : result.message };
+  return {
+    outcome: "error",
+    message: result.outcome === "not_found" ? "Not found" : result.message,
+  };
 }
 ```
 
@@ -6070,14 +6530,23 @@ Append to `orders.test.ts` (add `fetchOrderExportRows` to the import list):
 ```ts
 describe("fetchOrderExportRows", () => {
   it("sends the API's own parameter names (search, not q) and the ids as one comma list", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+      );
     vi.stubGlobal("fetch", fetchMock);
 
     await fetchOrderExportRows({ view: "unpaid", search: "mona", ids: ["a", "b"], first: 250 });
 
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(url.pathname).toBe("/api/v1/orders/export-rows");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ view: "unpaid", search: "mona", ids: "a,b", first: "250" });
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      view: "unpaid",
+      search: "mona",
+      ids: "a,b",
+      first: "250",
+    });
   });
 });
 ```
@@ -6226,9 +6695,30 @@ import { zonedDateTimeLabel } from "./zoned-time";
 
 /** The CSV's columns, in the spec's order (§1.5). */
 export const ORDERS_CSV_COLUMNS = [
-  "order", "date", "customerName", "phone", "email", "line1", "line2", "city", "province", "country",
-  "items", "itemCount", "subtotal", "shipping", "discount", "total", "codAmount", "currency",
-  "paymentStatus", "paymentMethod", "fulfillmentStatus", "shippingMethod", "tags", "notes",
+  "order",
+  "date",
+  "customerName",
+  "phone",
+  "email",
+  "line1",
+  "line2",
+  "city",
+  "province",
+  "country",
+  "items",
+  "itemCount",
+  "subtotal",
+  "shipping",
+  "discount",
+  "total",
+  "codAmount",
+  "currency",
+  "paymentStatus",
+  "paymentMethod",
+  "fulfillmentStatus",
+  "shippingMethod",
+  "tags",
+  "notes",
 ] as const;
 
 const BOM = "﻿";
@@ -6286,7 +6776,9 @@ export function buildOrdersCsv(
   options: { readonly t: Dictionary; readonly locale: Locale; readonly timeZone: string },
 ): string {
   const { t, locale, timeZone } = options;
-  const header = ORDERS_CSV_COLUMNS.map((column) => csvCell(t.ordersExport.columns[column])).join(",");
+  const header = ORDERS_CSV_COLUMNS.map((column) => csvCell(t.ordersExport.columns[column])).join(
+    ",",
+  );
   const body = rows.map((row) =>
     [
       `#${row.orderNumber}`,
@@ -6337,7 +6829,18 @@ const TZ = "Asia/Riyadh";
 
 describe("parseExportRequest (Shopify's five export scopes)", () => {
   it("current page: the list's own view, search, status and cursor, one page of 50", () => {
-    expect(parseExportRequest(params({ scope: "current_page", view: "unpaid", q: "mona", status: "placed", after: "c-1" }), TZ)).toEqual({
+    expect(
+      parseExportRequest(
+        params({
+          scope: "current_page",
+          view: "unpaid",
+          q: "mona",
+          status: "placed",
+          after: "c-1",
+        }),
+        TZ,
+      ),
+    ).toEqual({
       singlePage: true,
       query: { view: "unpaid", search: "mona", status: "placed", after: "c-1", first: 50 },
     });
@@ -6367,21 +6870,32 @@ describe("parseExportRequest (Shopify's five export scopes)", () => {
   });
 
   it("by date: whole shop-local days, the end day included", () => {
-    expect(parseExportRequest(params({ scope: "dates", from: "2026-10-01", to: "2026-10-31" }), TZ)).toEqual({
+    expect(
+      parseExportRequest(params({ scope: "dates", from: "2026-10-01", to: "2026-10-31" }), TZ),
+    ).toEqual({
       singlePage: false,
-      query: { view: "all", createdFrom: "2026-09-30T21:00:00.000Z", createdTo: "2026-10-31T21:00:00.000Z" },
+      query: {
+        view: "all",
+        createdFrom: "2026-09-30T21:00:00.000Z",
+        createdTo: "2026-10-31T21:00:00.000Z",
+      },
     });
   });
 
   it("refuses reversed or invalid dates and an unknown scope", () => {
-    expect(parseExportRequest(params({ scope: "dates", from: "2026-10-31", to: "2026-10-01" }), TZ)).toBeNull();
-    expect(parseExportRequest(params({ scope: "dates", from: "2026-02-30", to: "2026-03-01" }), TZ)).toBeNull();
+    expect(
+      parseExportRequest(params({ scope: "dates", from: "2026-10-31", to: "2026-10-01" }), TZ),
+    ).toBeNull();
+    expect(
+      parseExportRequest(params({ scope: "dates", from: "2026-02-30", to: "2026-03-01" }), TZ),
+    ).toBeNull();
     expect(parseExportRequest(params({ scope: "everything" }), TZ)).toBeNull();
     expect(parseExportRequest(params({}), TZ)).toBeNull();
   });
 });
 
-const rows = (count: number) => Array.from({ length: count }, (_, i) => ({ orderId: `o-${i}` }) as OrderExportRowDto);
+const rows = (count: number) =>
+  Array.from({ length: count }, (_, i) => ({ orderId: `o-${i}` }) as OrderExportRowDto);
 const ok = (count: number, next: string | null): FetchOrderExportRowsResult => ({
   outcome: "ok",
   items: rows(count),
@@ -6390,8 +6904,14 @@ const ok = (count: number, next: string | null): FetchOrderExportRowsResult => (
 
 describe("collectExportRows", () => {
   it("pages 250 at a time, following the cursor, until the last page", async () => {
-    const fetchPage = vi.fn().mockResolvedValueOnce(ok(250, "c-1")).mockResolvedValueOnce(ok(10, null));
-    const result = await collectExportRows(fetchPage, { singlePage: false, query: { view: "all" } });
+    const fetchPage = vi
+      .fn()
+      .mockResolvedValueOnce(ok(250, "c-1"))
+      .mockResolvedValueOnce(ok(10, null));
+    const result = await collectExportRows(fetchPage, {
+      singlePage: false,
+      query: { view: "all" },
+    });
     expect(result.outcome === "ok" && result.rows).toHaveLength(260);
     expect(fetchPage).toHaveBeenNthCalledWith(1, { view: "all", first: 250 });
     expect(fetchPage).toHaveBeenNthCalledWith(2, { view: "all", first: 250, after: "c-1" });
@@ -6399,25 +6919,46 @@ describe("collectExportRows", () => {
 
   it("reads one page only for the current page or a selection", async () => {
     const fetchPage = vi.fn().mockResolvedValue(ok(50, "c-1"));
-    const result = await collectExportRows(fetchPage, { singlePage: true, query: { view: "all", first: 50 } });
+    const result = await collectExportRows(fetchPage, {
+      singlePage: true,
+      query: { view: "all", first: 50 },
+    });
     expect(result.outcome === "ok" && result.rows).toHaveLength(50);
     expect(fetchPage).toHaveBeenCalledTimes(1);
   });
 
   it("stops with too_many past the cap rather than writing a cut-off file", async () => {
     const fetchPage = vi.fn().mockResolvedValue(ok(250, "c"));
-    expect((await collectExportRows(fetchPage, { singlePage: false, query: {} }, 500)).outcome).toBe("too_many");
+    expect(
+      (await collectExportRows(fetchPage, { singlePage: false, query: {} }, 500)).outcome,
+    ).toBe("too_many");
   });
 
   it("stops with too_many when pages never end (a scan that keeps answering short pages)", async () => {
     const fetchPage = vi.fn().mockResolvedValue(ok(0, "c"));
-    expect((await collectExportRows(fetchPage, { singlePage: false, query: {} })).outcome).toBe("too_many");
+    expect((await collectExportRows(fetchPage, { singlePage: false, query: {} })).outcome).toBe(
+      "too_many",
+    );
     expect(fetchPage).toHaveBeenCalledTimes(MAX_EXPORT_REQUESTS);
   });
 
   it("passes a failed or refused read through", async () => {
-    expect((await collectExportRows(vi.fn().mockResolvedValue({ outcome: "error", message: "x" }), { singlePage: false, query: {} })).outcome).toBe("error");
-    expect((await collectExportRows(vi.fn().mockResolvedValue({ outcome: "unauthorized" }), { singlePage: false, query: {} })).outcome).toBe("unauthorized");
+    expect(
+      (
+        await collectExportRows(vi.fn().mockResolvedValue({ outcome: "error", message: "x" }), {
+          singlePage: false,
+          query: {},
+        })
+      ).outcome,
+    ).toBe("error");
+    expect(
+      (
+        await collectExportRows(vi.fn().mockResolvedValue({ outcome: "unauthorized" }), {
+          singlePage: false,
+          query: {},
+        })
+      ).outcome,
+    ).toBe("unauthorized");
   });
 });
 ```
@@ -6429,7 +6970,11 @@ Run: `pnpm --filter admin-web exec vitest run src/lib/orders/orders-export.test.
 `apps/admin-web/src/lib/orders/orders-export.ts`:
 
 ```ts
-import type { FetchOrderExportRowsResult, OrderExportQuery, OrderExportRowDto } from "@/lib/api/orders";
+import type {
+  FetchOrderExportRowsResult,
+  OrderExportQuery,
+  OrderExportRowDto,
+} from "@/lib/api/orders";
 import { ORDERS_PAGE_SIZE, parseOrderIds, parseOrderView } from "./order-views";
 import { isCalendarDay, nextDay, startOfZonedDay } from "./zoned-time";
 
@@ -6458,13 +7003,21 @@ export function parseExportRequest(params: URLSearchParams, timeZone: string): E
     case "current_page":
       return {
         singlePage: true,
-        query: { view, search: text("q"), status: text("status"), after: text("after"), first: ORDERS_PAGE_SIZE },
+        query: {
+          view,
+          search: text("q"),
+          status: text("status"),
+          after: text("after"),
+          first: ORDERS_PAGE_SIZE,
+        },
       };
     case "all":
       return { singlePage: false, query: { view: "all" } };
     case "selected": {
       const ids = parseOrderIds(text("ids"), 50);
-      return ids === null ? null : { singlePage: true, query: { view: "all", ids, first: ids.length } };
+      return ids === null
+        ? null
+        : { singlePage: true, query: { view: "all", ids, first: ids.length } };
     }
     case "matching":
       return { singlePage: false, query: { view, search: text("q"), status: text("status") } };
@@ -6555,7 +7108,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
-  const csv = buildOrdersCsv(collected.rows, { t: dictionaryFor(locale), locale, timeZone: settings.timezone });
+  const csv = buildOrdersCsv(collected.rows, {
+    t: dictionaryFor(locale),
+    locale,
+    timeZone: settings.timezone,
+  });
   const day = zonedDay(new Date(), settings.timezone);
   return new Response(csv, {
     status: 200,
@@ -6585,14 +7142,26 @@ const context: OrdersExportContext = { view: "unpaid", q: "mona", after: "c-1", 
 
 function renderDialog(props: Partial<Parameters<typeof OrdersExportDialog>[0]> = {}) {
   return render(
-    <OrdersExportDialog open onOpenChange={vi.fn()} context={context} selectedIds={[]} t={en} {...props} />,
+    <OrdersExportDialog
+      open
+      onOpenChange={vi.fn()}
+      context={context}
+      selectedIds={[]}
+      t={en}
+      {...props}
+    />,
   );
 }
 
 describe("OrdersExportDialog (Shopify's Export orders)", () => {
   it("offers the five scopes and one format, with Selected disabled when nothing is selected", () => {
     renderDialog();
-    for (const name of ["Current page", "All orders", "Orders matching your search", "Orders by date"]) {
+    for (const name of [
+      "Current page",
+      "All orders",
+      "Orders matching your search",
+      "Orders by date",
+    ]) {
       expect(screen.getByRole("radio", { name })).toBeEnabled();
     }
     expect(screen.getByRole("radio", { name: "Selected: 0 orders" })).toBeDisabled();
@@ -6688,15 +7257,23 @@ export function OrdersExportDialog({
   readonly t: Dictionary;
 }) {
   const e = t.ordersExport;
-  const [scope, setScope] = useState<ExportScope>(defaultScope ?? (selectedIds.length > 0 ? "selected" : "current_page"));
+  const [scope, setScope] = useState<ExportScope>(
+    defaultScope ?? (selectedIds.length > 0 ? "selected" : "current_page"),
+  );
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const canSubmit = scope !== "dates" || (from.length > 0 && to.length > 0 && from <= to);
   const options: readonly { value: ExportScope; label: string; disabled: boolean }[] = [
     { value: "current_page", label: e.currentPage, disabled: false },
     { value: "all", label: e.all, disabled: false },
-    { value: "selected", label: e.selected.replace("{count}", String(selectedIds.length)), disabled: selectedIds.length === 0 },
-    ...(context.hasFilters ? [{ value: "matching" as const, label: e.matching, disabled: false }] : []),
+    {
+      value: "selected",
+      label: e.selected.replace("{count}", String(selectedIds.length)),
+      disabled: selectedIds.length === 0,
+    },
+    ...(context.hasFilters
+      ? [{ value: "matching" as const, label: e.matching, disabled: false }]
+      : []),
     { value: "dates", label: e.dates, disabled: false },
   ];
 
@@ -6707,7 +7284,12 @@ export function OrdersExportDialog({
           <DialogTitle>{e.title}</DialogTitle>
           <DialogDescription>{e.cap}</DialogDescription>
         </DialogHeader>
-        <form method="get" action="/orders/export" onSubmit={() => onOpenChange(false)} className="flex flex-col gap-4">
+        <form
+          method="get"
+          action="/orders/export"
+          onSubmit={() => onOpenChange(false)}
+          className="flex flex-col gap-4"
+        >
           <fieldset className="flex flex-col gap-2">
             <legend className="mb-1 text-sm font-medium">{e.scopeLegend}</legend>
             {options.map((option) => (
@@ -6728,11 +7310,25 @@ export function OrdersExportDialog({
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1">
                 <Label htmlFor="orders-export-from">{e.from}</Label>
-                <Input id="orders-export-from" type="date" name="from" value={from} onChange={(event) => setFrom(event.target.value)} required />
+                <Input
+                  id="orders-export-from"
+                  type="date"
+                  name="from"
+                  value={from}
+                  onChange={(event) => setFrom(event.target.value)}
+                  required
+                />
               </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="orders-export-to">{e.to}</Label>
-                <Input id="orders-export-to" type="date" name="to" value={to} onChange={(event) => setTo(event.target.value)} required />
+                <Input
+                  id="orders-export-to"
+                  type="date"
+                  name="to"
+                  value={to}
+                  onChange={(event) => setTo(event.target.value)}
+                  required
+                />
               </div>
             </div>
           )}
@@ -6741,9 +7337,15 @@ export function OrdersExportDialog({
           </p>
           <input type="hidden" name="view" value={context.view} />
           {context.q !== undefined && <input type="hidden" name="q" value={context.q} />}
-          {context.status !== undefined && <input type="hidden" name="status" value={context.status} />}
-          {context.after !== undefined && <input type="hidden" name="after" value={context.after} />}
-          {selectedIds.length > 0 && <input type="hidden" name="ids" value={selectedIds.join(",")} />}
+          {context.status !== undefined && (
+            <input type="hidden" name="status" value={context.status} />
+          )}
+          {context.after !== undefined && (
+            <input type="hidden" name="after" value={context.after} />
+          )}
+          {selectedIds.length > 0 && (
+            <input type="hidden" name="ids" value={selectedIds.join(",")} />
+          )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               {e.cancel}
@@ -6759,7 +7361,13 @@ export function OrdersExportDialog({
 }
 
 /** The page header's secondary "Export" button. */
-export function OrdersExportButton({ context, t }: { readonly context: OrdersExportContext; readonly t: Dictionary }) {
+export function OrdersExportButton({
+  context,
+  t,
+}: {
+  readonly context: OrdersExportContext;
+  readonly t: Dictionary;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -6767,7 +7375,9 @@ export function OrdersExportButton({ context, t }: { readonly context: OrdersExp
         <DownloadIcon aria-hidden="true" />
         {t.ordersPage.export}
       </Button>
-      {open && <OrdersExportDialog open onOpenChange={setOpen} context={context} selectedIds={[]} t={t} />}
+      {open && (
+        <OrdersExportDialog open onOpenChange={setOpen} context={context} selectedIds={[]} t={t} />
+      )}
     </>
   );
 }
@@ -6784,30 +7394,41 @@ on Submit if the default is not primary.) Run the dialog test — Expected: PASS
 `OrdersBulkBar`, and render after the `Table`:
 
 ```tsx
-      {exportOpen && exportContext !== undefined && (
-        <OrdersExportDialog
-          open
-          onOpenChange={setExportOpen}
-          context={exportContext}
-          selectedIds={selectedOrders.map((order) => order.id)}
-          defaultScope="selected"
-          t={t}
-        />
-      )}
+{
+  exportOpen && exportContext !== undefined && (
+    <OrdersExportDialog
+      open
+      onOpenChange={setExportOpen}
+      context={exportContext}
+      selectedIds={selectedOrders.map((order) => order.id)}
+      defaultScope="selected"
+      t={t}
+    />
+  );
+}
 ```
 
 Add to `orders-table.test.tsx`:
 
 ```tsx
-  it("offers Export selected when the page passes its export context, preselecting the selection", () => {
-    render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} exportContext={{ view: "all", hasFilters: false }} />);
-    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
-    fireEvent.click(screen.getByRole("button", { name: "Export selected" }));
-    expect(screen.getByRole("radio", { name: "Selected: 1 orders" })).toBeChecked();
-  });
+it("offers Export selected when the page passes its export context, preselecting the selection", () => {
+  render(
+    <OrdersTable
+      orders={two()}
+      t={en}
+      locale="en"
+      now={NOW}
+      exportContext={{ view: "all", hasFilters: false }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+  fireEvent.click(screen.getByRole("button", { name: "Export selected" }));
+  expect(screen.getByRole("radio", { name: "Selected: 1 orders" })).toBeChecked();
+});
 ```
 
 `page.tsx`:
+
 - `searchParams` gains `readonly exportError?: string;`;
 - build once: `const exportContext = { view, q: params.q, status: params.status, after: params.after, hasFilters: Boolean(params.q) || Boolean(params.status) || view !== "all" };`
   (omit keys whose value is `undefined` if the props type is strict);
@@ -6815,14 +7436,20 @@ Add to `orders-table.test.tsx`:
 - under the toolbar, when `params.exportError` is `too_many`, `failed` or `invalid`:
 
 ```tsx
-        {exportError !== undefined && (
-          <p role="alert" className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-base">
-            {t.ordersExport.errors[exportError]}
-          </p>
-        )}
+{
+  exportError !== undefined && (
+    <p
+      role="alert"
+      className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-base"
+    >
+      {t.ordersExport.errors[exportError]}
+    </p>
+  );
+}
 ```
 
-  with `const exportError = (["too_many", "failed", "invalid"] as const).find((e) => e === params.exportError);`;
+with `const exportError = (["too_many", "failed", "invalid"] as const).find((e) => e === params.exportError);`;
+
 - pass `exportContext` through `OrdersResults` to `OrdersTable`.
 
 - [ ] **Step 13: Run admin-web, typecheck, lint**
@@ -6853,6 +7480,7 @@ EOF
 Model tier: **standard**.
 
 **Files:**
+
 - Modify: `apps/admin-web/src/lib/api/orders.ts`, `orders.test.ts`
 - Modify: `apps/admin-web/src/app/orders/actions.ts`, `actions.test.ts`
 - Create: `apps/admin-web/src/components/orders/packing-slip.tsx`, `packing-slip.test.tsx`
@@ -6863,6 +7491,7 @@ Model tier: **standard**.
 - Modify: `apps/admin-web/src/messages/en.ts`, `ar.ts`
 
 **Interfaces:**
+
 - Consumes: `GET /orders/packing-slips`, `POST /orders/:orderId/archive|unarchive`, `archivedAt` on the detail (Task 3/6), `parseOrderIds` (Task 7), `storeSettingsOrDefaults`, `formatCurrency`, `formatLongDate`, `formatNumber`.
 - Produces:
   - `lib/api/orders.ts`: `PackingSlipDto`, `fetchPackingSlips(ids): Promise<{ outcome: "ok"; slips } | { outcome: "unauthorized" } | { outcome: "error"; message }>`, `archiveOrder(orderId, key)`, `unarchiveOrder(orderId, key)`, `OrderDetailDto.archivedAt?: string | null`.
@@ -6928,11 +7557,15 @@ describe("fetchPackingSlips / archiveOrder (order operations Part 1)", () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { slips: [] }));
     vi.stubGlobal("fetch", fetchMock);
     expect(await fetchPackingSlips(["a", "b"])).toEqual({ outcome: "ok", slips: [] });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(/\/api\/v1\/orders\/packing-slips\?ids=a,b$/);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toMatch(
+      /\/api\/v1\/orders\/packing-slips\?ids=a,b$/,
+    );
   });
 
   it("archives through POST /orders/:id/archive with the idempotency key", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { orderId: "o-1", archivedAt: "x" }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { orderId: "o-1", archivedAt: "x" }));
     vi.stubGlobal("fetch", fetchMock);
     expect((await archiveOrder("o-1", "key-1")).outcome).toBe("ok");
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -6953,14 +7586,18 @@ describe("archiveOrderAction / unarchiveOrderAction", () => {
   });
 
   it("archives the order named in the form and refreshes the list and the page", async () => {
-    expect(await archiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({ status: "success" });
+    expect(await archiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({
+      status: "success",
+    });
     expect(orders.archiveOrder).toHaveBeenCalledWith("order-1", expect.any(String));
     expect(revalidatePath).toHaveBeenCalledWith("/orders");
     expect(revalidatePath).toHaveBeenCalledWith("/orders/order-1");
   });
 
   it("unarchives, and refuses a form without an order id", async () => {
-    expect(await unarchiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({ status: "success" });
+    expect(await unarchiveOrderAction(idle, form({ orderId: "order-1" }))).toEqual({
+      status: "success",
+    });
     expect((await archiveOrderAction(idle, form({}))).status).toBe("error");
   });
 });
@@ -7050,11 +7687,17 @@ async function setArchived(
 }
 
 /** "More actions → Archive" on the order page (order operations Part 1). */
-export async function archiveOrderAction(_previous: FormState, formData: FormData): Promise<FormState> {
+export async function archiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
   return setArchived(formData, archiveOrder);
 }
 
-export async function unarchiveOrderAction(_previous: FormState, formData: FormData): Promise<FormState> {
+export async function unarchiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
   return setArchived(formData, unarchiveOrder);
 }
 ```
@@ -7078,7 +7721,16 @@ function slip(overrides: Partial<PackingSlipDto> = {}): PackingSlipDto {
     orderId: "o-1",
     orderNumber: "1001",
     createdAt: "2026-10-18T09:05:00.000Z",
-    shipTo: { name: "Mona Ali", phone: "+201012345678", line1: "1 Nile St", line2: null, city: "Cairo", province: "EG-C", postalCode: "11511", country: "EG" },
+    shipTo: {
+      name: "Mona Ali",
+      phone: "+201012345678",
+      line1: "1 Nile St",
+      line2: null,
+      city: "Cairo",
+      province: "EG-C",
+      postalCode: "11511",
+      country: "EG",
+    },
     lines: [
       { title: "T-shirt", variantTitle: "L", sku: "SKU-1", quantity: 2 },
       { title: "Cap", variantTitle: null, sku: null, quantity: 1 },
@@ -7171,7 +7823,9 @@ export function PackingSlip({
       <header className="border-border flex items-start justify-between gap-4 border-b pb-3">
         <div>
           <p className="text-lg font-semibold">{shopName}</p>
-          <h2 className="text-base font-medium">{p.orderLabel.replace("{orderNumber}", slip.orderNumber)}</h2>
+          <h2 className="text-base font-medium">
+            {p.orderLabel.replace("{orderNumber}", slip.orderNumber)}
+          </h2>
         </div>
         <p className="text-sm">{formatLongDate(locale, slip.createdAt)}</p>
       </header>
@@ -7179,7 +7833,11 @@ export function PackingSlip({
         <h3 className="mb-1 text-sm font-semibold">{p.shipTo}</h3>
         <address className="text-sm not-italic leading-6">
           {to.name !== null && <div>{to.name}</div>}
-          {to.phone !== null && <div dir="ltr" className="text-start">{to.phone}</div>}
+          {to.phone !== null && (
+            <div dir="ltr" className="text-start">
+              {to.phone}
+            </div>
+          )}
           <div>{to.line1}</div>
           {to.line2 !== null && <div>{to.line2}</div>}
           <div>{cityLine}</div>
@@ -7198,8 +7856,12 @@ export function PackingSlip({
             <tr key={`${line.title}-${index}`} className="border-border border-b">
               <td className="py-1">
                 <div>{line.title}</div>
-                {line.variantTitle !== null && <div className="text-muted-foreground">{line.variantTitle}</div>}
-                {line.sku !== null && <div className="text-muted-foreground">{p.sku.replace("{sku}", line.sku)}</div>}
+                {line.variantTitle !== null && (
+                  <div className="text-muted-foreground">{line.variantTitle}</div>
+                )}
+                {line.sku !== null && (
+                  <div className="text-muted-foreground">{p.sku.replace("{sku}", line.sku)}</div>
+                )}
               </td>
               <td className="py-1 text-end tabular-nums">{formatNumber(locale, line.quantity)}</td>
             </tr>
@@ -7214,7 +7876,10 @@ export function PackingSlip({
       )}
       {slip.codAmountMinor > 0 && (
         <p className="border-foreground rounded-md border-2 px-3 py-2 text-lg font-bold">
-          {p.collect.replace("{amount}", formatCurrency(locale, slip.codAmountMinor, slip.currency))}
+          {p.collect.replace(
+            "{amount}",
+            formatCurrency(locale, slip.codAmountMinor, slip.currency),
+          )}
         </p>
       )}
     </article>
@@ -7256,7 +7921,11 @@ import { parseOrderIds } from "@/lib/orders/order-views";
 const MAX_SLIPS = 50;
 
 function SlipsMessage({ text }: { readonly text: string }) {
-  return <p role="note" className="text-muted-foreground p-8 text-center text-base">{text}</p>;
+  return (
+    <p role="note" className="text-muted-foreground p-8 text-center text-base">
+      {text}
+    </p>
+  );
 }
 
 /** Packing slips for up to 50 orders (`?ids=a,b`), one per printed page, printing on open (spec §1.5). */
@@ -7278,11 +7947,20 @@ export default async function PackingSlipsPage({
   if (result.outcome !== "ok") return <SlipsMessage text={t.packingSlips.error} />;
   if (result.slips.length === 0) return <SlipsMessage text={t.packingSlips.empty} />;
   return (
-    <main dir={directionFor(locale)} className="bg-background text-foreground mx-auto max-w-3xl print:max-w-none">
+    <main
+      dir={directionFor(locale)}
+      className="bg-background text-foreground mx-auto max-w-3xl print:max-w-none"
+    >
       <style>{"@page { margin: 12mm; }"}</style>
       <h1 className="sr-only">{t.packingSlips.title}</h1>
       {result.slips.map((slip) => (
-        <PackingSlip key={slip.orderId} slip={slip} shopName={settings.storeName} t={t} locale={locale} />
+        <PackingSlip
+          key={slip.orderId}
+          slip={slip}
+          shopName={settings.storeName}
+          t={t}
+          locale={locale}
+        />
       ))}
       <AutoPrint />
     </main>
@@ -7300,33 +7978,37 @@ In `order-header-actions.test.tsx`: add `archiveOrderAction`, `unarchiveOrderAct
 and the first test's Print assertion with:
 
 ```tsx
-  it("links Print packing slip to the print page for this order, in a new tab", () => {
-    render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
-    const link = screen.getByRole("link", { name: "Print packing slip" });
-    expect(link).toHaveAttribute("href", "/orders/packing-slips?ids=order-1");
-    expect(link).toHaveAttribute("target", "_blank");
-  });
+it("links Print packing slip to the print page for this order, in a new tab", () => {
+  render(<OrderMoreActions orderId="order-1" canCancel archived={false} t={en} />);
+  const link = screen.getByRole("link", { name: "Print packing slip" });
+  expect(link).toHaveAttribute("href", "/orders/packing-slips?ids=order-1");
+  expect(link).toHaveAttribute("target", "_blank");
+});
 
-  it("offers Archive for an order that is not archived, and Unarchive for one that is", async () => {
-    const { rerender } = render(<OrderMoreActions orderId="order-1" canCancel={false} archived={false} t={en} />);
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    await waitFor(() => expect(actions.archiveOrderAction).toHaveBeenCalledTimes(1));
-    rerender(<OrderMoreActions orderId="order-1" canCancel={false} archived t={en} />);
-    expect(screen.getByRole("button", { name: "Unarchive" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
-  });
+it("offers Archive for an order that is not archived, and Unarchive for one that is", async () => {
+  const { rerender } = render(
+    <OrderMoreActions orderId="order-1" canCancel={false} archived={false} t={en} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Archive" }));
+  await waitFor(() => expect(actions.archiveOrderAction).toHaveBeenCalledTimes(1));
+  rerender(<OrderMoreActions orderId="order-1" canCancel={false} archived t={en} />);
+  expect(screen.getByRole("button", { name: "Unarchive" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
+});
 ```
 
 In `order-header.test.tsx`: add `archiveOrderAction: vi.fn(), unarchiveOrderAction: vi.fn()` to the
 `@/app/orders/actions` mock and append:
 
 ```tsx
-  it("shows an Archived badge on an archived order", () => {
-    render(<OrderHeader order={order({ archivedAt: "2026-10-18T09:00:00.000Z" })} t={en} locale="en" />);
-    expect(screen.getByText("Archived")).toBeInTheDocument();
-    render(<OrderHeader order={order({ id: "order-2", orderNumber: "1002" })} t={en} locale="en" />);
-    expect(screen.getAllByText("Archived")).toHaveLength(1);
-  });
+it("shows an Archived badge on an archived order", () => {
+  render(
+    <OrderHeader order={order({ archivedAt: "2026-10-18T09:00:00.000Z" })} t={en} locale="en" />,
+  );
+  expect(screen.getByText("Archived")).toBeInTheDocument();
+  render(<OrderHeader order={order({ id: "order-2", orderNumber: "1002" })} t={en} locale="en" />);
+  expect(screen.getAllByText("Archived")).toHaveLength(1);
+});
 ```
 
 Run both — Expected: FAIL.
@@ -7334,16 +8016,32 @@ Run both — Expected: FAIL.
 `order-header-actions.tsx` — `OrderMoreActions` gains `archived` and renders, after the Cancel form:
 
 ```tsx
-        {archived ? (
-          <OrderArchiveForm orderId={orderId} action={unarchiveOrderAction} label={t.orderPage.unarchive} t={t} />
-        ) : (
-          <OrderArchiveForm orderId={orderId} action={archiveOrderAction} label={t.orderPage.archive} t={t} />
-        )}
-        <Button asChild variant="ghost" className="w-full justify-start">
-          <a href={`/orders/packing-slips?ids=${encodeURIComponent(orderId)}`} target="_blank" rel="noopener">
-            {t.orderPage.printPackingSlip}
-          </a>
-        </Button>
+{
+  archived ? (
+    <OrderArchiveForm
+      orderId={orderId}
+      action={unarchiveOrderAction}
+      label={t.orderPage.unarchive}
+      t={t}
+    />
+  ) : (
+    <OrderArchiveForm
+      orderId={orderId}
+      action={archiveOrderAction}
+      label={t.orderPage.archive}
+      t={t}
+    />
+  );
+}
+<Button asChild variant="ghost" className="w-full justify-start">
+  <a
+    href={`/orders/packing-slips?ids=${encodeURIComponent(orderId)}`}
+    target="_blank"
+    rel="noopener"
+  >
+    {t.orderPage.printPackingSlip}
+  </a>
+</Button>;
 ```
 
 (the old `window.print()` button is removed) with:
@@ -7365,11 +8063,19 @@ function OrderArchiveForm({
   return (
     <form action={formAction} className="flex flex-col items-start gap-1">
       <input type="hidden" name="orderId" value={orderId} />
-      <Button type="submit" variant="ghost" className="w-full justify-start" loading={isPending} disabled={isPending}>
+      <Button
+        type="submit"
+        variant="ghost"
+        className="w-full justify-start"
+        loading={isPending}
+        disabled={isPending}
+      >
         {isPending ? t.orderPage.archiving : label}
       </Button>
       {state.status === "error" && (
-        <p role="alert" className="text-destructive px-3 text-xs">{state.message}</p>
+        <p role="alert" className="text-destructive px-3 text-xs">
+          {state.message}
+        </p>
       )}
     </form>
   );
@@ -7381,7 +8087,9 @@ function OrderArchiveForm({
 `order-header.tsx`: next to the two status badges,
 
 ```tsx
-          {order.archivedAt ? <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge> : null}
+{
+  order.archivedAt ? <Badge variant="neutral">{t.ordersPage.archivedBadge}</Badge> : null;
+}
 ```
 
 (import `Badge` from `@platform/ui`) and
@@ -7414,23 +8122,22 @@ EOF
 ## Final verification (after Task 9)
 
 - [ ] Run every touched package: `pnpm --filter @platform/db test`, `pnpm --filter @platform/auth test`,
-  `pnpm --filter @platform/orders test`, `pnpm --filter @platform/payments test`,
-  `pnpm --filter @platform/admin test`, `pnpm --filter admin-web test`, plus `typecheck` and `lint` for
-  each, and `prisma validate` with the dummy URLs. All PASS.
+      `pnpm --filter @platform/orders test`, `pnpm --filter @platform/payments test`,
+      `pnpm --filter @platform/admin test`, `pnpm --filter admin-web test`, plus `typecheck` and `lint` for
+      each, and `prisma validate` with the dummy URLs. All PASS.
 - [ ] Deploy note for the owner (not run by the agent): apply
-  `20261018000000_order_archive/migration.sql` from Railway's Console before the release that reads
-  `archived_at`.
+      `20261018000000_order_archive/migration.sql` from Railway's Console before the release that reads
+      `archived_at`.
 
 ## Spec coverage (self-review)
 
-| Spec item | Task |
-| --- | --- |
-| §1.1 tabs, `?view=`, legacy `fulfillment=unfulfilled`, Filter button, Home link | 1, 3, 7 |
-| §1.2 `archived_at` column + index, mapper never writes it, port, Prisma/in-memory, ArchiveOrders/UnarchiveOrders idempotent | 1, 2 |
-| §1.3 `OrderListQuery` fields, NOT EXISTS predicates, in-memory mirror + shared cases, recipient name/phone search (cap 500), `listUnfulfilledOrders` passes `archived: false` | 1, 3 |
-| §1.4 GET /orders `view` + `archivedAt`; archive/unarchive routes; POST /orders/bulk (per-action permission, per-order results, 50 cap, idempotent); export-rows; packing-slips; `GetPaymentIntentsByIds` + `paymentIntentsOf` | 3, 4, 5, 6 |
-| §1.5 header (Export, Create order), tabs, page size 50, client table with selection, Archived badge, bulk bar + admin-only cash, toast + details; export dialog (5 scopes, CSV for Excel, BOM), route handler (250 per page, 5,000 cap), CSV format/guard/columns; packing slips page + order page entry; order page Archive/Unarchive + badge | 7, 8, 9 |
-| §1.6 tests: repository predicates (both stores, same fixture), `save()` vs `archived_at`, tenant isolation of `setArchived`; use-case idempotency; routes (view mapping, bulk mix/permissions/51/viewer, export filters/ids/dates/page size/COD rule, slips cap); admin-web (tabs, selection/bar, dialog, CSV builder, slip render) | 1–9 |
-| Permissions table (`orders:archive`, `orders:export`, `payments:confirm_cod_collection` admin-only) | 3, 5, 6 |
-| Security: tenant scoping, money via existing guarded calls, PII (export operator/admin, capped, guarded), annotations never touch `version` | 1, 2, 5, 6, 8 |
-
+| Spec item                                                                                                                                                                                                                                                                                                                                      | Task          |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| §1.1 tabs, `?view=`, legacy `fulfillment=unfulfilled`, Filter button, Home link                                                                                                                                                                                                                                                                | 1, 3, 7       |
+| §1.2 `archived_at` column + index, mapper never writes it, port, Prisma/in-memory, ArchiveOrders/UnarchiveOrders idempotent                                                                                                                                                                                                                    | 1, 2          |
+| §1.3 `OrderListQuery` fields, NOT EXISTS predicates, in-memory mirror + shared cases, recipient name/phone search (cap 500), `listUnfulfilledOrders` passes `archived: false`                                                                                                                                                                  | 1, 3          |
+| §1.4 GET /orders `view` + `archivedAt`; archive/unarchive routes; POST /orders/bulk (per-action permission, per-order results, 50 cap, idempotent); export-rows; packing-slips; `GetPaymentIntentsByIds` + `paymentIntentsOf`                                                                                                                  | 3, 4, 5, 6    |
+| §1.5 header (Export, Create order), tabs, page size 50, client table with selection, Archived badge, bulk bar + admin-only cash, toast + details; export dialog (5 scopes, CSV for Excel, BOM), route handler (250 per page, 5,000 cap), CSV format/guard/columns; packing slips page + order page entry; order page Archive/Unarchive + badge | 7, 8, 9       |
+| §1.6 tests: repository predicates (both stores, same fixture), `save()` vs `archived_at`, tenant isolation of `setArchived`; use-case idempotency; routes (view mapping, bulk mix/permissions/51/viewer, export filters/ids/dates/page size/COD rule, slips cap); admin-web (tabs, selection/bar, dialog, CSV builder, slip render)            | 1–9           |
+| Permissions table (`orders:archive`, `orders:export`, `payments:confirm_cod_collection` admin-only)                                                                                                                                                                                                                                            | 3, 5, 6       |
+| Security: tenant scoping, money via existing guarded calls, PII (export operator/admin, capped, guarded), annotations never touch `version`                                                                                                                                                                                                    | 1, 2, 5, 6, 8 |

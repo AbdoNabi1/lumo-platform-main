@@ -12,6 +12,8 @@ export interface CollectionRepository {
   save(collection: Collection, tenantId: string, tx?: unknown): Promise<void>;
   findById(id: string, tenantId: string, tx?: unknown): Promise<Collection | null>;
   findBySlug(slug: string, tenantId: string, tx?: unknown): Promise<Collection | null>;
+  /** The tenant's non-deleted collections among `ids`, in one read; unknown ids are skipped. */
+  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly Collection[]>;
   /** Persists a collection already marked `deleted` (via `Collection.delete`) — same shape as `save`. */
   delete(collection: Collection, tenantId: string, tx?: unknown): Promise<void>;
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Collection>>;

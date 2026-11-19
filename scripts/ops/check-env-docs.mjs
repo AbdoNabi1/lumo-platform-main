@@ -31,7 +31,12 @@ const root = join(__dirname, "..", "..");
  */
 const ALLOWLIST = {
   // Documented for humans/ops tooling, not read by any TypeScript process.
-  codeOnly: [],
+  codeOnly: [
+    [
+      "NEXT_RUNTIME",
+      "set by Next.js itself ('nodejs' | 'edge'); read by apps/storefront/src/instrumentation.ts, never operator-configured",
+    ],
+  ],
   docsOnly: [
     ["NEXT_PUBLIC_APP_URL", "read by Next.js's own env inlining, not a schema key"],
     [
@@ -101,6 +106,11 @@ function envReads(source) {
   }
   for (const match of source.matchAll(/process\.env\[?"?([A-Z][A-Z0-9_]+)"?\]?/g)) {
     if (match[1] !== "SIGINT" && match[1] !== "SIGTERM") keys.add(match[1]);
+  }
+  // `env["X"]` where `env` is an injected `process.env` (apps/storefront/src/lib/storefront-env.ts
+  // takes `env: Env = process.env` so it can be unit-tested without touching the real environment).
+  for (const match of source.matchAll(/(?<![\w.])env\[\s*"([A-Z][A-Z0-9_]+)"\s*\]/g)) {
+    keys.add(match[1]);
   }
   return keys;
 }

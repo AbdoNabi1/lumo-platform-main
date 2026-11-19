@@ -34,5 +34,5 @@ datasource db {
   // locks) that a transaction-mode pooler cannot provide. Locally both env vars can point at the
   // same docker-compose Postgres. See docs/development/SETUP.md / .env.example.
   directUrl = env("DIRECT_URL")
-  schemas   = ["platform", "catalog", "media", "pricing", "inventory", "cart", "checkout", "orders", "payments", "identity", "finance", "fulfillment", "shipping", "returns", "notifications", "promotions", "coupons", "loyalty", "wishlist", "reviews", "search", "recommendations", "reporting", "feature_flags", "experiment", "automation", "content", "localization", "seo", "components", "theme", "experience", "pages", "tenancy", "licensing", "feature_registry", "security", "tracking", "customer_360"]
+  schemas   = ["platform", "catalog", "media", "pricing", "inventory", "cart", "checkout", "orders", "payments", "identity", "finance", "fulfillment", "shipping", "returns", "notifications", "promotions", "coupons", "loyalty", "wishlist", "reviews", "search", "recommendations", "reporting", "feature_flags", "experiment", "automation", "content", "localization", "seo", "components", "theme", "experience", "pages", "tenancy", "licensing", "feature_registry", "security", "tracking", "customer_360", "online_store"]
 }

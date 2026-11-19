@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { clearCheckoutSession } from "@/app/checkout/actions";
+import { clearCheckoutSession } from "@/app/(store)/checkout/actions";
 
 /**
  * Fires the `clearCheckoutSession` Server Action once, after this render — the confirmation page

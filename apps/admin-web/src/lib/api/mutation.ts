@@ -28,6 +28,13 @@ export type FormState =
       readonly fieldErrors: Readonly<Record<string, string>>;
     };
 
+/**
+ * A save that changes the live storefront. `liveDelayed` means it was saved but the storefront
+ * could not be told to drop its cached copy, so the live store may take up to a minute (its cache
+ * TTL) to show it — a soft note, never an error (Ruling 5).
+ */
+export type LiveSaveState = FormState | { readonly status: "success"; readonly liveDelayed: true };
+
 function fieldErrorsOf(fields: readonly FieldIssue[]): {
   readonly fieldErrors: Record<string, string>;
   readonly topLevelMessages: readonly string[];

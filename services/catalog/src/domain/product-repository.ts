@@ -46,3 +46,20 @@ export interface VariantCurrencyRelabeler {
 export interface ProductBatchReader {
   findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly Product[]>;
 }
+
+/**
+ * Online Store Part 3: the tenant's newest LISTED products (`publishState = "published"`, not
+ * deleted), ordered by `id` descending (ids are time-ordered), `limit` clamped to 1-50. A separate
+ * port so the many `ProductRepository` fakes need no new method.
+ */
+export interface NewestProductsReader {
+  listNewestListed(limit: number, tenantId: string, tx?: unknown): Promise<readonly Product[]>;
+}
+
+export const NEWEST_LISTED_MAX = 50;
+
+/** The clamp both readers apply to `listNewestListed`'s `limit`. */
+export function clampNewestLimit(limit: number): number {
+  const whole = Number.isFinite(limit) ? Math.trunc(limit) : 1;
+  return Math.min(NEWEST_LISTED_MAX, Math.max(1, whole));
+}

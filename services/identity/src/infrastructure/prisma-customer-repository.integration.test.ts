@@ -47,13 +47,18 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
     // FK's `onDelete: Cascade`) — never a blanket delete that could touch another suite's or
     // historical rows.
     const client = openClients[0];
-    if (client !== undefined && usedTenantIds.length > 0) {
-      await client.customer.deleteMany({ where: { tenantId: { in: usedTenantIds.splice(0) } } });
+    const tenantIds = usedTenantIds.splice(0);
+    if (client !== undefined && tenantIds.length > 0) {
+      await client.customer.deleteMany({ where: { tenantId: { in: tenantIds } } });
     }
-    // Only THIS suite ever writes `producer: "identity"` rows into the shared `platform.outbox`
-    // table, so this can't touch another bounded context's (or another test file's) rows.
-    if (client !== undefined) {
-      await client.outboxEntry.deleteMany({ where: { producer: "identity" } });
+    // Scoped to this test's tenants as well as the producer: `prisma-access-repositories`
+    // `.integration.test.ts` also writes `producer: "identity"` rows (under the fixed tenant
+    // "tenant-itest") and vitest runs the two files in parallel, so a producer-only delete would
+    // remove that file's rows mid-test.
+    if (client !== undefined && tenantIds.length > 0) {
+      await client.outboxEntry.deleteMany({
+        where: { producer: "identity", tenantId: { in: tenantIds } },
+      });
     }
     await Promise.all(openClients.splice(0).map((c) => c.$disconnect()));
   });

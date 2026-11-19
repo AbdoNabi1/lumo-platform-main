@@ -73,6 +73,16 @@ export class MediaLibraryAdminController {
     return this.mediaLibrary.uploadProductImage(input);
   }
 
+  /** Project 4: online-store images (logo, favicon, share image, section image). */
+  async uploadImage(
+    principal: Principal,
+    input: Parameters<MediaLibraryController["uploadImage"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "online_store:upload_image");
+    if (denied) return denied;
+    return this.mediaLibrary.uploadImage(input);
+  }
+
   async updateMediaAlt(
     principal: Principal,
     input: Parameters<MediaLibraryController["updateMediaAlt"]>[0],

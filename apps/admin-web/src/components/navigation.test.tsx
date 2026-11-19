@@ -89,14 +89,43 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(screen.getByRole("link", { name: en.nav.categories })).toBeInTheDocument();
   });
 
-  it("puts Theme, Pages and SEO under the Online Store sales channel", () => {
-    renderNav("pages");
-
+  it("puts Themes, Pages, Preferences and SEO under Online Store, in Shopify's order", () => {
+    renderNav("online-store-preferences");
     const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
-    expect(within(channels).getByRole("link", { name: en.nav.onlineStore })).toBeInTheDocument();
-    expect(within(channels).getByRole("link", { name: en.nav.pages })).toHaveAttribute(
+    expect(within(channels).getByRole("link", { name: en.nav.onlineStore })).toHaveAttribute(
+      "href",
+      "/online-store/themes",
+    );
+    const labels = within(channels)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels).toEqual(
+      expect.arrayContaining([en.nav.themes, en.nav.pages, en.nav.preferences, en.nav.seo]),
+    );
+    expect(within(channels).getByRole("link", { name: en.nav.preferences })).toHaveAttribute(
       "aria-current",
       "page",
+    );
+  });
+
+  it("puts Navigation right after Pages under Online Store (Part 2)", () => {
+    renderNav("online-store-navigation");
+    const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
+    const labels = within(channels)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels.indexOf(en.nav.navigation)).toBe(labels.indexOf(en.nav.pages) + 1);
+    const link = within(channels).getByRole("link", { name: en.nav.navigation });
+    expect(link).toHaveAttribute("href", "/online-store/navigation");
+    expect(link).toHaveAttribute("aria-current", "page");
+  });
+
+  it("lists the raw theme tokens under Platform tools", () => {
+    renderNav("dashboard", { showPlatformTools: true });
+    const tools = screen.getByRole("navigation", { name: en.nav.platformTools });
+    expect(within(tools).getByRole("link", { name: en.nav.themeTokens })).toHaveAttribute(
+      "href",
+      "/theme",
     );
   });
 

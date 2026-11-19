@@ -45,14 +45,22 @@ export function createShopResolver(
   };
 }
 
+/** A hung Runtime must not hold every request (review cross-task note): past this, the read throws. */
+const RESOLVE_TIMEOUT_MS = 2_000;
+
 export function fetchShopFromRuntime(
   runtimeApiUrl: string,
   platformTenantId: string,
+  timeoutMs: number = RESOLVE_TIMEOUT_MS,
 ): (hostname: string) => Promise<ResolvedShop | null> {
   return async (hostname) => {
     const response = await fetch(
       `${runtimeApiUrl}/api/v1/public/domains/resolve?host=${encodeURIComponent(hostname)}`,
-      { headers: { "x-tenant-id": platformTenantId }, cache: "no-store" },
+      {
+        headers: { "x-tenant-id": platformTenantId },
+        cache: "no-store",
+        signal: AbortSignal.timeout(timeoutMs),
+      },
     );
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`shop resolve failed with ${response.status}`);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UniqueEntityId } from "@platform/domain";
+import { ConcurrencyError } from "@platform/utils";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import { assertWriteTimeTenant } from "@platform/messaging/testing";
@@ -86,5 +87,47 @@ describe("InMemoryPageRepository write-time tenant (ADR-0014 amendment 2026-09-1
       agg.publish(nextId(), new Date(0));
       await repository.save(agg, tenantId);
     });
+  });
+});
+
+describe("InMemoryPageRepository versioning (Ruling 18)", () => {
+  const draft = (nextId: () => string, path = "/pages/about") => {
+    const route = RoutePath.create(path);
+    if (!route.ok) throw new Error("test setup: invalid route path");
+    return Page.create(UniqueEntityId.from(nextId()), "About", route.value);
+  };
+
+  it("stores a new page at 1 and every later save at +1; a stale save is a ConcurrencyError", async () => {
+    const { pages, nextId } = wire();
+    await pages.save(draft(nextId), "tenant-a");
+    const id = (await pages.list({}, "tenant-a")).items[0]!.id.toString();
+
+    const first = await pages.findById(id, "tenant-a");
+    const second = await pages.findById(id, "tenant-a");
+    expect(first!.version).toBe(1);
+    first!.updateContent({ title: { en: "One" }, body: {}, metaDescription: {} }, new Date(0));
+    await pages.save(first!, "tenant-a");
+    expect((await pages.findById(id, "tenant-a"))!.version).toBe(2);
+
+    second!.updateContent({ title: { en: "Two" }, body: {}, metaDescription: {} }, new Date(0));
+    await expect(pages.save(second!, "tenant-a")).rejects.toBeInstanceOf(ConcurrencyError);
+    expect((await pages.findById(id, "tenant-a"))!.title).toEqual({ en: "One" });
+  });
+
+  it("another shop cannot save over a page it does not own", async () => {
+    const { pages, nextId } = wire();
+    await pages.save(draft(nextId), "tenant-a");
+    const id = (await pages.list({}, "tenant-a")).items[0]!.id.toString();
+    const mine = await pages.findById(id, "tenant-a");
+    await expect(pages.save(mine!, "tenant-b")).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("a read is a detached copy: editing it changes nothing until it is saved", async () => {
+    const { pages, nextId } = wire();
+    await pages.save(draft(nextId), "tenant-a");
+    const id = (await pages.list({}, "tenant-a")).items[0]!.id.toString();
+    const copy = await pages.findById(id, "tenant-a");
+    copy!.updateContent({ title: { en: "Unsaved" }, body: {}, metaDescription: {} }, new Date(0));
+    expect((await pages.findById(id, "tenant-a"))!.title).toEqual({});
   });
 });

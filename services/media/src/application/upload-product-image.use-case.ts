@@ -1,56 +1,19 @@
-import type { Clock, IdGenerator } from "@platform/contracts";
-import { UniqueEntityId } from "@platform/domain";
-import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError, ValidationError } from "@platform/utils";
-import type { MediaAssetRepository } from "../domain/library-repositories";
-import { MAX_ALT_LENGTH, MediaAsset } from "../domain/media-asset";
-import type { ObjectStoragePort } from "./object-storage.port";
-import { sniffImage, type ImageType } from "./sniff-image";
+import { MAX_ALT_LENGTH } from "../domain/media-asset";
+import { UploadImage, type UploadedImage, type UploadImageDeps } from "./upload-image.use-case";
 
-/** The largest upload accepted, in bytes. The route enforces the same cap before the body is read. */
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
-/** Keys are unique and never overwritten, so the object can be cached for a year and never revalidated. */
-export const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
-const MAX_NAME_LENGTH = 255;
+// The shared upload exports live in upload-image.use-case.ts (no runtime import cycle between the two
+// modules); they are re-exported here under their existing names so every caller is unchanged.
+export {
+  IMMUTABLE_CACHE_CONTROL,
+  MAX_UPLOAD_BYTES,
+  publicMediaUrl,
+  type StorageKeyBuilder,
+  type UploadedImage,
+} from "./upload-image.use-case";
 
-const CONTENT_TYPE: Readonly<Record<ImageType, string>> = {
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-  gif: "image/gif",
-};
-const EXTENSION: Readonly<Record<ImageType, string>> = {
-  jpeg: "jpg",
-  png: "png",
-  webp: "webp",
-  gif: "gif",
-};
-
-/** `${baseUrl}/${storageKey}` — the public bucket serves the key as-is. */
-export function publicMediaUrl(baseUrl: string, storageKey: string): string {
-  return `${baseUrl.replace(/\/+$/, "")}/${storageKey}`;
-}
-
-/** Mints the object key. `@platform/storage`'s `StorageKeyFactory` is the production implementation. */
-export interface StorageKeyBuilder {
-  build(input: {
-    readonly tenantId: string;
-    readonly namespace: "product-images";
-    readonly filename?: string;
-  }): string;
-}
-
-export interface UploadProductImageDeps {
-  readonly mediaAssets: MediaAssetRepository;
-  readonly unitOfWork: TransactionalUnitOfWork<unknown>;
-  readonly idGenerator: IdGenerator;
-  readonly clock: Clock;
-  readonly objectStorage: ObjectStoragePort;
-  readonly keyFactory: StorageKeyBuilder;
-  /** Where the public bucket is served from. Absent ⇒ uploads are unavailable (503). */
-  readonly publicBaseUrl?: string;
-}
+export type UploadProductImageDeps = UploadImageDeps;
 
 export interface UploadProductImageInput {
   readonly bytes: Uint8Array;
@@ -60,14 +23,6 @@ export interface UploadProductImageInput {
   readonly tenantId: string;
 }
 
-export interface UploadedImage {
-  readonly id: string;
-  readonly url: string;
-  readonly width: number;
-  readonly height: number;
-  readonly alt: string | null;
-}
-
 export type UploadProductImageOutcome =
   | { readonly kind: "ok"; readonly image: UploadedImage }
   | { readonly kind: "unavailable" }
@@ -75,65 +30,31 @@ export type UploadProductImageOutcome =
   | { readonly kind: "unsupported" };
 
 /**
- * Stores a product image. The bytes decide everything: the type and size come from the header
- * (`sniffImage`), the key's extension from the type, the content type from the type; nothing the client
- * claims is trusted. Only JPEG, PNG, WebP and GIF pass; SVG and anything else is refused.
+ * Stores a product image. Delegates to `UploadImage` with the `product` purpose, whose policy is the
+ * Plan 2C-3 behaviour exactly (anti-goal: no change to `POST /media/uploads`): JPEG, PNG, WebP and GIF,
+ * 8 MB, no dimension or pixel rule. SVG and anything else is refused.
  */
 export class UploadProductImage {
-  private readonly deps: UploadProductImageDeps;
+  private readonly upload: UploadImage;
 
   constructor(deps: UploadProductImageDeps) {
-    this.deps = deps;
+    this.upload = new UploadImage(deps);
   }
 
   async execute(input: UploadProductImageInput): Promise<UploadProductImageOutcome> {
-    const { publicBaseUrl, objectStorage } = this.deps;
-    if (!objectStorage.persistent || publicBaseUrl === undefined) return { kind: "unavailable" };
-    if (input.bytes.length > MAX_UPLOAD_BYTES) return { kind: "too_large" };
-    const sniffed = sniffImage(input.bytes);
-    if (sniffed === null) return { kind: "unsupported" };
-
-    const extension = EXTENSION[sniffed.type];
-    const contentType = CONTENT_TYPE[sniffed.type];
-    const storageKey = this.deps.keyFactory.build({
-      tenantId: input.tenantId,
-      namespace: "product-images",
-      filename: `image.${extension}`,
-    });
-    const name = (input.fileName?.trim() ?? "").slice(0, MAX_NAME_LENGTH) || `image.${extension}`;
-
-    await objectStorage.put(storageKey, input.bytes, contentType, IMMUTABLE_CACHE_CONTROL);
-
-    const id = await this.deps.unitOfWork.run<string>(async (tx) => {
-      const assetId = UniqueEntityId.from(this.deps.idGenerator.generate());
-      const asset = MediaAsset.create(
-        assetId,
-        name,
-        storageKey,
-        this.deps.idGenerator.generate(),
-        this.deps.clock.now(),
-        undefined,
-        {
-          contentType,
-          byteSize: input.bytes.length,
-          width: sniffed.width,
-          height: sniffed.height,
-        },
-      );
-      await this.deps.mediaAssets.save(asset, input.tenantId, tx);
-      return assetId.toString();
-    });
-
-    return {
-      kind: "ok",
-      image: {
-        id,
-        url: publicMediaUrl(publicBaseUrl, storageKey),
-        width: sniffed.width,
-        height: sniffed.height,
-        alt: null,
-      },
-    };
+    const outcome = await this.upload.execute({ ...input, purpose: "product" });
+    switch (outcome.kind) {
+      case "ok":
+      case "unavailable":
+      case "unsupported":
+        return outcome;
+      case "too_large":
+        return { kind: "too_large" };
+      case "bad_dimensions":
+      case "too_many_pixels":
+        // The product policy has no dimension or pixel rule, so these cannot happen.
+        return { kind: "unsupported" };
+    }
   }
 }
 

@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Input, Label } from "@platform/ui";
-import { registerAccount, signIn } from "@/app/account/actions";
+import { registerAccount, signIn } from "@/app/(store)/account/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**

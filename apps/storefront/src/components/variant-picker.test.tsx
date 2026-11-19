@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
-import type { CartActionResult } from "@/app/cart/actions";
+import type { CartActionResult } from "@/app/(store)/cart/actions";
 import type { ProductSummary } from "@/lib/runtime-api";
 import { VariantPicker } from "./variant-picker";
 
@@ -15,7 +15,7 @@ const addToCart =
       sellableWhenOutOfStock?: boolean,
     ) => Promise<CartActionResult>
   >();
-vi.mock("@/app/cart/actions", () => ({
+vi.mock("@/app/(store)/cart/actions", () => ({
   addToCart: (
     productId: string,
     quantity: number,

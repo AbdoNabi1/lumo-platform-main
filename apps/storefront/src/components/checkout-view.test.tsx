@@ -12,7 +12,7 @@ import type {
   PaymentInitiationResult,
   RecalculateActionResult,
   ShippingQuoteActionResult,
-} from "@/app/checkout/actions";
+} from "@/app/(store)/checkout/actions";
 import { CheckoutView } from "./checkout-view";
 
 /** Every action call, in order, so a test can assert the exact sequence a submit runs. */
@@ -32,7 +32,7 @@ const initiatePayment = vi.fn<(id: string) => Promise<PaymentInitiationResult>>(
 const applyDiscountCode = vi.fn<(id: string, code: string) => Promise<DiscountCodeActionResult>>();
 const removeDiscountCode = vi.fn<(id: string, code: string) => Promise<CheckoutActionResult>>();
 
-vi.mock("@/app/checkout/actions", () => ({
+vi.mock("@/app/(store)/checkout/actions", () => ({
   setContactEmail: (id: string, email: string) => setContactEmail(id, email),
   setShippingAddress: (id: string, address: unknown) => setShippingAddress(id, address),
   requestShippingQuote: (id: string) => requestShippingQuote(id),
@@ -527,7 +527,8 @@ describe("CheckoutView — Complete order runs everything in order", () => {
     fireEvent.click(submit());
 
     expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
-    expect(scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in an effect after the banner renders, so a loaded runner can see the alert first.
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     expect(selectPayment).not.toHaveBeenCalled();
     expect(completeCheckout).not.toHaveBeenCalled();
     expect(initiatePayment).not.toHaveBeenCalled();

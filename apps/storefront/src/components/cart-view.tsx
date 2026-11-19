@@ -5,8 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MinusIcon, PlusIcon, XIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
-import { changeQuantity, clearCart, removeItem, type CartActionResult } from "@/app/cart/actions";
-import { startCheckout } from "@/app/checkout/actions";
+import {
+  changeQuantity,
+  clearCart,
+  removeItem,
+  type CartActionResult,
+} from "@/app/(store)/cart/actions";
+import { startCheckout } from "@/app/(store)/checkout/actions";
 import { LineThumb } from "./line-thumb";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { ResolvedCartLine } from "@/lib/cart";

@@ -10,7 +10,7 @@ vi.mock("jose", () => ({
   jwtVerify: jwtVerifyMock,
 }));
 
-const { fetchMediaDownloadUrl } = await import("./media");
+const { fetchMediaDownloadUrl, fetchLibraryImages } = await import("./media");
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -222,5 +222,71 @@ describe("updateMediaAlt (Plan 2C-3)", () => {
     expect(url).toBe("http://runtime.test/api/v1/media/assets/m-1");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body as string)).toEqual({ alt: "Red shoe" });
+  });
+});
+
+describe("fetchLibraryImages (Part 3, Ruling 19)", () => {
+  const item = (id: string, status: string, image: unknown) => ({
+    id,
+    name: id + ".png",
+    storageKey: "tenants/t/" + id,
+    folderRef: null,
+    status,
+    image,
+  });
+  const pic = { url: "https://cdn.test/a.png", alt: null, width: 10, height: 20 };
+
+  it("asks for 24, keeps active items with an image and never returns the storage key", async () => {
+    expect.hasAssertions();
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        items: [
+          item("a", "active", pic),
+          item("b", "archived", pic),
+          item("c", "active", null),
+          { id: "d", name: "d" },
+        ],
+        pageInfo: { hasNextPage: true, endCursor: "cur-1" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    const result = await fetchLibraryImages(null);
+    expect(fetchMock.mock.calls[0]![0]).toBe("http://runtime.test/api/v1/media/assets?first=24");
+    expect(result).toEqual({
+      outcome: "ok",
+      data: {
+        items: [{ id: "a", name: "a.png", image: { id: "a", ...pic } }],
+        endCursor: "cur-1",
+        hasNextPage: true,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("storageKey");
+  });
+
+  it("passes the cursor along, encoded", async () => {
+    expect.hasAssertions();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse(200, { items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    const result = await fetchLibraryImages("a b/c");
+    expect(fetchMock.mock.calls[0]![0]).toBe(
+      "http://runtime.test/api/v1/media/assets?first=24&after=a+b%2Fc",
+    );
+    expect(result).toEqual({
+      outcome: "ok",
+      data: { items: [], endCursor: null, hasNextPage: false },
+    });
+  });
+
+  it("fails the guard on a body without a page", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { items: "x" })));
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+    expect((await fetchLibraryImages(null)).outcome).toBe("error");
   });
 });
