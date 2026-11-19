@@ -95,3 +95,90 @@ describe("in-memory store: transaction handles", () => {
     expect(await reader).toBeNull();
   });
 });
+
+const MISSING_TX = "Already inside this outreach unit of work; pass tx to the repository call";
+
+describe("in-memory store: a missing tx inside a unit of work fails fast", () => {
+  // a short timeout turns the old behaviour (waiting forever on its own gate) into a failure
+  it(
+    "a standalone read inside run rejects at once, rolls the unit back, and the store stays usable",
+    { timeout: 2000 },
+    async () => {
+      expect.hasAssertions();
+      const mem = open();
+      const tenant = `t-${randomUUID()}`;
+      const failure = mem.unitOfWork.run(tenant, async (tx) => {
+        expect(await mem.directory.claim("phone-1", "waba-1", tenant, tx)).toBe("claimed");
+        await mem.connections.get(tenant); // no tx
+      });
+      await expect(failure).rejects.toThrow(MISSING_TX);
+      // the write made with tx was rolled back, and a later standalone read completes
+      expect(await mem.directory.find("phone-1")).toBeNull();
+      expect(await mem.connections.get(tenant)).toBeNull();
+    },
+  );
+
+  it(
+    "the no-tx multi-step (owned) path fails fast too, and a queued independent caller is not affected",
+    { timeout: 2000 },
+    async () => {
+      expect.hasAssertions();
+      const mem = open();
+      const tenant = `t-${randomUUID()}`;
+      const opened = barrier();
+      const proceed = barrier();
+      const failure = mem.unitOfWork.run(tenant, async (tx) => {
+        expect(await mem.directory.claim("phone-2", "waba-2", tenant, tx)).toBe("claimed");
+        opened.open();
+        await proceed.reached;
+        await mem.templates.applyStatusEvent(tenant, "waba-2", "meta-x", {
+          status: "REJECTED",
+          reason: null,
+          eventAt: T0,
+        }); // no tx
+      });
+      await opened.reached;
+      // an independent caller (no async context of the unit of work) still queues behind it and then completes
+      const independent = mem.directory.find("phone-2");
+      proceed.open();
+      await expect(failure).rejects.toThrow(MISSING_TX);
+      expect(await independent).toBeNull();
+      expect(await mem.directory.find("phone-2")).toBeNull();
+    },
+  );
+
+  it(
+    "a detached callback whose context handle is no longer the active one queues instead of failing",
+    { timeout: 2000 },
+    async () => {
+      expect.hasAssertions();
+      const mem = open();
+      const tenant = `t-${randomUUID()}`;
+      const go = barrier();
+      let detached: Promise<unknown> = Promise.resolve();
+      // scheduled inside the first unit of work (its handle is in the async context), runs after it has ended
+      await mem.unitOfWork.run(tenant, () => {
+        detached = go.reached.then(() => mem.connections.get(tenant));
+        return Promise.resolve();
+      });
+      const holding = barrier();
+      const finish = barrier();
+      const second = mem.unitOfWork.run(tenant, async () => {
+        holding.open();
+        await finish.reached;
+      });
+      await holding.reached;
+      go.open();
+      let settled = false;
+      void detached.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false); // queued behind the second unit of work, not rejected as "inside" it
+      finish.open();
+      await second;
+      expect(await detached).toBeNull();
+    },
+  );
+});

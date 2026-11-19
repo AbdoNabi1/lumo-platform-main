@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   ConsentEventRecord,
   ContactRecord,
@@ -108,6 +109,8 @@ export class InMemoryOutreachStore {
   private readonly lock = new Mutex();
   /** The ONE live transaction handle (the lock admits one at a time); invalidated when its transaction ends. */
   private active: InMemoryOutreachTransaction | undefined;
+  /** The handle of the unit of work whose async context the running code belongs to (if any). */
+  private readonly context = new AsyncLocalStorage<InMemoryOutreachTransaction>();
 
   /** Runs `work` in ONE transaction at a time; an error undoes exactly this transaction's writes. */
   async transaction<T>(
@@ -118,7 +121,7 @@ export class InMemoryOutreachStore {
     const tx = new InMemoryOutreachTransaction(tenantId);
     this.active = tx;
     try {
-      return await work(tx);
+      return await this.context.run(tx, () => work(tx));
     } catch (error) {
       tx.rollback();
       throw error;
@@ -160,7 +163,7 @@ export class InMemoryOutreachStore {
       const live = joined;
       return settle(() => work(live, false));
     }
-    return this.transaction(undefined, (t) => settle(() => work(t, true)));
+    return this.standalone((t) => settle(() => work(t, true)));
   }
 
   /**
@@ -174,7 +177,24 @@ export class InMemoryOutreachStore {
     } catch (error) {
       return Promise.reject(error instanceof Error ? error : new Error(String(error)));
     }
-    return joined === undefined ? this.transaction(undefined, work) : work(joined);
+    return joined === undefined ? this.standalone(work) : work(joined);
+  }
+
+  /**
+   * A FRESH gate acquisition for a call that was given no transaction. Made from inside this store's own open unit of
+   * work (the context handle is the store's current active handle) it could only wait for the gate its own caller
+   * holds, forever: fail fast instead. Prisma would run such a call in a separate transaction, so joining it silently
+   * would hide the missing `tx`. Identity, not `active !== undefined`: an independent caller still queues, and a
+   * detached callback whose context handle is no longer the active one is not the owner.
+   */
+  private standalone<T>(work: (t: InMemoryOutreachTransaction) => Promise<T>): Promise<T> {
+    const inside = this.context.getStore();
+    if (inside !== undefined && inside === this.active) {
+      return Promise.reject(
+        new Error("Already inside this outreach unit of work; pass tx to the repository call"),
+      );
+    }
+    return this.transaction(undefined, work);
   }
 }
 
