@@ -10,40 +10,65 @@
  */
 
 /**
- * Morbeh Primary — the brand ramp around `#635BFF` (hue 243°).
- * `500` is the canonical brand colour; `600`/`700` are the interactive states
- * (both clear WCAG AA against white foreground), `300`/`400` are the dark-mode
- * text/link tints.
+ * Morbeh Primary — the Nusuj terracotta ramp (hue ≈15°). LOCKED BY OWNER (2026-11-19),
+ * see docs/ui/BRAND_LOCK.md. `500` is the canonical brand colour; `600`/`700` are the
+ * interactive states (both clear WCAG AA against a white label), `300`/`400` are the
+ * dark-mode fills and tints (dark fills use the lighter 400 step with ink labels).
  */
 export const primary = {
-  50: "#f2f1ff",
-  100: "#e7e5ff",
-  200: "#d1cdff",
-  300: "#b2abff",
-  400: "#8c83ff",
-  500: "#635bff",
-  600: "#4f46e8",
-  700: "#4038c4",
-  800: "#352e9e",
-  900: "#2e297d",
-  950: "#1b1849",
+  50: "#fdf3ee",
+  100: "#fae4d8",
+  200: "#f5c9b4",
+  300: "#f5916e",
+  400: "#ef7b52",
+  500: "#b8451d",
+  600: "#9a3714",
+  700: "#7e2d10",
+  800: "#64240d",
+  900: "#4c1c0b",
+  950: "#3a1c10",
 } as const;
 
-/** Morbeh Neutral — a cool (slate) ramp. The UI is overwhelmingly built from these. */
+/** Morbeh Neutral — a warm sand ramp (light side). The UI is overwhelmingly built from these. */
 export const neutral = {
   0: "#ffffff",
-  50: "#f8fafc",
-  100: "#f1f5f9",
-  200: "#e2e8f0",
-  300: "#cbd5e1",
-  400: "#94a3b8",
-  500: "#64748b",
-  600: "#475569",
-  700: "#334155",
-  800: "#1e293b",
-  900: "#0f172a",
-  950: "#020617",
+  50: "#fcf8f3",
+  100: "#f3e9de",
+  200: "#e8ded3",
+  300: "#d5c8ba",
+  400: "#a1968b",
+  500: "#8a7f75",
+  600: "#5d636a",
+  700: "#3f3a36",
+  800: "#2b2724",
+  900: "#212529",
+  950: "#141210",
 } as const;
+
+/**
+ * Night — the dark theme's warm surfaces and text. Authored for dark, not an inversion of
+ * `neutral`: surfaces step up in lightness (950 canvas → 900 card → 850 popover/recessed).
+ */
+export const night = {
+  50: "#faf6f2",
+  300: "#d3c9bf",
+  400: "#b5aca3",
+  500: "#8c8279",
+  700: "#3f3832",
+  800: "#342e29",
+  850: "#29231e",
+  900: "#1e1b18",
+  950: "#141210",
+} as const;
+
+/** Logo two-tone: the bento's circles (`secondary`) and the app-icon circles (`iconAccent`). */
+export const brand = {
+  light: { secondary: "#4c362e", iconAccent: "#f9d5c6" },
+  dark: { secondary: "#dec8b4", iconAccent: "#f9d5c6" },
+} as const;
+
+/** The "on-primary ink": label colour on the lighter dark-theme brand/destructive fills. */
+export const onPrimaryInk = "#1a1512";
 
 /**
  * Status ramps. `primary` is the solid/graphic value, `soft` a tinted background,
@@ -52,16 +77,16 @@ export const neutral = {
  */
 export const status = {
   light: {
-    success: { primary: "#16a34a", soft: "#dcfce7", strong: "#166534" },
-    warning: { primary: "#d97706", soft: "#fef3c7", strong: "#92400e" },
-    error: { primary: "#dc2626", soft: "#fee2e2", strong: "#991b1b" },
-    info: { primary: "#2563eb", soft: "#dbeafe", strong: "#1e40af" },
+    success: { primary: "#1f8a57", soft: "#ebf7f0", strong: "#1a6e47" },
+    warning: { primary: "#c77a0a", soft: "#fef4e5", strong: "#8e5005" },
+    error: { primary: "#c0263a", soft: "#fcebec", strong: "#9b1c2e" },
+    info: { primary: "#3a6ea5", soft: "#edf4fa", strong: "#2f5882" },
   },
   dark: {
-    success: { primary: "#16a34a", soft: "#0b2e1b", strong: "#4ade80" },
-    warning: { primary: "#d97706", soft: "#34240a", strong: "#fbbf24" },
-    error: { primary: "#dc2626", soft: "#3a1416", strong: "#f87171" },
-    info: { primary: "#2563eb", soft: "#10233f", strong: "#60a5fa" },
+    success: { primary: "#2fa36b", soft: "#142b20", strong: "#5bd998" },
+    warning: { primary: "#d9901c", soft: "#2c2111", strong: "#f3b753" },
+    error: { primary: "#e5484d", soft: "#3a1518", strong: "#ff8a8f" },
+    info: { primary: "#4a86c5", soft: "#162331", strong: "#83b5e8" },
   },
 } as const;
 
@@ -83,8 +108,8 @@ export const spacing = {
 } as const;
 
 /**
- * Border radius. Inputs/dropdowns 16, buttons 16, cards 20, large surfaces/modals 28,
- * pills full. `2xl`/`3xl` exist for the soft-premium surfaces (cards, KPI tiles, modals) —
+ * Border radius. Inputs/dropdowns 16, buttons are pills (`full`), cards 22, large
+ * surfaces/modals 28. `2xl`/`3xl` exist for the soft-premium surfaces (cards, KPI tiles, modals) —
  * everything else keeps using the smaller steps.
  */
 export const radius = {
@@ -93,7 +118,7 @@ export const radius = {
   md: "8px",
   lg: "12px",
   xl: "16px",
-  "2xl": "20px",
+  "2xl": "22px",
   "3xl": "28px",
   full: "9999px",
 } as const;
@@ -106,12 +131,12 @@ export const radius = {
  */
 export const elevation = {
   light: {
-    sm: "0 1px 2px 0 rgb(15 23 42 / 0.04)",
-    md: "0 2px 4px -1px rgb(15 23 42 / 0.06), 0 4px 8px -2px rgb(15 23 42 / 0.06)",
-    lg: "0 4px 8px -2px rgb(15 23 42 / 0.06), 0 12px 24px -4px rgb(15 23 42 / 0.08)",
-    xl: "0 8px 16px -4px rgb(15 23 42 / 0.08), 0 24px 48px -8px rgb(15 23 42 / 0.12)",
-    card: "0 1px 2px 0 rgb(99 91 255 / 0.04), 0 12px 28px -8px rgb(99 91 255 / 0.10)",
-    cardHover: "0 2px 4px 0 rgb(99 91 255 / 0.06), 0 16px 36px -8px rgb(99 91 255 / 0.16)",
+    sm: "0 1px 2px 0 rgb(33 29 26 / 0.04)",
+    md: "0 2px 4px -1px rgb(33 29 26 / 0.06), 0 4px 8px -2px rgb(33 29 26 / 0.06)",
+    lg: "0 4px 8px -2px rgb(33 29 26 / 0.06), 0 12px 24px -4px rgb(33 29 26 / 0.08)",
+    xl: "0 8px 16px -4px rgb(33 29 26 / 0.08), 0 24px 48px -8px rgb(33 29 26 / 0.12)",
+    card: "0 1px 2px 0 rgb(184 69 29 / 0.05), 0 12px 28px -8px rgb(76 54 46 / 0.10)",
+    cardHover: "0 2px 4px 0 rgb(184 69 29 / 0.07), 0 16px 36px -8px rgb(76 54 46 / 0.16)",
   },
   dark: {
     sm: "0 1px 2px 0 rgb(2 6 23 / 0.5)",
@@ -140,18 +165,22 @@ export const motion = {
 } as const;
 
 /**
- * Typography. Geist for Latin, IBM Plex Sans Arabic for Arabic — the app is responsible
- * for loading the webfonts and assigning them to `--font-geist` / `--font-arabic`; the
- * families below degrade to system stacks when those are absent.
+ * Typography. Plus Jakarta Sans for Latin UI, Zain for Arabic UI, Baloo Bhaijaan 2 for display
+ * (h1, brand wordmark) — the app is responsible for loading the webfonts and assigning them to
+ * `--font-latin` / `--font-arabic-family` / `--font-display-family`; the families below degrade
+ * to system stacks when those are absent. Zain ships 200/300/400/700/800/900 only: weight 500
+ * renders as 400 and 600 as 700 in Arabic (accepted; never fake weights).
  */
 export const typography = {
   fontSans:
-    'var(--font-geist, "Geist"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+    'var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
   fontArabic:
-    'var(--font-arabic, "IBM Plex Sans Arabic"), var(--font-geist, "Geist"), ui-sans-serif, system-ui, sans-serif',
+    'var(--font-arabic-family, "Zain"), var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif, system-ui, sans-serif',
+  fontDisplay:
+    'var(--font-display-family, "Baloo Bhaijaan 2"), var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif, system-ui, sans-serif',
   fontMono: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-  /** 400 body · 500 labels/nav/buttons/metadata · 600 headings/KPI values/section titles. */
-  weights: { regular: 400, medium: 500, semibold: 600 },
+  /** 400 body · 500 labels/nav/buttons/metadata · 600 headings/KPI values · 700 display headings. */
+  weights: { regular: 400, medium: 500, semibold: 600, bold: 700 },
   /** `[font-size, line-height]`. `base` (14px) is the admin UI default. */
   sizes: {
     xs: ["12px", "16px"],

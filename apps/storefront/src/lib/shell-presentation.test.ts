@@ -34,7 +34,7 @@ describe("brandStyleFor", () => {
     };
     const css = brandStyleFor(corrupt);
     expect(css).toMatch(/^:root:root:root\{/);
-    expect(css).toContain("--background:#f8fafc");
+    expect(css).toContain("--background:#fcf8f3");
     expect(css).not.toContain("<");
   });
 });

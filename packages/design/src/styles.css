@@ -1,9 +1,12 @@
 /*
  * Morbeh Design System — token stylesheet (Tailwind v4, CSS-first).
+ * Brand: Nusuj — Warm Weave. LOCKED BY OWNER (2026-11-19): colours, fonts, radii and the logo
+ * change only on an explicit owner order. See docs/ui/BRAND_LOCK.md.
  *
  * This file is the runtime source of truth. `./primitives.ts` + `./semantic.ts` mirror the
  * same values for programmatic (TS) consumers such as `services/theme`; the two must stay
- * in step — `contrast.test.ts` guards the pairs that carry accessibility guarantees.
+ * in step — `brand-lock.test.ts` proves the values are identical and `contrast.test.ts`
+ * guards the pairs that carry accessibility guarantees.
  *
  * Usage (in an app's globals.css):
  *   @import "tailwindcss";
@@ -22,46 +25,60 @@
 :root {
   /* ---------------------------------------------------------------- 1. Primitives */
 
-  /* Morbeh Primary — brand ramp around #635BFF (hue 243°) */
-  --lumo-primary-50: #f2f1ff;
-  --lumo-primary-100: #e7e5ff;
-  --lumo-primary-200: #d1cdff;
-  --lumo-primary-300: #b2abff;
-  --lumo-primary-400: #8c83ff;
-  --lumo-primary-500: #635bff;
-  --lumo-primary-600: #4f46e8;
-  --lumo-primary-700: #4038c4;
-  --lumo-primary-800: #352e9e;
-  --lumo-primary-900: #2e297d;
-  --lumo-primary-950: #1b1849;
+  /* Morbeh Primary — Nusuj terracotta ramp (hue ≈15°) */
+  --lumo-primary-50: #fdf3ee;
+  --lumo-primary-100: #fae4d8;
+  --lumo-primary-200: #f5c9b4;
+  --lumo-primary-300: #f5916e;
+  --lumo-primary-400: #ef7b52;
+  --lumo-primary-500: #b8451d;
+  --lumo-primary-600: #9a3714;
+  --lumo-primary-700: #7e2d10;
+  --lumo-primary-800: #64240d;
+  --lumo-primary-900: #4c1c0b;
+  --lumo-primary-950: #3a1c10;
 
-  /* Morbeh Neutral — cool/slate ramp */
+  /* Morbeh Neutral — warm sand ramp (light side) */
   --lumo-neutral-0: #ffffff;
-  --lumo-neutral-50: #f8fafc;
-  --lumo-neutral-100: #f1f5f9;
-  --lumo-neutral-200: #e2e8f0;
-  --lumo-neutral-300: #cbd5e1;
-  --lumo-neutral-400: #94a3b8;
-  --lumo-neutral-500: #64748b;
-  --lumo-neutral-600: #475569;
-  --lumo-neutral-700: #334155;
-  --lumo-neutral-800: #1e293b;
-  --lumo-neutral-900: #0f172a;
-  --lumo-neutral-950: #020617;
+  --lumo-neutral-50: #fcf8f3;
+  --lumo-neutral-100: #f3e9de;
+  --lumo-neutral-200: #e8ded3;
+  --lumo-neutral-300: #d5c8ba;
+  --lumo-neutral-400: #a1968b;
+  --lumo-neutral-500: #8a7f75;
+  --lumo-neutral-600: #5d636a;
+  --lumo-neutral-700: #3f3a36;
+  --lumo-neutral-800: #2b2724;
+  --lumo-neutral-900: #212529;
+  --lumo-neutral-950: #141210;
+
+  /* Night — dark-theme surfaces and text (authored, not inverted) */
+  --lumo-night-50: #faf6f2;
+  --lumo-night-300: #d3c9bf;
+  --lumo-night-400: #b5aca3;
+  --lumo-night-500: #8c8279;
+  --lumo-night-700: #3f3832;
+  --lumo-night-800: #342e29;
+  --lumo-night-850: #29231e;
+  --lumo-night-900: #1e1b18;
+  --lumo-night-950: #141210;
+
+  /* On-primary ink: label colour on the lighter dark-theme brand/destructive fills */
+  --lumo-on-primary-ink: #1a1512;
 
   /* Status ramps (light authored) */
-  --lumo-success: #16a34a;
-  --lumo-success-soft: #dcfce7;
-  --lumo-success-strong: #166534;
-  --lumo-warning: #d97706;
-  --lumo-warning-soft: #fef3c7;
-  --lumo-warning-strong: #92400e;
-  --lumo-error: #dc2626;
-  --lumo-error-soft: #fee2e2;
-  --lumo-error-strong: #991b1b;
-  --lumo-info: #2563eb;
-  --lumo-info-soft: #dbeafe;
-  --lumo-info-strong: #1e40af;
+  --lumo-success: #1f8a57;
+  --lumo-success-soft: #ebf7f0;
+  --lumo-success-strong: #1a6e47;
+  --lumo-warning: #c77a0a;
+  --lumo-warning-soft: #fef4e5;
+  --lumo-warning-strong: #8e5005;
+  --lumo-error: #c0263a;
+  --lumo-error-soft: #fcebec;
+  --lumo-error-strong: #9b1c2e;
+  --lumo-info: #3a6ea5;
+  --lumo-info-soft: #edf4fa;
+  --lumo-info-strong: #2f5882;
 
   /* ------------------------------------------------------------ 2. Semantic (light) */
 
@@ -74,7 +91,7 @@
   --surface: var(--lumo-neutral-100);
   --surface-foreground: var(--lumo-neutral-900);
   --muted: var(--lumo-neutral-100);
-  --muted-foreground: var(--lumo-neutral-500);
+  --muted-foreground: var(--lumo-neutral-600);
   --subtle-foreground: var(--lumo-neutral-400);
   --secondary: var(--lumo-neutral-100);
   --secondary-foreground: var(--lumo-neutral-700);
@@ -112,33 +129,41 @@
   --chart-4: var(--lumo-warning);
   --chart-5: var(--lumo-success);
 
+  /* Logo two-tone — locked brand values, not UI accents. */
+  --brand-secondary: #4c362e;
+  --brand-icon-accent: #f9d5c6;
+
   /*
    * Elevation — borders separate, shadows only lift. Named `--lumo-shadow-*` (not
    * `--shadow-*`) so `@theme inline` can bridge them: that indirection is what lets the
    * `shadow-md` utility resolve to a *different* value under `.dark`.
    */
-  --lumo-shadow-sm: 0 1px 2px 0 rgb(15 23 42 / 0.04);
-  --lumo-shadow-md: 0 2px 4px -1px rgb(15 23 42 / 0.06), 0 4px 8px -2px rgb(15 23 42 / 0.06);
-  --lumo-shadow-lg: 0 4px 8px -2px rgb(15 23 42 / 0.06), 0 12px 24px -4px rgb(15 23 42 / 0.08);
-  --lumo-shadow-xl: 0 8px 16px -4px rgb(15 23 42 / 0.08), 0 24px 48px -8px rgb(15 23 42 / 0.12);
+  --lumo-shadow-sm: 0 1px 2px 0 rgb(33 29 26 / 0.04);
+  --lumo-shadow-md: 0 2px 4px -1px rgb(33 29 26 / 0.06), 0 4px 8px -2px rgb(33 29 26 / 0.06);
+  --lumo-shadow-lg: 0 4px 8px -2px rgb(33 29 26 / 0.06), 0 12px 24px -4px rgb(33 29 26 / 0.08);
+  --lumo-shadow-xl: 0 8px 16px -4px rgb(33 29 26 / 0.08), 0 24px 48px -8px rgb(33 29 26 / 0.12);
   /* Soft, brand-tinted "floating card" shadow — the default resting/hover elevation for
      every card surface in the soft-premium design language. */
-  --lumo-shadow-card: 0 1px 2px 0 rgb(99 91 255 / 0.04), 0 12px 28px -8px rgb(99 91 255 / 0.1);
+  --lumo-shadow-card: 0 1px 2px 0 rgb(184 69 29 / 0.05), 0 12px 28px -8px rgb(76 54 46 / 0.1);
   --lumo-shadow-card-hover:
-    0 2px 4px 0 rgb(99 91 255 / 0.06), 0 16px 36px -8px rgb(99 91 255 / 0.16);
+    0 2px 4px 0 rgb(184 69 29 / 0.07), 0 16px 36px -8px rgb(76 54 46 / 0.16);
 
-  /* Atmospheric background glow — an almost-white canvas with a whisper of lavender and
-     blue light. Applied via the `.lumo-canvas` utility (below), never the whole page. */
-  --lumo-glow-purple: color-mix(in srgb, var(--lumo-primary-300) 22%, transparent);
-  --lumo-glow-blue: color-mix(in srgb, var(--lumo-info) 14%, transparent);
+  /* Atmospheric background glow — a warm sand canvas with a whisper of terracotta and sand
+     light. Applied via the `.lumo-canvas` utility (below), never the whole page. */
+  --lumo-glow-warm: color-mix(in srgb, var(--lumo-primary-200) 26%, transparent);
+  --lumo-glow-sand: color-mix(in srgb, var(--lumo-neutral-200) 60%, transparent);
 
-  /* Typography. Apps assign --font-geist / --font-arabic when they load the webfonts. */
+  /* Typography. Apps assign --font-latin / --font-arabic-family / --font-display-family when
+     they load the webfonts: Plus Jakarta Sans (Latin), Zain (Arabic), Baloo Bhaijaan 2 (display). */
   --font-sans:
-    var(--font-geist, "Geist"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    sans-serif;
+    var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
   --font-arabic:
-    var(--font-arabic-family, "IBM Plex Sans Arabic"), var(--font-geist, "Geist"), ui-sans-serif,
+    var(--font-arabic-family, "Zain"), var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif,
     system-ui, sans-serif;
+  --font-display:
+    var(--font-display-family, "Baloo Bhaijaan 2"), var(--font-latin, "Plus Jakarta Sans"),
+    ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
   /* Motion durations. Consumed as `duration-(--duration-fast)`; easings live in @theme. */
@@ -155,6 +180,7 @@
  * declaration; redefining `--font-sans` cannot lose, because everything already resolves
  * through it.
  */
+/* `--font-display` is deliberately NOT overridden: Baloo Bhaijaan 2 carries Arabic glyphs. */
 :root:lang(ar) {
   --font-sans: var(--font-arabic);
 }
@@ -165,43 +191,57 @@
  * and status text uses the lighter ramp step so it stays legible on dark fills.
  */
 .dark {
-  --lumo-success-soft: #0b2e1b;
-  --lumo-success-strong: #4ade80;
-  --lumo-warning-soft: #34240a;
-  --lumo-warning-strong: #fbbf24;
-  --lumo-error-soft: #3a1416;
-  --lumo-error-strong: #f87171;
-  --lumo-info-soft: #10233f;
-  --lumo-info-strong: #60a5fa;
+  --lumo-success: #2fa36b;
+  --lumo-success-soft: #142b20;
+  --lumo-success-strong: #5bd998;
+  --lumo-warning: #d9901c;
+  --lumo-warning-soft: #2c2111;
+  --lumo-warning-strong: #f3b753;
+  --lumo-error: #e5484d;
+  --lumo-error-soft: #3a1518;
+  --lumo-error-strong: #ff8a8f;
+  --lumo-info: #4a86c5;
+  --lumo-info-soft: #162331;
+  --lumo-info-strong: #83b5e8;
 
-  --background: var(--lumo-neutral-950);
-  --foreground: var(--lumo-neutral-50);
-  --card: var(--lumo-neutral-900);
-  --card-foreground: var(--lumo-neutral-50);
-  --popover: var(--lumo-neutral-800);
-  --popover-foreground: var(--lumo-neutral-50);
-  --surface: var(--lumo-neutral-800);
-  --surface-foreground: var(--lumo-neutral-50);
-  --muted: var(--lumo-neutral-800);
-  --muted-foreground: var(--lumo-neutral-400);
-  --subtle-foreground: var(--lumo-neutral-500);
-  --secondary: var(--lumo-neutral-800);
-  --secondary-foreground: var(--lumo-neutral-300);
-  --accent: var(--lumo-neutral-800);
-  --accent-foreground: var(--lumo-neutral-50);
-  --border: var(--lumo-neutral-800);
-  --border-strong: var(--lumo-neutral-700);
-  --input: var(--lumo-neutral-500);
+  --background: var(--lumo-night-950);
+  --foreground: var(--lumo-night-50);
+  --card: var(--lumo-night-900);
+  --card-foreground: var(--lumo-night-50);
+  --popover: var(--lumo-night-850);
+  --popover-foreground: var(--lumo-night-50);
+  --surface: var(--lumo-night-850);
+  --surface-foreground: var(--lumo-night-50);
+  --muted: var(--lumo-night-850);
+  --muted-foreground: var(--lumo-night-400);
+  --subtle-foreground: var(--lumo-night-500);
+  --secondary: var(--lumo-night-850);
+  --secondary-foreground: var(--lumo-night-300);
+  --accent: var(--lumo-night-850);
+  --accent-foreground: var(--lumo-night-50);
+  --border: var(--lumo-night-800);
+  --border-strong: var(--lumo-night-700);
+  --input: var(--lumo-night-500);
   --ring: var(--lumo-primary-400);
 
+  /* Dark fills use the lighter 400 step with ink labels. */
+  --primary: var(--lumo-primary-400);
+  --primary-foreground: var(--lumo-on-primary-ink);
+  --primary-hover: var(--lumo-primary-300);
+  --primary-active: var(--lumo-primary-200);
   --primary-subtle: var(--lumo-primary-950);
   --primary-subtle-foreground: var(--lumo-primary-300);
 
+  --destructive-foreground: var(--lumo-on-primary-ink);
+
   --chart-1: var(--lumo-primary-400);
-  --chart-2: var(--lumo-neutral-400);
+  --chart-2: var(--lumo-night-400);
   --chart-3: var(--lumo-info-strong);
   --chart-4: var(--lumo-warning-strong);
   --chart-5: var(--lumo-success-strong);
+
+  --brand-secondary: #dec8b4;
+  --brand-icon-accent: #f9d5c6;
 
   --lumo-shadow-sm: 0 1px 2px 0 rgb(2 6 23 / 0.5);
   --lumo-shadow-md: 0 2px 4px -1px rgb(2 6 23 / 0.6), 0 4px 8px -2px rgb(2 6 23 / 0.5);
@@ -210,8 +250,8 @@
   --lumo-shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 12px 28px -8px rgb(0 0 0 / 0.45);
   --lumo-shadow-card-hover: 0 2px 4px 0 rgb(0 0 0 / 0.35), 0 16px 36px -8px rgb(0 0 0 / 0.55);
 
-  --lumo-glow-purple: color-mix(in srgb, var(--lumo-primary-800) 30%, transparent);
-  --lumo-glow-blue: color-mix(in srgb, var(--lumo-info) 10%, transparent);
+  --lumo-glow-warm: color-mix(in srgb, var(--lumo-primary-800) 28%, transparent);
+  --lumo-glow-sand: color-mix(in srgb, var(--lumo-night-800) 40%, transparent);
 }
 
 /* ------------------------------------------------------- 3. Tailwind utility bridge */
@@ -264,8 +304,12 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
 
+  --color-brand-secondary: var(--brand-secondary);
+  --color-brand-icon-accent: var(--brand-icon-accent);
+
   --font-sans: var(--font-sans);
   --font-arabic: var(--font-arabic);
+  --font-display: var(--font-display);
   --font-mono: var(--font-mono);
 
   /* 4px base grid. Allowed steps: 1 2 3 4 6 8 10 12 16 20 (= 4…80px). */
@@ -276,7 +320,7 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
-  --radius-2xl: 20px;
+  --radius-2xl: 22px;
   --radius-3xl: 28px;
 
   --shadow-sm: var(--lumo-shadow-sm);
@@ -377,16 +421,16 @@
   }
 
   /*
-   * Atmospheric page canvas: an almost-white/near-black surface with two soft, fixed
-   * radial glows (lavender top-start, blue bottom-end). Logical positioning (`start`)
+   * Atmospheric page canvas: a warm sand / near-black surface with two soft, fixed
+   * radial glows (terracotta top-start, sand bottom-end). Logical positioning (`start`)
    * flips correctly under RTL without a separate rule. Apply once, on the page's
    * outermost scroll container — never per-card.
    */
   .lumo-canvas {
     background-color: var(--background);
     background-image:
-      radial-gradient(60rem 34rem at 12% -10%, var(--lumo-glow-purple), transparent 60%),
-      radial-gradient(50rem 30rem at 100% 30%, var(--lumo-glow-blue), transparent 55%);
+      radial-gradient(60rem 34rem at 12% -10%, var(--lumo-glow-warm), transparent 60%),
+      radial-gradient(50rem 30rem at 100% 30%, var(--lumo-glow-sand), transparent 55%);
     background-repeat: no-repeat;
     background-attachment: fixed;
   }

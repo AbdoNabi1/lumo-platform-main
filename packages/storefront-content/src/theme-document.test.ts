@@ -23,12 +23,12 @@ const issuesOf = (raw: unknown) => {
 describe("DEFAULT_THEME_DOCUMENT", () => {
   it("is the design system's light palette, Plex for both fonts, medium, rounded, no logo", () => {
     expect(DEFAULT_THEME_DOCUMENT.brand.colors).toEqual({
-      background: "#f8fafc",
-      foreground: "#0f172a",
-      primary: "#635bff",
+      background: "#fcf8f3",
+      foreground: "#212529",
+      primary: "#b8451d",
       primaryForeground: "#ffffff",
-      accent: "#f1f5f9",
-      accentForeground: "#0f172a",
+      accent: "#f3e9de",
+      accentForeground: "#212529",
     });
     expect(DEFAULT_THEME_DOCUMENT.brand.typography).toEqual({
       headingFont: "ibm-plex-sans-arabic",

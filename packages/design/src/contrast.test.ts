@@ -104,6 +104,12 @@ const textPairs: readonly Pair[] = [
     min: AA_TEXT,
   },
   { name: "info badge", fg: (t) => t.infoForeground, bg: (t) => t.infoSubtle, min: AA_TEXT },
+  {
+    name: "brand secondary on card",
+    fg: (t) => t.brandSecondary,
+    bg: (t) => t.card,
+    min: AA_TEXT,
+  },
 ];
 
 /** Non-text pairs — WCAG 1.4.11, 3:1: control boundaries, focus, chart marks. */
@@ -117,6 +123,12 @@ const nonTextPairs: readonly Pair[] = [
   {
     name: "input border on canvas",
     fg: (t) => t.input,
+    bg: (t) => t.background,
+    min: AA_NON_TEXT,
+  },
+  {
+    name: "brand secondary on canvas",
+    fg: (t) => t.brandSecondary,
     bg: (t) => t.background,
     min: AA_NON_TEXT,
   },
@@ -150,7 +162,7 @@ describe.each([
 describe("contrastRatio", () => {
   it("is 21:1 for black on white and 1:1 for a colour against itself", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
-    expect(contrastRatio("#635bff", "#635bff")).toBeCloseTo(1, 5);
+    expect(contrastRatio("#b8451d", "#b8451d")).toBeCloseTo(1, 5);
   });
 
   it("is symmetric and accepts shorthand hex", () => {
