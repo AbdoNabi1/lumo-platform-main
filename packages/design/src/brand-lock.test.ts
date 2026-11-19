@@ -428,7 +428,10 @@ describe("styles.css ↔ TypeScript parity", () => {
     expect(sans).toContain('var(--font-latin, "Plus Jakarta Sans")');
     expect(arabic).toContain('var(--font-arabic-family, "Zain")');
     expect(arabic).toContain('var(--font-latin, "Plus Jakarta Sans")');
-    expect(display).toContain('var(--font-display-family, "Baloo Bhaijaan 2")');
+    // Display falls back to the locale UI font (--font-sans), so Arabic pages fall back to Zain.
+    expect(display.replace(/\s+/g, " ").trim()).toBe(
+      'var(--font-display-family, "Baloo Bhaijaan 2"), var(--font-sans)',
+    );
     // Display stays Baloo (it has Arabic glyphs): the :root:lang(ar) swap must not touch it.
     const arabicSwap = /^:root:lang\(ar\)\s*\{([\s\S]*?)^\}/m.exec(cssNoComments)?.[1] ?? "";
     expect(arabicSwap).toContain("--font-sans: var(--font-arabic);");

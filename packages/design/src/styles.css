@@ -161,9 +161,7 @@
   --font-arabic:
     var(--font-arabic-family, "Zain"), var(--font-latin, "Plus Jakarta Sans"), ui-sans-serif,
     system-ui, sans-serif;
-  --font-display:
-    var(--font-display-family, "Baloo Bhaijaan 2"), var(--font-latin, "Plus Jakarta Sans"),
-    ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display-family, "Baloo Bhaijaan 2"), var(--font-sans);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 
   /* Motion durations. Consumed as `duration-(--duration-fast)`; easings live in @theme. */
