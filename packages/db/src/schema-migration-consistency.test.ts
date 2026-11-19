@@ -519,3 +519,199 @@ describe("orders and checkout schema — draft orders (order operations Part 4)"
     );
   });
 });
+
+describe("online_store — migration history matches the Prisma models (Project 4 Part 1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  const tables: Record<string, readonly string[]> = {
+    storefront_preferences: [
+      "tenant_id",
+      "home_title",
+      "home_meta_description",
+      "share_image_ref",
+      "default_locale",
+      "version",
+      "updated_at",
+    ],
+    storefront_access: [
+      "tenant_id",
+      "locked",
+      "password_hash",
+      "password_updated_at",
+      "message",
+      "access_version",
+      "version",
+      "updated_at",
+    ],
+    storefront_themes: [
+      "tenant_id",
+      "draft",
+      "draft_revision",
+      "draft_saved_at",
+      "published",
+      "published_draft_revision",
+      "release_number",
+      "published_at",
+      "published_by",
+      "version",
+      "created_at",
+      "updated_at",
+    ],
+    storefront_theme_releases: [
+      "id",
+      "tenant_id",
+      "release_number",
+      "document",
+      "published_at",
+      "published_by",
+    ],
+    preview_tokens: ["id", "tenant_id", "token_hash", "expires_at", "created_by", "created_at"],
+  };
+
+  it("creates the schema before its tables", () => {
+    expect(allSql).toContain('CREATE SCHEMA IF NOT EXISTS "online_store";');
+  });
+
+  for (const [table, columns] of Object.entries(tables)) {
+    it(`${table} has exactly the model's columns`, () => {
+      expect([...columnsEverAddedTo("online_store", table, allSql)].sort()).toEqual(
+        [...columns].sort(),
+      );
+    });
+
+    it(`${table} is RLS-forced with the tenant_isolation policy`, () => {
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(
+        `DROP POLICY IF EXISTS tenant_isolation ON "online_store"."${table}";`,
+      );
+      // The whole policy, predicate included: a wrong USING or WITH CHECK must not pass.
+      expect(allSql.replace(/\r\n/g, "\n")).toContain(
+        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL\n` +
+          `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+          `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+      );
+    });
+  }
+
+  it("has the checks and indexes the spec names", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "storefront_preferences_default_locale_check" CHECK ("default_locale" IN ('ar', 'en'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "storefront_access_locked_needs_password_check" CHECK (NOT "locked" OR "password_hash" IS NOT NULL)`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "storefront_theme_releases_tenant_id_release_number_key" ON "online_store"."storefront_theme_releases" ("tenant_id", "release_number");',
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "preview_tokens_token_hash_key" ON "online_store"."preview_tokens" ("token_hash");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "preview_tokens_tenant_id_expires_at_idx" ON "online_store"."preview_tokens" ("tenant_id", "expires_at");',
+    );
+  });
+
+  it("is registered in the datasource schemas list", () => {
+    const main = readFileSync(join(migrationsDir, "..", "main.prisma"), "utf-8");
+    expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"online_store"/);
+  });
+});
+
+describe("online_store content — menus, policies and page bodies (Project 4 Part 2)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n");
+  const normalized = allSql.replace(/\r\n/g, "\n");
+
+  const tables: Record<string, readonly string[]> = {
+    menus: ["id", "tenant_id", "handle", "title", "items", "version", "created_at", "updated_at"],
+    policies: ["tenant_id", "type", "body", "updated_by", "version", "updated_at"],
+  };
+
+  for (const [table, columns] of Object.entries(tables)) {
+    it(`${table} has exactly the model's columns`, () => {
+      expect([...columnsEverAddedTo("online_store", table, allSql)].sort()).toEqual(
+        [...columns].sort(),
+      );
+    });
+    it(`${table} is RLS-forced with the tenant_isolation policy`, () => {
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(allSql).toContain(`ALTER TABLE "online_store"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(normalized).toContain(
+        `CREATE POLICY tenant_isolation ON "online_store"."${table}" FOR ALL\n` +
+          `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+          `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+      );
+    });
+  }
+
+  it("has the checks and indexes the spec names", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "menus_handle_format_check" CHECK ("handle" ~ '^[a-z0-9]+(-[a-z0-9]+)*$')`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "menus_tenant_id_handle_key" ON "online_store"."menus" ("tenant_id", "handle");',
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "policies_type_check" CHECK ("type" IN ('refund', 'shipping', 'privacy', 'terms', 'contact'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "pages_tenant_id_status_idx" ON "pages"."pages" ("tenant_id", "status");',
+    );
+  });
+
+  it("pages.pages gains the four content columns and keeps an explicit tenant policy", () => {
+    const columns = columnsEverAddedTo("pages", "pages", allSql);
+    for (const column of ["title", "body", "meta_description", "published_at"]) {
+      expect(columns.has(column), column).toBe(true);
+    }
+    expect(normalized).toContain(
+      `CREATE POLICY tenant_isolation ON "pages"."pages" FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+});
+
+describe("online_store content — column types, defaults and keys (Project 4 Part 2)", () => {
+  const sql = readFileSync(
+    join(migrationsDir, "20261027010000_online_store_content", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const squash = (text: string) => text.replace(/[ \t]+/g, " ");
+  const normalized = squash(sql);
+
+  const lines = [
+    '"id" UUID NOT NULL,',
+    '"tenant_id" TEXT NOT NULL,',
+    '"handle" TEXT NOT NULL,',
+    '"title" TEXT NOT NULL,',
+    `"items" JSONB NOT NULL DEFAULT '[]',`,
+    '"version" INTEGER NOT NULL DEFAULT 0,',
+    '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,',
+    '"updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,',
+    'CONSTRAINT "menus_pkey" PRIMARY KEY ("id"),',
+    '"type" TEXT NOT NULL,',
+    `"body" JSONB NOT NULL DEFAULT '{}',`,
+    '"updated_by" TEXT,',
+    'CONSTRAINT "policies_pkey" PRIMARY KEY ("tenant_id", "type"),',
+    `ALTER TABLE "pages"."pages" ADD COLUMN "title" JSONB NOT NULL DEFAULT '{}';`,
+    `ALTER TABLE "pages"."pages" ADD COLUMN "body" JSONB NOT NULL DEFAULT '{}';`,
+    `ALTER TABLE "pages"."pages" ADD COLUMN "meta_description" JSONB NOT NULL DEFAULT '{}';`,
+    'ALTER TABLE "pages"."pages" ADD COLUMN "published_at" TIMESTAMP(3);',
+  ];
+  for (const line of lines) {
+    it(`declares ${line}`, () => {
+      expect(normalized).toContain(line);
+    });
+  }
+});

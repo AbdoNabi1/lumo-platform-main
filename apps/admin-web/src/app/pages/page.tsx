@@ -2,14 +2,14 @@ import type { ReactNode } from "react";
 import { Suspense } from "react";
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { AlertTriangleIcon, FileIcon, LockIcon, PlusIcon } from "lucide-react";
+import { AlertTriangleIcon, FileIcon, LockIcon, PlusIcon, ScrollTextIcon } from "lucide-react";
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { PagesPagination } from "@/components/pages/pages-pagination";
 import { PagesTable } from "@/components/pages/pages-table";
 import { fetchPagesPage } from "@/lib/api/pages";
 import { getCurrentUser } from "@/lib/auth/current-user";
-import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
 const PAGE_SIZE = 20;
@@ -38,16 +38,24 @@ export default async function PagesPage({ searchParams }: PagesPageProps) {
             <h1 className="text-2xl font-semibold tracking-tight">{t.pagesPage.title}</h1>
             <p className="text-muted-foreground mt-1 text-sm">{t.pagesPage.subtitle}</p>
           </div>
-          <Button asChild>
-            <Link href="/pages/new">
-              <PlusIcon aria-hidden="true" />
-              {t.pagesPage.newPage}
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/settings/policies">
+                <ScrollTextIcon aria-hidden="true" />
+                {t.pageEditor.storePolicies}
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/pages/new">
+                <PlusIcon aria-hidden="true" />
+                {t.pagesPage.newPage}
+              </Link>
+            </Button>
+          </div>
         </header>
 
         <Suspense key={params.after ?? ""} fallback={<PagesTableSkeleton />}>
-          <PagesResults first={PAGE_SIZE} after={params.after} t={t} />
+          <PagesResults first={PAGE_SIZE} after={params.after} t={t} locale={locale} />
         </Suspense>
       </div>
     </AppShell>
@@ -58,10 +66,12 @@ async function PagesResults({
   first,
   after,
   t,
+  locale,
 }: {
   readonly first: number;
   readonly after: string | undefined;
   readonly t: Dictionary;
+  readonly locale: Locale;
 }) {
   const result = await fetchPagesPage({ first, after });
 
@@ -93,7 +103,7 @@ async function PagesResults({
   return (
     <Card>
       <CardContent className="p-0 sm:p-0">
-        <PagesTable pages={result.items} t={t} />
+        <PagesTable pages={result.items} t={t} locale={locale} />
       </CardContent>
       <div className="border-border flex items-center justify-end gap-2 border-t px-4 py-3 sm:px-5">
         <PagesPagination

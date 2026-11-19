@@ -93,13 +93,36 @@ const READ_PERMISSIONS = [
 // `POST /products/:productId/publish`.
 const OPERATOR_WRITE_PERMISSIONS = ["products:create", "products:update", "products:publish"];
 
+// `online-store-sections.spec.ts`: the section editor (read the theme, save the draft, upload and
+// pick images), plus the admin-only publish and the password lock (`apps/admin/src/http/
+// online-store-routes.ts`).
+const ONLINE_STORE_OPERATOR_PERMISSIONS = [
+  "online_store:read",
+  "online_store:edit_theme",
+  "online_store:upload_image",
+  "media_library:read",
+];
+const ONLINE_STORE_ADMIN_PERMISSIONS = [
+  ...ONLINE_STORE_OPERATOR_PERMISSIONS,
+  "online_store_admin:publish_theme",
+  "online_store_admin:update_access",
+];
+
 /** @typedef {readonly [email: string, role: "viewer" | "operator" | "admin", extraPermissions: readonly string[]]} SeedIdentity */
 
 /** One seed row per `ROUTE_ROLE_REQUIREMENTS` role, extra Keto permissions beyond READ_PERMISSIONS. */
 const IDENTITIES = /** @type {readonly SeedIdentity[]} */ ([
   ["e2e-viewer@morbeh.local", "viewer", []],
-  ["e2e-operator@morbeh.local", "operator", OPERATOR_WRITE_PERMISSIONS],
-  ["e2e-admin@morbeh.local", "admin", OPERATOR_WRITE_PERMISSIONS],
+  [
+    "e2e-operator@morbeh.local",
+    "operator",
+    [...OPERATOR_WRITE_PERMISSIONS, ...ONLINE_STORE_OPERATOR_PERMISSIONS],
+  ],
+  [
+    "e2e-admin@morbeh.local",
+    "admin",
+    [...OPERATOR_WRITE_PERMISSIONS, ...ONLINE_STORE_ADMIN_PERMISSIONS],
+  ],
 ]);
 
 async function ensureHydraClient() {

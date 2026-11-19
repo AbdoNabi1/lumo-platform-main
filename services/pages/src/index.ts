@@ -3,6 +3,7 @@ export type { PagesWiringDeps, WiredPages } from "./composition";
 export { PagesController } from "./interfaces/pages.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Page } from "./domain/page";
+export type { PageContent } from "./domain/page-content";
 export { Template } from "./domain/template";
 export type { PageRepository, TemplateRepository } from "./domain/repositories";
 export {

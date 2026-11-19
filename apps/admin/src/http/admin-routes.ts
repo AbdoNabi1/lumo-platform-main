@@ -51,6 +51,7 @@ import { licensingRoutes } from "./licensing-routes";
 import { localizationRoutes } from "./localization-routes";
 import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
+import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
@@ -80,6 +81,8 @@ import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutLinkRoutes } from "./public-checkout-link-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import { publicOnlineStoreRoutes } from "./public-online-store-routes";
+import { publicContentRoutes } from "./public-content-routes";
 import { publicShippingRoutes } from "./public-shipping-routes";
 import { publicLoyaltyRoutes } from "./public-loyalty-routes";
 import { publicReviewsRoutes } from "./public-reviews-routes";
@@ -2261,6 +2264,7 @@ export function adminRoutes(
     ...featureRegistryRoutes(admin),
     ...pagesRoutes(admin),
     ...mediaLibraryRoutes(admin),
+    ...onlineStoreRoutes(admin),
     ...(() => {
       const tenancy = tenancyRoutes(admin, {
         ...(options.onTenantLifecycleChange === undefined
@@ -2292,6 +2296,8 @@ export function adminRoutes(
     ...publicCheckoutRoutes(admin),
     ...publicCheckoutLinkRoutes(admin),
     ...publicShippingRoutes(admin),
+    ...publicOnlineStoreRoutes(admin, options.rateLimiter),
+    ...publicContentRoutes(admin),
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLoyaltyRoutes(admin),

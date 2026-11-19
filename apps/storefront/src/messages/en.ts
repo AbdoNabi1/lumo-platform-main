@@ -9,6 +9,8 @@ export const en = {
     searchPlaceholder: "Search products…",
     searchSubmit: "Search",
     account: "Account",
+    menu: "Menu",
+    closeMenu: "Close navigation",
   },
   theme: {
     toggle: "Toggle theme",
@@ -16,17 +18,62 @@ export const en = {
   language: {
     switch: "Language",
   },
+  footer: {
+    poweredBy: "Powered by Morbeh",
+    social: "Follow us",
+    networks: {
+      facebook: "Facebook",
+      instagram: "Instagram",
+      tiktok: "TikTok",
+      x: "X",
+      youtube: "YouTube",
+      snapchat: "Snapchat",
+    },
+    links: "Links",
+    policies: "Policies",
+  },
+  meta: {
+    fallbackTitle: "Store",
+  },
+  preview: {
+    banner: "Preview — not visible to customers",
+    expires: "Link expires at {time}",
+    expired: "Preview link expired",
+    unavailable: "Not available in preview",
+  },
+  password: {
+    title: "Password",
+    defaultMessage: "Opening soon",
+    label: "Password",
+    submit: "Enter",
+    incorrect: "Incorrect password",
+    tooMany: "Too many attempts on this store. Try again in {duration}.",
+    /** Picked with `Intl.PluralRules(locale)`: every category a locale may need is present. */
+    minutes: {
+      zero: "{count} minutes",
+      one: "one minute",
+      two: "two minutes",
+      few: "{count} minutes",
+      many: "{count} minutes",
+      other: "{count} minutes",
+    },
+    unavailable: "Temporarily unavailable. Try again shortly.",
+    ownerPrompt: "Are you the store owner?",
+    ownerLink: "Log in to the admin",
+  },
   home: {
     title: "Shop",
-    subtitle: "Browse products and collections.",
-    productsTitle: "Products",
     productsEmpty: "No products are available yet.",
-    productsError: "Couldn't load products. Try refreshing the page.",
-    categoriesTitle: "Categories",
-    categoriesEmpty: "No categories are available yet.",
-    collectionsTitle: "Collections",
     collectionsEmpty: "No collections are available yet.",
-    collectionsError: "Couldn't load collections. Try refreshing the page.",
+  },
+  sections: {
+    hiddenPlaceholder: "Hidden section",
+    incompletePlaceholder: "Finish setting up this section",
+    viewAll: "View all",
+    rating: "Rated {rating} out of {max}",
+    announcement: "Announcement",
+    opensInNewTab: "Opens in a new tab",
+    whatsappDefault: "Message us on WhatsApp",
   },
   product: {
     unavailable: "This product isn't available right now.",
@@ -325,7 +372,7 @@ export const en = {
     errorBody: "Couldn't reach the account service. Try again.",
     signIn: {
       title: "Sign in",
-      subtitle: "Sign in to your Morbeh account.",
+      subtitle: "Sign in to your account.",
       emailLabel: "Email",
       passwordLabel: "Password",
       submit: "Sign in",
@@ -335,7 +382,7 @@ export const en = {
     },
     register: {
       title: "Create an account",
-      subtitle: "Create a Morbeh account to save your wishlist and track your orders.",
+      subtitle: "Create an account to save your wishlist and track your orders.",
       nameLabel: "Name",
       emailLabel: "Email",
       passwordLabel: "Password",
@@ -421,6 +468,14 @@ export const en = {
   },
   common: {
     loading: "Loading…",
+  },
+  content: {
+    lastUpdated: "Last updated {date}",
+    unavailableTitle: "Page unavailable",
+    unavailable: "This page is unavailable right now. Please try again later.",
+  },
+  locked: {
+    enter: "Enter using password",
   },
   notFound: {
     title: "Page not found",

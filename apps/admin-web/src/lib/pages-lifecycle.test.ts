@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { PAGE_LIFECYCLE_TRANSITIONS, pageAdvanceableStatusesFrom, templateCanArchive } from "./pages-lifecycle";
+import {
+  PAGE_LIFECYCLE_TRANSITIONS,
+  pageAdvanceableStatusesFrom,
+  templateCanArchive,
+} from "./pages-lifecycle";
 
 describe("pageAdvanceableStatusesFrom", () => {
   it("returns every allowed target from draft", () => {
     expect(pageAdvanceableStatusesFrom("draft")).toEqual(["published", "archived"]);
   });
 
-  it("returns every allowed target from published", () => {
-    expect(pageAdvanceableStatusesFrom("published")).toEqual(["archived"]);
+  it("a published page can be hidden (back to draft) or archived (Ruling 15)", () => {
+    expect(pageAdvanceableStatusesFrom("published")).toEqual(["draft", "archived"]);
   });
 
   it("returns an empty array for the terminal archived status", () => {

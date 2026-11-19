@@ -1,0 +1,40 @@
+{
+  "name": "@platform/online-store",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Online Store bounded context — preferences, password lock, theme draft/publish/releases, preview tokens (Project 4).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/application": "workspace:*",
+    "@platform/contracts": "workspace:*",
+    "@platform/db": "workspace:*",
+    "@platform/domain": "workspace:*",
+    "@platform/domain-events": "workspace:*",
+    "@platform/messaging": "workspace:*",
+    "@platform/repository": "workspace:*",
+    "@platform/storefront-content": "workspace:*",
+    "@platform/types": "workspace:*",
+    "@platform/utils": "workspace:*",
+    "@prisma/client": "^6.5.0"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@types/node": "^22.7.5",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}

@@ -17,6 +17,11 @@ import type {
   RegisterMediaAsset,
   RegisterMediaAssetInput,
 } from "../application/media-library.use-cases";
+import {
+  ONLINE_STORE_IMAGE_PURPOSES,
+  type OnlineStoreImagePurpose,
+} from "../application/image-purposes";
+import type { UploadImage, UploadImageInput } from "../application/upload-image.use-case";
 import type {
   UpdateMediaAlt,
   UpdateMediaAltInput,
@@ -43,6 +48,7 @@ export interface MediaLibraryControllerDeps {
   readonly listMediaAssets: ListMediaAssets;
   readonly getMediaAsset: GetMediaAsset;
   readonly uploadProductImage: UploadProductImage;
+  readonly uploadImage: UploadImage;
   readonly updateMediaAlt: UpdateMediaAlt;
 }
 
@@ -98,6 +104,58 @@ export class MediaLibraryController {
             "Only JPG, PNG, WebP and GIF images are accepted.",
             false,
           ),
+        };
+    }
+  }
+
+  /** Project 4: online-store images by purpose. 201 with the image; 503/413/415/422 envelopes. */
+  async uploadImage(
+    input: Omit<UploadImageInput, "purpose"> & { readonly purpose: OnlineStoreImagePurpose },
+  ): Promise<ControllerResponse> {
+    // The type already forbids this; the check keeps "product" and unknown values out at runtime.
+    if (!(ONLINE_STORE_IMAGE_PURPOSES as readonly string[]).includes(input.purpose)) {
+      return {
+        status: 422,
+        body: envelope("INVALID_PURPOSE", "This image purpose is not supported.", false),
+      };
+    }
+    const outcome = await this.deps.uploadImage.execute(input);
+    switch (outcome.kind) {
+      case "ok":
+        return { status: 201, body: outcome.image };
+      case "unavailable":
+        return {
+          status: 503,
+          body: envelope("UNAVAILABLE", "Image storage isn't set up yet.", true),
+        };
+      case "too_large":
+        return {
+          status: 413,
+          body: envelope(
+            "PAYLOAD_TOO_LARGE",
+            `The image is larger than ${Math.round(outcome.maxBytes / (1024 * 1024))} MB.`,
+            false,
+          ),
+        };
+      case "unsupported":
+        return {
+          status: 415,
+          body: envelope("UNSUPPORTED_MEDIA_TYPE", "This image type is not accepted here.", false),
+        };
+      case "bad_dimensions":
+        return {
+          status: 422,
+          body: {
+            ...envelope("BAD_DIMENSIONS", "The image size is not allowed here.", false),
+            min: outcome.min,
+            max: outcome.max,
+            square: outcome.square,
+          },
+        };
+      case "too_many_pixels":
+        return {
+          status: 422,
+          body: envelope("IMAGE_TOO_LARGE_DIMENSIONS", "The image has too many pixels.", false),
         };
     }
   }

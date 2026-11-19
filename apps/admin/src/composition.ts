@@ -111,6 +111,11 @@ import {
   type WiredSecurity,
 } from "@platform/security";
 import { wireSeo } from "@platform/seo";
+import {
+  wireOnlineStore,
+  type OnlineStorePublicReads,
+  type StorefrontPasswordHasher,
+} from "@platform/online-store";
 import { wireShipping } from "@platform/shipping";
 import {
   wireTenancy,
@@ -130,6 +135,13 @@ import {
   CheckoutTaxCalculationAdapter,
 } from "./infrastructure/cross-context/checkout-shipping-tax.adapters";
 import { InventoryValidationAdapter } from "./infrastructure/cross-context/inventory-validation.adapter";
+import {
+  mediaImageRefs,
+  scryptStorefrontPasswordHasher,
+  tenancyShopHost,
+  tenancyStoreIdentity,
+} from "./infrastructure/cross-context/online-store.adapters";
+import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-store-link-targets.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
@@ -190,6 +202,7 @@ import { LoyaltyAdminController } from "./interfaces/loyalty.admin-controller";
 import { MediaLibraryAdminController } from "./interfaces/media-library.admin-controller";
 import { NotificationsAdminController } from "./interfaces/notifications.admin-controller";
 import { OrdersAdminController } from "./interfaces/orders.admin-controller";
+import { OnlineStoreAdminController } from "./interfaces/online-store.admin-controller";
 import { DraftOrdersAdminController } from "./interfaces/draft-orders.admin-controller";
 import { PagesAdminController } from "./interfaces/pages.admin-controller";
 import { PaymentsAdminController } from "./interfaces/payments.admin-controller";
@@ -491,6 +504,11 @@ export interface AdminWiringDeps {
    * (matches the storefront's own `RUNTIME_API_URL` local-default convention).
    */
   readonly storefrontPublicUrl?: string;
+  /**
+   * TEST SEAM (Project 4): the storefront password hasher. Absent ⇒ the real scrypt hasher. Route tests
+   * pass a fast fake so 21 unlock attempts do not cost 21 scrypt runs.
+   */
+  readonly onlineStorePasswordHasher?: StorefrontPasswordHasher;
 }
 
 export interface WiredAdmin {
@@ -596,6 +614,8 @@ export interface WiredAdmin {
   readonly experience: ExperienceAdminController;
   /** Dynamic Pages screen → Pages (Sprint 5.4 — Pages' first admin-transport wiring). */
   readonly pages: PagesAdminController;
+  /** Online Store → Themes / Preferences (Project 4). Guarded; tenant per call. */
+  readonly onlineStore: OnlineStoreAdminController;
   /** Media Library screen → Media Library extension (Sprint 5.4 — Media's first admin-transport wiring). */
   readonly mediaLibrary: MediaLibraryAdminController;
   /**
@@ -757,6 +777,21 @@ export interface WiredAdmin {
      * an admin/system-triggered action, so a customer with none yet gets an honest 404.
      */
     readonly loyalty: LoyaltyController;
+    /**
+     * Project 4: the storefront shell, the lock state and the unlock check — closures taking the
+     * request's tenant (spec "Composition"); `public-online-store-routes.ts` is their only caller.
+     */
+    readonly onlineStore: OnlineStorePublicReads;
+    /**
+     * Online Store Part 2: the storefront's published `/pages/<handle>` pages, one by handle and
+     * the list (at most 500). Closures taking the request's tenant, never the Pages controller
+     * (ADR-0014); `public-content-routes.ts` is their only caller and maps each page to its
+     * public DTO. A draft, archived, unknown or non-`/pages/` page is 404 `PAGE_NOT_FOUND`.
+     */
+    readonly pages: {
+      readonly byHandle: (tenantId: string, handle: string) => Promise<AdminResponse>;
+      readonly list: (tenantId: string) => Promise<AdminResponse>;
+    };
     /**
      * Order operations Part 4: the three draft operations the invoice link and the post-completion
      * bookkeeping need with no staff principal (the shopper opening an invoice, Checkout reporting a
@@ -1218,6 +1253,33 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
   const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
+  // Project 4. Every port is a closure (Ruling 13): no tenancy, media, catalog or pages object hangs
+  // off onlineStore.
+  // The fields are listed, never `...deps`: `deps.tenantId` must not reach this context (ADR-0014).
+  const onlineStore = wireOnlineStore({
+    serializer: deps.serializer,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+    imageRefs: mediaImageRefs(
+      (ids, tenantId) => mediaLibrary.images.existingIds(ids, tenantId),
+      (ids, tenantId) => mediaLibrary.images.execute({ ids, tenantId }),
+    ),
+    passwordHasher: deps.onlineStorePasswordHasher ?? scryptStorefrontPasswordHasher(),
+    shopHost: tenancyShopHost((shopId) => tenancy.tenancy.listShopDomains({ shopId })),
+    storeIdentity: tenancyStoreIdentity((tenantId) => tenancy.tenancy.getPublicStore(tenantId)),
+    linkTargets: onlineStoreLinkTargets({
+      products: (ids, tenantId) => catalog.products.getByIds({ ids, tenantId }),
+      collections: (ids, tenantId) => catalog.collections.getByIds({ ids, tenantId }),
+      pages: (ids, tenantId) => pages.pages.getByIds({ ids, tenantId }),
+      searchProducts: (query, tenantId) =>
+        catalog.products.list({ ...(query === "" ? {} : { query }), first: 20, tenantId }),
+      searchCollections: (query, tenantId) =>
+        catalog.collections.list({ ...(query === "" ? {} : { query }), first: 20, tenantId }),
+      listPages: (tenantId) => pages.pages.listPages({ first: 100, tenantId }),
+    }),
+  });
+
   const contexts: readonly DrainableContext[] = [
     catalog,
     inventory,
@@ -1252,6 +1314,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     featureRegistry,
     pages,
     mediaLibrary,
+    onlineStore,
     tenancy,
     licensing,
     wishlist,
@@ -1395,6 +1458,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     theme: new ThemeAdminController({ theme: theme.theme, guard }),
     experience: new ExperienceAdminController({ experience: experience.experience, guard }),
     pages: new PagesAdminController({ pages: pages.pages, guard }),
+    onlineStore: new OnlineStoreAdminController({ onlineStore: onlineStore.controller, guard }),
     mediaLibrary: new MediaLibraryAdminController({
       mediaLibrary: mediaLibrary.mediaLibrary,
       guard,
@@ -1458,6 +1522,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       customers: identity.customers,
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
+      onlineStore: onlineStore.publicReads,
+      pages: {
+        byHandle: (tenantId, handle) =>
+          pages.pages.publishedPageByPath({ routePath: `/pages/${handle}`, tenantId }),
+        list: (tenantId) => pages.pages.listPublishedPages({ tenantId }),
+      },
       // Closures, not the controller: nothing else of Orders is reachable through this key.
       draftOrders: {
         getDraftOrder: (input) => orders.orders.getDraftOrder(input),

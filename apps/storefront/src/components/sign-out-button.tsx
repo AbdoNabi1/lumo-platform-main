@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@platform/ui";
-import { signOut, signOutEverywhere } from "@/app/account/actions";
+import { signOut, signOutEverywhere } from "@/app/(store)/account/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**

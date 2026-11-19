@@ -3,7 +3,7 @@
 import { useId, useState, useTransition } from "react";
 import { TagIcon, XIcon } from "lucide-react";
 import { Button, Input, Label } from "@platform/ui";
-import { applyDiscountCode, removeDiscountCode } from "@/app/checkout/actions";
+import { applyDiscountCode, removeDiscountCode } from "@/app/(store)/checkout/actions";
 import type { CheckoutDiscountCodeSummary } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
 

@@ -5,7 +5,7 @@ import type { Dictionary } from "./en";
  * a compile error rather than a string that silently falls back to English.
  */
 export const ar: Dictionary = {
-  brand: "موربيه",
+  brand: "مربح",
   nav: {
     home: "الرئيسية",
     openMenu: "فتح القائمة",
@@ -14,6 +14,8 @@ export const ar: Dictionary = {
     searchPlaceholder: "ابحث عن المنتجات…",
     searchSubmit: "بحث",
     account: "الحساب",
+    menu: "القائمة",
+    closeMenu: "إغلاق القائمة",
   },
   theme: {
     toggle: "تبديل المظهر",
@@ -21,17 +23,62 @@ export const ar: Dictionary = {
   language: {
     switch: "اللغة",
   },
+  footer: {
+    poweredBy: "بدعم من مربح",
+    social: "تابعنا",
+    networks: {
+      facebook: "فيسبوك",
+      instagram: "إنستغرام",
+      tiktok: "تيك توك",
+      x: "إكس",
+      youtube: "يوتيوب",
+      snapchat: "سناب شات",
+    },
+    links: "روابط",
+    policies: "السياسات",
+  },
+  meta: {
+    fallbackTitle: "المتجر",
+  },
+  preview: {
+    banner: "معاينة — غير ظاهرة للعملاء",
+    expires: "تنتهي صلاحية الرابط في {time}",
+    expired: "انتهت صلاحية رابط المعاينة",
+    unavailable: "غير متاح أثناء المعاينة",
+  },
+  password: {
+    title: "كلمة المرور",
+    defaultMessage: "سيفتح المتجر قريبًا",
+    label: "كلمة المرور",
+    submit: "دخول",
+    incorrect: "كلمة المرور غير صحيحة",
+    tooMany: "أُجريت محاولات كثيرة على هذا المتجر. حاول مرة أخرى بعد {duration}.",
+    // العدد والمعدود: ١ و٢ بلفظهما، ٣–١٠ جمع، ١١–٩٩ مفرد منصوب، ١٠٠–١٠٢ مفرد.
+    minutes: {
+      zero: "{count} دقيقة",
+      one: "دقيقة واحدة",
+      two: "دقيقتين",
+      few: "{count} دقائق",
+      many: "{count} دقيقة",
+      other: "{count} دقيقة",
+    },
+    unavailable: "غير متاح مؤقتًا. حاول مرة أخرى بعد قليل.",
+    ownerPrompt: "هل أنت مالك المتجر؟",
+    ownerLink: "سجّل الدخول إلى لوحة التحكم",
+  },
   home: {
     title: "المتجر",
-    subtitle: "تصفّح المنتجات والمجموعات.",
-    productsTitle: "المنتجات",
     productsEmpty: "لا توجد منتجات متاحة حتى الآن.",
-    productsError: "تعذّر تحميل المنتجات. حاول تحديث الصفحة.",
-    categoriesTitle: "الفئات",
-    categoriesEmpty: "لا توجد فئات متاحة حتى الآن.",
-    collectionsTitle: "المجموعات",
     collectionsEmpty: "لا توجد مجموعات متاحة حتى الآن.",
-    collectionsError: "تعذّر تحميل المجموعات. حاول تحديث الصفحة.",
+  },
+  sections: {
+    hiddenPlaceholder: "قسم مخفي",
+    incompletePlaceholder: "أكمل إعداد هذا القسم",
+    viewAll: "عرض الكل",
+    rating: "التقييم {rating} من {max}",
+    announcement: "إعلان",
+    opensInNewTab: "يفتح في نافذة جديدة",
+    whatsappDefault: "راسلنا على واتساب",
   },
   product: {
     unavailable: "هذا المنتج غير متاح حالياً.",
@@ -317,7 +364,7 @@ export const ar: Dictionary = {
     errorBody: "تعذّر الوصول إلى خدمة الحسابات. حاول مرة أخرى.",
     signIn: {
       title: "تسجيل الدخول",
-      subtitle: "سجّل الدخول إلى حسابك في موربيه.",
+      subtitle: "سجّل الدخول إلى حسابك.",
       emailLabel: "البريد الإلكتروني",
       passwordLabel: "كلمة المرور",
       submit: "تسجيل الدخول",
@@ -327,7 +374,7 @@ export const ar: Dictionary = {
     },
     register: {
       title: "إنشاء حساب",
-      subtitle: "أنشئ حساباً في موربيه لحفظ قائمة أمنياتك وتتبّع طلباتك.",
+      subtitle: "أنشئ حساباً لحفظ قائمة أمنياتك وتتبّع طلباتك.",
       nameLabel: "الاسم",
       emailLabel: "البريد الإلكتروني",
       passwordLabel: "كلمة المرور",
@@ -408,6 +455,14 @@ export const ar: Dictionary = {
   },
   common: {
     loading: "جارٍ التحميل…",
+  },
+  content: {
+    lastUpdated: "آخر تحديث {date}",
+    unavailableTitle: "الصفحة غير متاحة",
+    unavailable: "هذه الصفحة غير متاحة الآن. يرجى المحاولة لاحقاً.",
+  },
+  locked: {
+    enter: "الدخول بكلمة المرور",
   },
   notFound: {
     title: "الصفحة غير موجودة",

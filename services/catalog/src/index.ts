@@ -11,7 +11,11 @@ export { Brand } from "./domain/brand";
 export { Collection } from "./domain/collection";
 export type { CollectionStatus } from "./domain/collection";
 export type { PublishStateValue } from "./domain/value-objects/publish-state";
-export type { ProductRepository, VariantCurrencyRelabeler } from "./domain/product-repository";
+export type {
+  NewestProductsReader,
+  ProductRepository,
+  VariantCurrencyRelabeler,
+} from "./domain/product-repository";
 export type { MediaLookupPort } from "./application/media-lookup.port";
 export type { CategoryRepository } from "./domain/category-repository";
 export type { BrandRepository } from "./domain/brand-repository";

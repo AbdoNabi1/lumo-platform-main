@@ -116,3 +116,126 @@ describe("MediaLibraryController — uploads and alt text (Plan 2C-3)", () => {
     expect(foreign.status).toBe(404);
   });
 });
+
+const MB = 1024 * 1024;
+const u32be = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+const u16be = (n: number) => [(n >>> 8) & 255, n & 255];
+
+/** Headers only: the sniffer reads sizes from the header; `pad` grows the body. */
+function sized(head: number[], pad: number): Uint8Array {
+  const out = new Uint8Array(head.length + pad);
+  out.set(head);
+  return out;
+}
+const png = (w: number, h: number, pad = 0) =>
+  sized(
+    [
+      0x89,
+      0x50,
+      0x4e,
+      0x47,
+      0x0d,
+      0x0a,
+      0x1a,
+      0x0a,
+      0,
+      0,
+      0,
+      13,
+      0x49,
+      0x48,
+      0x44,
+      0x52,
+      ...u32be(w),
+      ...u32be(h),
+      8,
+      6,
+      0,
+      0,
+      0,
+    ],
+    pad,
+  );
+const jpeg = (w: number, h: number) =>
+  sized([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, ...u16be(h), ...u16be(w), 3, 0, 0, 0, 0], 0);
+
+describe("MediaLibraryController.uploadImage", () => {
+  it("maps each outcome to its status and code", async () => {
+    const controller = wire(realStorage());
+    expect(
+      (await controller.uploadImage({ bytes: jpeg(64, 64), purpose: "favicon", tenantId: "t-1" }))
+        .status,
+    ).toBe(415);
+    const bad = await controller.uploadImage({
+      bytes: png(400, 20),
+      purpose: "logo",
+      tenantId: "t-1",
+    });
+    expect(bad).toEqual({
+      status: 422,
+      body: {
+        code: "BAD_DIMENSIONS",
+        message: "The image size is not allowed here.",
+        retryable: false,
+        fields: [],
+        min: { width: 32, height: 32 },
+        max: 4000,
+        square: false,
+      },
+    });
+    expect(
+      (
+        await controller.uploadImage({
+          bytes: png(20000, 20000),
+          purpose: "section_image",
+          tenantId: "t-1",
+        })
+      ).body,
+    ).toMatchObject({ code: "IMAGE_TOO_LARGE_DIMENSIONS" });
+    expect(
+      await controller.uploadImage({
+        bytes: png(64, 64, 3 * MB),
+        purpose: "logo",
+        tenantId: "t-1",
+      }),
+    ).toMatchObject({
+      status: 413,
+      body: { code: "PAYLOAD_TOO_LARGE", message: "The image is larger than 2 MB." },
+    });
+  });
+
+  it("422 INVALID_PURPOSE for product or an unknown purpose, and nothing is written", async () => {
+    const storage = realStorage();
+    const controller = wire(storage);
+    for (const purpose of ["product", "avatar", "__proto__"]) {
+      const response = await controller.uploadImage({
+        bytes: png(400, 120),
+        // Runtime guard: the type forbids these, a careless caller might not.
+        purpose: purpose as "logo",
+        tenantId: "t-1",
+      });
+      expect(response.status).toBe(422);
+      expect(response.body).toMatchObject({ code: "INVALID_PURPOSE", retryable: false });
+    }
+    expect(storage.keys).toHaveLength(0);
+  });
+
+  it("201 with the public url for a valid logo, 503 when storage is not set up", async () => {
+    const storage = realStorage();
+    const created = await wire(storage).uploadImage({
+      bytes: png(400, 120),
+      purpose: "logo",
+      tenantId: "t-1",
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ width: 400, height: 120, alt: null });
+    expect((created.body as { url: string }).url).toBe(`${BASE}/${storage.keys[0]}`);
+
+    const unavailable = await wire(new InMemoryObjectStorage()).uploadImage({
+      bytes: png(400, 120),
+      purpose: "logo",
+      tenantId: "t-1",
+    });
+    expect(unavailable.status).toBe(503);
+  });
+});

@@ -23,6 +23,7 @@ function stubCollections(overrides: Partial<CollectionRepository> = {}): Collect
     save: async () => {},
     findById: async () => null,
     findBySlug: async () => null,
+    findByIds: async () => [],
     delete: async () => {},
     list: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),
     search: async () => ({ items: [], pageInfo: { hasNextPage: false, endCursor: null } }),

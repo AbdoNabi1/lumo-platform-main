@@ -4,7 +4,9 @@ import { PackageIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardFooter, CardHeader, CardTitle } from "@platform/ui";
 import { AddToCartButton } from "./add-to-cart-button";
 import { formatCurrency, formatNumber } from "@/lib/format";
+import { safeImageSrc } from "@/lib/safe-image";
 import type { AvailabilityResolution, PriceResolution, PublishedProduct } from "@/lib/catalog";
+import type { ProductImageSummary } from "@/lib/runtime-api";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -32,13 +34,19 @@ export function ProductCard({
 }) {
   const outOfStock = availability.status === "ok" && availability.available <= 0;
   // Plan 2C-3: an older API sends only `media`; a newer one names the card's two pictures itself.
-  const featured = product.featuredImage ?? product.media?.[0] ?? null;
-  const hover = product.hoverImage ?? product.media?.[1] ?? null;
+  // A picture whose url is empty or not an http(s)/same-site address is no picture (it would crash
+  // next/image, or load something that is not ours): the card shows its placeholder instead.
+  const usable = (image: ProductImageSummary | null | undefined) =>
+    image !== null && image !== undefined && safeImageSrc(image.url) !== null ? image : null;
+  const featured = usable(product.featuredImage ?? product.media?.[0]);
+  const hover = usable(product.hoverImage ?? product.media?.[1]);
   const alt = featured?.alt ?? product.name;
+  // The slug is encoded so it can only ever be one path segment (F5).
+  const href = `/products/${encodeURIComponent(product.slug)}`;
 
   return (
     <Card variant="interactive">
-      <Link href={`/products/${product.slug}`} className="group block">
+      <Link href={href} className="group block">
         {/* A square, so the grid does not jump as pictures load. The hover picture is CSS only. */}
         <div className="bg-muted relative aspect-square w-full overflow-hidden">
           {featured !== null ? (
@@ -104,7 +112,7 @@ export function ProductCard({
       {price.status === "ok" && product.variants.length > 1 && (
         <CardFooter>
           <Button asChild>
-            <Link href={`/products/${product.slug}`}>{t.product.chooseOptions}</Link>
+            <Link href={href}>{t.product.chooseOptions}</Link>
           </Button>
         </CardFooter>
       )}

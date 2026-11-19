@@ -51,6 +51,15 @@ export class InMemoryCollectionRepository implements CollectionRepository {
     return null;
   }
 
+  async findByIds(ids: readonly string[], tenantId: string): Promise<readonly Collection[]> {
+    const found: Collection[] = [];
+    for (const id of new Set(ids)) {
+      const collection = await this.findById(id, tenantId);
+      if (collection !== null) found.push(collection);
+    }
+    return found;
+  }
+
   async delete(collection: Collection, tenantId: string, tx?: unknown): Promise<void> {
     await this.save(collection, tenantId, tx);
   }

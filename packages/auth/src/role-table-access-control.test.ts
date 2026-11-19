@@ -61,6 +61,34 @@ describe("RoleTableAccessControl", () => {
       ),
     ).toBe(false);
   });
+
+  it("online store: viewers read, operators edit, only admins publish and lock (Project 4)", async () => {
+    const writes = [
+      "online_store:update_preferences",
+      "online_store:upload_image",
+      "online_store:edit_theme",
+      "online_store:manage_menus",
+      "online_store:manage_policies",
+    ];
+    const adminOnly = ["online_store_admin:publish_theme", "online_store_admin:update_access"];
+    // The ninth new string (Part 2 pages): covered by `pages:*`, so operators and admins, not viewers.
+    expect(await acl.authorize(who(["viewer"]), "pages:update_page")).toBe(false);
+    expect(await acl.authorize(who(["operator"]), "pages:update_page")).toBe(true);
+    expect(await acl.authorize(who(["admin"]), "pages:update_page")).toBe(true);
+    for (const role of ["viewer", "operator", "admin"]) {
+      expect(await acl.authorize(who([role]), "online_store:read"), role).toBe(true);
+    }
+    for (const permission of writes) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(true);
+    }
+    for (const permission of adminOnly) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["admin"]), permission), permission).toBe(true);
+    }
+  });
+
   it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
     const op = who(["operator"]);
     const viewer = who(["viewer"]);

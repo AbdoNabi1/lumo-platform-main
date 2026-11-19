@@ -1,0 +1,4 @@
+# gitleaks fingerprints (<commit>:<file>:<rule>:<line>) of reviewed false positives.
+# Historical commits cannot be rewritten, so a finding in an earlier commit of a PR range is allowlisted here.
+# af538c30: placeholder idempotency key in a unit test fixture (not a credential); the line now uses a low-entropy value.
+af538c306abba69128c16e84903b094a70d383a1:apps/admin-web/src/app/online-store/themes/actions.test.ts:generic-api-key:16

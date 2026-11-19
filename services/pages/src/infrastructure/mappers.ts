@@ -1,7 +1,18 @@
 import { UniqueEntityId } from "@platform/domain";
+import type { LocalizedText } from "@platform/storefront-content";
 import { Page, type PageStatusValue } from "../domain/page";
 import { Template, type TemplateStatusValue } from "../domain/template";
 import { RoutePath } from "../domain/value-objects/route-path";
+
+/** Reads `{ ar?, en? }` from a stored JSON value: strings only, anything else is dropped. */
+function readLocalized(value: unknown): LocalizedText {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const { ar, en } = value as Record<string, unknown>;
+  return {
+    ...(typeof ar === "string" && ar.length > 0 ? { ar } : {}),
+    ...(typeof en === "string" && en.length > 0 ? { en } : {}),
+  };
+}
 
 export interface PageRow {
   readonly id: string;
@@ -12,6 +23,11 @@ export interface PageRow {
   readonly seoProfileRef: string | null;
   readonly localeRef: string | null;
   readonly status: string;
+  readonly title: unknown;
+  readonly body: unknown;
+  readonly metaDescription: unknown;
+  readonly publishedAt: Date | null;
+  readonly updatedAt: Date | null;
   readonly version: number;
 }
 
@@ -40,6 +56,15 @@ export class PageMapper {
         seoProfileRef: row.seoProfileRef ?? undefined,
         localeRef: row.localeRef ?? undefined,
       },
+      {
+        content: {
+          title: readLocalized(row.title),
+          body: readLocalized(row.body),
+          metaDescription: readLocalized(row.metaDescription),
+        },
+        publishedAt: row.publishedAt ?? null,
+        updatedAt: row.updatedAt ?? null,
+      },
     );
   }
 
@@ -54,6 +79,12 @@ export class PageMapper {
       seoProfileRef: page.seoProfileRef ?? null,
       localeRef: page.localeRef ?? null,
       status: page.status,
+      title: { ...page.title },
+      body: { ...page.body },
+      metaDescription: { ...page.metaDescription },
+      publishedAt: page.publishedAt,
+      // `undefined` lets the database stamp a page that was never touched by the domain.
+      updatedAt: page.updatedAt ?? undefined,
       version: 1,
     };
   }

@@ -6,7 +6,7 @@ import { ProductGallery } from "./product-gallery";
 import { ProductSelectionProvider } from "./product-selection";
 import { VariantPicker } from "./variant-picker";
 
-vi.mock("@/app/cart/actions", () => ({ addToCart: vi.fn() }));
+vi.mock("@/app/(store)/cart/actions", () => ({ addToCart: vi.fn() }));
 
 const image = (id: string, alt: string | null = null) => ({
   id,

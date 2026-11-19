@@ -14,6 +14,7 @@ import {
   LanguagesIcon,
   LayoutTemplateIcon,
   MegaphoneIcon,
+  MenuIcon,
   PaletteIcon,
   PercentIcon,
   PuzzleIcon,
@@ -22,6 +23,7 @@ import {
   ShieldIcon,
   ShoppingBagIcon,
   ShoppingCartIcon,
+  SlidersHorizontalIcon,
   StarIcon,
   StoreIcon,
   TagIcon,
@@ -124,15 +126,35 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   { id: "analytics", label: (t) => t.nav.analytics, href: "/analytics", Icon: BarChart3Icon },
 ];
 
-/** Shopify's "Online Store" sales channel: the theme, the store's pages and its search listing. */
+/**
+ * Shopify's "Online Store" sales channel, in Shopify's order: Themes, Pages, Preferences, then the
+ * store's search listing. The raw design-token screens (`/theme`) moved to Platform tools (spec 1.11).
+ */
 export const ONLINE_STORE_NAV: NavItem = {
   id: "online-store",
   label: (t) => t.nav.onlineStore,
-  href: "/theme",
+  href: "/online-store/themes",
   Icon: StoreIcon,
   children: [
-    { id: "theme", label: (t) => t.nav.theme, href: "/theme", Icon: PaletteIcon },
+    {
+      id: "online-store-themes",
+      label: (t) => t.nav.themes,
+      href: "/online-store/themes",
+      Icon: PaletteIcon,
+    },
     { id: "pages", label: (t) => t.nav.pages, href: "/pages", Icon: FileIcon },
+    {
+      id: "online-store-navigation",
+      label: (t) => t.nav.navigation,
+      href: "/online-store/navigation",
+      Icon: MenuIcon,
+    },
+    {
+      id: "online-store-preferences",
+      label: (t) => t.nav.preferences,
+      href: "/online-store/preferences",
+      Icon: SlidersHorizontalIcon,
+    },
     { id: "seo", label: (t) => t.nav.seo, href: "/seo/profiles", Icon: SearchIcon },
   ],
 };
@@ -148,6 +170,7 @@ export const SETTINGS_NAV: NavItem = {
 
 /** The platform's engineering screens — listed only when `ADMIN_PLATFORM_TOOLS` is on. */
 export const PLATFORM_TOOLS_NAV: readonly NavItem[] = [
+  { id: "theme", label: (t) => t.nav.themeTokens, href: "/theme", Icon: PaletteIcon },
   {
     id: "notifications",
     label: (t) => t.nav.notifications,

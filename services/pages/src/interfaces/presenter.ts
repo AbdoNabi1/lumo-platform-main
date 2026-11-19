@@ -1,5 +1,6 @@
 import type { Result } from "@platform/types";
 import { type DomainError, toErrorEnvelope } from "@platform/utils";
+import { CODE_PATTERN } from "../domain/errors";
 
 export interface ControllerResponse {
   readonly status: number;
@@ -16,7 +17,11 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   FORBIDDEN: 403,
 };
 
-/** Maps a use-case `Result` to a transport-neutral response (framework-agnostic; no HTTP server). */
+/**
+ * Maps a use-case `Result` to a transport-neutral response (framework-agnostic; no HTTP server).
+ * The specific code (message prefix `CODE:`) becomes `body.code` (Ruling 24). This mirrors the
+ * online-store presenter on purpose: services cannot import each other.
+ */
 export function present<T>(
   result: Result<T, DomainError>,
   successStatus: number,
@@ -24,5 +29,10 @@ export function present<T>(
   if (result.ok) {
     return { status: successStatus, body: result.value };
   }
-  return { status: STATUS_BY_CODE[result.error.code] ?? 422, body: toErrorEnvelope(result.error) };
+  const envelope = toErrorEnvelope(result.error);
+  const specific = CODE_PATTERN.exec(result.error.message)?.[1];
+  return {
+    status: STATUS_BY_CODE[result.error.code] ?? 422,
+    body: { ...envelope, code: specific ?? envelope.code },
+  };
 }

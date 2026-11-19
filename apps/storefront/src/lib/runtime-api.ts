@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { SHOP_ID_HEADER } from "./shop-host";
 import type { ShippableCountries } from "./checkout-address";
 
-const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
+export const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 /**
@@ -10,7 +10,7 @@ const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
  * tenant, as before. With it on, the middleware put the resolved shop id on the request; its absence
  * is a wiring bug, so this throws rather than silently serving the default shop.
  */
-async function currentTenantId(): Promise<string> {
+export async function currentShopId(): Promise<string> {
   if (process.env.STOREFRONT_HOST_ROUTING !== "on") return TENANT_ID;
   const shopId = (await headers()).get(SHOP_ID_HEADER);
   if (shopId === null || shopId === "") {
@@ -171,7 +171,7 @@ async function fetchList<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -210,7 +210,7 @@ async function fetchPage<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -227,6 +227,59 @@ async function fetchPage<T>(
   }
 }
 
+/** A hung Runtime must not hang the sitemap: each of its reads gives up after this. */
+const SHOP_PAGE_TIMEOUT_MS = 3_000;
+
+/**
+ * One cursor page of a public list for an EXPLICIT shop (preflight 1): it never reads request
+ * headers, so it is safe inside `unstable_cache`, unlike `fetchPage` (whose `currentShopId()` reads
+ * them). 3 s timeout (preflight 9). Null for any failure or a body that is not a page.
+ */
+async function fetchShopPage<T>(
+  shopId: string,
+  path: string,
+  after: string | undefined,
+): Promise<CursorPageResult<T> | null> {
+  const query = new URLSearchParams({ first: String(MAX_PAGE_SIZE) });
+  if (after !== undefined) query.set("after", after);
+  try {
+    const response = await fetch(`${RUNTIME_API_URL}${path}?${query.toString()}`, {
+      headers: { "x-tenant-id": shopId },
+      cache: "no-store",
+      signal: AbortSignal.timeout(SHOP_PAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const json = (await response.json()) as { items?: unknown; pageInfo?: unknown } | null;
+    if (json === null || typeof json !== "object" || !Array.isArray(json.items)) return null;
+    const info = (json.pageInfo ?? {}) as { hasNextPage?: unknown; endCursor?: unknown };
+    return {
+      items: json.items as readonly T[],
+      pageInfo: {
+        hasNextPage: info.hasNextPage === true,
+        endCursor: typeof info.endCursor === "string" ? info.endCursor : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One page (100) of a shop's public products, for the sitemap (`GET /public/products`). */
+export function getProductsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<ProductSummary> | null> {
+  return fetchShopPage<ProductSummary>(shopId, "/api/v1/public/products", after);
+}
+
+/** One page (100) of a shop's public collections, for the sitemap (`GET /public/collections`). */
+export function getCollectionsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<CollectionSummary> | null> {
+  return fetchShopPage<CollectionSummary>(shopId, "/api/v1/public/collections", after);
+}
+
 /**
  * Fetches a single-item PUBLIC route. Unlike `fetchList` (which collapses every failure to
  * `null`), this returns the real HTTP status alongside the body — Cart's empty-state (404, no
@@ -239,7 +292,7 @@ async function fetchItem<T>(
 ): Promise<{ readonly status: number; readonly body: T | null }> {
   try {
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
-      headers: { "x-tenant-id": await currentTenantId(), ...extraHeaders },
+      headers: { "x-tenant-id": await currentShopId(), ...extraHeaders },
       cache: "no-store",
     });
     if (!response.ok) return { status: response.status, body: null };
@@ -264,7 +317,7 @@ async function postItem<T>(
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
       method: "POST",
       headers: {
-        "x-tenant-id": await currentTenantId(),
+        "x-tenant-id": await currentShopId(),
         "content-type": "application/json",
         ...extraHeaders,
       },
@@ -318,6 +371,17 @@ export async function getShippableCountries(): Promise<ShippableCountries | null
   return { countries: body.countries, restOfWorld: body.restOfWorld };
 }
 
+/** Compatibility reads retained for main's category and collection callers. */
+export function getCategories(): Promise<readonly CategorySummary[] | null> {
+  return fetchList<CategorySummary>("/api/v1/public/categories");
+}
+
+export function getCollections(
+  first: number = MAX_PAGE_SIZE,
+): Promise<readonly CollectionSummary[] | null> {
+  return fetchList<CollectionSummary>("/api/v1/public/collections", { first });
+}
+
 /** Products — Catalog (`GET /public/products`, Phase 9). */
 export function getProducts(
   first: number = MAX_PAGE_SIZE,
@@ -345,18 +409,6 @@ export async function getProductBySlug(slug: string): Promise<ProductSummary | n
     `/api/v1/public/products/${encodeURIComponent(slug)}`,
   );
   return body;
-}
-
-/** Categories — Catalog (`GET /public/categories`, Phase 9). */
-export function getCategories(): Promise<readonly CategorySummary[] | null> {
-  return fetchList<CategorySummary>("/api/v1/public/categories");
-}
-
-/** Collections — Catalog (`GET /public/collections`, Phase 9). */
-export function getCollections(
-  first: number = MAX_PAGE_SIZE,
-): Promise<readonly CollectionSummary[] | null> {
-  return fetchList<CollectionSummary>("/api/v1/public/collections", { first });
 }
 
 /** One collection by slug (`GET /public/collections/:slug`). */
@@ -439,7 +491,7 @@ export interface AddCartItemInput {
 /**
  * The guest Cart transport (Phase 17.1 — Guest Cart Foundation). Every call carries the caller's
  * `sessionRef` — read server-side from the storefront's own HttpOnly session cookie
- * (`apps/storefront/src/app/cart/actions.ts`), never accepted from the browser directly — which
+ * (`apps/storefront/src/app/(store)/cart/actions.ts`), never accepted from the browser directly — which
  * the Runtime API checks against `cart.sessionRef` before any read/mutation. `POST` bodies never
  * carry a `customerRef`: these routes create and operate on guest carts only.
  *
@@ -1098,7 +1150,7 @@ export async function removeCheckoutDiscountCode(
       `${RUNTIME_API_URL}/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes/${encodeURIComponent(code)}`,
       {
         method: "DELETE",
-        headers: { "x-tenant-id": await currentTenantId(), "x-cart-session": sessionRef },
+        headers: { "x-tenant-id": await currentShopId(), "x-cart-session": sessionRef },
         cache: "no-store",
       },
     );

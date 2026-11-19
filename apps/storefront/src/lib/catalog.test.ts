@@ -7,9 +7,7 @@ import type {
   ProductVariantSummary,
 } from "./runtime-api";
 
-const getProducts = vi.fn<() => Promise<readonly ProductSummary[] | null>>();
 const getProductBySlug = vi.fn<(slug: string) => Promise<ProductSummary | null>>();
-const getCollections = vi.fn<() => Promise<readonly CollectionSummary[] | null>>();
 const getCollectionBySlug = vi.fn<(slug: string) => Promise<CollectionSummary | null>>();
 const getCollectionProducts =
   vi.fn<
@@ -23,9 +21,7 @@ const getInventory = vi.fn<() => Promise<readonly InventoryItemSummary[] | null>
 const searchProducts = vi.fn<(query: string) => Promise<readonly ProductSummary[] | null>>();
 
 vi.mock("./runtime-api", () => ({
-  getProducts: () => getProducts(),
   getProductBySlug: (slug: string) => getProductBySlug(slug),
-  getCollections: () => getCollections(),
   getCollectionBySlug: (slug: string) => getCollectionBySlug(slug),
   getCollectionProducts: (slug: string, first?: number, after?: string) =>
     getCollectionProducts(slug, first, after),
@@ -34,8 +30,6 @@ vi.mock("./runtime-api", () => ({
 }));
 
 const {
-  listPublishedProducts,
-  listPublishedCollections,
   resolveProductBySlug,
   resolveCollectionBySlug,
   searchPublishedProducts,
@@ -83,26 +77,6 @@ function collection(overrides: Partial<CollectionSummary> = {}): CollectionSumma
     ...overrides,
   };
 }
-
-describe("listPublishedProducts", () => {
-  it("keeps only published products", async () => {
-    getProducts.mockResolvedValue([
-      product({ id: "a", status: "published" }),
-      product({ id: "b", status: "draft" }),
-      product({ id: "c", status: "archived" }),
-      product({ id: "d", status: "scheduled" }),
-    ]);
-    const result = await listPublishedProducts();
-    expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
-    expect(result.products.map((p: ProductSummary) => p.id)).toEqual(["a"]);
-  });
-
-  it("surfaces an error without falling back to demo data", async () => {
-    getProducts.mockResolvedValue(null);
-    expect(await listPublishedProducts()).toEqual({ status: "error" });
-  });
-});
 
 describe("searchPublishedProducts", () => {
   it("keeps only published products among the search matches", async () => {
@@ -378,18 +352,5 @@ describe("AvailabilityBook — per variant (Plan 2B-1)", () => {
         status: "unknown",
       });
     });
-  });
-});
-
-describe("listPublishedCollections", () => {
-  it("keeps only published collections", async () => {
-    getCollections.mockResolvedValue([
-      collection({ id: "a", status: "published" }),
-      collection({ id: "b", status: "draft" }),
-    ]);
-    const result = await listPublishedCollections();
-    expect(result.status).toBe("ok");
-    if (result.status !== "ok") return;
-    expect(result.collections.map((c: CollectionSummary) => c.id)).toEqual(["a"]);
   });
 });

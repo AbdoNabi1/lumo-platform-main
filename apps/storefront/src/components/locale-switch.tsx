@@ -12,6 +12,7 @@ import {
 } from "@platform/ui";
 import { setLocale } from "@/app/actions";
 import { LOCALES, type Locale } from "@/lib/i18n";
+import { usePreviewMode } from "./preview-mode";
 
 const NATIVE_NAME: Readonly<Record<Locale, string>> = {
   en: "English",
@@ -26,16 +27,25 @@ const NATIVE_NAME: Readonly<Record<Locale, string>> = {
 export function LocaleSwitch({
   locale,
   label,
+  disabled,
 }: {
   readonly locale: Locale;
   readonly label: string;
+  /** Ruling 15: a language change is a POST, which preview refuses. */
+  readonly disabled?: boolean;
 }) {
   const [pending, startTransition] = React.useTransition();
+  const preview = usePreviewMode();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={label} disabled={pending}>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={label}
+          disabled={pending || disabled === true || preview.active}
+        >
           <LanguagesIcon aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>

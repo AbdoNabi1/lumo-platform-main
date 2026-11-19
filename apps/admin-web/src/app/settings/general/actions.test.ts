@@ -3,9 +3,11 @@ import type { FormState } from "@/lib/api/mutation";
 
 const api = vi.hoisted(() => ({ updateStoreSettings: vi.fn() }));
 const revalidatePath = vi.hoisted(() => vi.fn());
+const revalidateStorefront = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/store-settings", () => ({ updateStoreSettings: api.updateStoreSettings }));
 vi.mock("next/cache", () => ({ revalidatePath }));
+vi.mock("@/lib/storefront-revalidate", () => ({ revalidateStorefront }));
 vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
@@ -31,6 +33,7 @@ function form(overrides: Record<string, string> = {}): FormData {
 beforeEach(() => {
   api.updateStoreSettings.mockReset().mockResolvedValue({ outcome: "ok", data: {} });
   revalidatePath.mockReset();
+  revalidateStorefront.mockReset().mockResolvedValue(true);
 });
 
 describe("saveStoreSettingsAction (Plan 3C)", () => {
@@ -50,6 +53,16 @@ describe("saveStoreSettingsAction (Plan 3C)", () => {
       expect.any(String),
     );
     expect(revalidatePath).toHaveBeenCalledWith("/settings/general");
+    // Ruling 24: the store name is in the storefront's cached shell.
+    expect(revalidateStorefront).toHaveBeenCalledTimes(1);
+  });
+
+  it("still succeeds when the storefront could not be told, flagging the delay for the form", async () => {
+    revalidateStorefront.mockResolvedValue(false);
+    expect(await saveStoreSettingsAction(idle, form())).toEqual({
+      status: "success",
+      liveDelayed: true,
+    });
   });
 
   it("sends no contact email when the field is blank", async () => {
@@ -80,6 +93,7 @@ describe("saveStoreSettingsAction (Plan 3C)", () => {
       fieldErrors: { currency: "must be an ISO 4217 currency code" },
     });
     expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateStorefront).not.toHaveBeenCalled();
   });
 
   it("reports a failed save (for example a failed price relabel) so the merchant can retry", async () => {
@@ -89,5 +103,6 @@ describe("saveStoreSettingsAction (Plan 3C)", () => {
 
     expect(state.status).toBe("error");
     expect(revalidatePath).not.toHaveBeenCalled();
+    expect(revalidateStorefront).not.toHaveBeenCalled();
   });
 });

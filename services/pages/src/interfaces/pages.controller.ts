@@ -12,16 +12,30 @@ import type {
   CreateTemplateInput,
   PageIdInput,
   TemplateIdInput,
+  UpdatePageContent,
+  UpdatePageContentInput,
 } from "../application/pages.use-cases";
+import type {
+  GetPagesByIds,
+  GetPagesByIdsInput,
+  GetPublishedPageByPath,
+  GetPublishedPageByPathInput,
+  ListPublishedPages,
+  ListPublishedPagesInput,
+} from "../application/public-pages.use-cases";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface PagesControllerDeps {
   readonly createPage: CreatePage;
   readonly advancePage: AdvancePage;
+  readonly updatePageContent: UpdatePageContent;
   readonly createTemplate: CreateTemplate;
   readonly archiveTemplate: ArchiveTemplate;
   readonly listPages: ListPages;
   readonly getPage: GetPage;
+  readonly getPublishedPageByPath: GetPublishedPageByPath;
+  readonly listPublishedPages: ListPublishedPages;
+  readonly getPagesByIds: GetPagesByIds;
   readonly listTemplates: ListTemplates;
   readonly getTemplate: GetTemplate;
 }
@@ -42,6 +56,10 @@ export class PagesController {
     return present(await this.deps.advancePage.execute(input), 200);
   }
 
+  async updatePageContent(input: UpdatePageContentInput): Promise<ControllerResponse> {
+    return present(await this.deps.updatePageContent.execute(input), 200);
+  }
+
   async createTemplate(input: CreateTemplateInput): Promise<ControllerResponse> {
     return present(await this.deps.createTemplate.execute(input), 201);
   }
@@ -56,6 +74,19 @@ export class PagesController {
 
   async getPage(input: PageIdInput): Promise<ControllerResponse> {
     return present(await this.deps.getPage.execute(input), 200);
+  }
+
+  /** Only a published page at `/pages/<handle>`; anything else is 404 `PAGE_NOT_FOUND`. */
+  async publishedPageByPath(input: GetPublishedPageByPathInput): Promise<ControllerResponse> {
+    return present(await this.deps.getPublishedPageByPath.execute(input), 200);
+  }
+
+  async listPublishedPages(input: ListPublishedPagesInput): Promise<ControllerResponse> {
+    return present(await this.deps.listPublishedPages.execute(input), 200);
+  }
+
+  async getByIds(input: GetPagesByIdsInput): Promise<ControllerResponse> {
+    return present(await this.deps.getPagesByIds.execute(input), 200);
   }
 
   async listTemplates(input: ListTemplatesInput): Promise<ControllerResponse> {
