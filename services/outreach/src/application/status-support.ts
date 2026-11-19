@@ -1,7 +1,7 @@
 import { nextStatus, type OutboundStatus } from "../domain/outbound-message";
 import type { OutboundRecord } from "../domain/repositories";
 import type { OutreachDeps } from "./outreach-deps";
-import { emit } from "./support";
+import { type EventDeps, emit } from "./support";
 
 /** A verified delivery fact about one outbound message (from a webhook, or drained from the unmatched store). */
 export interface StatusFact {
@@ -79,7 +79,7 @@ export async function applyStatusFact(
 }
 
 export async function emitStatusChanged(
-  deps: OutreachDeps,
+  deps: EventDeps,
   tx: unknown,
   row: OutboundRecord,
   from: OutboundStatus,

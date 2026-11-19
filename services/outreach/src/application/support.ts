@@ -37,8 +37,11 @@ export function isConcurrency(e: unknown): boolean {
   return e instanceof ConcurrencyError;
 }
 
+/** What emitting an event needs (the recovery wiring has no ports, vault or repositories beyond these). */
+export type EventDeps = Pick<OutreachDeps, "idGenerator" | "clock" | "events">;
+
 export async function emit<T extends OutreachEventType>(
-  deps: OutreachDeps,
+  deps: EventDeps,
   tx: unknown,
   tenantId: string,
   type: T,

@@ -30,4 +30,12 @@ describe("@platform/outreach package entry", () => {
     const root = (await import("./index")) as Record<string, unknown>;
     expect(Object.keys(root)).not.toContain("createMetaFetchHarness");
   });
+
+  it("exposes the composition entry points the runtime needs", async () => {
+    expect.hasAssertions();
+    const root = (await import("./index")) as Record<string, unknown>;
+    expect(typeof root.wireOutreach).toBe("function");
+    expect(typeof root.wireOutreachRecovery).toBe("function");
+    expect(typeof root.OutreachController).toBe("function");
+  });
 });

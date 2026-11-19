@@ -2,6 +2,11 @@ import type { UseCase } from "@platform/application";
 import { ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
 import type { OutreachDeps } from "./outreach-deps";
+import type { EventDeps } from "./support";
+
+/** The recovery job needs only the outbound repository, the unit of work, the clock and the event sink. */
+export type ReconcileUnresolvedDeps = EventDeps &
+  Pick<OutreachDeps, "outbound" | "unitOfWork" | "unresolvedAfterMs">;
 import { emitStatusChanged } from "./status-support";
 
 const BATCH = 100;
@@ -17,7 +22,7 @@ export class ReconcileUnresolvedOutbound implements UseCase<
   number,
   DomainError
 > {
-  constructor(private readonly deps: OutreachDeps) {}
+  constructor(private readonly deps: ReconcileUnresolvedDeps) {}
 
   async execute(input: { tenantId: string }): Promise<Result<number, DomainError>> {
     const { deps } = this;
