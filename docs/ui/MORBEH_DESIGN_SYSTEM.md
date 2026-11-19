@@ -13,14 +13,19 @@
 
 **Where it lives**
 
-| Layer                                  | Path                                           | Role                                                     |
-| -------------------------------------- | ---------------------------------------------- | -------------------------------------------------------- |
-| Tokens (CSS — runtime source of truth) | `packages/design/src/styles.css`               | What the browser renders from                            |
-| Tokens (TS mirror)                     | `packages/design/src/{primitives,semantic}.ts` | Programmatic consumers, tests, `services/theme` seeding  |
-| Accessibility guard                    | `packages/design/src/contrast.test.ts`         | Asserts the palette's WCAG AA guarantees on every run    |
-| Brand lock                             | `packages/design/src/brand-lock.test.ts`       | Pins every locked value; proves CSS and TS are identical |
-| Components                             | `packages/ui/src/components/ui/*`              | The only sanctioned way to build a Morbeh surface        |
-| Reference implementation               | `apps/admin-web`                               | The Morbeh Dashboard                                     |
+| Layer                                  | Path                                           | Role                                                    |
+| -------------------------------------- | ---------------------------------------------- | ------------------------------------------------------- |
+| Tokens (CSS — runtime source of truth) | `packages/design/src/styles.css`               | What the browser renders from                           |
+| Tokens (TS mirror)                     | `packages/design/src/{primitives,semantic}.ts` | Programmatic consumers, tests, `services/theme` seeding |
+| Accessibility guard                    | `packages/design/src/contrast.test.ts`         | Asserts the palette's WCAG AA guarantees on every run   |
+| Brand lock                             | `packages/design/src/brand-lock.test.ts`       | Pins the locked tokens, radii and fonts (see below)     |
+| Components                             | `packages/ui/src/components/ui/*`              | The only sanctioned way to build a Morbeh surface       |
+| Reference implementation               | `apps/admin-web`                               | The Morbeh Dashboard                                    |
+
+`brand-lock.test.ts` pins all primitives, all 45 semantic values in both themes, the radius
+steps, the exact TypeScript font strings, the CSS font slots and families (not full CSS stack
+equality), and CSS↔TS colour parity. The logo, favicon, fonts binding and button shape are
+covered by other tests; the full inventory is in [BRAND_LOCK.md](./BRAND_LOCK.md).
 
 ---
 
@@ -88,14 +93,15 @@ empty. The storefront binds its own slots (Geist for Latin, IBM Plex Sans Arabic
 renders shop typography in the merchant-chosen families — the Nusuj fonts apply to the
 dashboard and auth pages, not to merchant storefronts.
 
-**Weights.** UI text uses 400 / 500 / 600; display text (the brand wordmark) uses 700 / 800.
+**Weights.** UI text uses 400 / 500 / 600. 700 / 800 are available as display weights; the
+store-name / wordmark text beside the logo currently renders at `font-semibold` (600).
 
-| Weight        | Use                                                          |
-| ------------- | ------------------------------------------------------------ |
-| 400 Regular   | body, descriptions, table content                            |
-| 500 Medium    | labels, navigation, buttons, metadata                        |
-| 600 Semibold  | headings, KPI values, section titles                         |
-| 700–800 Bold+ | display: brand wordmark (Baloo Bhaijaan 2 loads 600/700/800) |
+| Weight        | Use                                                 |
+| ------------- | --------------------------------------------------- |
+| 400 Regular   | body, descriptions, table content                   |
+| 500 Medium    | labels, navigation, buttons, metadata               |
+| 600 Semibold  | headings, KPI values, section titles                |
+| 700–800 Bold+ | display option (Baloo Bhaijaan 2 loads 600/700/800) |
 
 Zain ships 200 / 300 / 400 / 700 / 800 / 900 only, so in Arabic weight 500 renders as 400 and
 600 as 700. This is accepted; weights are never faked. Page titles (`h1`) take the display
@@ -262,10 +268,10 @@ Arbitrary values (`p-[13px]`) are not permitted.
 | Token          | Value  | Use                                  |
 | -------------- | ------ | ------------------------------------ |
 | `rounded-xs`   | 4px    | keyboard hints, micro chips          |
-| `rounded-sm`   | 6px    | menu items, small controls           |
-| `rounded-md`   | 8px    | dropdowns                            |
-| `rounded-lg`   | 12px   |                                      |
-| `rounded-xl`   | 16px   | inputs                               |
+| `rounded-sm`   | 6px    | small controls                       |
+| `rounded-md`   | 8px    |                                      |
+| `rounded-lg`   | 12px   | dropdown menu items                  |
+| `rounded-xl`   | 16px   | inputs, dropdown panels              |
 | `rounded-2xl`  | 22px   | cards, KPI tiles                     |
 | `rounded-3xl`  | 28px   | dialogs, large surfaces              |
 | `rounded-full` | 9999px | **buttons (pills)**, badges, avatars |
@@ -277,17 +283,19 @@ radius scale through `--shop-radius-*` for branded shops; its fallbacks are its 
 
 ## 7. Elevation
 
-| Token       | Use                                     |
-| ----------- | --------------------------------------- |
-| `shadow-sm` | barely-raised affordances               |
-| `shadow-md` | `Card variant="elevated"` — opt-in only |
-| `shadow-lg` | dropdown, tooltip                       |
-| `shadow-xl` | dialog, drawer                          |
+| Token       | Use                                                     |
+| ----------- | ------------------------------------------------------- |
+| `shadow-sm` | barely-raised affordances                               |
+| `shadow-md` | primary button hover                                    |
+| `shadow-lg` | dropdown, tooltip                                       |
+| `shadow-xl` | dialog, drawer, `Card variant="elevated"` (opt-in only) |
 
 Light shadows use the warm ink `rgb(33 29 26 / α)`. Two brand-tinted shadows, `shadow-card`
 (`0 1px 2px 0 rgb(184 69 29 / 0.05), 0 12px 28px -8px rgb(76 54 46 / 0.10)`) and
 `shadow-card-hover` (`0 2px 4px 0 rgb(184 69 29 / 0.07), 0 16px 36px -8px rgb(76 54 46 / 0.16)`),
-are the resting and hover elevation of a card. If everything else is elevated, nothing is.
+are the resting and hover elevation of a card. `Card variant="bordered"` has no shadow, and the
+hover shadow applies only to the `interactive` and `kpi` variants. If everything else is
+elevated, nothing is.
 
 ---
 
@@ -436,9 +444,11 @@ Verified in dark: cards, tables, inputs, dialogs, navigation, badges, charts, bu
 Target: **WCAG 2.1 Level AA**.
 
 **Colour contrast is tested, not asserted.** `packages/design/src/contrast.test.ts` runs 61
-tests across both themes covering body/muted/secondary/accent text, every button
-state, every badge pair, input boundaries, focus rings, and all five chart series. A token
-change that breaks a guarantee fails the suite.
+tests across both themes covering body/muted/secondary/accent text, the primary button label
+(default, hover and active), the destructive button label, the status badge pairs, brand
+secondary, input boundaries, focus rings, and all five chart series. It does not evaluate
+rendered opacity (disabled, destructive active). A token change that breaks a tested pair
+fails the suite.
 
 Structural requirements:
 

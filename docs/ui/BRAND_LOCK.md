@@ -21,8 +21,10 @@ human or model, changes the colours, fonts, radii, logo, favicon or button shape
 | Logo (`BrandMark`)                         | viewBox `0 0 64 64`: circle (17,19) r9 `brand-secondary` · rect (30,10) 26×18 rx9 `primary` · rect (8,36) 26×18 rx9 `primary` · circle (47,45) r9 `brand-secondary` |
 | Favicon (`icon.svg`)                       | rounded square rx 14, fill `#b8451d`; bento in `translate(6 6) scale(.81)`; pills `#ffffff`; circles `#f9d5c6`                                                      |
 
-Merchant storefronts are out of scope: their fonts stay the merchant-chosen families (the
-storefront binds Geist / IBM Plex Sans Arabic) and saved merchant themes are never rewritten.
+Storefront boundary, both sides. **Locked:** the default storefront palette, used by shops
+with no saved colours, is the Nusuj palette (the storefront imports the design stylesheet).
+**Not touched:** merchant-chosen fonts (the storefront binds Geist / IBM Plex Sans Arabic) and
+saved merchant theme documents, which are never rewritten.
 
 ## What enforces it
 
