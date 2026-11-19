@@ -10,6 +10,8 @@ import {
   type EmailSendCounterRepository,
   type InboundMessageRepository,
   type InboundRecord,
+  type LeaseHolder,
+  type OnboardingExpectation,
   type OutboundMessageRepository,
   type OutboundRecord,
   type PhoneDirectory,
@@ -37,6 +39,7 @@ import {
   unmatchedFromRow,
   unmatchedInsertRow,
 } from "./prisma-outreach-mappers";
+import { tenantScopeOf, withPlatformScope } from "./prisma-outreach-unit-of-work";
 
 /**
  * Reuses the caller's transaction when given; otherwise opens a tenant-scoped one (`app.tenant_id` set first, ADR-0014)
@@ -54,6 +57,13 @@ export function withClient<T>(
 }
 
 const unexpectedConflict = (): Error => new Error(UNEXPECTED_UNIQUE_CONFLICT);
+
+/** Private non-claim signal: thrown inside the owned transaction (rollback), translated back outside it. */
+class NotClaimed extends Error {
+  constructor(readonly result: "phone_in_use" | "waba_in_use") {
+    super(result);
+  }
+}
 
 export interface PrismaOutreachDeps {
   readonly prisma: Database;
@@ -92,7 +102,99 @@ export class PrismaWhatsAppConnectionRepository implements WhatsAppConnectionRep
       }
     });
   }
+
+  async acquireOnboardingLease(
+    next: WhatsAppConnectionRecord,
+    expected: OnboardingExpectation | null,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    if (!installsLease(next, now)) throw new Error(LEASE_REQUIRED);
+    await withClient(this.deps.prisma, next.tenantId, tx, async (c) => {
+      if (expected === null) {
+        const created = await c.whatsAppConnection.createMany({
+          data: [{ tenantId: next.tenantId, ...connectionColumns(next), version: 1 }],
+          skipDuplicates: true,
+        });
+        if (created.count === 0) {
+          throw new ConcurrencyError(
+            `Connection ${next.tenantId} already exists (expected no row)`,
+          );
+        }
+        return;
+      }
+      const updated = await c.whatsAppConnection.updateMany({
+        where: {
+          tenantId: next.tenantId,
+          ...expectationWhere(expected),
+          // the lease must be available AT WRITE TIME
+          OR: [{ onboardingLeaseUntil: null }, { onboardingLeaseUntil: { lt: now } }],
+        },
+        data: { ...connectionColumns(next), version: expected.version + 1 },
+      });
+      if (updated.count === 0) throw leaseLost(next.tenantId, "acquire");
+    });
+  }
+
+  async renewOnboardingLease(
+    tenantId: string,
+    holder: LeaseHolder,
+    leaseUntil: Date,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    await withClient(this.deps.prisma, tenantId, tx, async (c) => {
+      const updated = await c.whatsAppConnection.updateMany({
+        where: { tenantId, ...holderWhere(holder, now) },
+        data: { onboardingLeaseUntil: leaseUntil, version: holder.version + 1 },
+      });
+      if (updated.count === 0) throw leaseLost(tenantId, "renew");
+    });
+  }
+
+  async writeAsLeaseOwner(
+    next: WhatsAppConnectionRecord,
+    holder: LeaseHolder,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    await withClient(this.deps.prisma, next.tenantId, tx, async (c) => {
+      const updated = await c.whatsAppConnection.updateMany({
+        where: { tenantId: next.tenantId, ...holderWhere(holder, now) },
+        data: { ...connectionColumns(next), version: holder.version + 1 },
+      });
+      if (updated.count === 0) throw leaseLost(next.tenantId, "owner write");
+    });
+  }
 }
+
+const LEASE_REQUIRED = "acquireOnboardingLease must install a lease (owner + expiry after now)";
+
+const installsLease = (next: WhatsAppConnectionRecord, now: Date): boolean =>
+  next.onboardingLeaseOwner !== null &&
+  next.onboardingLeaseUntil !== null &&
+  next.onboardingLeaseUntil.getTime() > now.getTime();
+
+const leaseLost = (tenantId: string, what: string): ConcurrencyError =>
+  new ConcurrencyError(
+    `Connection ${tenantId}: onboarding lease ${what} lost (row or lease changed)`,
+  );
+
+/** The row-shape part of every lease predicate: version, stage, attempt, phone and WABA. */
+const expectationWhere = (e: OnboardingExpectation) => ({
+  version: e.version,
+  onboardingStage: e.onboardingStage,
+  onboardingAttemptId: e.onboardingAttemptId,
+  phoneNumberId: e.phoneNumberId,
+  wabaId: e.wabaId,
+});
+
+/** An owner write: the row shape AND `lease_owner = me AND lease_until > now`, both evaluated by the update itself. */
+const holderWhere = (h: LeaseHolder, now: Date) => ({
+  ...expectationWhere(h),
+  onboardingLeaseOwner: h.owner,
+  onboardingLeaseUntil: { gt: now },
+});
 
 export interface PrismaPhoneDirectoryDeps extends PrismaOutreachDeps {
   /** The platform scope: every directory row carries it as `tenant_id` (like `tenancy.staff_directory`). */
@@ -102,8 +204,22 @@ export interface PrismaPhoneDirectoryDeps extends PrismaOutreachDeps {
 export class PrismaPhoneDirectory implements PhoneDirectory {
   constructor(private readonly deps: PrismaPhoneDirectoryDeps) {}
 
+  /**
+   * Standalone: its own platform-scoped transaction. With the unit of work's `tx`: the SAME transaction, switched to the
+   * platform scope for this operation and restored to the shop scope right after (never split).
+   */
   private scoped<T>(tx: unknown, run: (c: TransactionClient) => Promise<T>): Promise<T> {
-    return withClient(this.deps.prisma, this.deps.platformTenantId, tx, run);
+    if (tx === undefined || tx === null) {
+      return runInTenantTransaction(this.deps.prisma, this.deps.platformTenantId, run);
+    }
+    const shop = tenantScopeOf(tx);
+    if (shop === undefined) {
+      return Promise.reject(
+        new Error("the transaction was not opened by the outreach unit of work (no tenant scope)"),
+      );
+    }
+    const client = tx as TransactionClient;
+    return withPlatformScope(client, this.deps.platformTenantId, shop, () => run(client));
   }
 
   async find(
@@ -148,7 +264,7 @@ export class PrismaPhoneDirectory implements PhoneDirectory {
     tx?: unknown,
   ): Promise<ClaimResult> {
     const platform = this.deps.platformTenantId;
-    return this.scoped(tx, async (c) => {
+    const body = async (c: TransactionClient): Promise<ClaimResult> => {
       // 1. release the shop's own different tuple (the caller rolls the tx back on a non-claim)
       const mine = await c.whatsAppPhoneDirectory.findFirst({
         where: { tenantId: platform, shopTenantId },
@@ -190,6 +306,16 @@ export class PrismaPhoneDirectory implements PhoneDirectory {
         return "waba_in_use";
       }
       return "phone_in_use";
+    };
+    if (tx !== undefined && tx !== null) return this.scoped(tx, body);
+    // Standalone: an owned transaction that is rolled back on a non-claim, translated back OUTSIDE the rollback.
+    return this.scoped(undefined, async (c) => {
+      const result = await body(c);
+      if (result !== "claimed") throw new NotClaimed(result);
+      return result;
+    }).catch((error: unknown) => {
+      if (error instanceof NotClaimed) return error.result;
+      throw error;
     });
   }
 
@@ -547,17 +673,31 @@ export class PrismaEmailSendCounterRepository implements EmailSendCounterReposit
         AND (("window_kind" = 'hour' AND "window_start" = ${hour}::timestamp)
           OR ("window_kind" = 'day' AND "window_start" = ${day}::timestamp))
       ORDER BY "window_kind" FOR UPDATE`;
-    const hourCount = rows.find((x) => x.window_kind === "hour")?.count ?? 0;
-    const dayCount = rows.find((x) => x.window_kind === "day")?.count ?? 0;
+    // Fail closed: after a successful seed BOTH window rows must exist (exactly one of each kind) under this scope.
+    const hourRows = rows.filter((x) => x.window_kind === "hour");
+    const dayRows = rows.filter((x) => x.window_kind === "day");
+    const hourRow = hourRows[0];
+    const dayRow = dayRows[0];
+    if (
+      rows.length !== 2 ||
+      hourRows.length !== 1 ||
+      dayRows.length !== 1 ||
+      hourRow === undefined ||
+      dayRow === undefined
+    ) {
+      throw new Error("email send counter rows are missing after the seed");
+    }
     // 3. refuse without touching either window
-    if (hourCount >= limits.perHour) return "hour_cap";
-    if (dayCount >= limits.perDay) return "day_cap";
+    if (hourRow.count >= limits.perHour) return "hour_cap";
+    if (dayRow.count >= limits.perDay) return "day_cap";
     // 4. increment both windows
-    await c.$executeRaw`
+    const incremented = await c.$executeRaw`
       UPDATE "outreach"."email_send_counters" SET "count" = "count" + 1
       WHERE "tenant_id" = ${tenantId}
         AND (("window_kind" = 'hour' AND "window_start" = ${hour}::timestamp)
           OR ("window_kind" = 'day' AND "window_start" = ${day}::timestamp))`;
+    if (incremented !== 2)
+      throw new Error("email send counter increment did not update both windows");
     return "reserved";
   }
 }

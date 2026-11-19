@@ -1,5 +1,5 @@
 import type { Database } from "@platform/db";
-import { PrismaOutboxStore, PrismaUnitOfWork } from "@platform/db";
+import { PrismaOutboxStore } from "@platform/db";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import type { EventSerializer } from "@platform/domain-events";
 import { OutboxWriter } from "@platform/messaging";
@@ -45,6 +45,7 @@ import {
   OutreachEventTranslator,
 } from "./infrastructure/outbox-outreach-event-sink";
 import { PrismaOutboundMessageRepository } from "./infrastructure/prisma-outreach-repositories";
+import { PrismaOutreachUnitOfWork } from "./infrastructure/prisma-outreach-unit-of-work";
 import { createPrismaOutreach } from "./infrastructure/prisma-outreach-wiring";
 import { OutreachController } from "./interfaces/outreach.controller";
 import { InMemoryOutreachEventRecorder } from "./testing/in-memory-outreach-event-recorder";
@@ -192,7 +193,7 @@ export function wireOutreach(deps: OutreachWiringDeps): WiredOutreach {
 
 /**
  * The recovery job's own wiring (it must not depend on the admin HTTP composition): the Prisma outbound repository,
- * `PrismaUnitOfWork` and the outbox sink only. It needs no providers, vault or ports and never calls a provider.
+ * the tenant-scoped `PrismaOutreachUnitOfWork` and the outbox sink only. It needs no providers, vault or ports and never calls a provider.
  */
 export function wireOutreachRecovery(d: {
   prisma: Database;
@@ -203,7 +204,7 @@ export function wireOutreachRecovery(d: {
 }): { reconcileUnresolved(tenantId: string): Promise<number> } {
   const reconcile = new ReconcileUnresolvedOutbound({
     outbound: new PrismaOutboundMessageRepository({ prisma: d.prisma }),
-    unitOfWork: new PrismaUnitOfWork(d.prisma),
+    unitOfWork: new PrismaOutreachUnitOfWork(d.prisma),
     clock: d.clock,
     idGenerator: d.idGenerator,
     events: outboxSink({ prisma: d.prisma, serializer: d.serializer, clock: d.clock }),

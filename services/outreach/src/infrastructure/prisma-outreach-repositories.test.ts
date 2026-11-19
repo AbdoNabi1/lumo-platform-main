@@ -24,7 +24,10 @@ import {
   PrismaWhatsAppConnectionRepository,
   windowStarts,
 } from "./prisma-outreach-repositories";
+import { bindTenantScope } from "./prisma-outreach-unit-of-work";
 import { PrismaTemplateRepository, templatePatchData } from "./prisma-template-repository";
+
+const SHOP = "s-1";
 
 type Args = Record<string, unknown>;
 interface Call {
@@ -45,15 +48,18 @@ const DEFAULTS: Record<string, unknown> = {
  * A transaction client that records every delegate call. `script` queues answers per `model.method`; unscripted calls
  * answer a benign default (no row / count 1).
  */
-function recordingClient(script: Record<string, unknown[]> = {}) {
+function recordingClient(script: Record<string, unknown[]> = {}, shopScope = SHOP) {
   const calls: Call[] = [];
+  const execAnswers: number[] = [];
   const raw: { kind: string; sql: string; values: unknown[] }[] = [];
   const rawAnswers: unknown[][] = [];
   const tagged =
     (kind: string) =>
     (strings: TemplateStringsArray, ...values: unknown[]) => {
       raw.push({ kind, sql: strings.join("?").replace(/\s+/g, " ").trim(), values });
-      return Promise.resolve(kind === "queryRaw" ? (rawAnswers.shift() ?? []) : 0);
+      return Promise.resolve(
+        kind === "queryRaw" ? (rawAnswers.shift() ?? []) : (execAnswers.shift() ?? 0),
+      );
     };
   const models = new Map<string, unknown>();
   const client = new Proxy(
@@ -76,7 +82,9 @@ function recordingClient(script: Record<string, unknown[]> = {}) {
                     const queue = script[`${name}.${method}`];
                     const answer =
                       queue !== undefined && queue.length > 0 ? queue.shift() : DEFAULTS[method];
-                    return Promise.resolve(answer);
+                    return answer instanceof Error
+                      ? Promise.reject(answer)
+                      : Promise.resolve(answer);
                   };
                 },
               },
@@ -87,7 +95,9 @@ function recordingClient(script: Record<string, unknown[]> = {}) {
       },
     },
   );
-  return { tx: client as unknown as TransactionClient, calls, raw, rawAnswers };
+  // The outreach unit of work binds the shop scope to the transaction it opened; a recording client stands in for it.
+  bindTenantScope(client, shopScope);
+  return { tx: client as unknown as TransactionClient, calls, raw, rawAnswers, execAnswers };
 }
 
 const PLATFORM = "platform-tenant";
@@ -234,6 +244,139 @@ describe("PrismaWhatsAppConnectionRepository arguments", () => {
       new PrismaWhatsAppConnectionRepository(deps).save(connectionRecord(), 4, tx),
     ).rejects.toBeInstanceOf(ConcurrencyError);
   });
+
+  const ATTEMPT = "00000000-0000-4000-8000-000000000001";
+  const OWNER = "00000000-0000-4000-8000-000000000002";
+  const holder = {
+    version: 9,
+    onboardingStage: "registering" as const,
+    onboardingAttemptId: ATTEMPT,
+    phoneNumberId: "phone-1",
+    wabaId: "waba-1",
+    owner: OWNER,
+  };
+  const repo = new PrismaWhatsAppConnectionRepository(deps);
+
+  it("acquire with no expected row creates at version 1 holding the lease; an existing row loses", async () => {
+    expect.hasAssertions();
+    const { tx, calls } = recordingClient({ "whatsAppConnection.createMany": [{ count: 0 }] });
+    await expect(
+      repo.acquireOnboardingLease(
+        connectionRecord({ onboardingLeaseUntil: new Date(NOW.getTime() + 1000) }),
+        null,
+        NOW,
+        tx,
+      ),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(calls[0]).toMatchObject({
+      method: "createMany",
+      args: {
+        skipDuplicates: true,
+        data: [{ tenantId: "t-1", version: 1, onboardingLeaseOwner: OWNER }],
+      },
+    });
+  });
+
+  it("acquire over a row: ONE update with tenant + shape + (lease null OR expired at write time) at expected + 1", async () => {
+    expect.hasAssertions();
+    const { tx, calls } = recordingClient();
+    const until = new Date(NOW.getTime() + 1000);
+    await repo.acquireOnboardingLease(
+      connectionRecord({ onboardingLeaseUntil: until }),
+      { ...holder },
+      NOW,
+      tx,
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      method: "updateMany",
+      args: {
+        where: {
+          tenantId: "t-1",
+          version: 9,
+          onboardingStage: "registering",
+          onboardingAttemptId: ATTEMPT,
+          phoneNumberId: "phone-1",
+          wabaId: "waba-1",
+          OR: [{ onboardingLeaseUntil: null }, { onboardingLeaseUntil: { lt: NOW } }],
+        },
+        data: { version: 10, onboardingLeaseUntil: until },
+      },
+    });
+    const missed = recordingClient({ "whatsAppConnection.updateMany": [{ count: 0 }] });
+    await expect(
+      repo.acquireOnboardingLease(
+        connectionRecord({ onboardingLeaseUntil: until }),
+        { ...holder },
+        NOW,
+        missed.tx,
+      ),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("acquire refuses to install a lease that is missing or not after now, before any write", async () => {
+    expect.hasAssertions();
+    const { tx, calls } = recordingClient();
+    await expect(
+      repo.acquireOnboardingLease(
+        connectionRecord({ onboardingLeaseOwner: null }),
+        { ...holder },
+        NOW,
+        tx,
+      ),
+    ).rejects.toThrow(/install a lease/);
+    await expect(
+      repo.acquireOnboardingLease(connectionRecord({ onboardingLeaseUntil: NOW }), null, NOW, tx),
+    ).rejects.toThrow(/install a lease/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("renew and owner write put lease_owner = me AND lease_until > now (write-time) into the update itself", async () => {
+    expect.hasAssertions();
+    const leaseWhere = {
+      tenantId: "t-1",
+      version: 9,
+      onboardingStage: "registering",
+      onboardingAttemptId: ATTEMPT,
+      phoneNumberId: "phone-1",
+      wabaId: "waba-1",
+      onboardingLeaseOwner: OWNER,
+      onboardingLeaseUntil: { gt: NOW },
+    };
+    const renewed = recordingClient();
+    const until = new Date(NOW.getTime() + 5000);
+    await repo.renewOnboardingLease("t-1", holder, until, NOW, renewed.tx);
+    expect(renewed.calls).toEqual([
+      {
+        model: "whatsAppConnection",
+        method: "updateMany",
+        args: { where: leaseWhere, data: { onboardingLeaseUntil: until, version: 10 } },
+      },
+    ]);
+    const written = recordingClient();
+    await repo.writeAsLeaseOwner(
+      connectionRecord({ onboardingStage: "registered" }),
+      holder,
+      NOW,
+      written.tx,
+    );
+    expect(written.calls).toHaveLength(1);
+    expect(written.calls[0]).toMatchObject({
+      method: "updateMany",
+      args: { where: leaseWhere, data: { version: 10, onboardingStage: "registered" } },
+    });
+  });
+
+  it("a renew or an owner write that matches no row (expired, other owner, bumped version) is a ConcurrencyError", async () => {
+    expect.hasAssertions();
+    const miss = () => recordingClient({ "whatsAppConnection.updateMany": [{ count: 0 }] }).tx;
+    await expect(repo.renewOnboardingLease("t-1", holder, NOW, NOW, miss())).rejects.toBeInstanceOf(
+      ConcurrencyError,
+    );
+    await expect(
+      repo.writeAsLeaseOwner(connectionRecord(), holder, NOW, miss()),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+  });
 });
 
 describe("PrismaPhoneDirectory arguments (platform scope, no exemptions)", () => {
@@ -250,6 +393,33 @@ describe("PrismaPhoneDirectory arguments (platform scope, no exemptions)", () =>
       { where: { tenantId: PLATFORM, wabaId: "w-1" } },
       { where: { tenantId: PLATFORM, shopTenantId: "s-1" } },
     ]);
+  });
+
+  it("inside a unit-of-work tx every directory call switches to the platform scope and restores the shop scope", async () => {
+    expect.hasAssertions();
+    const { tx, raw } = recordingClient();
+    await directory.find("p-1", tx);
+    await directory.release("p-1", "s-1", tx);
+    const scopes = raw.map((x) => {
+      expect(x.sql).toBe("SELECT set_config('app.tenant_id', ?, true)");
+      return x.values[0];
+    });
+    expect(scopes).toEqual([PLATFORM, SHOP, PLATFORM, SHOP]);
+  });
+
+  it("restores the shop scope even when the directory call throws", async () => {
+    expect.hasAssertions();
+    const { tx, raw } = recordingClient({
+      "whatsAppPhoneDirectory.findFirst": [new Error("boom")],
+    });
+    await expect(directory.find("p-1", tx)).rejects.toThrow("boom");
+    expect(raw.map((x) => x.values[0])).toEqual([PLATFORM, SHOP]);
+  });
+
+  it("refuses a transaction the outreach unit of work did not open (no tenant scope)", async () => {
+    expect.hasAssertions();
+    const bare = { whatsAppPhoneDirectory: {} } as unknown as TransactionClient;
+    await expect(directory.find("p-1", bare)).rejects.toThrow(/no tenant scope/);
   });
 
   it("release filters platform scope + phone + owning shop", async () => {
@@ -353,6 +523,60 @@ describe("PrismaPhoneDirectory arguments (platform scope, no exemptions)", () =>
     await new PrismaPhoneDirectory({ prisma, platformTenantId: PLATFORM }).find("p-1");
     expect(settings).toEqual([[PLATFORM]]);
     expect(inner.calls[0]?.args).toEqual({ where: { tenantId: PLATFORM, phoneNumberId: "p-1" } });
+  });
+});
+
+describe("PrismaPhoneDirectory standalone claim", () => {
+  it("a losing claim without a tx rolls its owned transaction back and still reports the public result", async () => {
+    expect.hasAssertions();
+    const otherShopOwnsPhone = {
+      phoneNumberId: "p-2",
+      wabaId: "w-2",
+      shopTenantId: "s-2",
+      tenantId: PLATFORM,
+    };
+    const inner = recordingClient({
+      "whatsAppPhoneDirectory.findFirst": [
+        { phoneNumberId: "p-1", wabaId: "w-1", shopTenantId: "s-1", tenantId: PLATFORM },
+        otherShopOwnsPhone,
+        null,
+      ],
+    });
+    const outcomes: ("commit" | "rollback")[] = [];
+    const prisma = {
+      $transaction: async (fn: (c: TransactionClient) => Promise<unknown>) => {
+        try {
+          const result = await fn(txWithSetConfig(inner.tx, []));
+          outcomes.push("commit");
+          return result;
+        } catch (error) {
+          outcomes.push("rollback");
+          throw error;
+        }
+      },
+    } as unknown as Database;
+    const directory = new PrismaPhoneDirectory({ prisma, platformTenantId: PLATFORM });
+    expect(await directory.claim("p-2", "w-new", "s-1")).toBe("phone_in_use");
+    // the shop's own old tuple was released inside the transaction, which therefore must not commit
+    expect(inner.calls.some((c) => c.method === "deleteMany")).toBe(true);
+    expect(outcomes).toEqual(["rollback"]);
+  });
+
+  it("a winning claim without a tx commits", async () => {
+    expect.hasAssertions();
+    const row = { phoneNumberId: "p-1", wabaId: "w-1", shopTenantId: "s-1", tenantId: PLATFORM };
+    const inner = recordingClient({ "whatsAppPhoneDirectory.findFirst": [null, row, row] });
+    const outcomes: string[] = [];
+    const prisma = {
+      $transaction: async (fn: (c: TransactionClient) => Promise<unknown>) => {
+        const result = await fn(txWithSetConfig(inner.tx, []));
+        outcomes.push("commit");
+        return result;
+      },
+    } as unknown as Database;
+    const directory = new PrismaPhoneDirectory({ prisma, platformTenantId: PLATFORM });
+    expect(await directory.claim("p-1", "w-1", "s-1")).toBe("claimed");
+    expect(outcomes).toEqual(["commit"]);
   });
 });
 
@@ -788,7 +1012,7 @@ describe("PrismaTemplateRepository arguments", () => {
     });
     const dup = recordingClient({
       "messageTemplate.createMany": [{ count: 0 }],
-      "messageTemplate.findFirst": [{}],
+      "messageTemplate.findFirst": [{ ...templateRecord(), createdAt: NOW, updatedAt: NOW }],
     });
     expect(await repo.insert(templateRecord(), dup.tx)).toBe("duplicate");
     expect(dup.calls[1]?.args).toEqual({
@@ -872,7 +1096,8 @@ describe("PrismaEmailSendCounterRepository", () => {
 
   it("seeds, locks both rows tenant-scoped, then increments only when both are under their limits", async () => {
     expect.hasAssertions();
-    const { tx, raw, rawAnswers } = recordingClient();
+    const { tx, raw, rawAnswers, execAnswers } = recordingClient();
+    execAnswers.push(0, 2);
     rawAnswers.push([
       { window_kind: "day", count: 4 },
       { window_kind: "hour", count: 2 },
@@ -888,6 +1113,35 @@ describe("PrismaEmailSendCounterRepository", () => {
     expect(raw[1]?.sql).toContain("FOR UPDATE");
     expect(raw[2]?.sql).toContain('SET "count" = "count" + 1');
     expect(raw[2]?.sql).toContain('"tenant_id" = ?');
+  });
+
+  it("fails closed when a window row is missing, duplicated, or the increment touches fewer than two rows", async () => {
+    expect.hasAssertions();
+    const missing = recordingClient();
+    missing.rawAnswers.push([{ window_kind: "hour", count: 0 }]);
+    await expect(repo.reserve("t-1", NOW, limits, missing.tx)).rejects.toThrow(
+      /missing after the seed/,
+    );
+    expect(missing.raw.map((x) => x.kind)).toEqual(["executeRaw", "queryRaw"]);
+
+    const doubled = recordingClient();
+    doubled.rawAnswers.push([
+      { window_kind: "hour", count: 0 },
+      { window_kind: "hour", count: 0 },
+    ]);
+    await expect(repo.reserve("t-1", NOW, limits, doubled.tx)).rejects.toThrow(
+      /missing after the seed/,
+    );
+
+    const short = recordingClient();
+    short.execAnswers.push(0, 1);
+    short.rawAnswers.push([
+      { window_kind: "day", count: 0 },
+      { window_kind: "hour", count: 0 },
+    ]);
+    await expect(repo.reserve("t-1", NOW, limits, short.tx)).rejects.toThrow(
+      /did not update both windows/,
+    );
   });
 
   it("refuses at the boundary without writing: hour first, then day", async () => {
@@ -909,6 +1163,7 @@ describe("PrismaEmailSendCounterRepository", () => {
     expect(day.raw.map((x) => x.kind)).toEqual(["executeRaw", "queryRaw"]);
 
     const edge = recordingClient();
+    edge.execAnswers.push(0, 2);
     edge.rawAnswers.push([
       { window_kind: "day", count: 4 },
       { window_kind: "hour", count: 2 },
@@ -977,17 +1232,20 @@ describe("row mappers", () => {
 describe("tenant scoping of every read/update/delete", () => {
   it("never issues a find/update/delete whose where lacks the tenant (platform scope for the directory)", async () => {
     expect.hasAssertions();
-    const { tx, calls } = recordingClient({
-      "whatsAppPhoneDirectory.findFirst": [null, null, null, null, null, null, null],
-      "contact.findFirst": [null, null, null, null, null, null],
-      "messageTemplate.findFirst": [
-        { ...templateRecord(), createdAt: NOW, updatedAt: NOW },
-        null,
-        null,
-        null,
-      ],
-      "messageTemplate.findMany": [[{ ...templateRecord(), createdAt: NOW, updatedAt: NOW }]],
-    });
+    const { tx, calls } = recordingClient(
+      {
+        "whatsAppPhoneDirectory.findFirst": [null, null, null, null, null, null, null],
+        "contact.findFirst": [null, null, null, null, null, null],
+        "messageTemplate.findFirst": [
+          { ...templateRecord(), createdAt: NOW, updatedAt: NOW },
+          null,
+          null,
+          null,
+        ],
+        "messageTemplate.findMany": [[{ ...templateRecord(), createdAt: NOW, updatedAt: NOW }]],
+      },
+      "t-1",
+    );
     const prisma = NOOP_PRISMA;
     const directory = new PrismaPhoneDirectory({ prisma, platformTenantId: PLATFORM });
     const contacts = new PrismaContactRepository({ prisma });

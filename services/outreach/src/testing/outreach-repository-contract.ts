@@ -5,7 +5,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { ConcurrencyError } from "@platform/utils";
-import type { TransactionalUnitOfWork } from "@platform/repository";
 import { describe, expect, it } from "vitest";
 import type {
   ConsentEventRecord,
@@ -14,6 +13,7 @@ import type {
   InboundRecord,
   OutboundRecord,
   OutreachRepositories,
+  OutreachUnitOfWork,
   StatusEventRecord,
   TemplateRecord,
   UnmatchedStatusRecord,
@@ -26,7 +26,7 @@ export interface MutableClock {
 }
 
 export interface OutreachRepositorySet extends OutreachRepositories {
-  unitOfWork: TransactionalUnitOfWork<unknown>;
+  unitOfWork: OutreachUnitOfWork;
 }
 
 export interface OutreachContractHarness {
@@ -55,11 +55,12 @@ function mutableClock(): MutableClock {
 class Boom extends Error {}
 
 async function rollsBack(
-  uow: TransactionalUnitOfWork<unknown>,
+  uow: OutreachUnitOfWork,
+  tenantId: string,
   work: (tx: unknown) => Promise<unknown>,
 ) {
   await expect(
-    uow.run(async (tx) => {
+    uow.run(tenantId, async (tx) => {
       await work(tx);
       throw new Boom("rollback");
     }),
@@ -319,9 +320,206 @@ export function runOutreachRepositoryContract(
         expect.hasAssertions();
         const { r, close } = await open();
         const tenant = uid("t");
-        await rollsBack(r.unitOfWork, (tx) => r.connections.save(connection(tenant), 0, tx));
+        await rollsBack(r.unitOfWork, tenant, (tx) =>
+          r.connections.save(connection(tenant), 0, tx),
+        );
         expect(await r.connections.get(tenant)).toBeNull();
         await close();
+      });
+
+      describe("onboarding lease operations (checked at write time)", () => {
+        const holderOf = (row: WhatsAppConnectionRecord, owner: string) => ({
+          version: row.version,
+          onboardingStage: row.onboardingStage,
+          onboardingAttemptId: row.onboardingAttemptId,
+          phoneNumberId: row.phoneNumberId,
+          wabaId: row.wabaId,
+          owner,
+        });
+        const seedLeased = async (r: OutreachRepositorySet, tenant: string, owner: string) => {
+          await r.connections.save(
+            connection(tenant, {
+              status: "onboarding",
+              onboardingStage: "registering",
+              onboardingAttemptId: randomUUID(),
+              onboardingLeaseOwner: owner,
+              onboardingLeaseUntil: at(100),
+            }),
+            0,
+          );
+          return (await r.connections.get(tenant))!;
+        };
+
+        it("acquire with no expected row creates it at version 1 holding the lease, and refuses an existing row", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const next = connection(tenant, {
+            status: "onboarding",
+            onboardingStage: "verified",
+            onboardingAttemptId: randomUUID(),
+            onboardingLeaseOwner: owner,
+            onboardingLeaseUntil: at(100),
+          });
+          await r.connections.acquireOnboardingLease(next, null, at(0));
+          expect(await r.connections.get(tenant)).toMatchObject({
+            version: 1,
+            onboardingLeaseOwner: owner,
+            onboardingLeaseUntil: at(100),
+          });
+          await expect(
+            r.connections.acquireOnboardingLease(next, null, at(0)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await close();
+        });
+
+        it("acquire refuses to install a lease that is missing or already expired", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const base = connection(tenant, { status: "onboarding", onboardingStage: "verified" });
+          await expect(r.connections.acquireOnboardingLease(base, null, at(0))).rejects.toThrow(
+            /install a lease/,
+          );
+          await expect(
+            r.connections.acquireOnboardingLease(
+              { ...base, onboardingLeaseOwner: randomUUID(), onboardingLeaseUntil: at(0) },
+              null,
+              at(0),
+            ),
+          ).rejects.toThrow(/install a lease/);
+          expect(await r.connections.get(tenant)).toBeNull();
+          await close();
+        });
+
+        it("acquire over a row: a live lease or a stale expectation loses; an expired lease is taken and the version bumps", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const row = await seedLeased(r, tenant, randomUUID());
+          const mine = randomUUID();
+          const take = (expectVersion: number, now: Date) =>
+            r.connections.acquireOnboardingLease(
+              { ...row, onboardingLeaseOwner: mine, onboardingLeaseUntil: at(500) },
+              { ...holderOf(row, "x"), version: expectVersion },
+              now,
+            );
+          await expect(take(row.version, at(50))).rejects.toBeInstanceOf(ConcurrencyError);
+          await expect(take(row.version + 7, at(150))).rejects.toBeInstanceOf(ConcurrencyError);
+          expect((await r.connections.get(tenant))?.onboardingLeaseUntil).toEqual(at(100));
+          await take(row.version, at(150));
+          expect(await r.connections.get(tenant)).toMatchObject({
+            version: row.version + 1,
+            onboardingLeaseOwner: mine,
+            onboardingLeaseUntil: at(500),
+          });
+          await close();
+        });
+
+        it("renew extends only the current live owner's lease", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          await expect(
+            r.connections.renewOnboardingLease(
+              tenant,
+              holderOf(row, randomUUID()),
+              at(300),
+              at(50),
+            ),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await expect(
+            r.connections.renewOnboardingLease(tenant, holderOf(row, owner), at(300), at(100)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await r.connections.renewOnboardingLease(tenant, holderOf(row, owner), at(300), at(50));
+          expect(await r.connections.get(tenant)).toMatchObject({
+            version: row.version + 1,
+            onboardingLeaseUntil: at(300),
+            onboardingLeaseOwner: owner,
+          });
+          await close();
+        });
+
+        it("an owner write after the lease expired between the read and the write fails with no version bump", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          const next = { ...row, onboardingStage: "registered" as const };
+          // the row was read while live (at(50)); the write happens at the expiry instant and after it
+          await expect(
+            r.connections.writeAsLeaseOwner(next, holderOf(row, owner), at(100)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await expect(
+            r.connections.writeAsLeaseOwner(next, holderOf(row, owner), at(101)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          expect(await r.connections.get(tenant)).toMatchObject({
+            version: row.version,
+            onboardingStage: "registering",
+          });
+          await close();
+        });
+
+        it("an owner write applies for the live owner only, bumps the version and can release the lease", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          await expect(
+            r.connections.writeAsLeaseOwner(
+              { ...row, onboardingStage: "registered" },
+              holderOf(row, randomUUID()),
+              at(50),
+            ),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await r.connections.writeAsLeaseOwner(
+            {
+              ...row,
+              onboardingStage: "registered",
+              onboardingLeaseOwner: null,
+              onboardingLeaseUntil: null,
+            },
+            holderOf(row, owner),
+            at(50),
+          );
+          expect(await r.connections.get(tenant)).toMatchObject({
+            version: row.version + 1,
+            onboardingStage: "registered",
+            onboardingLeaseOwner: null,
+            onboardingLeaseUntil: null,
+          });
+          // the released row cannot be written as the old owner any more
+          await expect(
+            r.connections.writeAsLeaseOwner(
+              { ...row, onboardingStage: "registered" },
+              holderOf(row, owner),
+              at(60),
+            ),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await close();
+        });
+
+        it("an owner write or renew for another tenant's row loses", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const [a, b] = [uid("t"), uid("t")];
+          const owner = randomUUID();
+          const row = await seedLeased(r, a, owner);
+          const foreign = { ...row, tenantId: b };
+          await expect(
+            r.connections.writeAsLeaseOwner(foreign, holderOf(foreign, owner), at(50)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          await expect(
+            r.connections.renewOnboardingLease(b, holderOf(row, owner), at(300), at(50)),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          expect((await r.connections.get(a))?.version).toBe(row.version);
+          await close();
+        });
       });
     });
 
@@ -330,7 +528,7 @@ export function runOutreachRepositoryContract(
         expect.hasAssertions();
         const { r, close } = await open();
         const [shop, phone, waba] = [uid("shop"), uid("phone"), uid("waba")];
-        expect(await r.unitOfWork.run((tx) => r.directory.claim(phone, waba, shop, tx))).toBe(
+        expect(await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, waba, shop, tx))).toBe(
           "claimed",
         );
         expect(await r.directory.find(phone)).toEqual({ shopTenantId: shop, wabaId: waba });
@@ -347,8 +545,8 @@ export function runOutreachRepositoryContract(
         expect.hasAssertions();
         const { r, close } = await open();
         const [shop, phone, waba] = [uid("shop"), uid("phone"), uid("waba")];
-        await r.unitOfWork.run((tx) => r.directory.claim(phone, waba, shop, tx));
-        expect(await r.unitOfWork.run((tx) => r.directory.claim(phone, waba, shop, tx))).toBe(
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, waba, shop, tx));
+        expect(await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, waba, shop, tx))).toBe(
           "claimed",
         );
         expect(await r.directory.findByShop(shop)).toEqual({ phoneNumberId: phone, wabaId: waba });
@@ -362,7 +560,7 @@ export function runOutreachRepositoryContract(
         const shops = [uid("shop"), uid("shop")] as const;
         const results = await Promise.all(
           shops.map((shop) =>
-            r.unitOfWork.run((tx) => r.directory.claim(phone, uid("waba"), shop, tx)),
+            r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, uid("waba"), shop, tx)),
           ),
         );
         expect(results.filter((x) => x === "claimed")).toHaveLength(1);
@@ -378,7 +576,7 @@ export function runOutreachRepositoryContract(
         const waba = uid("waba");
         const results = await Promise.all(
           [uid("shop"), uid("shop")].map((shop) =>
-            r.unitOfWork.run((tx) => r.directory.claim(uid("phone"), waba, shop, tx)),
+            r.unitOfWork.run(shop, (tx) => r.directory.claim(uid("phone"), waba, shop, tx)),
           ),
         );
         expect(results.filter((x) => x === "claimed")).toHaveLength(1);
@@ -396,8 +594,8 @@ export function runOutreachRepositoryContract(
           uid("waba"),
           uid("waba"),
         ];
-        await r.unitOfWork.run((tx) => r.directory.claim(phone, w1, owner, tx));
-        expect(await r.unitOfWork.run((tx) => r.directory.claim(phone, w2, other, tx))).toBe(
+        await r.unitOfWork.run(owner, (tx) => r.directory.claim(phone, w1, owner, tx));
+        expect(await r.unitOfWork.run(other, (tx) => r.directory.claim(phone, w2, other, tx))).toBe(
           "phone_in_use",
         );
         expect(await r.directory.find(phone)).toEqual({ shopTenantId: owner, wabaId: w1 });
@@ -409,8 +607,8 @@ export function runOutreachRepositoryContract(
         expect.hasAssertions();
         const { r, close } = await open();
         const [shop, phone, w1, w2] = [uid("shop"), uid("phone"), uid("waba"), uid("waba")];
-        await r.unitOfWork.run((tx) => r.directory.claim(phone, w1, shop, tx));
-        expect(await r.unitOfWork.run((tx) => r.directory.claim(phone, w2, shop, tx))).toBe(
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, w1, shop, tx));
+        expect(await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, w2, shop, tx))).toBe(
           "claimed",
         );
         expect(await r.directory.find(phone)).toEqual({ shopTenantId: shop, wabaId: w2 });
@@ -428,8 +626,10 @@ export function runOutreachRepositoryContract(
           uid("phone"),
           uid("waba"),
         ];
-        await r.unitOfWork.run((tx) => r.directory.claim(p1, w1, shop, tx));
-        expect(await r.unitOfWork.run((tx) => r.directory.claim(p2, w2, shop, tx))).toBe("claimed");
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(p1, w1, shop, tx));
+        expect(await r.unitOfWork.run(shop, (tx) => r.directory.claim(p2, w2, shop, tx))).toBe(
+          "claimed",
+        );
         expect(await r.directory.find(p1)).toBeNull();
         expect(await r.directory.findByWaba(w1)).toBeNull();
         expect(await r.directory.findByShop(shop)).toEqual({ phoneNumberId: p2, wabaId: w2 });
@@ -446,12 +646,12 @@ export function runOutreachRepositoryContract(
           uid("waba"),
           uid("phone"),
         ];
-        await r.unitOfWork.run((tx) => r.directory.claim(p1, w1, shop, tx));
-        await r.unitOfWork.run((tx) => r.directory.claim(p2, uid("waba"), rival, tx));
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(p1, w1, shop, tx));
+        await r.unitOfWork.run(rival, (tx) => r.directory.claim(p2, uid("waba"), rival, tx));
 
         let result = "";
         await expect(
-          r.unitOfWork.run(async (tx) => {
+          r.unitOfWork.run(shop, async (tx) => {
             result = await r.directory.claim(p2, uid("waba"), shop, tx);
             if (result !== "claimed") throw new Boom("not claimed, roll back");
           }),
@@ -462,14 +662,42 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("a standalone claim that loses (phone or WABA in use) keeps the shop's existing mapping", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [shop, rival, p1, w1, p2, w2] = [
+          uid("shop"),
+          uid("shop"),
+          uid("phone"),
+          uid("waba"),
+          uid("phone"),
+          uid("waba"),
+        ];
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(p1, w1, shop, tx));
+        await r.unitOfWork.run(rival, (tx) => r.directory.claim(p2, w2, rival, tx));
+
+        // no transaction supplied: the release of the shop's own tuple must be undone with the failed claim
+        expect(await r.directory.claim(p2, uid("waba"), shop)).toBe("phone_in_use");
+        expect(await r.directory.findByShop(shop)).toEqual({ phoneNumberId: p1, wabaId: w1 });
+        expect(await r.directory.claim(uid("phone"), w2, shop)).toBe("waba_in_use");
+        expect(await r.directory.findByShop(shop)).toEqual({ phoneNumberId: p1, wabaId: w1 });
+        expect(await r.directory.find(p2)).toMatchObject({ shopTenantId: rival });
+        // a standalone claim that wins still switches the mapping
+        const [p3, w3] = [uid("phone"), uid("waba")];
+        expect(await r.directory.claim(p3, w3, shop)).toBe("claimed");
+        expect(await r.directory.find(p1)).toBeNull();
+        expect(await r.directory.findByShop(shop)).toEqual({ phoneNumberId: p3, wabaId: w3 });
+        await close();
+      });
+
       it("release only removes the row owned by that shop", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
         const [shop, other, phone, waba] = [uid("shop"), uid("shop"), uid("phone"), uid("waba")];
-        await r.unitOfWork.run((tx) => r.directory.claim(phone, waba, shop, tx));
-        await r.unitOfWork.run((tx) => r.directory.release(phone, other, tx));
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, waba, shop, tx));
+        await r.unitOfWork.run(other, (tx) => r.directory.release(phone, other, tx));
         expect(await r.directory.find(phone)).toEqual({ shopTenantId: shop, wabaId: waba });
-        await r.unitOfWork.run((tx) => r.directory.release(phone, shop, tx));
+        await r.unitOfWork.run(shop, (tx) => r.directory.release(phone, shop, tx));
         expect(await r.directory.find(phone)).toBeNull();
         await close();
       });
@@ -518,7 +746,7 @@ export function runOutreachRepositoryContract(
         const { r, close } = await open();
         const [tenant, waba] = [uid("t"), uid("waba")];
         const row = template(tenant, waba);
-        await rollsBack(r.unitOfWork, (tx) => r.templates.insert(row, tx));
+        await rollsBack(r.unitOfWork, tenant, (tx) => r.templates.insert(row, tx));
         expect(await r.templates.list(tenant, waba)).toEqual([]);
         await close();
       });
@@ -573,11 +801,26 @@ export function runOutreachRepositoryContract(
         s = await r.templates.findByProviderId(tenant, waba, id);
         expect(s).toMatchObject({ status: "UNKNOWN", revision: row.revision + 2 });
 
+        // Triage I4: a webhook never moves a row OUT of UNKNOWN (only an authoritative fetch does), so a later
+        // APPROVED status event is a no-op on the value and leaves the row non-sendable.
         expect(
           await r.templates.applyStatusEvent(tenant, waba, id, {
             status: "APPROVED",
             reason: null,
             eventAt: at(20),
+          }),
+        ).toBe("noop");
+        s = await r.templates.findByProviderId(tenant, waba, id);
+        // the ordering marker is recorded (one more revision); the value stays UNKNOWN
+        expect(s).toMatchObject({
+          status: "UNKNOWN",
+          statusEventAt: at(20),
+          revision: row.revision + 3,
+        });
+        expect(
+          await r.templates.applyFetched(tenant, waba, fetched(row, { status: "APPROVED" }), {
+            revisionAtFetchStart: row.revision + 3,
+            fetchStartedAt: at(60),
           }),
         ).toBe("applied");
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("APPROVED");
@@ -973,6 +1216,126 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("a later empty snapshot refreshes the deletion fence: a delayed event between the two snapshots is stale", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const row = template(tenant, waba, { revision: 1 });
+        await r.templates.insert(row);
+        const id = row.metaTemplateId!;
+        const first = await r.templates.replaceSnapshot(tenant, waba, [], {
+          revisionsAtFetchStart: new Map([[id, 1]]),
+          fetchStartedAt: at(100),
+        });
+        expect(first.statusChanges).toHaveLength(1);
+        expect(await r.templates.findByProviderId(tenant, waba, id)).toMatchObject({
+          status: "DELETED",
+          reconciledAt: at(100),
+          revision: 2,
+        });
+        // T3: a newer authoritative absence of an already-deleted row advances the fence and the revision
+        const second = await r.templates.replaceSnapshot(tenant, waba, [], {
+          revisionsAtFetchStart: new Map([[id, 2]]),
+          fetchStartedAt: at(300),
+        });
+        expect(second).toEqual({ statusChanges: [], raced: 0, fenceNewer: 0 });
+        expect(await r.templates.findByProviderId(tenant, waba, id)).toMatchObject({
+          status: "DELETED",
+          reconciledAt: at(300),
+          revision: 3,
+        });
+        // T2 (between the two snapshots) would beat the T1 fence but not the T3 one
+        expect(
+          await r.templates.applyStatusEvent(tenant, waba, id, {
+            status: "APPROVED",
+            reason: null,
+            eventAt: at(200),
+          }),
+        ).toBe("stale");
+        expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("DELETED");
+        await close();
+      });
+
+      it("a multi-row snapshot whose later row collides with an unrelated UUID throws and rolls the earlier writes back", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [other, otherWaba] = [uid("t"), uid("waba")];
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const unrelated = template(other, otherWaba);
+        await r.templates.insert(unrelated);
+        const earlier = template(tenant, waba);
+        const collider = template(tenant, waba);
+        const rows = [fetched(earlier), fetched(collider, { id: unrelated.id })];
+        const fetch = { revisionsAtFetchStart: new Map<string, number>(), fetchStartedAt: at(50) };
+
+        // optional-transaction path: the repository owns the transaction
+        await expect(r.templates.replaceSnapshot(tenant, waba, rows, fetch)).rejects.toThrow(
+          /unexpected unique conflict/,
+        );
+        expect(await r.templates.list(tenant, waba)).toEqual([]);
+        // caller-owned transaction
+        await expect(
+          r.unitOfWork.run(tenant, (tx) =>
+            r.templates.replaceSnapshot(tenant, waba, rows, fetch, tx),
+          ),
+        ).rejects.toThrow(/unexpected unique conflict/);
+        expect(await r.templates.list(tenant, waba)).toEqual([]);
+        expect(await r.templates.list(other, otherWaba)).toHaveLength(1);
+        await close();
+      });
+
+      it("a snapshot reconciles a local row that has no provider id yet: adopted when present remotely, deleted when absent", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const present = template(tenant, waba, {
+          metaTemplateId: null,
+          status: "PENDING",
+          revision: 1,
+        });
+        const absent = template(tenant, waba, { metaTemplateId: null, revision: 1 });
+        const changed = template(tenant, waba, { metaTemplateId: null, revision: 1 });
+        for (const row of [present, absent, changed]) await r.templates.insert(row);
+        const remoteId = uid("meta");
+        const res = await r.templates.replaceSnapshot(
+          tenant,
+          waba,
+          [fetched(present, { metaTemplateId: remoteId, status: "APPROVED" })],
+          {
+            revisionsAtFetchStart: new Map(),
+            // `changed` was written after the fetch started (start revision 0 ≠ stored 1): it stays untouched
+            revisionsByLocalId: new Map([
+              [present.id, 1],
+              [absent.id, 1],
+              [changed.id, 0],
+            ]),
+            fetchStartedAt: at(80),
+          },
+        );
+        expect(res.raced).toBe(1);
+        expect(res.statusChanges.map((c) => [c.from, c.to]).sort()).toEqual(
+          [
+            ["PENDING", "APPROVED"],
+            ["APPROVED", "DELETED"],
+          ].sort(),
+        );
+        const rows = await r.templates.list(tenant, waba);
+        expect(rows.find((x) => x.id === present.id)).toMatchObject({
+          metaTemplateId: remoteId,
+          status: "APPROVED",
+          revision: 2,
+        });
+        expect(rows.find((x) => x.id === absent.id)).toMatchObject({
+          status: "DELETED",
+          revision: 2,
+        });
+        expect(rows.find((x) => x.id === changed.id)).toMatchObject({
+          status: "APPROVED",
+          revision: 1,
+        });
+        await close();
+      });
+
       it("markDeletedByName deletes every language of that name only", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
@@ -981,7 +1344,9 @@ export function runOutreachRepositoryContract(
         const ar = template(tenant, waba, { language: "ar", name: "promo" });
         const other = template(tenant, waba, { name: "other" });
         for (const row of [en, ar, other]) await r.templates.insert(row);
-        await r.unitOfWork.run((tx) => r.templates.markDeletedByName(tenant, waba, "promo", tx));
+        await r.unitOfWork.run(tenant, (tx) =>
+          r.templates.markDeletedByName(tenant, waba, "promo", tx),
+        );
         const rows = await r.templates.list(tenant, waba);
         expect(rows.filter((x) => x.name === "promo").map((x) => x.status)).toEqual([
           "DELETED",
@@ -998,7 +1363,7 @@ export function runOutreachRepositoryContract(
         const [tenant, waba] = [uid("t"), uid("waba")];
         const row = template(tenant, waba, { status: "PENDING" });
         await r.templates.insert(row);
-        await rollsBack(r.unitOfWork, (tx) =>
+        await rollsBack(r.unitOfWork, tenant, (tx) =>
           r.templates.applyStatusEvent(
             tenant,
             waba,
@@ -1061,6 +1426,23 @@ export function runOutreachRepositoryContract(
         ).rejects.toBeInstanceOf(ConcurrencyError);
         await expect(r.contacts.save({ ...c }, 0)).rejects.toBeInstanceOf(ConcurrencyError);
         expect((await r.contacts.findById(tenant, c.id))?.displayName).toBe("New");
+        await close();
+      });
+
+      it("a UUID already used by another tenant is an unexpected conflict, not a retryable ConcurrencyError", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [a, b] = [uid("t"), uid("t")];
+        const c = contact(a);
+        await r.contacts.save(c, 0);
+        const error: unknown = await r.contacts
+          .save(contact(b, { id: c.id }), 0)
+          .catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(ConcurrencyError);
+        expect((error as Error).message).toMatch(/unexpected unique conflict/);
+        expect(await r.contacts.findById(b, c.id)).toBeNull();
+        expect(await r.contacts.findById(a, c.id)).not.toBeNull();
         await close();
       });
 
@@ -1161,7 +1543,7 @@ export function runOutreachRepositoryContract(
         const list = await r.contacts.listConsentEvents(a, c.id);
         expect(list.map((e) => e.action)).toEqual(["grant", "revoke"]);
         expect(await r.contacts.listConsentEvents(b, c.id)).toEqual([]);
-        await rollsBack(r.unitOfWork, (tx) =>
+        await rollsBack(r.unitOfWork, a, (tx) =>
           r.contacts.appendConsent(ev({ evidence: "rolled back" }), tx),
         );
         expect(await r.contacts.listConsentEvents(a, c.id)).toHaveLength(2);
@@ -1173,7 +1555,7 @@ export function runOutreachRepositoryContract(
         const { r, close } = await open();
         const tenant = uid("t");
         const c = contact(tenant);
-        await rollsBack(r.unitOfWork, (tx) => r.contacts.save(c, 0, tx));
+        await rollsBack(r.unitOfWork, tenant, (tx) => r.contacts.save(c, 0, tx));
         expect(await r.contacts.findById(tenant, c.id)).toBeNull();
         expect(await r.contacts.findByPhone(tenant, c.phoneE164!)).toBeNull();
         await close();
@@ -1300,12 +1682,14 @@ export function runOutreachRepositoryContract(
         const { r, close } = await open();
         const tenant = uid("t");
         const row = outbound(tenant);
-        await rollsBack(r.unitOfWork, async (tx) => {
+        await rollsBack(r.unitOfWork, tenant, async (tx) => {
           expect(await r.outbound.insert(row, tx)).toBe("inserted");
         });
         expect(await r.outbound.findByIdempotencyKey(tenant, row.idempotencyKey)).toBeNull();
-        expect(await r.unitOfWork.run((tx) => r.outbound.insert(row, tx))).toBe("inserted");
-        expect(await r.unitOfWork.run((tx) => r.outbound.insert(row, tx))).toBe("duplicate");
+        expect(await r.unitOfWork.run(tenant, (tx) => r.outbound.insert(row, tx))).toBe("inserted");
+        expect(await r.unitOfWork.run(tenant, (tx) => r.outbound.insert(row, tx))).toBe(
+          "duplicate",
+        );
         await close();
       });
 
@@ -1319,7 +1703,7 @@ export function runOutreachRepositoryContract(
 
         // UUID collision with a different idempotency key
         await expect(
-          r.unitOfWork.run(async (tx) => {
+          r.unitOfWork.run(tenant, async (tx) => {
             await r.contacts.save(marker, 0, tx);
             await r.outbound.insert(outbound(tenant, { id: existing.id }), tx);
           }),
@@ -1361,7 +1745,7 @@ export function runOutreachRepositoryContract(
         const row = outbound(tenant);
         await r.outbound.insert(row);
         const ev = statusEvent(tenant, row.id);
-        await rollsBack(r.unitOfWork, async (tx) => {
+        await rollsBack(r.unitOfWork, tenant, async (tx) => {
           expect(await r.outbound.recordStatusEvent(ev, tx)).toBe("inserted");
         });
         expect(await r.outbound.recordStatusEvent(ev)).toBe("inserted");
@@ -1473,7 +1857,7 @@ export function runOutreachRepositoryContract(
         const { r, close } = await open();
         const tenant = uid("t");
         const row = inbound(tenant, randomUUID());
-        await rollsBack(r.unitOfWork, (tx) => r.inbound.insert(row, tx));
+        await rollsBack(r.unitOfWork, tenant, (tx) => r.inbound.insert(row, tx));
         expect(await r.inbound.findByProviderMessageId(tenant, row.providerMessageId)).toBeNull();
         await close();
       });
@@ -1544,7 +1928,7 @@ export function runOutreachRepositoryContract(
         const tenant = uid("t");
         const wamid = uid("wamid");
         await r.unmatched.put(unmatched(tenant, { providerMessageId: wamid }));
-        await rollsBack(r.unitOfWork, async (tx) => {
+        await rollsBack(r.unitOfWork, tenant, async (tx) => {
           expect(
             await r.unmatched.takeFor(tenant, "phone-1", { providerMessageId: wamid }, tx),
           ).toHaveLength(1);
@@ -1562,7 +1946,7 @@ export function runOutreachRepositoryContract(
         tenant: string,
         now: Date,
         limits: { perHour: number; perDay: number },
-      ) => r.unitOfWork.run((tx) => r.emailCounters.reserve(tenant, now, limits, tx));
+      ) => r.unitOfWork.run(tenant, (tx) => r.emailCounters.reserve(tenant, now, limits, tx));
 
       it("hour cap boundary: limit-1 reserved, limit reserved, limit+1 refused", async () => {
         expect.hasAssertions();
@@ -1624,12 +2008,47 @@ export function runOutreachRepositoryContract(
         const tenant = uid("t");
         const limits = { perHour: 1, perDay: 1 };
         const row = outbound(tenant, { channel: "email", kind: "email" });
-        await rollsBack(r.unitOfWork, async (tx) => {
+        await rollsBack(r.unitOfWork, tenant, async (tx) => {
           expect(await r.outbound.insert(row, tx)).toBe("inserted");
           expect(await r.emailCounters.reserve(tenant, T0, limits, tx)).toBe("reserved");
         });
         expect(await r.outbound.findByIdempotencyKey(tenant, row.idempotencyKey)).toBeNull();
         expect(await reserve(r, tenant, T0, limits)).toBe("reserved");
+        await close();
+      });
+
+      it("overlapping reservations where the first aborts: the second succeeds and exactly one slot stays consumed", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const tenant = uid("t");
+        const limits = { perHour: 1, perDay: 100 };
+        const aborted = r.unitOfWork.run(tenant, async (tx) => {
+          expect(await r.emailCounters.reserve(tenant, T0, limits, tx)).toBe("reserved");
+          // stay open while the second reservation starts, then abort
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          throw new Boom("abort the first reservation");
+        });
+        const second = new Promise<"reserved" | "hour_cap" | "day_cap">((resolve, reject) => {
+          setTimeout(() => {
+            reserve(r, tenant, T0, limits).then(resolve, reject);
+          }, 5);
+        });
+        const [first, winner] = await Promise.allSettled([aborted, second]);
+        expect(first.status).toBe("rejected");
+        expect(winner).toEqual({ status: "fulfilled", value: "reserved" });
+        // the slot of the committed reservation is held; the aborted one left nothing behind
+        expect(await reserve(r, tenant, T0, limits)).toBe("hour_cap");
+        await close();
+      });
+
+      it("requires the unit of work's transaction", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const tenant = uid("t");
+        await expect(
+          r.emailCounters.reserve(tenant, T0, { perHour: 5, perDay: 5 }, undefined),
+        ).rejects.toThrow(/transaction client/);
+        expect(await reserve(r, tenant, T0, { perHour: 1, perDay: 1 })).toBe("reserved");
         await close();
       });
 

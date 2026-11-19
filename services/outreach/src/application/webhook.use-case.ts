@@ -141,7 +141,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const { deps } = this;
     const { tenantId, wabaId, phoneNumberId } = scope;
 
-    await deps.unitOfWork.run(async (tx) => {
+    await deps.unitOfWork.run(tenantId, async (tx) => {
       let row: OutboundRecord | null = await deps.outbound.findByProviderId(tenantId, id, tx);
       let viaCorrelation = false;
       if (row === null && correlation !== null) {
@@ -205,7 +205,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const profileName = profileNameFor(value, from);
     const { tenantId } = scope;
 
-    await deps.unitOfWork.run(async (tx) => {
+    await deps.unitOfWork.run(tenantId, async (tx) => {
       // A duplicate delivery mutates nothing: no contact write, no window change, no event, no consent.
       if ((await deps.inbound.findByProviderMessageId(tenantId, id, tx)) !== null) return;
       let contact = await findOrCreateContact(
@@ -346,7 +346,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
     apply: (tx: unknown) => Promise<"applied" | "noop" | "stale" | "conflict" | "not_found">,
   ): Promise<void> {
     const { deps } = this;
-    await deps.unitOfWork.run(async (tx) => {
+    await deps.unitOfWork.run(tenantId, async (tx) => {
       const before = await deps.templates.findByProviderId(tenantId, wabaId, metaTemplateId, tx);
       const result = await apply(tx);
       if (result !== "applied" && result !== "conflict") return;

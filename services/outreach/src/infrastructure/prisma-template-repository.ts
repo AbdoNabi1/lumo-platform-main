@@ -1,7 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import type { TransactionClient } from "@platform/db";
 import {
-  UNEXPECTED_UNIQUE_CONFLICT,
   type FetchedTemplate,
   type TemplateCategoryValue,
   type TemplateEventResult,
@@ -15,6 +14,7 @@ import {
   applyCategoryEventTo,
   applyFetchedTo,
   applyStatusEventTo,
+  insertTemplateRow,
   reconcileSnapshotTo,
   type TemplatePatch,
   type TemplateRowAccess,
@@ -56,6 +56,12 @@ export class PrismaTemplateRepository implements TemplateRepository {
       findByMetaId: async (metaTemplateId) => {
         const row = await client.messageTemplate.findFirst({
           where: { tenantId, wabaId, metaTemplateId },
+        });
+        return row === null ? null : templateFromRow(row);
+      },
+      findByNameLanguage: async (name, language) => {
+        const row = await client.messageTemplate.findFirst({
+          where: { tenantId, wabaId, name, language },
         });
         return row === null ? null : templateFromRow(row);
       },
@@ -121,25 +127,18 @@ export class PrismaTemplateRepository implements TemplateRepository {
   }
 
   insert(r: TemplateRecord, tx?: unknown): Promise<"inserted" | "duplicate"> {
-    return withClient(this.deps.prisma, r.tenantId, tx, async (c) => {
-      const created = await c.messageTemplate.createMany({
-        data: [templateInsertRow(r)],
-        skipDuplicates: true,
-      });
-      if (created.count > 0) return "inserted";
-      const replay = await c.messageTemplate.findFirst({
-        where: { tenantId: r.tenantId, wabaId: r.wabaId, name: r.name, language: r.language },
-      });
-      if (replay !== null) return "duplicate";
-      throw new Error(UNEXPECTED_UNIQUE_CONFLICT);
-    });
+    return this.run(r.tenantId, r.wabaId, tx, (a) => insertTemplateRow(a, r));
   }
 
   replaceSnapshot(
     tenantId: string,
     wabaId: string,
     rows: FetchedTemplate[],
-    fetch: { revisionsAtFetchStart: ReadonlyMap<string, number>; fetchStartedAt: Date },
+    fetch: {
+      revisionsAtFetchStart: ReadonlyMap<string, number>;
+      revisionsByLocalId?: ReadonlyMap<string, number>;
+      fetchStartedAt: Date;
+    },
     tx?: unknown,
   ): Promise<TemplateSnapshotResult> {
     return this.run(tenantId, wabaId, tx, (a) =>

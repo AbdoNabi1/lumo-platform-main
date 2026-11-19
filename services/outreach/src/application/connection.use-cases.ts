@@ -53,7 +53,7 @@ export class RefreshWhatsAppStatus implements UseCase<
       failureCode = metaConflictCode(error);
     }
 
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       // The snapshot rule: a version/phone/WABA change or a disconnect makes this refresh obsolete (no write).
       if (!(await connectionUnchanged(deps, tenantId, snapshot, tx, { allowError: true }))) {
         return err(conflict("CONNECTION_CHANGED"));
@@ -104,7 +104,7 @@ export class DisconnectWhatsApp implements UseCase<
   async execute(input: VersionedTenantInput): Promise<Result<WhatsAppConnectionDto, DomainError>> {
     const { deps } = this;
     const { tenantId } = input;
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       const row = await deps.connections.get(tenantId, tx);
       if (row === null || row.status === "disconnected") {
         return ok(connectionDto(row, isAvailable(deps)));
@@ -151,7 +151,7 @@ export class AbandonWhatsAppOnboarding implements UseCase<
   async execute(input: VersionedTenantInput): Promise<Result<WhatsAppConnectionDto, DomainError>> {
     const { deps } = this;
     const { tenantId } = input;
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       const row = await deps.connections.get(tenantId, tx);
       if (row === null || row.status === "disconnected") {
         return ok(connectionDto(row, isAvailable(deps)));

@@ -83,7 +83,10 @@ export class SyncTemplates implements UseCase<TenantInput, TemplateDto[], Domain
     if (whatsapp === undefined) return err(conflict("WHATSAPP_NOT_CONFIGURED"));
 
     const revisionsAtFetchStart = new Map<string, number>();
+    // By stable local row id as well: a row without a provider id can only be reconciled through it.
+    const revisionsByLocalId = new Map<string, number>();
     for (const t of await deps.templates.list(tenantId, snapshot.wabaId)) {
+      revisionsByLocalId.set(t.id, t.revision);
       if (t.metaTemplateId !== null) revisionsAtFetchStart.set(t.metaTemplateId, t.revision);
     }
     const fetchStartedAt = deps.clock.now();
@@ -91,7 +94,7 @@ export class SyncTemplates implements UseCase<TenantInput, TemplateDto[], Domain
     if (!remote.ok) return remote;
     const rows = remote.value.map((m) => fetchedFromMeta(deps, m));
 
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       if (!(await connectionUnchanged(deps, tenantId, snapshot, tx))) {
         return err(conflict("CONNECTION_CHANGED"));
       }
@@ -99,7 +102,7 @@ export class SyncTemplates implements UseCase<TenantInput, TemplateDto[], Domain
         tenantId,
         snapshot.wabaId,
         rows,
-        { revisionsAtFetchStart, fetchStartedAt },
+        { revisionsAtFetchStart, revisionsByLocalId, fetchStartedAt },
         tx,
       );
       for (const change of result.statusChanges) {
@@ -180,7 +183,7 @@ export class CreateTemplate implements UseCase<CreateTemplateInput, TemplateDto,
       version: 1,
     };
 
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       // A disconnect/switch after the remote create leaves the template at Meta; the next sync adopts it.
       if (!(await connectionUnchanged(deps, tenantId, snapshot, tx))) {
         return err(conflict("CONNECTION_CHANGED"));
@@ -277,7 +280,7 @@ export class DeleteTemplate implements UseCase<
     const removed = await metaGuard(() => whatsapp.deleteTemplate(snapshot.wabaId, token, name));
     if (!removed.ok) return removed;
 
-    return deps.unitOfWork.run(async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
       if (!(await connectionUnchanged(deps, tenantId, snapshot, tx))) {
         return err(conflict("CONNECTION_CHANGED"));
       }

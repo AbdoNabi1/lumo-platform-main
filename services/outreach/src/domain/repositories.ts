@@ -13,6 +13,15 @@
  */
 import type { OutboundStatus } from "./outbound-message";
 
+/**
+ * The tenant-scoped unit of work of the outreach context (ADR-0014). `run` opens ONE transaction whose `app.tenant_id`
+ * is the given (trusted) shop from its first statement; every repository call made with the handed-in `tx` shares it.
+ * Directory operations inside it switch to the platform scope for that operation only and restore the shop scope.
+ */
+export interface OutreachUnitOfWork {
+  run<T>(tenantId: string, work: (tx: unknown) => Promise<T>): Promise<T>;
+}
+
 export type ConnectionStatus = "onboarding" | "connected" | "disconnected" | "error";
 export type OnboardingStage = "verified" | "subscribed" | "registering" | "registered";
 
@@ -40,10 +49,58 @@ export interface WhatsAppConnectionRecord {
   version: number;
 }
 
+/** What the row must look like for a lease operation to apply (all compared inside the conditional write). */
+export interface OnboardingExpectation {
+  version: number;
+  onboardingStage: OnboardingStage | null;
+  onboardingAttemptId: string | null;
+  phoneNumberId: string;
+  wabaId: string;
+}
+
+/** The expectation of a live lease holder: the row must still carry this owner. */
+export interface LeaseHolder extends OnboardingExpectation {
+  owner: string;
+}
+
 export interface WhatsAppConnectionRepository {
   get(tenantId: string, tx?: unknown): Promise<WhatsAppConnectionRecord | null>;
   /** Version convention above. Throws `ConcurrencyError` on a miss. Every column is written. */
   save(r: WhatsAppConnectionRecord, expectedVersion: number, tx?: unknown): Promise<void>;
+  /**
+   * Takes the onboarding lease at WRITE time. `expected === null` creates the row (version 1) already holding the
+   * lease; otherwise ONE conditional update applies where tenant + version + stage + attempt + phone + WABA match AND
+   * `lease_until IS NULL OR lease_until < now`. `next` carries the new lease (owner + `leaseUntil > now`). Every column
+   * of `next` is written. A miss (version bump, other row shape or a live lease) throws `ConcurrencyError`.
+   */
+  acquireOnboardingLease(
+    next: WhatsAppConnectionRecord,
+    expected: OnboardingExpectation | null,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void>;
+  /**
+   * Extends the lease of the CURRENT owner only: tenant + the whole holder expectation + `lease_owner = owner` AND
+   * `lease_until > now`. Writes the lease expiry (and bumps the version); `ConcurrencyError` on a miss.
+   */
+  renewOnboardingLease(
+    tenantId: string,
+    holder: LeaseHolder,
+    leaseUntil: Date,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void>;
+  /**
+   * An owner-conditional write (stage, failure, reseal, release, finalize): ONE conditional update applies where
+   * tenant + the whole holder expectation + `lease_owner = owner` AND `lease_until > now` (write-time `now`). Every
+   * column of `next` is written (a release clears the lease columns in `next`). `ConcurrencyError` on a miss.
+   */
+  writeAsLeaseOwner(
+    next: WhatsAppConnectionRecord,
+    holder: LeaseHolder,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void>;
 }
 
 export interface DirectoryEntry {
@@ -72,7 +129,9 @@ export interface PhoneDirectory {
    * One `tx`, in this order: (1) release the shop's existing tuple when it differs from `(phone, waba, shop)`;
    * (2) insert `(phone, waba, shop)` skipping duplicates; (3) read back by phone and by WABA; (4) `claimed` ONLY when
    * the phone row equals the full tuple and the WABA row belongs to the shop; (5) otherwise `phone_in_use` /
-   * `waba_in_use`. It never updates an owner. The caller rolls the `tx` back on a non-claim (that undoes the release).
+   * `waba_in_use`. It never updates an owner. With a caller `tx` the caller rolls it back on a non-claim (that undoes
+   * the release). WITHOUT `tx` the claim runs in an owned transaction that is rolled back on a non-claim, so a failed
+   * standalone claim never leaves the shop's previous mapping released.
    */
   claim(
     phoneNumberId: string,
@@ -173,21 +232,30 @@ export interface TemplateRepository {
   insert(r: TemplateRecord, tx?: unknown): Promise<"inserted" | "duplicate">;
   /**
    * Atomic reconcile of one WABA against an authoritative fetch. Per row: raced when the stored revision differs from
-   * `revisionsAtFetchStart` (or the row is absent from the map), skipped when `reconciledAt > fetchStartedAt`,
-   * otherwise the snapshot values are applied with `reconciledAt = max(stored, fetchStartedAt)` and `revision + 1`.
-   * A local row absent from the snapshot becomes `DELETED` only if its revision is unchanged.
+   * `revisionsByLocalId` (preferred, keyed by the stable local row id) or `revisionsAtFetchStart` (keyed by provider id;
+   * the only way for a row without a provider id is the local-id map) or the row is in neither map, skipped when
+   * `reconciledAt > fetchStartedAt`, otherwise the snapshot values are applied with `reconciledAt = max(stored,
+   * fetchStartedAt)` and `revision + 1`. A local row absent from the snapshot becomes `DELETED` only if its revision is
+   * unchanged; an already `DELETED` absent row gets the same revision/fence check and refreshes `reconciledAt` and the
+   * revision (a newer authoritative absence), reported as no status change.
    */
   replaceSnapshot(
     tenantId: string,
     wabaId: string,
     rows: FetchedTemplate[],
-    fetch: { revisionsAtFetchStart: ReadonlyMap<string, number>; fetchStartedAt: Date },
+    fetch: {
+      revisionsAtFetchStart: ReadonlyMap<string, number>;
+      revisionsByLocalId?: ReadonlyMap<string, number>;
+      fetchStartedAt: Date;
+    },
     tx?: unknown,
   ): Promise<TemplateSnapshotResult>;
   /**
    * Same rule for one template (per-send fetch). A local row that no longer exists is reported as `raced`.
    * `stale` rules: `eventAt <= reconciledAt` or `eventAt < marker` of the kind; equal marker + same value → `noop`;
    * equal marker + different value → `conflict` (status UNKNOWN). `applied`/`conflict` increment `revision`.
+   * A webhook NEVER moves a row out of `UNKNOWN`: a newer status event on an `UNKNOWN` row only advances its marker
+   * (reported as `noop`); only `applyFetched` / `replaceSnapshot` clear `UNKNOWN`.
    */
   applyFetched(
     tenantId: string,
@@ -406,7 +474,8 @@ export interface EmailSendCounterRepository {
   /**
    * Atomic upsert-increment of the UTC hour and UTC day windows, guarded by the limits. Exceeding either window
    * (`count >= limit`) leaves BOTH unchanged; the hour cap is reported first. Call ONLY from the creator, in the same
-   * `tx` as the outbound insert, after it returned `inserted`.
+   * `tx` as the outbound insert, after it returned `inserted`. Fails closed (throws, aborting the `tx`) when a window
+   * row is missing after the seed or the increment does not touch exactly the two window rows.
    */
   reserve(
     tenantId: string,

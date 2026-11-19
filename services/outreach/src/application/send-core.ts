@@ -73,7 +73,7 @@ export async function runSend(
 ): Promise<Result<SendResultDto, DomainError>> {
   let reserved: Reserved;
   try {
-    reserved = await deps.unitOfWork.run((tx) => reserve(deps, spec, tx));
+    reserved = await deps.unitOfWork.run(spec.tenantId, (tx) => reserve(deps, spec, tx));
   } catch (error) {
     if (error instanceof RolledBackRefusal) return err(error.refusal);
     throw error;
@@ -168,7 +168,9 @@ async function settle(
 ): Promise<Result<SendResultDto, DomainError>> {
   for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
     try {
-      const stored = await deps.unitOfWork.run((tx) => settleOnce(deps, tx, reserved, outcome));
+      const stored = await deps.unitOfWork.run(reserved.tenantId, (tx) =>
+        settleOnce(deps, tx, reserved, outcome),
+      );
       return ok(sendResultDto(stored));
     } catch {
       // retried below; after the last attempt the outcome is reported as unrecorded

@@ -50,7 +50,7 @@ export class UpsertContact implements UseCase<UpsertContactInput, ContactDto, Do
     const displayName = present(input.displayName) ? input.displayName.trim().slice(0, 200) : null;
     const customerRef = present(input.customerRef) ? input.customerRef.trim().slice(0, 200) : null;
 
-    return this.deps.unitOfWork.run(async (tx) => {
+    return this.deps.unitOfWork.run(tenantId, async (tx) => {
       const byPhone =
         phone === null ? null : await this.deps.contacts.findByPhone(tenantId, phone, tx);
       const byEmail =
@@ -140,7 +140,7 @@ export class RecordConsent implements UseCase<RecordConsentInput, ContactDto, Do
       typeof input.evidence === "string" && input.evidence.trim() !== ""
         ? input.evidence.trim().slice(0, 500)
         : null;
-    return this.deps.unitOfWork.run(async (tx) => {
+    return this.deps.unitOfWork.run(tenantId, async (tx) => {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const contact = await this.deps.contacts.findById(tenantId, input.contactId, tx);
         if (contact === null) return err(new NotFoundError("Contact not found"));

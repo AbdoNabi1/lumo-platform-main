@@ -1,6 +1,6 @@
 import type { Clock } from "@platform/contracts";
-import { PrismaUnitOfWork, type Database } from "@platform/db";
-import type { OutreachRepositories } from "../domain/repositories";
+import type { Database } from "@platform/db";
+import type { OutreachRepositories, OutreachUnitOfWork } from "../domain/repositories";
 import {
   PrismaContactRepository,
   PrismaEmailSendCounterRepository,
@@ -10,10 +10,11 @@ import {
   PrismaUnmatchedStatusRepository,
   PrismaWhatsAppConnectionRepository,
 } from "./prisma-outreach-repositories";
+import { PrismaOutreachUnitOfWork } from "./prisma-outreach-unit-of-work";
 import { PrismaTemplateRepository } from "./prisma-template-repository";
 
 export interface PrismaOutreach extends OutreachRepositories {
-  unitOfWork: PrismaUnitOfWork;
+  unitOfWork: OutreachUnitOfWork;
 }
 
 /** The production repositories on the `outreach` schema. `platformTenantId` scopes the phone directory (A1). */
@@ -24,7 +25,7 @@ export function createPrismaOutreach(deps: {
 }): PrismaOutreach {
   const { prisma, clock, platformTenantId } = deps;
   return {
-    unitOfWork: new PrismaUnitOfWork(prisma),
+    unitOfWork: new PrismaOutreachUnitOfWork(prisma),
     connections: new PrismaWhatsAppConnectionRepository({ prisma }),
     directory: new PrismaPhoneDirectory({ prisma, platformTenantId }),
     templates: new PrismaTemplateRepository({ prisma }),

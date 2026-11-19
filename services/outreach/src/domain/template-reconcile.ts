@@ -4,15 +4,16 @@
  * rules (revision CAS, fence, equal-second staleness) and differ only in how rows are read and compare-and-set.
  */
 import { ConcurrencyError } from "@platform/utils";
-import type {
-  FetchedTemplate,
-  TemplateCategoryValue,
-  TemplateEventResult,
-  TemplateFetchResult,
-  TemplateRecord,
-  TemplateSnapshotResult,
-  TemplateStatus,
-  TemplateStatusChange,
+import {
+  UNEXPECTED_UNIQUE_CONFLICT,
+  type FetchedTemplate,
+  type TemplateCategoryValue,
+  type TemplateEventResult,
+  type TemplateFetchResult,
+  type TemplateRecord,
+  type TemplateSnapshotResult,
+  type TemplateStatus,
+  type TemplateStatusChange,
 } from "./repositories";
 
 export type TemplatePatch = Partial<
@@ -35,6 +36,7 @@ export type TemplatePatch = Partial<
 export interface TemplateRowAccess {
   list(): Promise<TemplateRecord[]>;
   findByMetaId(metaTemplateId: string): Promise<TemplateRecord | null>;
+  findByNameLanguage(name: string, language: string): Promise<TemplateRecord | null>;
   /** `false` when the insert hit a unique conflict (a concurrent writer created the row). */
   insert(row: TemplateRecord): Promise<boolean>;
   /** Compare-and-set on `current.revision`; applies `patch` with `revision + 1` and `version + 1`. `false` on a miss. */
@@ -50,7 +52,7 @@ const MAX_CAS_ATTEMPTS = 3;
 const same = (a: Date | null, b: Date): boolean => a !== null && a.getTime() === b.getTime();
 
 type EventDecision =
-  { result: "stale" | "noop" } | { result: "applied" | "conflict"; patch: TemplatePatch };
+  { result: "stale" | "noop" } | { result: "applied" | "conflict" | "noop"; patch: TemplatePatch };
 
 /**
  * `stale` when `eventAt <= reconciledAt` (an equal-second fact is not provably newer than an authoritative fetch) or
@@ -79,11 +81,17 @@ export function decideStatusEvent(
   row: TemplateRecord,
   event: { status: TemplateStatus; reason: string | null; eventAt: Date },
 ): EventDecision {
-  return decideEvent(row, event.eventAt, row.statusEventAt, row.status === event.status, {
+  const decision = decideEvent(row, event.eventAt, row.statusEventAt, row.status === event.status, {
     status: event.status,
     rejectedReason: event.reason,
     statusEventAt: event.eventAt,
   });
+  // A webhook never moves a row OUT of `UNKNOWN` (an unresolved conflict or a post-reinstatement state): it only
+  // records the ordering marker. Only an authoritative fetch (`applyFetched` / `replaceSnapshot`) clears it.
+  if (decision.result === "applied" && row.status === "UNKNOWN") {
+    return { result: "noop", patch: { statusEventAt: event.eventAt } };
+  }
+  return decision;
 }
 
 export function decideCategoryEvent(
@@ -199,12 +207,37 @@ export function newTemplateRow(
   };
 }
 
+/**
+ * The ONE discriminating insert both the public `insert` and the snapshot path use: a zero-row create is a benign
+ * duplicate only when the scoped (tenant, WABA, name, language) key exists in the same transaction; any other unique
+ * conflict (e.g. a fresh UUID colliding with an unrelated row) throws so the transaction rolls back.
+ */
+export async function insertTemplateRow(
+  access: TemplateRowAccess,
+  row: TemplateRecord,
+): Promise<"inserted" | "duplicate"> {
+  if (await access.insert(row)) return "inserted";
+  if ((await access.findByNameLanguage(row.name, row.language)) !== null) return "duplicate";
+  throw new Error(UNEXPECTED_UNIQUE_CONFLICT);
+}
+
 export async function reconcileSnapshotTo(
   access: TemplateRowAccess,
   identity: { tenantId: string; wabaId: string },
   rows: readonly FetchedTemplate[],
-  fetch: { revisionsAtFetchStart: ReadonlyMap<string, number>; fetchStartedAt: Date },
+  fetch: {
+    revisionsAtFetchStart: ReadonlyMap<string, number>;
+    revisionsByLocalId?: ReadonlyMap<string, number> | undefined;
+    fetchStartedAt: Date;
+  },
 ): Promise<TemplateSnapshotResult> {
+  /** Start revision of a local row: by its stable local id first, then by the provider id it carried. */
+  const startRevision = (l: TemplateRecord, adoptedMetaId?: string): number | undefined => {
+    const byLocal = fetch.revisionsByLocalId?.get(l.id);
+    if (byLocal !== undefined) return byLocal;
+    const metaId = l.metaTemplateId ?? adoptedMetaId;
+    return metaId === undefined ? undefined : fetch.revisionsAtFetchStart.get(metaId);
+  };
   const local = await access.list();
   const byMeta = new Map<string, TemplateRecord>();
   const byKey = new Map<string, TemplateRecord>();
@@ -240,17 +273,16 @@ export async function reconcileSnapshotTo(
       byMeta.get(fetched.metaTemplateId) ??
       byKey.get(nameLanguageKey(fetched.name, fetched.language));
     if (existing === undefined) {
-      const inserted = await access.insert(
+      const inserted = await insertTemplateRow(
+        access,
         newTemplateRow(identity.tenantId, identity.wabaId, fetched, fetch.fetchStartedAt),
       );
-      if (inserted) change(fetched, null, fetched.status);
+      if (inserted === "inserted") change(fetched, null, fetched.status);
       else result.raced += 1;
       continue;
     }
     seen.add(existing.id);
-    const expected = fetch.revisionsAtFetchStart.get(
-      existing.metaTemplateId ?? fetched.metaTemplateId,
-    );
+    const expected = startRevision(existing, fetched.metaTemplateId);
     if (expected === undefined) {
       result.raced += 1;
       continue;
@@ -266,9 +298,8 @@ export async function reconcileSnapshotTo(
   }
 
   for (const l of local) {
-    if (seen.has(l.id) || l.status === "DELETED") continue;
-    const expected =
-      l.metaTemplateId === null ? undefined : fetch.revisionsAtFetchStart.get(l.metaTemplateId);
+    if (seen.has(l.id)) continue;
+    const expected = startRevision(l);
     if (expected === undefined || expected !== l.revision) {
       result.raced += 1;
       continue;
@@ -282,8 +313,9 @@ export async function reconcileSnapshotTo(
       lastSyncedAt: fetch.fetchStartedAt,
       reconciledAt: maxDate(l.reconciledAt, fetch.fetchStartedAt),
     });
-    if (ok) change(l, l.status, "DELETED");
-    else result.raced += 1;
+    // DELETED → DELETED refreshes the fence and the revision (a newer authoritative absence) without a status change.
+    if (!ok) result.raced += 1;
+    else if (l.status !== "DELETED") change(l, l.status, "DELETED");
   }
   return result;
 }

@@ -1,7 +1,12 @@
 import type { UseCase } from "@platform/application";
 import { err, ok, type Result } from "@platform/types";
 import { ConcurrencyError, type DomainError, ValidationError } from "@platform/utils";
-import type { OnboardingStage, WhatsAppConnectionRecord } from "../domain/repositories";
+import type {
+  LeaseHolder,
+  OnboardingExpectation,
+  OnboardingStage,
+  WhatsAppConnectionRecord,
+} from "../domain/repositories";
 import { type WhatsAppConnectionDto, connectionDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
 import type { WhatsAppPhoneInfo } from "./ports";
@@ -60,6 +65,20 @@ async function meta<T>(call: () => Promise<T>): Promise<MetaResult<T>> {
 
 const sameAssets = (row: WhatsAppConnectionRecord, phone: string, waba: string): boolean =>
   row.phoneNumberId === phone && row.wabaId === waba;
+
+/** The row shape a conditional lease write must still find: version, stage, attempt, phone and WABA. */
+const expectationOf = (row: WhatsAppConnectionRecord): OnboardingExpectation => ({
+  version: row.version,
+  onboardingStage: row.onboardingStage,
+  onboardingAttemptId: row.onboardingAttemptId,
+  phoneNumberId: row.phoneNumberId,
+  wabaId: row.wabaId,
+});
+
+const holderOf = (row: WhatsAppConnectionRecord, lease: Lease): LeaseHolder => ({
+  ...expectationOf(row),
+  owner: lease.owner,
+});
 
 /**
  * Connects a WhatsApp Business account (Embedded Signup result). The persisted row is classified FIRST and the
@@ -258,7 +277,7 @@ export class ConnectWhatsApp implements UseCase<
   > {
     const { deps } = this;
     try {
-      return await deps.unitOfWork.run(async (tx) => {
+      return await deps.unitOfWork.run(tenantId, async (tx) => {
         const now = deps.clock.now();
         const row = await deps.connections.get(tenantId, tx);
         const byPhone = await deps.directory.find(phone, tx);
@@ -312,25 +331,33 @@ export class ConnectWhatsApp implements UseCase<
             ...leaseFields,
             version: 1,
           };
-          await deps.connections.save(fresh, row === null ? 0 : row.version, tx);
+          await deps.connections.acquireOnboardingLease(
+            fresh,
+            row === null ? null : expectationOf(row),
+            now,
+            tx,
+          );
         } else if (kind === "resume") {
-          await deps.connections.save(
+          await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId },
-            row.version,
+            expectationOf(row),
+            now,
             tx,
           );
         } else if (kind === "reconnect") {
-          await deps.connections.save(
+          await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId, onboardingStage: "verified" },
-            row.version,
+            expectationOf(row),
+            now,
             tx,
           );
         } else {
           // connected / error for DIFFERENT assets: the lease is taken in place; the live connection stays usable
           // until the start write switches it.
-          await deps.connections.save(
+          await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId },
-            row.version,
+            expectationOf(row),
+            now,
             tx,
           );
         }
@@ -364,7 +391,7 @@ export class ConnectWhatsApp implements UseCase<
   ): Promise<WhatsAppConnectionRecord | "lost"> {
     const { deps } = this;
     try {
-      return await deps.unitOfWork.run(async (tx) => {
+      return await deps.unitOfWork.run(lease.tenantId, async (tx) => {
         const row = await deps.connections.get(lease.tenantId, tx);
         if (!this.holds(row, lease)) throw new LeaseLost();
         const now = deps.clock.now();
@@ -375,7 +402,8 @@ export class ConnectWhatsApp implements UseCase<
           onboardingLeaseUntil:
             opts.release === true ? null : new Date(now.getTime() + ONBOARDING_LEASE_MS),
         };
-        await deps.connections.save(next, row.version, tx);
+        // The expiry is checked again by the conditional write itself, at write time (not only by `holds` above).
+        await deps.connections.writeAsLeaseOwner(next, holderOf(row, lease), deps.clock.now(), tx);
         if (opts.extra !== undefined) await opts.extra(tx);
         return { ...next, version: row.version + 1 };
       });
@@ -408,7 +436,7 @@ export class ConnectWhatsApp implements UseCase<
     const { deps } = this;
     const { tenantId, phoneNumberId, wabaId } = lease;
     try {
-      const done = await deps.unitOfWork.run(async (tx) => {
+      const done = await deps.unitOfWork.run(tenantId, async (tx) => {
         const row = await deps.connections.get(tenantId, tx);
         if (!this.holds(row, lease)) throw new LeaseLost();
         const now = deps.clock.now();
@@ -434,7 +462,7 @@ export class ConnectWhatsApp implements UseCase<
           onboardingLeaseOwner: null,
           onboardingLeaseUntil: null,
         };
-        await deps.connections.save(next, row.version, tx);
+        await deps.connections.writeAsLeaseOwner(next, holderOf(row, lease), deps.clock.now(), tx);
         const claim = await deps.directory.claim(phoneNumberId, wabaId, tenantId, tx);
         if (claim !== "claimed") {
           throw new NotClaimed(claim === "phone_in_use" ? "PHONE_IN_USE" : "WABA_IN_USE");

@@ -309,8 +309,9 @@ describe("ConnectWhatsApp — resume", () => {
     let crash = true;
     kit.deps.connections = new Proxy(real, {
       get(target, prop) {
-        if (prop === "save") {
-          return (...args: Parameters<typeof real.save>) => {
+        // Owner writes go through the conditional `writeAsLeaseOwner` since the lease is checked at write time.
+        if (prop === "writeAsLeaseOwner") {
+          return (...args: Parameters<typeof real.writeAsLeaseOwner>) => {
             if (
               crash &&
               args[0].status === "onboarding" &&
@@ -319,7 +320,7 @@ describe("ConnectWhatsApp — resume", () => {
               crash = false;
               return Promise.reject(new Error("db down"));
             }
-            return target.save(...args);
+            return target.writeAsLeaseOwner(...args);
           };
         }
         const v = Reflect.get(target, prop) as unknown;

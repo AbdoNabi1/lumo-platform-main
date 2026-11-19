@@ -1,6 +1,5 @@
 import type { Clock, IdGenerator } from "@platform/contracts";
-import type { TransactionalUnitOfWork } from "@platform/repository";
-import type { OutreachRepositories } from "../domain/repositories";
+import type { OutreachRepositories, OutreachUnitOfWork } from "../domain/repositories";
 import type { OutreachEventSink } from "./events";
 import type { EmailSendPort, OutreachCredentialVault, WhatsAppCloudApiPort } from "./ports";
 
@@ -13,7 +12,8 @@ export interface OutreachDeps extends OutreachRepositories {
   whatsapp: WhatsAppCloudApiPort | undefined;
   email: EmailSendPort | undefined;
   vault: OutreachCredentialVault | undefined;
-  unitOfWork: TransactionalUnitOfWork<unknown>;
+  /** Tenant-scoped (ADR-0014): `run(tenantId, work)` binds `app.tenant_id` to the trusted shop for the whole transaction. */
+  unitOfWork: OutreachUnitOfWork;
   idGenerator: IdGenerator;
   clock: Clock;
   emailFrom: string | undefined;

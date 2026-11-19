@@ -66,8 +66,8 @@ function afterReservation(kit: OutreachKit, fn: () => Promise<void> | void): voi
   const inner = kit.deps.unitOfWork;
   let n = 0;
   kit.deps.unitOfWork = {
-    run: async (work) => {
-      const result = await inner.run(work);
+    run: async (tenantId, work) => {
+      const result = await inner.run(tenantId, work);
       n += 1;
       if (n === 1) await fn();
       return result;

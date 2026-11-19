@@ -238,7 +238,7 @@ describe("RecordConsent", () => {
     const recorder = new InMemoryOutreachEventRecorder();
     const kit = createOutreachKit();
     await expect(
-      kit.deps.unitOfWork.run(async (tx) => {
+      kit.deps.unitOfWork.run(T1, async (tx) => {
         await recorder.emit(
           {
             tenantId: T1,

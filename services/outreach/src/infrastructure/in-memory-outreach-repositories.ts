@@ -10,6 +10,8 @@ import {
   type FetchedTemplate,
   type InboundMessageRepository,
   type InboundRecord,
+  type LeaseHolder,
+  type OnboardingExpectation,
   type OutboundMessageRepository,
   type OutboundRecord,
   type PhoneDirectory,
@@ -31,11 +33,17 @@ import {
   applyCategoryEventTo,
   applyFetchedTo,
   applyStatusEventTo,
+  insertTemplateRow,
   patchedRow,
   reconcileSnapshotTo,
   type TemplateRowAccess,
 } from "../domain/template-reconcile";
-import { settle, transactionOf, type InMemoryOutreachStore } from "./in-memory-outreach-store";
+import {
+  InMemoryOutreachTransaction,
+  settle,
+  transactionOf,
+  type InMemoryOutreachStore,
+} from "./in-memory-outreach-store";
 
 const unexpectedConflict = (): Error => new Error(UNEXPECTED_UNIQUE_CONFLICT);
 
@@ -62,7 +70,98 @@ export class InMemoryWhatsAppConnectionRepository implements WhatsAppConnectionR
       );
     });
   }
+
+  acquireOnboardingLease(
+    next: WhatsAppConnectionRecord,
+    expected: OnboardingExpectation | null,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    return settle(() => {
+      if (
+        next.onboardingLeaseOwner === null ||
+        next.onboardingLeaseUntil === null ||
+        next.onboardingLeaseUntil.getTime() <= now.getTime()
+      ) {
+        throw new Error("acquireOnboardingLease must install a lease (owner + expiry after now)");
+      }
+      const current = this.store.connections.get(next.tenantId);
+      if (expected === null) {
+        if (current !== undefined)
+          throw new ConcurrencyError(`Connection ${next.tenantId} already exists`);
+        this.store.connections.set(next.tenantId, { ...next, version: 1 }, transactionOf(tx));
+        return;
+      }
+      const available =
+        current !== undefined &&
+        (current.onboardingLeaseUntil === null ||
+          current.onboardingLeaseUntil.getTime() < now.getTime());
+      if (current === undefined || !matchesExpectation(current, expected) || !available) {
+        throw new ConcurrencyError(`Connection ${next.tenantId}: onboarding lease acquire lost`);
+      }
+      this.store.connections.set(
+        next.tenantId,
+        { ...next, version: expected.version + 1 },
+        transactionOf(tx),
+      );
+    });
+  }
+
+  renewOnboardingLease(
+    tenantId: string,
+    holder: LeaseHolder,
+    leaseUntil: Date,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    return settle(() => {
+      const current = this.store.connections.get(tenantId);
+      if (current === undefined || !holdsLease(current, holder, now)) {
+        throw new ConcurrencyError(`Connection ${tenantId}: onboarding lease renew lost`);
+      }
+      this.store.connections.set(
+        tenantId,
+        { ...current, onboardingLeaseUntil: leaseUntil, version: holder.version + 1 },
+        transactionOf(tx),
+      );
+    });
+  }
+
+  writeAsLeaseOwner(
+    next: WhatsAppConnectionRecord,
+    holder: LeaseHolder,
+    now: Date,
+    tx?: unknown,
+  ): Promise<void> {
+    return settle(() => {
+      const current = this.store.connections.get(next.tenantId);
+      if (current === undefined || !holdsLease(current, holder, now)) {
+        throw new ConcurrencyError(
+          `Connection ${next.tenantId}: onboarding lease owner write lost`,
+        );
+      }
+      this.store.connections.set(
+        next.tenantId,
+        { ...next, version: holder.version + 1 },
+        transactionOf(tx),
+      );
+    });
+  }
 }
+
+const matchesExpectation = (row: WhatsAppConnectionRecord, e: OnboardingExpectation): boolean =>
+  row.version === e.version &&
+  row.onboardingStage === e.onboardingStage &&
+  row.onboardingAttemptId === e.onboardingAttemptId &&
+  row.phoneNumberId === e.phoneNumberId &&
+  row.wabaId === e.wabaId;
+
+/** `lease_owner = me AND lease_until > now`, evaluated at write time on top of the row shape. */
+const holdsLease = (row: WhatsAppConnectionRecord, h: LeaseHolder, now: Date): boolean =>
+  matchesExpectation(row, h) &&
+  row.onboardingLeaseOwner === h.owner &&
+  row.onboardingLeaseUntil !== null &&
+  row.onboardingLeaseUntil.getTime() > now.getTime();
 
 export class InMemoryPhoneDirectory implements PhoneDirectory {
   /** `platformTenantId` mirrors the Prisma twin: every row of the directory carries the platform scope. */
@@ -105,7 +204,22 @@ export class InMemoryPhoneDirectory implements PhoneDirectory {
     tx?: unknown,
   ): Promise<ClaimResult> {
     return settle(() => {
-      const t = transactionOf(tx);
+      const joined = transactionOf(tx);
+      // Standalone: an owned (synchronous, hence atomic) transaction that is undone on a non-claim.
+      const t = joined ?? new InMemoryOutreachTransaction(undefined);
+      const result = this.claimIn(t, phoneNumberId, wabaId, shopTenantId);
+      if (joined === undefined && result !== "claimed") for (const undo of t.undo.reverse()) undo();
+      return result;
+    });
+  }
+
+  private claimIn(
+    t: InMemoryOutreachTransaction,
+    phoneNumberId: string,
+    wabaId: string,
+    shopTenantId: string,
+  ): ClaimResult {
+    {
       const mine = this.rows().find((r) => r.shopTenantId === shopTenantId);
       if (mine !== undefined && !(mine.phoneNumberId === phoneNumberId && mine.wabaId === wabaId)) {
         this.store.directory.delete(mine.phoneNumberId, t);
@@ -143,7 +257,7 @@ export class InMemoryPhoneDirectory implements PhoneDirectory {
         return "waba_in_use";
       }
       return "phone_in_use";
-    });
+    }
   }
 
   release(phoneNumberId: string, shopTenantId: string, tx?: unknown): Promise<void> {
@@ -178,6 +292,12 @@ export class InMemoryTemplateRepository implements TemplateRepository {
       list: () => settle(() => this.scope(tenantId, wabaId)),
       findByMetaId: (id) =>
         settle(() => this.scope(tenantId, wabaId).find((x) => x.metaTemplateId === id) ?? null),
+      findByNameLanguage: (name, language) =>
+        settle(
+          () =>
+            this.scope(tenantId, wabaId).find((x) => x.name === name && x.language === language) ??
+            null,
+        ),
       insert: (row) =>
         settle(() => {
           if (this.store.templates.get(row.id) !== undefined || this.nameClash(row)) return false;
@@ -222,29 +342,23 @@ export class InMemoryTemplateRepository implements TemplateRepository {
   }
 
   insert(r: TemplateRecord, tx?: unknown): Promise<"inserted" | "duplicate"> {
-    return settle(() => {
-      const idTaken = this.store.templates.get(r.id) !== undefined;
-      if (!idTaken && !this.nameClash(r)) {
-        this.store.templates.set(r.id, { ...r, version: 1 }, transactionOf(tx));
-        return "inserted";
-      }
-      if (this.nameClash(r)) return "duplicate";
-      throw unexpectedConflict();
-    });
+    return insertTemplateRow(this.access(r.tenantId, r.wabaId, tx), r);
   }
 
   replaceSnapshot(
     tenantId: string,
     wabaId: string,
     rows: FetchedTemplate[],
-    fetch: { revisionsAtFetchStart: ReadonlyMap<string, number>; fetchStartedAt: Date },
+    fetch: {
+      revisionsAtFetchStart: ReadonlyMap<string, number>;
+      revisionsByLocalId?: ReadonlyMap<string, number>;
+      fetchStartedAt: Date;
+    },
     tx?: unknown,
   ): Promise<TemplateSnapshotResult> {
-    return reconcileSnapshotTo(
-      this.access(tenantId, wabaId, tx),
-      { tenantId, wabaId },
-      rows,
-      fetch,
+    // Multi-step write: joins the caller's transaction or runs in its own, rolled back if any row throws.
+    return this.store.owned(tx, (t) =>
+      reconcileSnapshotTo(this.access(tenantId, wabaId, t), { tenantId, wabaId }, rows, fetch),
     );
   }
 
@@ -323,9 +437,12 @@ export class InMemoryContactRepository implements ContactRepository {
           (r.email !== null && c.email === r.email),
       );
       if (expectedVersion === 0) {
-        if (this.store.contacts.get(r.id) !== undefined || identityClash) {
+        const sameTenantWinner = identityClash || this.scope(r.tenantId).some((c) => c.id === r.id);
+        if (sameTenantWinner) {
           throw new ConcurrencyError(`Contact ${r.id} collides with an existing contact`);
         }
+        // A UUID already used by ANOTHER tenant is a global PK collision with no winner in this tenant.
+        if (this.store.contacts.get(r.id) !== undefined) throw unexpectedConflict();
         this.store.contacts.set(r.id, { ...r, ...CONSENT_DEFAULTS, version: 1 }, t);
         return;
       }
@@ -608,13 +725,26 @@ export class InMemoryEmailSendCounterRepository implements EmailSendCounterRepos
     tx: unknown,
   ): Promise<"reserved" | "hour_cap" | "day_cap"> {
     return settle(() => {
+      const t = transactionOf(tx);
+      if (t === undefined) {
+        throw new Error(
+          "EmailSendCounterRepository.reserve requires the unit of work's transaction client",
+        );
+      }
       const hourKey = `${tenantId}|hour|${Math.floor(now.getTime() / HOUR_MS) * HOUR_MS}`;
       const dayKey = `${tenantId}|day|${Math.floor(now.getTime() / DAY_MS) * DAY_MS}`;
-      const hour = this.store.emailCounters.get(hourKey) ?? 0;
-      const day = this.store.emailCounters.get(dayKey) ?? 0;
+      // 1. seed both window rows (a no-op when they exist), like the Prisma twin
+      if (this.store.emailCounters.get(hourKey) === undefined)
+        this.store.emailCounters.set(hourKey, 0, t);
+      if (this.store.emailCounters.get(dayKey) === undefined)
+        this.store.emailCounters.set(dayKey, 0, t);
+      const hour = this.store.emailCounters.get(hourKey);
+      const day = this.store.emailCounters.get(dayKey);
+      if (hour === undefined || day === undefined) {
+        throw new Error("email send counter rows are missing after the seed");
+      }
       if (hour >= limits.perHour) return "hour_cap";
       if (day >= limits.perDay) return "day_cap";
-      const t = transactionOf(tx);
       this.store.emailCounters.set(hourKey, hour + 1, t);
       this.store.emailCounters.set(dayKey, day + 1, t);
       return "reserved";

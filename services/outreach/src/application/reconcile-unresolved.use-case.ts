@@ -30,10 +30,14 @@ export class ReconcileUnresolvedOutbound implements UseCase<
     let marked = 0;
     for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
       const olderThan = new Date(deps.clock.now().getTime() - deps.unresolvedAfterMs);
-      const rows = await deps.outbound.listUnresolved(tenantId, olderThan, BATCH);
+      // Listing and settlement both run in the tenant-scoped unit of work: under RLS a row discovered outside the
+      // scope could not be matched (or would be invisible) when it is settled.
+      const rows = await deps.unitOfWork.run(tenantId, (tx) =>
+        deps.outbound.listUnresolved(tenantId, olderThan, BATCH, tx),
+      );
       let progressed = 0;
       for (const candidate of rows) {
-        const done = await deps.unitOfWork.run(async (tx) => {
+        const done = await deps.unitOfWork.run(tenantId, async (tx) => {
           const result = await deps.outbound.markUnknownIfPending(
             tenantId,
             candidate.id,
