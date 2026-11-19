@@ -334,6 +334,35 @@ describe("ConnectWhatsApp — resume", () => {
     expect(registerPins(kit)).toEqual(["123456", "123456"]);
   });
 
+  it("a lease that expires after the use case's own check but before the write executes: the write is refused and nothing changes", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const real = kit.mem.connections;
+    let expireOnce = true;
+    kit.deps.connections = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "writeAsLeaseOwner") {
+          return (...args: Parameters<typeof real.writeAsLeaseOwner>) => {
+            // the use case read the row while its lease was live; the clock passes the expiry before the write runs
+            if (expireOnce) {
+              expireOnce = false;
+              kit.clock.advance(ONBOARDING_LEASE_MS + 1);
+            }
+            return target.writeAsLeaseOwner(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    expect(errorOf(await connect(kit)).message).toBe("CONNECTION_CHANGED");
+    const stored = await row(kit);
+    // only the acquire wrote: the version, stage and the (now expired) lease are exactly as the acquire left them
+    expect(stored).toMatchObject({ version: 1, onboardingStage: null, status: "onboarding" });
+    expect(kit.whatsapp.count("subscribeApp")).toBe(0);
+    expect(kit.whatsapp.count("registerPhone")).toBe(0);
+  });
+
   it("a resume with an unusable code continues with the sealed token", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();

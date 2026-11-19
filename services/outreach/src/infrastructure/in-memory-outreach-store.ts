@@ -18,10 +18,11 @@ import type {
 export class InMemoryOutreachTransaction {
   readonly undo: Array<() => void> = [];
   constructor(readonly tenantId: string | undefined) {}
-}
 
-export function transactionOf(tx: unknown): InMemoryOutreachTransaction | undefined {
-  return tx instanceof InMemoryOutreachTransaction ? tx : undefined;
+  /** Restores exactly what this transaction wrote, newest first, and forgets the steps. */
+  rollback(): void {
+    for (const undo of this.undo.splice(0).reverse()) undo();
+  }
 }
 
 /** Runs `fn` synchronously and returns its outcome as a settled promise (a throw becomes a rejection). */
@@ -103,8 +104,10 @@ export class InMemoryOutreachStore {
   readonly inbound = new MemoryTable<InboundRecord>();
   readonly unmatched = new MemoryTable<UnmatchedStatusRecord>();
   readonly emailCounters = new MemoryTable<number>();
-  /** Serialises every transaction of this store: concurrent units of work never interleave their writes. */
+  /** Serialises every access of this store: a standalone call never sees (or races) an open transaction's writes. */
   private readonly lock = new Mutex();
+  /** The ONE live transaction handle (the lock admits one at a time); invalidated when its transaction ends. */
+  private active: InMemoryOutreachTransaction | undefined;
 
   /** Runs `work` in ONE transaction at a time; an error undoes exactly this transaction's writes. */
   async transaction<T>(
@@ -113,22 +116,64 @@ export class InMemoryOutreachStore {
   ): Promise<T> {
     const release = await this.lock.acquire();
     const tx = new InMemoryOutreachTransaction(tenantId);
+    this.active = tx;
     try {
       return await work(tx);
     } catch (error) {
-      for (const undo of tx.undo.reverse()) undo();
+      tx.rollback();
       throw error;
     } finally {
+      this.active = undefined;
       release();
     }
   }
 
   /**
-   * A multi-step write: joins the caller's transaction, or (standalone) runs in its own serialised transaction that is
-   * rolled back when the work throws, so a half-applied operation is never committed.
+   * The live transaction `tx` denotes: `undefined` when no transaction was given (a standalone call), the handle
+   * itself when it is this store's open one. A handle that is closed, or that belongs to another store, is an error:
+   * its writes could never be rolled back, so it must not be accepted as if it were live.
+   */
+  liveTransaction(tx: unknown): InMemoryOutreachTransaction | undefined {
+    if (!(tx instanceof InMemoryOutreachTransaction)) return undefined;
+    if (tx !== this.active) {
+      throw new Error("the transaction handle is not an open transaction of this store");
+    }
+    return tx;
+  }
+
+  /**
+   * One repository operation. Joined to the live same-store transaction `tx` it runs at once (it must not relock: that
+   * transaction already holds the gate). Standalone it goes through the SAME gate, so it waits for an open transaction
+   * to commit or abort and only then reads or writes committed state; its own writes roll back if it throws.
+   */
+  access<T>(
+    tx: unknown,
+    work: (t: InMemoryOutreachTransaction, standalone: boolean) => T,
+  ): Promise<T> {
+    let joined: InMemoryOutreachTransaction | undefined;
+    try {
+      joined = this.liveTransaction(tx);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+    if (joined !== undefined) {
+      const live = joined;
+      return settle(() => work(live, false));
+    }
+    return this.transaction(undefined, (t) => settle(() => work(t, true)));
+  }
+
+  /**
+   * A multi-step (awaiting) write: joins the caller's live transaction, or (standalone) runs in its own gated
+   * transaction that is rolled back when the work throws, so a half-applied operation is never committed.
    */
   owned<T>(tx: unknown, work: (t: InMemoryOutreachTransaction) => Promise<T>): Promise<T> {
-    const joined = transactionOf(tx);
+    let joined: InMemoryOutreachTransaction | undefined;
+    try {
+      joined = this.liveTransaction(tx);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
     return joined === undefined ? this.transaction(undefined, work) : work(joined);
   }
 }

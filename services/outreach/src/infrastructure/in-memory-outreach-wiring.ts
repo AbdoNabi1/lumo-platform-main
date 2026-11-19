@@ -26,7 +26,7 @@ export function createInMemoryOutreach(deps: {
   return {
     store,
     unitOfWork: new InMemoryOutreachUnitOfWork(store),
-    connections: new InMemoryWhatsAppConnectionRepository(store),
+    connections: new InMemoryWhatsAppConnectionRepository(store, deps.clock),
     directory: new InMemoryPhoneDirectory(store, deps.platformTenantId),
     templates: new InMemoryTemplateRepository(store),
     contacts: new InMemoryContactRepository(store),

@@ -22,6 +22,11 @@ describe.runIf(Boolean(databaseUrl))("outreach repositories (integration)", () =
       // random per harness: the directory's phone / WABA / shop keys are globally unique in a shared database
       platformTenantId: `platform-${crypto.randomUUID()}`,
     });
-    return Promise.resolve({ repos, close: () => prisma.$disconnect() });
+    return Promise.resolve({
+      repos,
+      // the lease is judged by the DATABASE clock, which no test can set: let real time pass
+      elapse: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      close: () => prisma.$disconnect(),
+    });
   });
 });

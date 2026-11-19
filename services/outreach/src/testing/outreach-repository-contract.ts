@@ -31,6 +31,11 @@ export interface OutreachRepositorySet extends OutreachRepositories {
 
 export interface OutreachContractHarness {
   repos: OutreachRepositorySet;
+  /**
+   * Lets `ms` of the LEASE clock pass. A twin with an injected clock advances it (the default); a real database cannot be
+   * advanced, so its harness really sleeps.
+   */
+  elapse?: (ms: number) => Promise<void>;
   close?: () => Promise<void>;
 }
 
@@ -53,6 +58,18 @@ function mutableClock(): MutableClock {
 }
 
 class Boom extends Error {}
+
+/** A promise whose resolver is handed out: a barrier between two concurrent steps. */
+function barrier() {
+  let open!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { reached, open };
+}
+
+/** A short real pause, so a concurrent caller has reached its gate / database lock before the next barrier opens. */
+const settleTicks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 30));
 
 async function rollsBack(
   uow: OutreachUnitOfWork,
@@ -249,11 +266,21 @@ export function runOutreachRepositoryContract(
     const open = async (): Promise<{
       r: OutreachRepositorySet;
       clock: MutableClock;
+      elapse: (ms: number) => Promise<void>;
       close: () => Promise<void>;
     }> => {
       const clock = mutableClock();
       const h = await factory({ clock });
-      return { r: h.repos, clock, close: h.close ?? (() => Promise.resolve()) };
+      const advance = (ms: number): Promise<void> => {
+        clock.set(new Date(clock.now().getTime() + ms));
+        return Promise.resolve();
+      };
+      return {
+        r: h.repos,
+        clock,
+        elapse: h.elapse ?? advance,
+        close: h.close ?? (() => Promise.resolve()),
+      };
     };
 
     describe("WhatsAppConnectionRepository", () => {
@@ -327,7 +354,10 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
-      describe("onboarding lease operations (checked at write time)", () => {
+      describe("onboarding lease operations (the database clock decides, at the write)", () => {
+        /** Short enough for a real sleep against PostgreSQL, long enough that no live-lease check races it. */
+        const LEASE_MS = 2500;
+        const PAST_LEASE_MS = LEASE_MS + 250;
         const holderOf = (row: WhatsAppConnectionRecord, owner: string) => ({
           version: row.version,
           onboardingStage: row.onboardingStage,
@@ -336,131 +366,222 @@ export function runOutreachRepositoryContract(
           wabaId: row.wabaId,
           owner,
         });
-        const seedLeased = async (r: OutreachRepositorySet, tenant: string, owner: string) => {
-          await r.connections.save(
+        const seedLeased = async (
+          r: OutreachRepositorySet,
+          tenant: string,
+          owner: string,
+          leaseMs = LEASE_MS,
+        ) => {
+          await r.connections.acquireOnboardingLease(
             connection(tenant, {
               status: "onboarding",
               onboardingStage: "registering",
               onboardingAttemptId: randomUUID(),
               onboardingLeaseOwner: owner,
-              onboardingLeaseUntil: at(100),
+              onboardingLeaseUntil: null,
             }),
-            0,
+            null,
+            leaseMs,
           );
           return (await r.connections.get(tenant))!;
         };
-
-        it("acquire with no expected row creates it at version 1 holding the lease, and refuses an existing row", async () => {
+        it("acquire with no expected row creates it at version 1 holding a database-derived lease, and refuses an existing row", async () => {
           expect.hasAssertions();
-          const { r, close } = await open();
+          const { r, elapse, close } = await open();
           const tenant = uid("t");
           const owner = randomUUID();
+          const callerDeadline = new Date("2100-01-01T00:00:00.000Z");
           const next = connection(tenant, {
             status: "onboarding",
             onboardingStage: "verified",
             onboardingAttemptId: randomUUID(),
             onboardingLeaseOwner: owner,
-            onboardingLeaseUntil: at(100),
+            onboardingLeaseUntil: callerDeadline,
           });
-          await r.connections.acquireOnboardingLease(next, null, at(0));
-          expect(await r.connections.get(tenant)).toMatchObject({
-            version: 1,
-            onboardingLeaseOwner: owner,
-            onboardingLeaseUntil: at(100),
-          });
+          await r.connections.acquireOnboardingLease(next, null, LEASE_MS);
+          const created = (await r.connections.get(tenant))!;
+          expect(created).toMatchObject({ version: 1, onboardingLeaseOwner: owner });
+          // the deadline comes from the clock at the write, never from the caller's record
+          expect(created.onboardingLeaseUntil!.getTime()).toBeLessThan(callerDeadline.getTime());
           await expect(
-            r.connections.acquireOnboardingLease(next, null, at(0)),
+            r.connections.acquireOnboardingLease(next, null, LEASE_MS),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          // and the lease it created really lasts LEASE_MS: live now, over after it
+          await expect(
+            r.connections.writeAsLeaseOwner(created, holderOf(created, owner), LEASE_MS),
+          ).resolves.toBeUndefined();
+          await elapse(PAST_LEASE_MS);
+          const live = (await r.connections.get(tenant))!;
+          await expect(
+            r.connections.writeAsLeaseOwner(live, holderOf(live, owner), LEASE_MS),
           ).rejects.toBeInstanceOf(ConcurrencyError);
           await close();
         });
 
-        it("acquire refuses to install a lease that is missing or already expired", async () => {
+        it("two concurrent acquires of a missing row: exactly one wins, the insert conflict loses", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const attempt = (owner: string) =>
+            r.connections.acquireOnboardingLease(
+              connection(tenant, {
+                status: "onboarding",
+                onboardingStage: "verified",
+                onboardingAttemptId: randomUUID(),
+                onboardingLeaseOwner: owner,
+              }),
+              null,
+              LEASE_MS,
+            );
+          const [x, y] = [randomUUID(), randomUUID()];
+          const settled = await Promise.allSettled([attempt(x), attempt(y)]);
+          expect(settled.filter((s) => s.status === "fulfilled")).toHaveLength(1);
+          const lost = settled.find((s) => s.status === "rejected");
+          expect(lost?.status === "rejected" && lost.reason).toBeInstanceOf(ConcurrencyError);
+          expect((await r.connections.get(tenant))?.version).toBe(1);
+          await close();
+        });
+
+        it("acquire refuses to install no lease: no owner, or a lease length that is not positive", async () => {
           expect.hasAssertions();
           const { r, close } = await open();
           const tenant = uid("t");
           const base = connection(tenant, { status: "onboarding", onboardingStage: "verified" });
-          await expect(r.connections.acquireOnboardingLease(base, null, at(0))).rejects.toThrow(
+          await expect(r.connections.acquireOnboardingLease(base, null, LEASE_MS)).rejects.toThrow(
             /install a lease/,
           );
-          await expect(
-            r.connections.acquireOnboardingLease(
-              { ...base, onboardingLeaseOwner: randomUUID(), onboardingLeaseUntil: at(0) },
-              null,
-              at(0),
-            ),
-          ).rejects.toThrow(/install a lease/);
+          for (const leaseMs of [0, -1, Number.NaN]) {
+            await expect(
+              r.connections.acquireOnboardingLease(
+                { ...base, onboardingLeaseOwner: randomUUID() },
+                null,
+                leaseMs,
+              ),
+            ).rejects.toThrow(/install a lease/);
+          }
           expect(await r.connections.get(tenant)).toBeNull();
           await close();
         });
 
         it("acquire over a row: a live lease or a stale expectation loses; an expired lease is taken and the version bumps", async () => {
           expect.hasAssertions();
-          const { r, close } = await open();
+          const { r, elapse, close } = await open();
           const tenant = uid("t");
           const row = await seedLeased(r, tenant, randomUUID());
           const mine = randomUUID();
-          const take = (expectVersion: number, now: Date) =>
+          const take = (expectVersion: number) =>
             r.connections.acquireOnboardingLease(
-              { ...row, onboardingLeaseOwner: mine, onboardingLeaseUntil: at(500) },
+              { ...row, onboardingLeaseOwner: mine },
               { ...holderOf(row, "x"), version: expectVersion },
-              now,
+              LEASE_MS,
             );
-          await expect(take(row.version, at(50))).rejects.toBeInstanceOf(ConcurrencyError);
-          await expect(take(row.version + 7, at(150))).rejects.toBeInstanceOf(ConcurrencyError);
-          expect((await r.connections.get(tenant))?.onboardingLeaseUntil).toEqual(at(100));
-          await take(row.version, at(150));
+          await expect(take(row.version)).rejects.toBeInstanceOf(ConcurrencyError);
+          await elapse(PAST_LEASE_MS);
+          await expect(take(row.version + 7)).rejects.toBeInstanceOf(ConcurrencyError);
+          expect((await r.connections.get(tenant))?.version).toBe(row.version);
+          await take(row.version);
           expect(await r.connections.get(tenant)).toMatchObject({
             version: row.version + 1,
             onboardingLeaseOwner: mine,
-            onboardingLeaseUntil: at(500),
           });
           await close();
         });
 
-        it("renew extends only the current live owner's lease", async () => {
+        it("renew extends only the current live owner's lease, by the database clock", async () => {
           expect.hasAssertions();
-          const { r, close } = await open();
+          const { r, elapse, close } = await open();
           const tenant = uid("t");
           const owner = randomUUID();
           const row = await seedLeased(r, tenant, owner);
           await expect(
-            r.connections.renewOnboardingLease(
-              tenant,
-              holderOf(row, randomUUID()),
-              at(300),
-              at(50),
-            ),
+            r.connections.renewOnboardingLease(tenant, holderOf(row, randomUUID()), 2 * LEASE_MS),
           ).rejects.toBeInstanceOf(ConcurrencyError);
+          await r.connections.renewOnboardingLease(tenant, holderOf(row, owner), 4 * LEASE_MS);
+          const renewed = (await r.connections.get(tenant))!;
+          expect(renewed).toMatchObject({ version: row.version + 1, onboardingLeaseOwner: owner });
+          expect(renewed.onboardingLeaseUntil!.getTime()).toBeGreaterThan(
+            row.onboardingLeaseUntil!.getTime(),
+          );
+          // the original deadline passes; the renewed lease is still live for its owner
+          await elapse(PAST_LEASE_MS);
           await expect(
-            r.connections.renewOnboardingLease(tenant, holderOf(row, owner), at(300), at(100)),
-          ).rejects.toBeInstanceOf(ConcurrencyError);
-          await r.connections.renewOnboardingLease(tenant, holderOf(row, owner), at(300), at(50));
-          expect(await r.connections.get(tenant)).toMatchObject({
-            version: row.version + 1,
-            onboardingLeaseUntil: at(300),
-            onboardingLeaseOwner: owner,
-          });
+            r.connections.writeAsLeaseOwner(renewed, holderOf(renewed, owner), LEASE_MS),
+          ).resolves.toBeUndefined();
           await close();
         });
 
-        it("an owner write after the lease expired between the read and the write fails with no version bump", async () => {
+        it("renew after the lease expired is refused with no version bump", async () => {
           expect.hasAssertions();
-          const { r, close } = await open();
+          const { r, elapse, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          await elapse(PAST_LEASE_MS);
+          await expect(
+            r.connections.renewOnboardingLease(tenant, holderOf(row, owner), LEASE_MS),
+          ).rejects.toBeInstanceOf(ConcurrencyError);
+          expect((await r.connections.get(tenant))?.version).toBe(row.version);
+          await close();
+        });
+
+        it("an owner write after the lease expired fails with no version, stage or lease change", async () => {
+          expect.hasAssertions();
+          const { r, elapse, close } = await open();
           const tenant = uid("t");
           const owner = randomUUID();
           const row = await seedLeased(r, tenant, owner);
           const next = { ...row, onboardingStage: "registered" as const };
-          // the row was read while live (at(50)); the write happens at the expiry instant and after it
+          await elapse(PAST_LEASE_MS);
           await expect(
-            r.connections.writeAsLeaseOwner(next, holderOf(row, owner), at(100)),
+            r.connections.writeAsLeaseOwner(next, holderOf(row, owner), LEASE_MS),
           ).rejects.toBeInstanceOf(ConcurrencyError);
-          await expect(
-            r.connections.writeAsLeaseOwner(next, holderOf(row, owner), at(101)),
-          ).rejects.toBeInstanceOf(ConcurrencyError);
-          expect(await r.connections.get(tenant)).toMatchObject({
-            version: row.version,
-            onboardingStage: "registering",
+          expect(await r.connections.get(tenant)).toEqual(row);
+          await close();
+        });
+
+        it("a live owner write prepared before the lease expired, but executed after it, changes nothing", async () => {
+          expect.hasAssertions();
+          const { r, elapse, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          const prepared = barrier();
+          const expired = barrier();
+          // the write is prepared from a row that is live, then the clock passes the expiry before it executes
+          const write = r.unitOfWork.run(tenant, async (tx) => {
+            const live = (await r.connections.get(tenant, tx))!;
+            const next = { ...live, onboardingStage: "registered" as const };
+            prepared.open();
+            await expired.reached;
+            await r.connections.writeAsLeaseOwner(next, holderOf(live, owner), LEASE_MS, tx);
           });
+          await prepared.reached;
+          await elapse(PAST_LEASE_MS);
+          expired.open();
+          await expect(write).rejects.toBeInstanceOf(ConcurrencyError);
+          expect(await r.connections.get(tenant)).toEqual(row);
+          await close();
+        });
+
+        it("a renew prepared before the lease expired, but executed after it, changes nothing", async () => {
+          expect.hasAssertions();
+          const { r, elapse, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          const prepared = barrier();
+          const expired = barrier();
+          const renew = r.unitOfWork.run(tenant, async (tx) => {
+            const live = (await r.connections.get(tenant, tx))!;
+            prepared.open();
+            await expired.reached;
+            await r.connections.renewOnboardingLease(tenant, holderOf(live, owner), LEASE_MS, tx);
+          });
+          await prepared.reached;
+          await elapse(PAST_LEASE_MS);
+          expired.open();
+          await expect(renew).rejects.toBeInstanceOf(ConcurrencyError);
+          expect(await r.connections.get(tenant)).toEqual(row);
           await close();
         });
 
@@ -474,7 +595,7 @@ export function runOutreachRepositoryContract(
             r.connections.writeAsLeaseOwner(
               { ...row, onboardingStage: "registered" },
               holderOf(row, randomUUID()),
-              at(50),
+              LEASE_MS,
             ),
           ).rejects.toBeInstanceOf(ConcurrencyError);
           await r.connections.writeAsLeaseOwner(
@@ -485,7 +606,7 @@ export function runOutreachRepositoryContract(
               onboardingLeaseUntil: null,
             },
             holderOf(row, owner),
-            at(50),
+            LEASE_MS,
           );
           expect(await r.connections.get(tenant)).toMatchObject({
             version: row.version + 1,
@@ -498,9 +619,30 @@ export function runOutreachRepositoryContract(
             r.connections.writeAsLeaseOwner(
               { ...row, onboardingStage: "registered" },
               holderOf(row, owner),
-              at(60),
+              LEASE_MS,
             ),
           ).rejects.toBeInstanceOf(ConcurrencyError);
+          await close();
+        });
+
+        it("an owner write that keeps the lease re-derives the deadline from the clock at the write", async () => {
+          expect.hasAssertions();
+          const { r, close } = await open();
+          const tenant = uid("t");
+          const owner = randomUUID();
+          const row = await seedLeased(r, tenant, owner);
+          const callerDeadline = new Date("2100-01-01T00:00:00.000Z");
+          await r.connections.writeAsLeaseOwner(
+            { ...row, lastError: "x", onboardingLeaseUntil: callerDeadline },
+            holderOf(row, owner),
+            LEASE_MS,
+          );
+          const written = (await r.connections.get(tenant))!;
+          expect(written).toMatchObject({ lastError: "x", onboardingLeaseOwner: owner });
+          expect(written.onboardingLeaseUntil!.getTime()).toBeLessThan(callerDeadline.getTime());
+          expect(written.onboardingLeaseUntil!.getTime()).toBeGreaterThanOrEqual(
+            row.onboardingLeaseUntil!.getTime(),
+          );
           await close();
         });
 
@@ -512,10 +654,10 @@ export function runOutreachRepositoryContract(
           const row = await seedLeased(r, a, owner);
           const foreign = { ...row, tenantId: b };
           await expect(
-            r.connections.writeAsLeaseOwner(foreign, holderOf(foreign, owner), at(50)),
+            r.connections.writeAsLeaseOwner(foreign, holderOf(foreign, owner), LEASE_MS),
           ).rejects.toBeInstanceOf(ConcurrencyError);
           await expect(
-            r.connections.renewOnboardingLease(b, holderOf(row, owner), at(300), at(50)),
+            r.connections.renewOnboardingLease(b, holderOf(row, owner), LEASE_MS),
           ).rejects.toBeInstanceOf(ConcurrencyError);
           expect((await r.connections.get(a))?.version).toBe(row.version);
           await close();
@@ -1336,6 +1478,38 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("a complete local-id map is authoritative on a miss: a row inserted after the fetch started is raced, never judged by another row's revision", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const [metaM, metaM2] = [uid("meta"), uid("meta")];
+        const a = template(tenant, waba, { metaTemplateId: metaM, revision: 1 });
+        await r.templates.insert(a);
+        // an old fetch captured A (provider id M, revision 1)
+        const oldFetch = {
+          revisionsAtFetchStart: new Map([[metaM, 1]]),
+          revisionsByLocalId: new Map([[a.id, 1]]),
+          fetchStartedAt: at(50),
+        };
+        // a later sync moves A to provider id M2, then B is inserted carrying M at revision 1
+        await r.templates.replaceSnapshot(tenant, waba, [fetched(a, { metaTemplateId: metaM2 })], {
+          ...oldFetch,
+          fetchStartedAt: at(100),
+        });
+        const b = template(tenant, waba, { metaTemplateId: metaM, revision: 1 });
+        await r.templates.insert(b);
+        const before = await r.templates.list(tenant, waba);
+        expect(before.find((x) => x.id === a.id)).toMatchObject({
+          metaTemplateId: metaM2,
+          revision: 2,
+        });
+        // applying the OLD empty snapshot: A raced by its revision, B (unknown to the old fetch) raced too
+        const res = await r.templates.replaceSnapshot(tenant, waba, [], oldFetch);
+        expect(res).toEqual({ statusChanges: [], raced: 2, fenceNewer: 0 });
+        expect(await r.templates.list(tenant, waba)).toEqual(before);
+        await close();
+      });
+
       it("markDeletedByName deletes every language of that name only", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
@@ -1693,6 +1867,36 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("a standalone reader and claimant of a key an open unit of work holds wait for it: after the abort the claimant is the committed winner", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const tenant = uid("t");
+        const key = uid("idem");
+        const held = outbound(tenant, { idempotencyKey: key });
+        const rival = outbound(tenant, { idempotencyKey: key });
+        const inserted = barrier();
+        const abort = barrier();
+        const a = r.unitOfWork.run(tenant, async (tx) => {
+          expect(await r.outbound.insert(held, tx)).toBe("inserted");
+          inserted.open();
+          await abort.reached;
+          throw new Boom("abort the holder");
+        });
+        await inserted.reached;
+        // both start while A is open and uncommitted
+        const reader = r.outbound.findByIdempotencyKey(tenant, key);
+        const claimant = r.outbound.insert(rival);
+        await settleTicks();
+        abort.open();
+        await expect(a).rejects.toBeInstanceOf(Boom);
+        expect(await reader).toBeNull();
+        expect(await claimant).toBe("inserted");
+        const committed = await r.outbound.findByIdempotencyKey(tenant, key);
+        expect(committed?.id).toBe(rival.id);
+        expect(await r.outbound.findById(tenant, held.id)).toBeNull();
+        await close();
+      });
+
       it("a unique conflict that is not the replay key propagates and rolls the unit of work back", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
@@ -2022,21 +2226,40 @@ export function runOutreachRepositoryContract(
         const { r, close } = await open();
         const tenant = uid("t");
         const limits = { perHour: 1, perDay: 100 };
+        const firstReserved = barrier();
+        const abort = barrier();
         const aborted = r.unitOfWork.run(tenant, async (tx) => {
           expect(await r.emailCounters.reserve(tenant, T0, limits, tx)).toBe("reserved");
-          // stay open while the second reservation starts, then abort
-          await new Promise((resolve) => setTimeout(resolve, 30));
+          firstReserved.open();
+          await abort.reached;
           throw new Boom("abort the first reservation");
         });
-        const second = new Promise<"reserved" | "hour_cap" | "day_cap">((resolve, reject) => {
-          setTimeout(() => {
-            reserve(r, tenant, T0, limits).then(resolve, reject);
-          }, 5);
-        });
+        // the second reservation starts only after the first one holds its slot, and waits for it
+        await firstReserved.reached;
+        const second = reserve(r, tenant, T0, limits);
+        await settleTicks();
+        abort.open();
         const [first, winner] = await Promise.allSettled([aborted, second]);
         expect(first.status).toBe("rejected");
+        expect(first.status === "rejected" && first.reason).toBeInstanceOf(Boom);
         expect(winner).toEqual({ status: "fulfilled", value: "reserved" });
         // the slot of the committed reservation is held; the aborted one left nothing behind
+        expect(await reserve(r, tenant, T0, limits)).toBe("hour_cap");
+        await close();
+      });
+
+      it("rejects the handle of a unit of work that already finished, and the next valid reservation still succeeds", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const tenant = uid("t");
+        const limits = { perHour: 1, perDay: 5 };
+        let closed: unknown;
+        await r.unitOfWork.run(tenant, (tx) => {
+          closed = tx;
+          return Promise.resolve();
+        });
+        await expect(r.emailCounters.reserve(tenant, T0, limits, closed)).rejects.toThrow();
+        expect(await reserve(r, tenant, T0, limits)).toBe("reserved");
         expect(await reserve(r, tenant, T0, limits)).toBe("hour_cap");
         await close();
       });

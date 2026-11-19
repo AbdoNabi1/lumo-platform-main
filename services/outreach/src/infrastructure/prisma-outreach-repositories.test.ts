@@ -247,6 +247,7 @@ describe("PrismaWhatsAppConnectionRepository arguments", () => {
 
   const ATTEMPT = "00000000-0000-4000-8000-000000000001";
   const OWNER = "00000000-0000-4000-8000-000000000002";
+  const LEASE_MS = 120_000;
   const holder = {
     version: 9,
     onboardingStage: "registering" as const,
@@ -256,125 +257,214 @@ describe("PrismaWhatsAppConnectionRepository arguments", () => {
     owner: OWNER,
   };
   const repo = new PrismaWhatsAppConnectionRepository(deps);
+  const DB_NOW = /clock_timestamp\(\) AT TIME ZONE 'UTC'/;
+  const lockOf = (r: { raw: { kind: string; sql: string; values: unknown[] }[] }) => r.raw[0];
+  /** The row-shape predicate every lease statement carries, with the tenant first. */
+  const SHAPE =
+    /WHERE w\."tenant_id" = \? AND w\."version" = \? AND w\."onboarding_stage" IS NOT DISTINCT FROM \? AND w\."onboarding_attempt_id" IS NOT DISTINCT FROM \?::uuid AND w\."phone_number_id" = \? AND w\."waba_id" = \?/;
+  const SHAPE_VALUES = ["t-1", 9, "registering", ATTEMPT, "phone-1", "waba-1"];
 
-  it("acquire with no expected row creates at version 1 holding the lease; an existing row loses", async () => {
+  it("every lease statement first locks the scoped row, then runs ONE raw conditional write; no delegate call", async () => {
     expect.hasAssertions();
-    const { tx, calls } = recordingClient({ "whatsAppConnection.createMany": [{ count: 0 }] });
-    await expect(
-      repo.acquireOnboardingLease(
-        connectionRecord({ onboardingLeaseUntil: new Date(NOW.getTime() + 1000) }),
-        null,
-        NOW,
-        tx,
-      ),
-    ).rejects.toBeInstanceOf(ConcurrencyError);
-    expect(calls[0]).toMatchObject({
-      method: "createMany",
-      args: {
-        skipDuplicates: true,
-        data: [{ tenantId: "t-1", version: 1, onboardingLeaseOwner: OWNER }],
-      },
-    });
+    const acquired = recordingClient();
+    acquired.execAnswers.push(1);
+    await repo.acquireOnboardingLease(
+      connectionRecord({ onboardingLeaseOwner: OWNER }),
+      { ...holder },
+      LEASE_MS,
+      acquired.tx,
+    );
+    const renewed = recordingClient();
+    renewed.execAnswers.push(1);
+    await repo.renewOnboardingLease("t-1", holder, LEASE_MS, renewed.tx);
+    const written = recordingClient();
+    written.execAnswers.push(1);
+    await repo.writeAsLeaseOwner(connectionRecord(), holder, LEASE_MS, written.tx);
+    for (const run of [acquired, renewed, written]) {
+      expect(run.calls).toEqual([]);
+      expect(run.raw.map((x) => x.kind)).toEqual(["queryRaw", "executeRaw"]);
+      const lock = lockOf(run);
+      expect(lock?.sql).toMatch(
+        /^SELECT "tenant_id" FROM "outreach"\."whatsapp_connections" WHERE "tenant_id" = \? FOR UPDATE$/,
+      );
+      expect(lock?.values).toEqual(["t-1"]);
+    }
   });
 
-  it("acquire over a row: ONE update with tenant + shape + (lease null OR expired at write time) at expected + 1", async () => {
+  it("acquire with no expected row: an existing row loses before any insert; a missing row is created at version 1 with a database-derived deadline", async () => {
     expect.hasAssertions();
-    const { tx, calls } = recordingClient();
-    const until = new Date(NOW.getTime() + 1000);
-    await repo.acquireOnboardingLease(
-      connectionRecord({ onboardingLeaseUntil: until }),
-      { ...holder },
-      NOW,
-      tx,
-    );
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({
-      method: "updateMany",
-      args: {
-        where: {
-          tenantId: "t-1",
-          version: 9,
-          onboardingStage: "registering",
-          onboardingAttemptId: ATTEMPT,
-          phoneNumberId: "phone-1",
-          wabaId: "waba-1",
-          OR: [{ onboardingLeaseUntil: null }, { onboardingLeaseUntil: { lt: NOW } }],
-        },
-        data: { version: 10, onboardingLeaseUntil: until },
-      },
-    });
-    const missed = recordingClient({ "whatsAppConnection.updateMany": [{ count: 0 }] });
+    const existing = recordingClient();
+    existing.rawAnswers.push([{ tenant_id: "t-1" }]);
     await expect(
       repo.acquireOnboardingLease(
-        connectionRecord({ onboardingLeaseUntil: until }),
+        connectionRecord({ onboardingLeaseOwner: OWNER }),
+        null,
+        LEASE_MS,
+        existing.tx,
+      ),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(existing.raw.map((x) => x.kind)).toEqual(["queryRaw"]);
+
+    const fresh = recordingClient();
+    fresh.execAnswers.push(1);
+    await repo.acquireOnboardingLease(
+      connectionRecord({
+        onboardingLeaseOwner: OWNER,
+        onboardingLeaseUntil: new Date("2100-01-01T00:00:00.000Z"),
+      }),
+      null,
+      LEASE_MS,
+      fresh.tx,
+    );
+    const insert = fresh.raw[1];
+    expect(insert?.sql).toMatch(/^INSERT INTO "outreach"\."whatsapp_connections" \(/);
+    expect(insert?.sql).toMatch(DB_NOW);
+    expect(insert?.sql).toMatch(
+      /db\."now" \+ \(\?::double precision \* interval '1 millisecond'\)/,
+    );
+    expect(insert?.sql).toMatch(/ON CONFLICT \("tenant_id"\) DO NOTHING$/);
+    expect(insert?.values).toContain("t-1");
+    expect(insert?.values).toContain(OWNER);
+    expect(insert?.values).toContain(LEASE_MS);
+    // the caller's deadline never reaches the database; no Date is bound at all
+    expect(insert?.values.some((v) => v instanceof Date)).toBe(false);
+    expect(insert?.values).not.toContain("2100-01-01T00:00:00.000Z");
+
+    const raced = recordingClient();
+    raced.execAnswers.push(0);
+    await expect(
+      repo.acquireOnboardingLease(
+        connectionRecord({ onboardingLeaseOwner: OWNER }),
+        null,
+        LEASE_MS,
+        raced.tx,
+      ),
+    ).rejects.toBeInstanceOf(ConcurrencyError);
+  });
+
+  it("acquire over a row: ONE update with tenant + shape + (lease null OR expired by the database clock) at expected + 1", async () => {
+    expect.hasAssertions();
+    const { tx, raw, execAnswers } = recordingClient();
+    execAnswers.push(1);
+    await repo.acquireOnboardingLease(
+      connectionRecord({ onboardingLeaseOwner: OWNER }),
+      { ...holder },
+      LEASE_MS,
+      tx,
+    );
+    const update = raw[1];
+    expect(update?.sql).toMatch(/^UPDATE "outreach"\."whatsapp_connections" AS w SET /);
+    expect(update?.sql).toMatch(DB_NOW);
+    expect(update?.sql).toMatch(SHAPE);
+    expect(update?.sql).toMatch(
+      /AND \(w\."onboarding_lease_until" IS NULL OR w\."onboarding_lease_until" < db\."now"\)$/,
+    );
+    expect(update?.sql).toMatch(/"version" = \?, "updated_at" = db\."now" FROM/);
+    expect(update?.values).toEqual(expect.arrayContaining([...SHAPE_VALUES, 10, OWNER, LEASE_MS]));
+    expect(update?.values.some((v) => v instanceof Date)).toBe(false);
+
+    const missed = recordingClient();
+    missed.execAnswers.push(0);
+    await expect(
+      repo.acquireOnboardingLease(
+        connectionRecord({ onboardingLeaseOwner: OWNER }),
         { ...holder },
-        NOW,
+        LEASE_MS,
         missed.tx,
       ),
     ).rejects.toBeInstanceOf(ConcurrencyError);
   });
 
-  it("acquire refuses to install a lease that is missing or not after now, before any write", async () => {
+  it("acquire refuses to install no lease (no owner, or a length that is not positive) before any statement", async () => {
     expect.hasAssertions();
-    const { tx, calls } = recordingClient();
+    const { tx, raw, calls } = recordingClient();
     await expect(
       repo.acquireOnboardingLease(
         connectionRecord({ onboardingLeaseOwner: null }),
         { ...holder },
-        NOW,
+        LEASE_MS,
         tx,
       ),
     ).rejects.toThrow(/install a lease/);
-    await expect(
-      repo.acquireOnboardingLease(connectionRecord({ onboardingLeaseUntil: NOW }), null, NOW, tx),
-    ).rejects.toThrow(/install a lease/);
+    for (const leaseMs of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        repo.acquireOnboardingLease(
+          connectionRecord({ onboardingLeaseOwner: OWNER }),
+          null,
+          leaseMs,
+          tx,
+        ),
+      ).rejects.toThrow(/install a lease/);
+    }
+    expect(raw).toHaveLength(0);
     expect(calls).toHaveLength(0);
   });
 
-  it("renew and owner write put lease_owner = me AND lease_until > now (write-time) into the update itself", async () => {
+  it("renew and owner write put lease_owner = me AND lease_until > the database clock into the update itself", async () => {
     expect.hasAssertions();
-    const leaseWhere = {
-      tenantId: "t-1",
-      version: 9,
-      onboardingStage: "registering",
-      onboardingAttemptId: ATTEMPT,
-      phoneNumberId: "phone-1",
-      wabaId: "waba-1",
-      onboardingLeaseOwner: OWNER,
-      onboardingLeaseUntil: { gt: NOW },
-    };
+    const OWNER_PREDICATE =
+      /AND w\."onboarding_lease_owner" = \?::uuid AND w\."onboarding_lease_until" > db\."now"$/;
     const renewed = recordingClient();
-    const until = new Date(NOW.getTime() + 5000);
-    await repo.renewOnboardingLease("t-1", holder, until, NOW, renewed.tx);
-    expect(renewed.calls).toEqual([
-      {
-        model: "whatsAppConnection",
-        method: "updateMany",
-        args: { where: leaseWhere, data: { onboardingLeaseUntil: until, version: 10 } },
-      },
-    ]);
+    renewed.execAnswers.push(1);
+    await repo.renewOnboardingLease("t-1", holder, LEASE_MS, renewed.tx);
+    const renew = renewed.raw[1];
+    expect(renew?.sql).toMatch(DB_NOW);
+    expect(renew?.sql).toMatch(SHAPE);
+    expect(renew?.sql).toMatch(OWNER_PREDICATE);
+    expect(renew?.sql).toMatch(
+      /SET "onboarding_lease_until" = db\."now" \+ \(\?::double precision \* interval '1 millisecond'\), "version" = \?, "updated_at" = db\."now" FROM/,
+    );
+    expect(renew?.values).toEqual([LEASE_MS, 10, ...SHAPE_VALUES, OWNER]);
+
     const written = recordingClient();
+    written.execAnswers.push(1);
     await repo.writeAsLeaseOwner(
       connectionRecord({ onboardingStage: "registered" }),
       holder,
-      NOW,
+      LEASE_MS,
       written.tx,
     );
-    expect(written.calls).toHaveLength(1);
-    expect(written.calls[0]).toMatchObject({
-      method: "updateMany",
-      args: { where: leaseWhere, data: { version: 10, onboardingStage: "registered" } },
-    });
+    const write = written.raw[1];
+    expect(write?.sql).toMatch(DB_NOW);
+    expect(write?.sql).toMatch(SHAPE);
+    expect(write?.sql).toMatch(OWNER_PREDICATE);
+    expect(write?.values).toEqual(
+      expect.arrayContaining([...SHAPE_VALUES, OWNER, 10, "registered", LEASE_MS]),
+    );
+    expect(write?.values.some((v) => v instanceof Date)).toBe(false);
+  });
+
+  it("a release clears both lease columns inside the same conditional write", async () => {
+    expect.hasAssertions();
+    const { tx, raw, execAnswers } = recordingClient();
+    execAnswers.push(1);
+    await repo.writeAsLeaseOwner(
+      connectionRecord({ onboardingLeaseOwner: null, onboardingLeaseUntil: null }),
+      holder,
+      LEASE_MS,
+      tx,
+    );
+    const write = raw[1];
+    expect(write?.sql).toMatch(
+      /"onboarding_lease_until" = CASE WHEN \?::uuid IS NULL THEN NULL ELSE db\."now" \+ \(\?::double precision \* interval '1 millisecond'\) END/,
+    );
+    // the new owner is bound as null, the holder as a predicate
+    expect(write?.values).toContain(null);
+    expect(write?.values).toContain(OWNER);
   });
 
   it("a renew or an owner write that matches no row (expired, other owner, bumped version) is a ConcurrencyError", async () => {
     expect.hasAssertions();
-    const miss = () => recordingClient({ "whatsAppConnection.updateMany": [{ count: 0 }] }).tx;
-    await expect(repo.renewOnboardingLease("t-1", holder, NOW, NOW, miss())).rejects.toBeInstanceOf(
+    const miss = () => {
+      const run = recordingClient();
+      run.execAnswers.push(0);
+      return run.tx;
+    };
+    await expect(repo.renewOnboardingLease("t-1", holder, LEASE_MS, miss())).rejects.toBeInstanceOf(
       ConcurrencyError,
     );
     await expect(
-      repo.writeAsLeaseOwner(connectionRecord(), holder, NOW, miss()),
+      repo.writeAsLeaseOwner(connectionRecord(), holder, LEASE_MS, miss()),
     ).rejects.toBeInstanceOf(ConcurrencyError);
   });
 });

@@ -194,21 +194,25 @@ describe.runIf(Boolean(databaseUrl))(
       ).toBe("hour_cap");
     });
 
-    it("an owner write after the lease expired between read and write fails without a version bump", async () => {
+    it("an owner write prepared while the lease was live but executed after the DATABASE clock passed it fails without a version bump", async () => {
       expect.hasAssertions();
       const tenant = uid("t");
       const owner = randomUUID();
-      const until = new Date(T0.getTime() + 60_000);
-      await repos.connections.save(
-        {
-          ...connectionFor(tenant),
-          status: "onboarding",
-          onboardingStage: "registering",
-          onboardingAttemptId: randomUUID(),
-          onboardingLeaseOwner: owner,
-          onboardingLeaseUntil: until,
-        },
-        0,
+      const leaseMs = 400;
+      await repos.unitOfWork.run(tenant, (tx) =>
+        repos.connections.acquireOnboardingLease(
+          {
+            ...connectionFor(tenant),
+            status: "onboarding",
+            onboardingStage: "registering",
+            onboardingAttemptId: randomUUID(),
+            onboardingLeaseOwner: owner,
+            onboardingLeaseUntil: null,
+          },
+          null,
+          leaseMs,
+          tx,
+        ),
       );
       const row = (await repos.connections.get(tenant))!;
       const holder = {
@@ -220,14 +224,12 @@ describe.runIf(Boolean(databaseUrl))(
         owner,
       };
       await expect(
-        repos.unitOfWork.run(tenant, (tx) =>
-          repos.connections.writeAsLeaseOwner(
-            { ...row, onboardingStage: "registered" },
-            holder,
-            new Date(until.getTime() + 1),
-            tx,
-          ),
-        ),
+        repos.unitOfWork.run(tenant, async (tx) => {
+          const prepared = { ...row, onboardingStage: "registered" as const };
+          // no caller-supplied time exists: only the database clock at execution can expire the lease
+          await new Promise((resolve) => setTimeout(resolve, leaseMs + 300));
+          await repos.connections.writeAsLeaseOwner(prepared, holder, leaseMs, tx);
+        }),
       ).rejects.toThrow(/lease owner write lost|owner write lost/);
       expect(await repos.connections.get(tenant)).toMatchObject({
         version: row.version,

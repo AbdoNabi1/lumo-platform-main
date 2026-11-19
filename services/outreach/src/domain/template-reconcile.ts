@@ -231,10 +231,14 @@ export async function reconcileSnapshotTo(
     fetchStartedAt: Date;
   },
 ): Promise<TemplateSnapshotResult> {
-  /** Start revision of a local row: by its stable local id first, then by the provider id it carried. */
+  /**
+   * Start revision of a local row. A supplied local-id map is COMPLETE and authoritative: exactly its entry for the row,
+   * and an absent entry means the row did not exist when the fetch started (the caller treats `undefined` as raced), so
+   * another row's provider-keyed revision is never borrowed. Only a caller that supplied no local map falls back to the
+   * provider id the row carried.
+   */
   const startRevision = (l: TemplateRecord, adoptedMetaId?: string): number | undefined => {
-    const byLocal = fetch.revisionsByLocalId?.get(l.id);
-    if (byLocal !== undefined) return byLocal;
+    if (fetch.revisionsByLocalId !== undefined) return fetch.revisionsByLocalId.get(l.id);
     const metaId = l.metaTemplateId ?? adoptedMetaId;
     return metaId === undefined ? undefined : fetch.revisionsAtFetchStart.get(metaId);
   };

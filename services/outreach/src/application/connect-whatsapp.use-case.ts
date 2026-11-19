@@ -300,6 +300,7 @@ export class ConnectWhatsApp implements UseCase<
             : live && same
               ? "reconnect"
               : "new";
+        // An estimate: the repository replaces it with `databaseNow + ONBOARDING_LEASE_MS` at the write.
         const leaseUntil = new Date(now.getTime() + ONBOARDING_LEASE_MS);
         const attemptId =
           kind === "resume" && row?.onboardingAttemptId
@@ -334,21 +335,21 @@ export class ConnectWhatsApp implements UseCase<
           await deps.connections.acquireOnboardingLease(
             fresh,
             row === null ? null : expectationOf(row),
-            now,
+            ONBOARDING_LEASE_MS,
             tx,
           );
         } else if (kind === "resume") {
           await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId },
             expectationOf(row),
-            now,
+            ONBOARDING_LEASE_MS,
             tx,
           );
         } else if (kind === "reconnect") {
           await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId, onboardingStage: "verified" },
             expectationOf(row),
-            now,
+            ONBOARDING_LEASE_MS,
             tx,
           );
         } else {
@@ -357,7 +358,7 @@ export class ConnectWhatsApp implements UseCase<
           await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId },
             expectationOf(row),
-            now,
+            ONBOARDING_LEASE_MS,
             tx,
           );
         }
@@ -402,8 +403,14 @@ export class ConnectWhatsApp implements UseCase<
           onboardingLeaseUntil:
             opts.release === true ? null : new Date(now.getTime() + ONBOARDING_LEASE_MS),
         };
-        // The expiry is checked again by the conditional write itself, at write time (not only by `holds` above).
-        await deps.connections.writeAsLeaseOwner(next, holderOf(row, lease), deps.clock.now(), tx);
+        // `holds` is an early check on the row just read. The write itself judges the lease against the DATABASE clock
+        // at execution and derives the new deadline from it (the `onboardingLeaseUntil` above is only an estimate).
+        await deps.connections.writeAsLeaseOwner(
+          next,
+          holderOf(row, lease),
+          ONBOARDING_LEASE_MS,
+          tx,
+        );
         if (opts.extra !== undefined) await opts.extra(tx);
         return { ...next, version: row.version + 1 };
       });
@@ -462,7 +469,12 @@ export class ConnectWhatsApp implements UseCase<
           onboardingLeaseOwner: null,
           onboardingLeaseUntil: null,
         };
-        await deps.connections.writeAsLeaseOwner(next, holderOf(row, lease), deps.clock.now(), tx);
+        await deps.connections.writeAsLeaseOwner(
+          next,
+          holderOf(row, lease),
+          ONBOARDING_LEASE_MS,
+          tx,
+        );
         const claim = await deps.directory.claim(phoneNumberId, wabaId, tenantId, tx);
         if (claim !== "claimed") {
           throw new NotClaimed(claim === "phone_in_use" ? "PHONE_IN_USE" : "WABA_IN_USE");

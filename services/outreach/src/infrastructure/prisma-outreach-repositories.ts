@@ -103,98 +103,172 @@ export class PrismaWhatsAppConnectionRepository implements WhatsAppConnectionRep
     });
   }
 
+  /**
+   * The lease operations are judged by the DATABASE wall clock at the statement that writes: the scoped row is locked
+   * (`SELECT … FOR UPDATE`) in the same transaction, THEN one raw conditional statement samples
+   * `clock_timestamp() AT TIME ZONE 'UTC'` (the `timestamp(3)` columns hold UTC) exactly once, compares the lease against
+   * it and derives the new deadline from it. No caller-supplied time can make an expired lease look live. Every value is
+   * bound; the tenant is in every WHERE; a count other than one loses.
+   */
   async acquireOnboardingLease(
     next: WhatsAppConnectionRecord,
     expected: OnboardingExpectation | null,
-    now: Date,
+    leaseMs: number,
     tx?: unknown,
   ): Promise<void> {
-    if (!installsLease(next, now)) throw new Error(LEASE_REQUIRED);
-    await withClient(this.deps.prisma, next.tenantId, tx, async (c) => {
+    if (next.onboardingLeaseOwner === null || !isValidLeaseMs(leaseMs)) {
+      throw new Error(LEASE_REQUIRED);
+    }
+    const tenantId = next.tenantId;
+    const v = connectionValues(next);
+    await withClient(this.deps.prisma, tenantId, tx, async (c) => {
+      const exists = await lockConnection(c, tenantId);
       if (expected === null) {
-        const created = await c.whatsAppConnection.createMany({
-          data: [{ tenantId: next.tenantId, ...connectionColumns(next), version: 1 }],
-          skipDuplicates: true,
-        });
-        if (created.count === 0) {
-          throw new ConcurrencyError(
-            `Connection ${next.tenantId} already exists (expected no row)`,
-          );
+        if (exists)
+          throw new ConcurrencyError(`Connection ${tenantId} already exists (expected no row)`);
+        // a concurrent creator that commits first makes the insert a no-op: it loses, exactly like an existing row
+        const created = await c.$executeRaw`
+          INSERT INTO "outreach"."whatsapp_connections" (
+            "tenant_id", "status", "waba_id", "phone_number_id", "display_phone_number", "verified_name",
+            "quality_rating", "messaging_limit_tier", "sealed_credentials", "connected_at", "disconnected_at",
+            "last_status_sync_at", "last_error", "onboarding_attempt_id", "onboarding_stage", "onboarding_failure",
+            "onboarding_lease_owner", "onboarding_lease_until", "version", "updated_at")
+          SELECT ${tenantId}, ${v.status}, ${v.wabaId}, ${v.phoneNumberId}, ${v.displayPhoneNumber}, ${v.verifiedName},
+            ${v.qualityRating}, ${v.messagingLimitTier}, ${v.sealedCredentials}, ${v.connectedAt}::timestamp,
+            ${v.disconnectedAt}::timestamp, ${v.lastStatusSyncAt}::timestamp, ${v.lastError}, ${v.attemptId}::uuid,
+            ${v.stage}, ${v.failure}, ${v.owner}::uuid,
+            db."now" + (${leaseMs}::double precision * interval '1 millisecond'), 1, db."now"
+          FROM (SELECT (clock_timestamp() AT TIME ZONE 'UTC') AS "now") AS db
+          ON CONFLICT ("tenant_id") DO NOTHING`;
+        if (created !== 1) {
+          throw new ConcurrencyError(`Connection ${tenantId} already exists (expected no row)`);
         }
         return;
       }
-      const updated = await c.whatsAppConnection.updateMany({
-        where: {
-          tenantId: next.tenantId,
-          ...expectationWhere(expected),
-          // the lease must be available AT WRITE TIME
-          OR: [{ onboardingLeaseUntil: null }, { onboardingLeaseUntil: { lt: now } }],
-        },
-        data: { ...connectionColumns(next), version: expected.version + 1 },
-      });
-      if (updated.count === 0) throw leaseLost(next.tenantId, "acquire");
+      const updated = await c.$executeRaw`
+        UPDATE "outreach"."whatsapp_connections" AS w SET
+          "status" = ${v.status}, "waba_id" = ${v.wabaId}, "phone_number_id" = ${v.phoneNumberId},
+          "display_phone_number" = ${v.displayPhoneNumber}, "verified_name" = ${v.verifiedName},
+          "quality_rating" = ${v.qualityRating}, "messaging_limit_tier" = ${v.messagingLimitTier},
+          "sealed_credentials" = ${v.sealedCredentials}, "connected_at" = ${v.connectedAt}::timestamp,
+          "disconnected_at" = ${v.disconnectedAt}::timestamp, "last_status_sync_at" = ${v.lastStatusSyncAt}::timestamp,
+          "last_error" = ${v.lastError}, "onboarding_attempt_id" = ${v.attemptId}::uuid,
+          "onboarding_stage" = ${v.stage}, "onboarding_failure" = ${v.failure},
+          "onboarding_lease_owner" = ${v.owner}::uuid,
+          "onboarding_lease_until" = db."now" + (${leaseMs}::double precision * interval '1 millisecond'),
+          "version" = ${expected.version + 1}, "updated_at" = db."now"
+        FROM (SELECT (clock_timestamp() AT TIME ZONE 'UTC') AS "now") AS db
+        WHERE w."tenant_id" = ${tenantId} AND w."version" = ${expected.version}
+          AND w."onboarding_stage" IS NOT DISTINCT FROM ${expected.onboardingStage}
+          AND w."onboarding_attempt_id" IS NOT DISTINCT FROM ${expected.onboardingAttemptId}::uuid
+          AND w."phone_number_id" = ${expected.phoneNumberId} AND w."waba_id" = ${expected.wabaId}
+          AND (w."onboarding_lease_until" IS NULL OR w."onboarding_lease_until" < db."now")`;
+      if (updated !== 1) throw leaseLost(tenantId, "acquire");
     });
   }
 
   async renewOnboardingLease(
     tenantId: string,
     holder: LeaseHolder,
-    leaseUntil: Date,
-    now: Date,
+    leaseMs: number,
     tx?: unknown,
   ): Promise<void> {
+    if (!isValidLeaseMs(leaseMs)) throw new Error(INVALID_LEASE_MS);
     await withClient(this.deps.prisma, tenantId, tx, async (c) => {
-      const updated = await c.whatsAppConnection.updateMany({
-        where: { tenantId, ...holderWhere(holder, now) },
-        data: { onboardingLeaseUntil: leaseUntil, version: holder.version + 1 },
-      });
-      if (updated.count === 0) throw leaseLost(tenantId, "renew");
+      await lockConnection(c, tenantId);
+      const updated = await c.$executeRaw`
+        UPDATE "outreach"."whatsapp_connections" AS w SET
+          "onboarding_lease_until" = db."now" + (${leaseMs}::double precision * interval '1 millisecond'),
+          "version" = ${holder.version + 1}, "updated_at" = db."now"
+        FROM (SELECT (clock_timestamp() AT TIME ZONE 'UTC') AS "now") AS db
+        WHERE w."tenant_id" = ${tenantId} AND w."version" = ${holder.version}
+          AND w."onboarding_stage" IS NOT DISTINCT FROM ${holder.onboardingStage}
+          AND w."onboarding_attempt_id" IS NOT DISTINCT FROM ${holder.onboardingAttemptId}::uuid
+          AND w."phone_number_id" = ${holder.phoneNumberId} AND w."waba_id" = ${holder.wabaId}
+          AND w."onboarding_lease_owner" = ${holder.owner}::uuid AND w."onboarding_lease_until" > db."now"`;
+      if (updated !== 1) throw leaseLost(tenantId, "renew");
     });
   }
 
   async writeAsLeaseOwner(
     next: WhatsAppConnectionRecord,
     holder: LeaseHolder,
-    now: Date,
+    leaseMs: number,
     tx?: unknown,
   ): Promise<void> {
-    await withClient(this.deps.prisma, next.tenantId, tx, async (c) => {
-      const updated = await c.whatsAppConnection.updateMany({
-        where: { tenantId: next.tenantId, ...holderWhere(holder, now) },
-        data: { ...connectionColumns(next), version: holder.version + 1 },
-      });
-      if (updated.count === 0) throw leaseLost(next.tenantId, "owner write");
+    // a write that keeps the lease needs a length; a release (null owner) clears both lease columns
+    if (next.onboardingLeaseOwner !== null && !isValidLeaseMs(leaseMs)) {
+      throw new Error(INVALID_LEASE_MS);
+    }
+    const tenantId = next.tenantId;
+    const v = connectionValues(next);
+    await withClient(this.deps.prisma, tenantId, tx, async (c) => {
+      await lockConnection(c, tenantId);
+      const updated = await c.$executeRaw`
+        UPDATE "outreach"."whatsapp_connections" AS w SET
+          "status" = ${v.status}, "waba_id" = ${v.wabaId}, "phone_number_id" = ${v.phoneNumberId},
+          "display_phone_number" = ${v.displayPhoneNumber}, "verified_name" = ${v.verifiedName},
+          "quality_rating" = ${v.qualityRating}, "messaging_limit_tier" = ${v.messagingLimitTier},
+          "sealed_credentials" = ${v.sealedCredentials}, "connected_at" = ${v.connectedAt}::timestamp,
+          "disconnected_at" = ${v.disconnectedAt}::timestamp, "last_status_sync_at" = ${v.lastStatusSyncAt}::timestamp,
+          "last_error" = ${v.lastError}, "onboarding_attempt_id" = ${v.attemptId}::uuid,
+          "onboarding_stage" = ${v.stage}, "onboarding_failure" = ${v.failure},
+          "onboarding_lease_owner" = ${v.owner}::uuid,
+          "onboarding_lease_until" = CASE WHEN ${v.owner}::uuid IS NULL THEN NULL
+            ELSE db."now" + (${leaseMs}::double precision * interval '1 millisecond') END,
+          "version" = ${holder.version + 1}, "updated_at" = db."now"
+        FROM (SELECT (clock_timestamp() AT TIME ZONE 'UTC') AS "now") AS db
+        WHERE w."tenant_id" = ${tenantId} AND w."version" = ${holder.version}
+          AND w."onboarding_stage" IS NOT DISTINCT FROM ${holder.onboardingStage}
+          AND w."onboarding_attempt_id" IS NOT DISTINCT FROM ${holder.onboardingAttemptId}::uuid
+          AND w."phone_number_id" = ${holder.phoneNumberId} AND w."waba_id" = ${holder.wabaId}
+          AND w."onboarding_lease_owner" = ${holder.owner}::uuid AND w."onboarding_lease_until" > db."now"`;
+      if (updated !== 1) throw leaseLost(tenantId, "owner write");
     });
   }
 }
 
-const LEASE_REQUIRED = "acquireOnboardingLease must install a lease (owner + expiry after now)";
-
-const installsLease = (next: WhatsAppConnectionRecord, now: Date): boolean =>
-  next.onboardingLeaseOwner !== null &&
-  next.onboardingLeaseUntil !== null &&
-  next.onboardingLeaseUntil.getTime() > now.getTime();
+const LEASE_REQUIRED =
+  "acquireOnboardingLease must install a lease (an owner and a positive, finite lease length)";
+const INVALID_LEASE_MS = "the lease length must be a positive, finite number of milliseconds";
 
 const leaseLost = (tenantId: string, what: string): ConcurrencyError =>
   new ConcurrencyError(
     `Connection ${tenantId}: onboarding lease ${what} lost (row or lease changed)`,
   );
 
-/** The row-shape part of every lease predicate: version, stage, attempt, phone and WABA. */
-const expectationWhere = (e: OnboardingExpectation) => ({
-  version: e.version,
-  onboardingStage: e.onboardingStage,
-  onboardingAttemptId: e.onboardingAttemptId,
-  phoneNumberId: e.phoneNumberId,
-  wabaId: e.wabaId,
-});
+/** Locks the scoped row for the rest of the transaction, so the write's clock sample comes after any competing writer. */
+async function lockConnection(c: TransactionClient, tenantId: string): Promise<boolean> {
+  const rows = await c.$queryRaw<{ tenant_id: string }[]>`
+    SELECT "tenant_id" FROM "outreach"."whatsapp_connections" WHERE "tenant_id" = ${tenantId} FOR UPDATE`;
+  return rows.length > 0;
+}
 
-/** An owner write: the row shape AND `lease_owner = me AND lease_until > now`, both evaluated by the update itself. */
-const holderWhere = (h: LeaseHolder, now: Date) => ({
-  ...expectationWhere(h),
-  onboardingLeaseOwner: h.owner,
-  onboardingLeaseUntil: { gt: now },
-});
+const isoOrNull = (d: Date | null): string | null => (d === null ? null : d.toISOString());
+
+/** The bound values of a whole connection row; dates travel as ISO text and are cast to `timestamp` (UTC) in SQL. */
+function connectionValues(r: WhatsAppConnectionRecord) {
+  return {
+    status: r.status,
+    wabaId: r.wabaId,
+    phoneNumberId: r.phoneNumberId,
+    displayPhoneNumber: r.displayPhoneNumber,
+    verifiedName: r.verifiedName,
+    qualityRating: r.qualityRating,
+    messagingLimitTier: r.messagingLimitTier,
+    sealedCredentials: r.sealedCredentials,
+    connectedAt: isoOrNull(r.connectedAt),
+    disconnectedAt: isoOrNull(r.disconnectedAt),
+    lastStatusSyncAt: isoOrNull(r.lastStatusSyncAt),
+    lastError: r.lastError,
+    attemptId: r.onboardingAttemptId,
+    stage: r.onboardingStage,
+    failure: r.onboardingFailure,
+    owner: r.onboardingLeaseOwner,
+  };
+}
+
+const isValidLeaseMs = (leaseMs: number): boolean => Number.isFinite(leaseMs) && leaseMs > 0;
 
 export interface PrismaPhoneDirectoryDeps extends PrismaOutreachDeps {
   /** The platform scope: every directory row carries it as `tenant_id` (like `tenancy.staff_directory`). */
