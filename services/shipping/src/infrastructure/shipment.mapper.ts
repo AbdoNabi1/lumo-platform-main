@@ -23,6 +23,8 @@ export interface ShipmentPackageJson {
 export interface ShippingLabelJson {
   readonly labelId: string;
   readonly trackingNumber: string;
+  /** Absent on legacy labels and on rows written before local carriers. */
+  readonly carrierDeliveryId?: string;
 }
 export interface DeliveryEstimateJson {
   readonly windowStart: string;
@@ -107,7 +109,11 @@ export class ShipmentMapper {
             : must(CarrierService.create(row.carrierService), "carrier service"),
         label: isSet(row.label)
           ? must(
-              ShippingLabel.create(row.label.labelId, row.label.trackingNumber),
+              ShippingLabel.create(
+                row.label.labelId,
+                row.label.trackingNumber,
+                row.label.carrierDeliveryId,
+              ),
               "shipping label",
             )
           : undefined,
@@ -145,7 +151,13 @@ export class ShipmentMapper {
       label:
         shipment.label === undefined
           ? {}
-          : { labelId: shipment.label.labelId, trackingNumber: shipment.label.trackingNumber },
+          : {
+              labelId: shipment.label.labelId,
+              trackingNumber: shipment.label.trackingNumber,
+              ...(shipment.label.carrierDeliveryId === undefined
+                ? {}
+                : { carrierDeliveryId: shipment.label.carrierDeliveryId }),
+            },
       trackingNumber: shipment.trackingNumber?.value ?? null,
       trackingEvents: shipment.trackingEvents.map((t) => ({
         id: t.id.toString(),

@@ -1,7 +1,11 @@
 import { Entity, type UniqueEntityId } from "@platform/domain";
 
 export type ShippingAttemptKind = "label" | "carrier" | "retry" | "carrier_webhook";
-export type ShippingAttemptOutcome = "succeeded" | "failed";
+/**
+ * `pending` (local carriers, Ruling 4): a carrier label request that has started but whose result
+ * is not yet known. It is settled append-only, by a later `label` attempt with the same reference.
+ */
+export type ShippingAttemptOutcome = "succeeded" | "failed" | "pending";
 
 interface ShippingAttemptProps {
   readonly kind: ShippingAttemptKind;

@@ -16,9 +16,21 @@ export interface ShipmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<Shipment | null>;
-  /** Looks up the shipment created for a given fulfillment order (Phase A.30 admin Order Detail panel). */
+  /**
+   * Looks up the shipment created for a given fulfillment order (Phase A.30 admin Order Detail
+   * panel). A fulfillment can have more than one shipment over time (a carrier-cancelled one and
+   * its replacement), so this returns the newest by creation time.
+   */
   findByFulfillmentRef(
     fulfillmentRef: string,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Shipment | null>;
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string, tx?: unknown): Promise<number>;
+  /** Looks up a carrier's shipment by its tracking number within one tenant (carrier webhooks); newest first. */
+  findByTrackingNumber(
+    carrier: string,
+    trackingNumber: string,
     tenantId: string,
     tx?: unknown,
   ): Promise<Shipment | null>;

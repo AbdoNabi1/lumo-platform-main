@@ -3,7 +3,7 @@
 // localhost and grants only the 14 `:read` permissions the Phase A.30/A.31 screens needed. The
 // admin controllers declare 66 distinct permission strings, so the other 52 denied. Regenerate the
 // list below with:
-//   grep -rhoE '"[a-z0-9]+:(read|write|create|update|delete|manage)"' apps/admin/src/interfaces/*.ts | sort -u
+//   grep -rhoE '"[a-z0-9_]+:[a-z_]+"' apps/admin/src/interfaces/*.ts | sort -u
 //
 // Idempotent — safe to re-run.
 //
@@ -102,6 +102,8 @@ const PERMISSIONS = [
   "seo:read",
   "shipping:create",
   "shipping:read",
+  "shipping:read_settings",
+  "shipping:update_settings",
   "tenancy:create",
   "tenancy:read",
   "tenancy:update",

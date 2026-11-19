@@ -193,6 +193,7 @@ describe("T5.6 pricing write functions", () => {
     expect(result).toEqual({
       outcome: "invalid",
       message: "Invalid input",
+      code: "VALIDATION",
       fields: [{ field: "currency", message: "must be 3 characters" }],
     });
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
 import type { OrderListItemDto } from "@/lib/api/orders";
@@ -11,6 +11,12 @@ import type { Dictionary } from "@/messages/en";
 import { BulkResultNote, OrdersBulkBar, type BulkOutcome } from "./orders-bulk-bar";
 import { OrderFulfillmentStatusBadge, OrderPaymentStatusBadge } from "./order-status-badge";
 import { OrdersExportDialog, type OrdersExportContext } from "./orders-export-dialog";
+import {
+  OrderSelectCheckbox,
+  OrdersSelectionProvider,
+  useOptionalOrdersSelection,
+  useOrdersSelection,
+} from "./orders-selection";
 
 /** Columns that only fit from the medium breakpoint up. On a phone: Order, Customer, Total, Payment status. */
 const FROM_MD = "hidden md:table-cell";
@@ -93,51 +99,74 @@ function SelectAllCheckbox({
   );
 }
 
-/**
- * The orders list, like Shopify's: a checkbox column (select all on this page), the short number with an
- * Archived badge, a relative date, the customer, the total and both statuses. While rows are selected the
- * header becomes the bulk-action bar. Selection is per page: it clears whenever the page's orders change.
- * The Order link is stretched over the row; the checkboxes sit above it (`z-10`). `now` is injectable so
- * the relative date is testable.
- */
-export function OrdersTable({
-  orders,
-  t,
-  locale,
-  now,
-  permissions = NO_ORDER_ACTIONS,
-  exportContext,
-}: {
+/** The enabled carriers the bulk bar can ship with (Bosta part 1). */
+export type OrdersTableCarriers = readonly {
+  readonly key: string;
+  readonly displayName: string;
+}[];
+
+interface OrdersTableProps {
   readonly orders: readonly OrderListItemDto[];
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly now?: Date;
+  /** Adds the checkbox column and the bulk bar; on by default. Needs no provider (the table supplies one). */
+  readonly selectable?: boolean;
   /** The bulk actions this staff member may take (server-decided); none when omitted. */
   readonly permissions?: OrderActionPermissions;
   /** What the list is showing; when given, "Export selected" opens the export dialog on the selection. */
   readonly exportContext?: OrdersExportContext | undefined;
-}) {
+  /** When given, the bulk bar also offers Ship with <carrier> / Print waybills on the same selection. */
+  readonly carriers?: OrdersTableCarriers | undefined;
+}
+
+/**
+ * The orders list, like Shopify's: a checkbox column (select all on this page), the short number with an
+ * Archived badge, a relative date, the customer, the total and both statuses. While rows are selected the
+ * header becomes the one bulk-action bar: order operations (fulfill, capture, archive, tags, export,
+ * packing slips) and, when carriers are passed, Bosta ship / print waybills, all on the same selection
+ * (`OrdersSelectionProvider`, max 50; the table supplies its own when none is above it). Selection is per
+ * page: it clears whenever the page's orders change. The Order link is stretched over the row; the
+ * checkboxes sit above it (`z-10`). `now` is injectable so the relative date is testable.
+ */
+export function OrdersTable(props: OrdersTableProps) {
+  const inherited = useOptionalOrdersSelection();
+  if (inherited !== null) return <OrdersTableRows {...props} />;
+  return (
+    <OrdersSelectionProvider>
+      <OrdersTableRows {...props} />
+    </OrdersSelectionProvider>
+  );
+}
+
+function OrdersTableRows({
+  orders,
+  t,
+  locale,
+  now,
+  selectable = true,
+  permissions = NO_ORDER_ACTIONS,
+  exportContext,
+  carriers,
+}: OrdersTableProps) {
   const reference = now ?? new Date();
   const pageKey = orders.map((order) => order.id).join(",");
-  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const { ids, held, setAll, clear } = useOrdersSelection();
   const [outcome, setOutcome] = useState<BulkOutcome | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => {
-    setSelected(new Set());
-  }, [pageKey]);
+    clear();
+  }, [pageKey, clear]);
 
-  const selectedOrders = orders.filter((order) => selected.has(order.id));
+  const selectedOrders = orders.filter((order) => ids.includes(order.id));
   const allSelected = orders.length > 0 && selectedOrders.length === orders.length;
-  const toggleAll = () =>
-    setSelected(allSelected ? new Set() : new Set(orders.map((order) => order.id)));
-  const toggleOne = (orderId: string) =>
-    setSelected((previous) => {
-      const next = new Set(previous);
-      if (next.has(orderId)) next.delete(orderId);
-      else next.add(orderId);
-      return next;
-    });
+  const toggleAll = () => {
+    if (allSelected) clear();
+    else setAll(orders.map((order) => order.id));
+  };
+  // The bar stays up after an all-success bulk ship (nothing selected) until it is cleared, so focus has a target.
+  const barVisible = selectable && (selectedOrders.length > 0 || held);
 
   const selectAll = (
     <SelectAllCheckbox
@@ -147,6 +176,7 @@ export function OrdersTable({
       label={t.ordersPage.selectAll}
     />
   );
+  const leading = (cell: ReactNode | null) => (selectable ? cell : null);
 
   return (
     <div className="flex flex-col">
@@ -160,7 +190,7 @@ export function OrdersTable({
       )}
       <Table aria-label={t.ordersPage.title}>
         <TableHeader>
-          {selectedOrders.length > 0 ? (
+          {barVisible ? (
             <TableRow>
               <TableHead className="w-10">{selectAll}</TableHead>
               <TableHead colSpan={9}>
@@ -169,19 +199,20 @@ export function OrdersTable({
                   t={t}
                   locale={locale}
                   permissions={permissions}
+                  carriers={carriers}
                   onExportSelected={
                     exportContext === undefined ? undefined : () => setExportOpen(true)
                   }
                   onFinished={(next) => {
                     setOutcome(next);
-                    setSelected(new Set());
+                    clear();
                   }}
                 />
               </TableHead>
             </TableRow>
           ) : (
             <TableRow>
-              <TableHead className="w-10">{selectAll}</TableHead>
+              {leading(<TableHead className="w-10">{selectAll}</TableHead>)}
               <TableHead>{t.ordersPage.columns.order}</TableHead>
               <TableHead className={FROM_MD}>{t.ordersPage.columns.date}</TableHead>
               <TableHead>{t.ordersPage.columns.customer}</TableHead>
@@ -201,20 +232,18 @@ export function OrdersTable({
               <TableRow
                 key={order.id}
                 className="hover:bg-muted/50 relative"
-                data-state={selected.has(order.id) ? "selected" : undefined}
+                data-state={ids.includes(order.id) ? "selected" : undefined}
               >
-                <TableCell className="relative z-10 w-10">
-                  <input
-                    type="checkbox"
-                    className="accent-primary size-4"
-                    checked={selected.has(order.id)}
-                    onChange={() => toggleOne(order.id)}
-                    aria-label={t.ordersPage.selectOrder.replace(
-                      "{orderNumber}",
-                      order.orderNumber,
-                    )}
-                  />
-                </TableCell>
+                {leading(
+                  <TableCell className="relative z-10 w-10">
+                    <OrderSelectCheckbox
+                      orderId={order.id}
+                      orderNumber={order.orderNumber}
+                      t={t}
+                      label={t.ordersPage.selectOrder.replace("{orderNumber}", order.orderNumber)}
+                    />
+                  </TableCell>,
+                )}
                 <TableCell className="font-semibold">
                   <span className="inline-flex items-center gap-2">
                     <Link

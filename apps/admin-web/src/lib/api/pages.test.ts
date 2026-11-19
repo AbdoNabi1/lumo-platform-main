@@ -105,6 +105,10 @@ describe("pages API client (Part 2, spec 2.4)", () => {
         { title: {}, body: {}, metaDescription: {}, expectedVersion: 1 },
         "k",
       ),
-    ).toEqual({ outcome: "conflict", message: "VERSION_CONFLICT: changed elsewhere" });
+    ).toEqual({
+      outcome: "conflict",
+      message: "VERSION_CONFLICT: changed elsewhere",
+      code: "VERSION_CONFLICT",
+    });
   });
 });

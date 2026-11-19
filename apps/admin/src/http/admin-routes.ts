@@ -54,6 +54,7 @@ import { mediaLibraryRoutes } from "./media-library-routes";
 import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
+import { publicCarrierWebhookRoutes } from "./public-carrier-webhook-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
@@ -101,6 +102,8 @@ import { securitySessionsRoutes } from "./security-sessions-routes";
 import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
 import { shippingZonesRoutes } from "./shipping-zones-routes";
+import { carrierSettingsRoutes } from "./carrier-settings-routes";
+import { carrierShippingRoutes } from "./carrier-shipping-routes";
 import { taxesRoutes } from "./taxes-routes";
 import { storeBillingRoutes } from "./store-billing-routes";
 import { storeDomainsRoutes } from "./store-domains-routes";
@@ -2232,6 +2235,7 @@ export function adminRoutes(
     ...checkoutRoutes(admin),
     ...paymentsRoutes(admin),
     ...paymentsWebhookRoutes(admin),
+    ...publicCarrierWebhookRoutes(admin),
     ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
     ...orderOperationsRoutes(admin),
@@ -2240,6 +2244,8 @@ export function adminRoutes(
     ...draftOrderRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
+    ...carrierSettingsRoutes(admin),
+    ...carrierShippingRoutes(admin),
     ...taxesRoutes(admin),
     ...returnsRoutes(admin),
     ...reviewsRoutes(admin),

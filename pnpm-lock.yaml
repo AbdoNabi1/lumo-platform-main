@@ -80,6 +80,9 @@ importers:
       '@platform/automation':
         specifier: workspace:*
         version: link:../../services/automation
+      '@platform/carrier-bosta':
+        specifier: workspace:*
+        version: link:../../packages/carrier-bosta
       '@platform/cart':
         specifier: workspace:*
         version: link:../../services/cart
@@ -440,6 +443,9 @@ importers:
       '@platform/automation':
         specifier: workspace:*
         version: link:../../services/automation
+      '@platform/carrier-bosta':
+        specifier: workspace:*
+        version: link:../../packages/carrier-bosta
       '@platform/cart':
         specifier: workspace:*
         version: link:../../services/cart
@@ -810,6 +816,31 @@ importers:
       '@types/node':
         specifier: ^22.7.5
         version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
+  packages/carrier-bosta:
+    dependencies:
+      '@platform/regions':
+        specifier: workspace:*
+        version: link:../regions
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
       '@vitest/coverage-v8':
         specifier: ^2.1.4
         version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
@@ -3882,6 +3913,9 @@ importers:
       '@platform/repository':
         specifier: workspace:*
         version: link:../../packages/repository
+      '@platform/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types

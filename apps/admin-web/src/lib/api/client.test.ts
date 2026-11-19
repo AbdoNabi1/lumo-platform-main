@@ -10,7 +10,8 @@ vi.mock("jose", () => ({
   jwtVerify: jwtVerifyMock,
 }));
 
-const { currentTenantRef, getAdminApi, mutateAdminApi } = await import("./client");
+const { currentTenantRef, getAdminApi, mutateAdminApi, postAdminApiForBytes } =
+  await import("./client");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -34,6 +35,24 @@ afterEach(() => {
 });
 
 describe("mutateAdminApi", () => {
+  it("surfaces the carrier error code from a 409 envelope", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "CARRIER_CREDENTIALS_REJECTED",
+          message: "rejected",
+        }),
+      ),
+    );
+    const result = await mutateAdminApi(
+      "/api/v1/shipping/carriers/bosta",
+      { method: "PUT" },
+      isRecord,
+    );
+    expect(result).toMatchObject({ outcome: "conflict", code: "CARRIER_CREDENTIALS_REJECTED" });
+  });
+
   it("keeps the HTTP status on an error answer (a 503 is read by status, not by wording)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503, { message: "x" }));
     vi.stubGlobal("fetch", fetchMock);
@@ -72,6 +91,7 @@ describe("mutateAdminApi", () => {
       outcome: "invalid",
       message: "Invalid input",
       fields: [{ field: "sku", message: "must not be empty" }],
+      code: "VALIDATION",
     });
   });
 
@@ -83,7 +103,7 @@ describe("mutateAdminApi", () => {
 
     const result = await mutateAdminApi("/api/v1/products", { method: "POST", body: {} }, isRecord);
 
-    expect(result).toEqual({ outcome: "invalid", message: "bad", fields: [] });
+    expect(result).toEqual({ outcome: "invalid", message: "bad", fields: [], code: "VALIDATION" });
   });
 
   it("maps a 409 to conflict, using the API's own message", async () => {
@@ -98,7 +118,7 @@ describe("mutateAdminApi", () => {
       isRecord,
     );
 
-    expect(result).toEqual({ outcome: "conflict", message: "already in flight" });
+    expect(result).toEqual({ outcome: "conflict", message: "already in flight", code: "CONFLICT" });
   });
 
   it("maps a 401 to unauthorized", async () => {
@@ -165,6 +185,45 @@ describe("mutateAdminApi", () => {
 
     const result = await mutateAdminApi("/api/v1/products", { method: "POST" }, isRecord);
     expect(result.outcome).toBe("error");
+  });
+});
+
+describe("postAdminApiForBytes", () => {
+  it("returns the response bytes on 200", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([37, 80, 68, 70])));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await postAdminApiForBytes("/api/v1/shipments/awb", { orderIds: ["a"] }, 1000);
+    expect(result).toEqual({ outcome: "ok", bytes: new Uint8Array([37, 80, 68, 70]) });
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ orderIds: ["a"] }));
+  });
+
+  it("maps 409 to conflict with the order numbers and code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(409, { code: "AWB_NOT_AVAILABLE", orderNumbers: ["1001", 5, "1002"] }),
+        ),
+    );
+    expect(await postAdminApiForBytes("/x", {})).toEqual({
+      outcome: "conflict",
+      code: "AWB_NOT_AVAILABLE",
+      orderNumbers: ["1001", "1002"],
+    });
+  });
+
+  it("maps 401/403, 404, other statuses and network failures", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 403 })));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "unauthorized" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 404 })));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "not_found" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 500 })));
+    expect(await postAdminApiForBytes("/x", {})).toMatchObject({ outcome: "error" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+    expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "error", message: "down" });
   });
 });
 

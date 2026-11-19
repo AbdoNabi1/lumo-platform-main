@@ -1,0 +1,6 @@
+{
+  "success": false,
+  "message": "User is not authorized!",
+  "errorCode": 1007,
+  "data": null
+}

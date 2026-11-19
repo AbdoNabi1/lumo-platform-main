@@ -30,6 +30,7 @@
     "@platform/admin": "workspace:*",
     "@platform/auth": "workspace:*",
     "@platform/automation": "workspace:*",
+    "@platform/carrier-bosta": "workspace:*",
     "@platform/cart": "workspace:*",
     "@platform/catalog": "workspace:*",
     "@platform/checkout": "workspace:*",

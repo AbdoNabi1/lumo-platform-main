@@ -197,6 +197,10 @@ vi.mock("./client", async (importOriginal) => {
       captures.push({ method: "GET", path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });
     }),
+    postAdminApiForBytes: vi.fn((requestPath: string) => {
+      captures.push({ method: "POST", path: requestPath, file: currentFile, fn: currentFn });
+      return Promise.resolve({ outcome: "error", message: "mocked" });
+    }),
     mutateAdminApi: vi.fn((requestPath: string, init: { readonly method: string }) => {
       captures.push({ method: init.method, path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });

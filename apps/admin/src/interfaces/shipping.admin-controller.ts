@@ -78,6 +78,15 @@ export class ShippingAdminController {
     return this.shipping.retry(input);
   }
 
+  async getShipment(
+    principal: Principal,
+    input: Parameters<ShippingController["getShipment"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "shipping:read");
+    if (denied) return denied;
+    return this.shipping.getShipment(input);
+  }
+
   async getByFulfillment(
     principal: Principal,
     input: Parameters<ShippingController["getByFulfillment"]>[0],

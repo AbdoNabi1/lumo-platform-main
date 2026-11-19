@@ -4847,12 +4847,10 @@ describe("GET /orders/export-rows (order operations Part 1)", () => {
     } as unknown as Order;
     const admin = {
       orders: {
-        listOrders: vi
-          .fn()
-          .mockResolvedValue({
-            status: 200,
-            body: { items: [order], pageInfo: { hasNextPage: false, endCursor: null } },
-          }),
+        listOrders: vi.fn().mockResolvedValue({
+          status: 200,
+          body: { items: [order], pageInfo: { hasNextPage: false, endCursor: null } },
+        }),
         fulfillmentsOfOrders: vi.fn().mockResolvedValue({ status: 200, body: [] }),
         orderAnnotations: vi.fn().mockResolvedValue({ status: 200, body: new Map() }),
         paymentIntentsOf: vi

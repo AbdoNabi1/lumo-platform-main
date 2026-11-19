@@ -11,6 +11,12 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import {
+  AttachCarrierShipment,
+  DetachCarrierShipment,
+  MirrorShipmentStatus,
+  PrepareForCarrierShipment,
+} from "./application/carrier-fulfillment.use-cases";
 import { CreateFulfillment } from "./application/create-fulfillment.use-case";
 import { CreateShipment } from "./application/create-shipment.use-case";
 import { AdvanceFulfillment } from "./application/fulfillment-lifecycle.use-cases";
@@ -75,6 +81,8 @@ function buildController(
     notifications,
   };
 
+  const requestReservation = new RequestReservation({ ...lifecycleDeps, inventoryPort });
+
   return new FulfillmentController({
     createFulfillment: new CreateFulfillment({
       fulfillmentOrders,
@@ -83,7 +91,7 @@ function buildController(
       clock: deps.clock,
     }),
     advanceFulfillment: new AdvanceFulfillment(lifecycleDeps),
-    requestReservation: new RequestReservation({ ...lifecycleDeps, inventoryPort }),
+    requestReservation,
     createShipment: new CreateShipment({ ...lifecycleDeps, shippingProvider }),
     recordCarrierWebhook: new RecordCarrierWebhook({
       fulfillmentOrders,
@@ -94,6 +102,13 @@ function buildController(
     }),
     getFulfillmentByOrder: new GetFulfillmentByOrder({ fulfillmentOrders }),
     getFulfillmentsByOrders: new GetFulfillmentsByOrders({ fulfillmentOrders }),
+    prepareForCarrierShipment: new PrepareForCarrierShipment({
+      ...lifecycleDeps,
+      requestReservation,
+    }),
+    attachCarrierShipment: new AttachCarrierShipment(lifecycleDeps),
+    detachCarrierShipment: new DetachCarrierShipment(lifecycleDeps),
+    mirrorShipmentStatus: new MirrorShipmentStatus(lifecycleDeps),
   });
 }
 

@@ -1,4 +1,9 @@
-import { AggregateRoot, BusinessRuleError, UniqueEntityId } from "@platform/domain";
+import {
+  AggregateRoot,
+  BusinessRuleError,
+  deterministicEntityId,
+  type UniqueEntityId,
+} from "@platform/domain";
 import { FulfillmentTransitioned } from "./events/fulfillment-transitioned.event";
 import {
   FulfillmentAttempt,
@@ -189,6 +194,13 @@ export class FulfillmentOrder extends AggregateRoot<FulfillmentOrderProps> {
     this.transition("closed", eventId, occurredAt);
   }
 
+  /** `shipment_created` | `tracking_assigned` → `packing_completed`; clears the carrier reference and tracking number (label voided, spec 9a.3). */
+  returnToPacking(eventId: string, occurredAt: Date): void {
+    this.transition("packing_completed", eventId, occurredAt);
+    this.props.carrierReference = undefined;
+    this.props.trackingNumber = undefined;
+  }
+
   /** Records a carrier webhook receipt as an append-only attempt (replay-safety is enforced by the application layer's `ProcessedCarrierWebhookStore`, before this is ever called twice for the same event). The application layer follows this with its own validated `transition()` call for recognized kinds. */
   recordCarrierWebhook(kind: string, occurredAt: Date): void {
     this.recordAttempt("carrier_webhook", "succeeded", occurredAt, kind);
@@ -202,7 +214,7 @@ export class FulfillmentOrder extends AggregateRoot<FulfillmentOrderProps> {
   ): void {
     this.props.attempts.push(
       FulfillmentAttempt.create(
-        UniqueEntityId.from(this.id.toString() + this.props.attempts.length),
+        deterministicEntityId(`${this.id.toString()}:attempt:${this.props.attempts.length}`),
         kind,
         outcome,
         occurredAt,

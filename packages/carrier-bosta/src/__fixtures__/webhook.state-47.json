@@ -1,0 +1,11 @@
+{
+  "_id": "15LmfpKYp0YILntA3jbyd",
+  "trackingNumber": 48089608,
+  "state": 47,
+  "type": "SEND",
+  "timeStamp": 1689253131024,
+  "deliveryPromiseDate": "15-07-2023",
+  "numberOfAttempts": 1,
+  "exceptionReason": "Postponed - the customer requested postponement for another day.",
+  "exceptionCode": 3
+}

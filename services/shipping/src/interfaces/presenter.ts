@@ -1,5 +1,6 @@
 import type { Result } from "@platform/types";
 import { type DomainError, toErrorEnvelope } from "@platform/utils";
+import { CarrierError } from "../domain/errors";
 
 export interface ControllerResponse {
   readonly status: number;
@@ -23,6 +24,17 @@ export function present<T>(
 ): ControllerResponse {
   if (result.ok) {
     return { status: successStatus, body: result.value };
+  }
+  // Ruling 19: a carrier failure answers its own status, with its specific code as `body.code`
+  // and, when set, its allow-listed `reason`.
+  if (result.error instanceof CarrierError) {
+    return {
+      status: result.error.httpStatus,
+      body: {
+        ...toErrorEnvelope(result.error),
+        ...(result.error.reason !== undefined ? { reason: result.error.reason } : {}),
+      },
+    };
   }
   return { status: STATUS_BY_CODE[result.error.code] ?? 422, body: toErrorEnvelope(result.error) };
 }

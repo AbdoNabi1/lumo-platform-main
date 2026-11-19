@@ -4,6 +4,7 @@ import {
   type SignupEmailPort,
 } from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
+import type { CarrierCredentialVault } from "@platform/shipping";
 import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import {
@@ -114,6 +115,49 @@ export function assertProductionPaymentProviderConfigured(
   if (appEnv === "local") {
     for (const problem of problems) {
       logger.warn(`Payments provider guard (APP_ENV=local, not enforced): ${problem}`);
+    }
+  } else {
+    throw new Error(`api: ${problems.join(" Also: ")}`);
+  }
+}
+
+/**
+ * Project 5 / Ruling 31: carriers are configured by a PAIR — `SHIPPING_CREDENTIALS_KEK_REF` (seals
+ * merchants' keys) and `ADMIN_API_PUBLIC_URL` (where carriers post statuses). One without the other
+ * either seals nothing or silently never follows statuses, so outside `local` it refuses boot; neither
+ * set is fine (carriers simply unavailable). The in-memory vault is never acceptable outside `local`
+ * (§8.1), and the webhook origin must be https (preflight F13). `local` only warns.
+ */
+export function assertProductionCarriersConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  carriers: {
+    readonly kekConfigured: boolean;
+    readonly webhookBaseConfigured: boolean;
+    readonly webhookBaseUrl: string | undefined;
+    readonly vault: CarrierCredentialVault | undefined;
+  },
+): void {
+  const problems: string[] = [];
+  if (carriers.kekConfigured !== carriers.webhookBaseConfigured) {
+    problems.push(
+      "carriers are half-configured: set both SHIPPING_CREDENTIALS_KEK_REF and ADMIN_API_PUBLIC_URL, or neither (Ruling 31)",
+    );
+  }
+  if (carriers.vault?.backing === "stub") {
+    problems.push(
+      "the in-memory carrier credential vault must never seal merchants' carrier keys outside APP_ENV=local (§8.1). Set SHIPPING_CREDENTIALS_KEK_REF.",
+    );
+  }
+  if (
+    carriers.webhookBaseUrl !== undefined &&
+    new URL(carriers.webhookBaseUrl).protocol !== "https:"
+  ) {
+    problems.push("ADMIN_API_PUBLIC_URL must use https outside local (preflight F13)");
+  }
+  if (problems.length === 0) return;
+  if (appEnv === "local") {
+    for (const problem of problems) {
+      logger.warn(`Carriers guard (APP_ENV=local, not enforced): ${problem}`);
     }
   } else {
     throw new Error(`api: ${problems.join(" Also: ")}`);
@@ -479,6 +523,14 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
     collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
+    collectGuardFailure(() =>
+      assertProductionCarriersConfigured(config.APP_ENV, {
+        kekConfigured: config.SHIPPING_CREDENTIALS_KEK_REF !== undefined,
+        webhookBaseConfigured: config.ADMIN_API_PUBLIC_URL !== undefined,
+        webhookBaseUrl: config.ADMIN_API_PUBLIC_URL,
+        vault: runtime.carrierCredentialVault,
+      }),
+    ),
     collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
@@ -521,6 +573,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     health: runtime.health,
     metrics: runtime.metrics,
     prisma: runtime.prisma,
+    carrierRegistrations: runtime.carrierRegistrations,
+    carrierCredentialVault: runtime.carrierCredentialVault,
+    distributedLock: runtime.distributedLock,
     // Plan 1B-1: passwords in Postgres (scrypt, tenant-scoped, lockout) instead of process memory.
     passwordAuthProvider: new HashedPasswordAuthProvider({
       store: new PrismaPasswordCredentialStore(runtime.prisma),

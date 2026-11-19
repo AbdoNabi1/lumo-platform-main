@@ -10,6 +10,7 @@ import type { Locale } from "@/lib/i18n";
 import type { OrderActionPermissions } from "@/lib/orders/order-views";
 import type { Dictionary } from "@/messages/en";
 import { OrdersBulkTagsDialog } from "./orders-bulk-tags-dialog";
+import { CarrierBulkActions } from "./orders-selection";
 
 /** The result of one bulk action, with the numbers of the orders it ran on (to name them in the details). */
 export interface BulkOutcome {
@@ -43,6 +44,7 @@ function MenuButton({
  * Shopify's bulk-action bar (spec §1.5): it replaces the table header while rows are selected. Every
  * action is the `runBulkOrderAction` server action (one API call, a result per order); Print packing
  * slips opens the print page in a new tab. The ⋯ menu is a native `<details>`, like the order page's.
+ * With `carriers` it also carries the Bosta bulk ship / print-waybills actions on the same selection.
  */
 export function OrdersBulkBar({
   selected,
@@ -51,6 +53,7 @@ export function OrdersBulkBar({
   permissions,
   onFinished,
   onExportSelected,
+  carriers,
 }: {
   readonly selected: readonly OrderListItemDto[];
   readonly t: Dictionary;
@@ -59,6 +62,11 @@ export function OrdersBulkBar({
   readonly permissions: OrderActionPermissions;
   readonly onFinished: (outcome: BulkOutcome) => void;
   readonly onExportSelected?: (() => void) | undefined;
+  /**
+   * The enabled carriers. When given (even empty) the bar also offers the carrier actions on the same
+   * selection: Ship with <carrier> (when one is enabled), Print waybills and Clear selection.
+   */
+  readonly carriers?: readonly { readonly key: string; readonly displayName: string }[] | undefined;
 }) {
   const [isPending, startTransition] = useTransition();
   const b = t.ordersPage.bulk;
@@ -182,6 +190,7 @@ export function OrdersBulkBar({
           </div>
         </details>
       )}
+      {carriers !== undefined && <CarrierBulkActions carriers={carriers} t={t} />}
       {tagMode !== null && (
         <OrdersBulkTagsDialog
           open

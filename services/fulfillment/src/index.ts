@@ -9,3 +9,7 @@ export {
   type PrismaFulfillmentOrderRepositoryDeps,
 } from "./infrastructure/prisma-fulfillment-order-repository";
 export { FULFILLMENT_PUBLISHED_EVENTS } from "./infrastructure/fulfillment-event-translator";
+export type {
+  AttachCarrierShipmentInput,
+  MirrorShipmentStatusInput,
+} from "./application/carrier-fulfillment.use-cases";

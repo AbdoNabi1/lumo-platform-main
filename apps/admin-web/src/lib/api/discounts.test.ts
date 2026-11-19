@@ -209,6 +209,7 @@ describe("discount writes", () => {
       outcome: "invalid",
       message: "Invalid discount",
       fields: [{ field: "code", message: "This code is already in use" }],
+      code: "VALIDATION",
     });
   });
 });

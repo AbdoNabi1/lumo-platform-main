@@ -4,6 +4,7 @@ import type { OrderListItemDto } from "@/lib/api/orders";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { orderActionPermissionsFor } from "@/lib/orders/order-views";
+import { OrdersSelectionProvider } from "./orders-selection";
 import { OrdersTable } from "./orders-table";
 
 const OPERATOR = orderActionPermissionsFor("operator");
@@ -15,6 +16,8 @@ vi.mock("@/app/orders/actions", () => actions);
 vi.mock("@/app/orders/annotation-actions", () => ({
   suggestOrderTagsAction: vi.fn().mockResolvedValue([]),
 }));
+const carrierActions = vi.hoisted(() => ({ bulkShipWithCarrierAction: vi.fn() }));
+vi.mock("@/app/orders/carrier-actions", () => carrierActions);
 
 // Built from local calendar fields: "today" is the runtime's own calendar day.
 const at = (month: number, day: number, hour: number, minute: number) =>
@@ -269,6 +272,122 @@ describe("OrdersTable — like Shopify's orders list (Plan 3B)", () => {
     expect(screen.getByText("مدفوع")).toBeInTheDocument();
     expect(screen.getByText("قيد التجهيز")).toBeInTheDocument();
     expect(screen.getByText(/النهارده الساعة/)).toBeInTheDocument();
+  });
+});
+
+describe("OrdersTable selection (carriers part 1)", () => {
+  it("has no checkbox column when not selectable", () => {
+    render(<OrdersTable orders={[order()]} t={ar} locale="ar" now={NOW} selectable={false} />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("selectable rows get a labelled checkbox above the row link", () => {
+    render(
+      <OrdersSelectionProvider>
+        <OrdersTable orders={[order()]} t={ar} locale="ar" now={NOW} selectable />
+      </OrdersSelectionProvider>,
+    );
+    const box = screen.getByRole("checkbox", { name: "تحديد الطلب 1001" });
+    expect(box.closest("td")).toHaveClass("relative", "z-10");
+  });
+});
+
+describe("OrdersTable unified bulk bar (order operations + Bosta)", () => {
+  const two = () => [order(), order({ id: "order-2", orderNumber: "1002" })];
+  const carriers = [{ key: "bosta", displayName: "Bosta" }];
+  const renderWithCarriers = (list = carriers) =>
+    render(
+      <OrdersTable
+        orders={two()}
+        t={en}
+        locale="en"
+        now={NOW}
+        permissions={OPERATOR}
+        carriers={list}
+      />,
+    );
+
+  it("offers the order-operation actions and the Bosta actions in the one bar on one selection", () => {
+    renderWithCarriers();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    const bar = screen.getByRole("toolbar", { name: "Bulk actions" });
+    for (const name of [
+      "Fulfill items",
+      "Print packing slips",
+      "Ship with Bosta",
+      "Print waybills",
+    ]) {
+      expect(within(bar).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("has no carrier actions unless carriers are passed", () => {
+    render(<OrdersTable orders={two()} t={en} locale="en" now={NOW} permissions={OPERATOR} />);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.queryByRole("button", { name: "Print waybills" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ship with Bosta" })).toBeNull();
+  });
+
+  it("hides Ship when no carrier is enabled but keeps Print waybills", () => {
+    renderWithCarriers([]);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select order 1001" }));
+    expect(screen.queryByRole("button", { name: "Ship with Bosta" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Print waybills" })).toBeInTheDocument();
+  });
+
+  it("opens the waybills of the selection in a new tab", () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderWithCarriers();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Print waybills" }));
+    expect(open).toHaveBeenCalledWith(
+      "/orders/awb?orderIds=order-1,order-2",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("keeps the bar mounted after an all-success ship until the selection is cleared", async () => {
+    carrierActions.bulkShipWithCarrierAction.mockResolvedValue({
+      status: "success",
+      shipped: 2,
+      failed: [],
+    });
+    renderWithCarriers();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ship with Bosta" }));
+    await screen.findByRole("dialog");
+    expect(carrierActions.bulkShipWithCarrierAction).toHaveBeenCalledWith(
+      ["order-1", "order-2"],
+      "bosta",
+    );
+    // English: the dialog's own Close button and the corner X share the name; either closes it.
+    fireEvent.click(screen.getAllByRole("button", { name: en.carrierShipping.close })[0]!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const toolbar = screen.getByRole("toolbar");
+    await waitFor(() => expect(toolbar).toContainElement(document.activeElement as HTMLElement));
+    fireEvent.click(screen.getByRole("button", { name: en.carrierShipping.clearSelection }));
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+
+  it("refuses the 51st selection with the message", () => {
+    const many = Array.from({ length: 51 }, (_, i) =>
+      order({ id: `o-${i}`, orderNumber: String(2000 + i) }),
+    );
+    render(
+      <OrdersTable
+        orders={many}
+        t={en}
+        locale="en"
+        now={NOW}
+        permissions={OPERATOR}
+        carriers={carriers}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all orders on this page" }));
+    expect(screen.getByRole("toolbar")).toHaveTextContent("50 selected");
+    expect(screen.getByRole("alert")).toHaveTextContent(en.carrierShipping.tooMany);
   });
 });
 

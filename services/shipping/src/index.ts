@@ -1,3 +1,20 @@
+export {
+  CancelCarrierShipment,
+  PrintCarrierAwbs,
+  GetShipment,
+} from "./application/carrier-shipment.use-cases";
+export type {
+  CarrierShipmentDeps,
+  PrintCarrierAwbsInput,
+} from "./application/carrier-shipment.use-cases";
+export { CreateLabel, IN_FLIGHT_GRACE_MS } from "./application/shipment-lifecycle.use-cases";
+export type {
+  CarrierLabelDetails,
+  CreateLabelInput,
+  CreateLabelOutput,
+  CreateLabelDeps,
+} from "./application/shipment-lifecycle.use-cases";
+export { CountShipmentsByFulfillment } from "./application/get-shipment-by-fulfillment.use-case";
 export { wireShipping } from "./composition";
 export type { ShippingWiringDeps, WiredShipping } from "./composition";
 export { ShippingController } from "./interfaces/shipping.controller";
@@ -21,3 +38,58 @@ export {
   PrismaShippingZoneRepository,
   type PrismaShippingZoneRepositoryDeps,
 } from "./infrastructure/prisma-shipping-zone-repository";
+export { CARRIER_KEY_PATTERN, isWellFormedCarrierKey } from "./domain/value-objects/carrier-key";
+export { carrierFailureOf } from "./application/carrier-provider";
+export type {
+  AwbOptions,
+  CarrierDelivery,
+  CarrierDeliveryRequest,
+  CarrierDeliveryStatus,
+  CarrierFailure,
+  CarrierFailureKind,
+  CarrierParcelRequest,
+  CarrierProblem,
+  CarrierProvider,
+  CarrierRejectionCode,
+  CarrierStatusTarget,
+} from "./application/carrier-provider";
+export { CarrierRegistry } from "./application/carrier-registry";
+export type {
+  CarrierBuildContext,
+  CarrierCapabilities,
+  CarrierConfigParseResult,
+  CarrierRegistration,
+} from "./application/carrier-registry";
+export {
+  GetCarrierSettings,
+  ListEnabledCarriers,
+  MAX_CARRIER_SECRET_LENGTH,
+  RotateCarrierWebhookSecret,
+  UpdateCarrierSettings,
+  VerifyCarrierWebhook,
+} from "./application/carrier-settings.use-cases";
+export type {
+  CarrierSettingsDeps,
+  CarrierSettingsDto,
+  CarrierSettingsEntryDto,
+  EnabledCarriersDto,
+  UpdateCarrierSettingsInput,
+} from "./application/carrier-settings.use-cases";
+export { CarrierResolutionError } from "./application/carrier-resolver";
+export type {
+  CarrierResolutionCode,
+  CarrierResolutionPurpose,
+  CarrierResolver,
+} from "./application/carrier-resolver";
+export type { CarrierCredentialVault } from "./application/ports";
+export {
+  EnvelopeCarrierCredentialVault,
+  InMemoryCarrierCredentialVault,
+  SHIPPING_CREDENTIALS_KEY_ALIAS,
+} from "./infrastructure/envelope-carrier-credential-vault";
+export { RecordCarrierWebhook } from "./application/record-carrier-webhook.use-case";
+export type {
+  RecordCarrierWebhookInput,
+  RecordCarrierWebhookOutput,
+} from "./application/record-carrier-webhook.use-case";
+export { PrismaProcessedCarrierWebhookStore } from "./infrastructure/prisma-processed-carrier-webhook-store";

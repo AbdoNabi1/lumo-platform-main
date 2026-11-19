@@ -12,6 +12,7 @@ import {
 } from "./composition";
 import { buildJobs, startJobLoop } from "./scheduler";
 import {
+  assertProductionCarriersConfigured,
   assertProductionDunningNotificationsConfigured,
   assertProductionIntegrationPortsConfigured,
   assertProductionLicensingBillingConfigured,
@@ -27,7 +28,8 @@ import { StripePaymentProvider } from "@platform/psp-stripe";
 import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
 import type { PaymentProvider } from "@platform/contracts";
 import type { PaymentCredentialVault, ProviderRegistration } from "@platform/payments";
-import type { Logger } from "@platform/utils";
+import type { CarrierCredentialVault } from "@platform/shipping";
+import { logger as moduleLogger, type Logger } from "@platform/utils";
 
 const validEnv = {
   APP_ENV: "local",
@@ -191,6 +193,95 @@ describe("composition root (lazy clients — graph builds without any Docker run
       }),
     );
     expect(core.paymentProvider).toBeInstanceOf(StripePaymentProvider);
+  });
+});
+
+describe("carrier composition (Ruling 31)", () => {
+  const kek = "k".repeat(32);
+
+  it("both set → bosta registered with a real vault", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        SHIPPING_CREDENTIALS_KEK_REF: kek,
+        ADMIN_API_PUBLIC_URL: "https://api.example.com/",
+      }),
+    );
+    expect(core.carrierRegistrations.map((r) => r.key)).toEqual(["bosta"]);
+    expect(core.carrierRegistrations[0]?.webhookUrl).toBe(
+      "https://api.example.com/api/v1/public/shipping/webhook/bosta",
+    );
+    expect(core.carrierCredentialVault?.backing).toBe("real");
+  });
+
+  it("neither → no registrations, vault undefined", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.carrierRegistrations).toEqual([]);
+    expect(core.carrierCredentialVault).toBeUndefined();
+  });
+
+  it("only the KEK set → no registration (half-configured is the guard's job)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, SHIPPING_CREDENTIALS_KEK_REF: kek }),
+    );
+    expect(core.carrierRegistrations).toEqual([]);
+  });
+});
+
+describe("assertProductionCarriersConfigured", () => {
+  const realVault = { backing: "real" } as unknown as CarrierCredentialVault;
+  const stubVault = { backing: "stub" } as unknown as CarrierCredentialVault;
+  const both = {
+    kekConfigured: true,
+    webhookBaseConfigured: true,
+    webhookBaseUrl: "https://api.x.com",
+    vault: realVault,
+  };
+  const neither = {
+    kekConfigured: false,
+    webhookBaseConfigured: false,
+    webhookBaseUrl: undefined,
+    vault: undefined,
+  };
+
+  it("half-configured refuses outside local and warns in local", () => {
+    const kekOnly = { ...neither, kekConfigured: true, vault: realVault };
+    expect(() => assertProductionCarriersConfigured("production", kekOnly)).toThrow(
+      "carriers are half-configured: set both SHIPPING_CREDENTIALS_KEK_REF and ADMIN_API_PUBLIC_URL, or neither (Ruling 31)",
+    );
+    const urlOnly = { ...neither, webhookBaseConfigured: true, webhookBaseUrl: "https://a.b" };
+    expect(() => assertProductionCarriersConfigured("production", urlOnly)).toThrow(
+      /half-configured/,
+    );
+    const warn = vi.spyOn(moduleLogger, "warn").mockImplementation(() => undefined);
+    expect(() => assertProductionCarriersConfigured("local", kekOnly)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("half-configured"));
+    warn.mockRestore();
+  });
+
+  it("a stub vault is refused", () => {
+    expect(() =>
+      assertProductionCarriersConfigured("production", { ...both, vault: stubVault }),
+    ).toThrow(/in-memory/);
+  });
+
+  it("neither set passes", () => {
+    expect(() => assertProductionCarriersConfigured("production", neither)).not.toThrow();
+  });
+
+  it("both set with a real vault and https passes", () => {
+    expect(() => assertProductionCarriersConfigured("production", both)).not.toThrow();
+  });
+
+  it("an http:// origin is refused outside local (F13) and warns in local", () => {
+    const http = { ...both, webhookBaseUrl: "http://api.x.com" };
+    expect(() => assertProductionCarriersConfigured("production", http)).toThrow(
+      "ADMIN_API_PUBLIC_URL must use https outside local (preflight F13)",
+    );
+    const warn = vi.spyOn(moduleLogger, "warn").mockImplementation(() => undefined);
+    expect(() => assertProductionCarriersConfigured("local", http)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("https"));
+    warn.mockRestore();
   });
 });
 

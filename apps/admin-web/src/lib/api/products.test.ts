@@ -91,6 +91,7 @@ describe("createProduct", () => {
     expect(result).toEqual({
       outcome: "invalid",
       message: "Invalid input",
+      code: "VALIDATION",
       fields: [{ field: "sku", message: "must not be empty" }],
     });
   });
@@ -140,7 +141,7 @@ describe("updateProduct", () => {
 
     const result = await updateProduct("product-1", { name: "x", slug: "y" }, "key-3");
 
-    expect(result).toEqual({ outcome: "conflict", message: "stale version" });
+    expect(result).toEqual({ outcome: "conflict", message: "stale version", code: "CONCURRENCY" });
   });
 });
 

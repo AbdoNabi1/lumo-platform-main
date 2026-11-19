@@ -84,6 +84,13 @@ import {
   localKeyResolver,
 } from "@platform/auth";
 import { EnvelopeCipher, KeyAliasRegistry, createSecretProvider } from "@platform/secrets";
+import { BostaCityDirectory } from "@platform/carrier-bosta";
+import {
+  EnvelopeCarrierCredentialVault,
+  type CarrierCredentialVault,
+  type CarrierRegistration,
+} from "@platform/shipping";
+import { bostaRegistration, bostaWebhookUrl } from "./bosta-registration";
 import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
@@ -158,6 +165,13 @@ export interface RuntimeCore {
    */
   readonly providerRegistrations: readonly ProviderRegistration[];
   readonly paymentCredentialVault: PaymentCredentialVault | undefined;
+  /**
+   * Shipping carriers (Project 5): Bosta, present only when BOTH `SHIPPING_CREDENTIALS_KEK_REF` and
+   * `ADMIN_API_PUBLIC_URL` are set (Ruling 31) — otherwise `[]` and no vault. The vault is sealed under
+   * its own KEK, never `PAYMENT_CREDENTIALS_KEK_REF`. `api.ts` refuses a half-configured pair.
+   */
+  readonly carrierRegistrations: readonly CarrierRegistration[];
+  readonly carrierCredentialVault: CarrierCredentialVault | undefined;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
@@ -382,6 +396,21 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   const providerRegistrations: readonly ProviderRegistration[] =
     paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
 
+  // Project 5: carriers come together with their vault and public webhook origin, or not at all.
+  const carrierCredentialVault: CarrierCredentialVault | undefined =
+    config.SHIPPING_CREDENTIALS_KEK_REF !== undefined
+      ? buildCarrierCredentialVault(config.SHIPPING_CREDENTIALS_KEK_REF)
+      : undefined;
+  const carrierRegistrations: readonly CarrierRegistration[] =
+    config.SHIPPING_CREDENTIALS_KEK_REF !== undefined && config.ADMIN_API_PUBLIC_URL !== undefined
+      ? [
+          bostaRegistration({
+            webhookUrl: bostaWebhookUrl(config.ADMIN_API_PUBLIC_URL),
+            cities: new BostaCityDirectory(),
+          }),
+        ]
+      : [];
+
   const platformBillingPayments = buildPlatformBillingPayments(config);
   const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
     config,
@@ -425,6 +454,8 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentProvider,
     providerRegistrations,
     paymentCredentialVault,
+    carrierRegistrations,
+    carrierCredentialVault,
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,
@@ -485,6 +516,20 @@ function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
   return new EnvelopePaymentCredentialVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
     "payments-credentials",
+  );
+}
+
+/**
+ * The real carrier credential vault (Project 5): the same envelope encryption as the payments vault,
+ * but under its OWN alias and KEK (`SHIPPING_CREDENTIALS_KEK_REF`), so rotating one never touches
+ * the other.
+ */
+function buildCarrierCredentialVault(kekRef: string): CarrierCredentialVault {
+  const aliases = new KeyAliasRegistry();
+  aliases.set("shipping-credentials", kekRef);
+  return new EnvelopeCarrierCredentialVault(
+    new EnvelopeCipher(new NodeCrypto(), aliases),
+    "shipping-credentials",
   );
 }
 

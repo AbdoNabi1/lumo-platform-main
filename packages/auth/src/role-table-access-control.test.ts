@@ -20,6 +20,16 @@ describe("permissionMatches", () => {
 });
 
 describe("RoleTableAccessControl", () => {
+  it("carrier settings are admin-only even though operator has shipping:* (Ruling 26)", async () => {
+    const op = who(["operator"]);
+    expect(await acl.authorize(op, "shipping:create_label")).toBe(true);
+    expect(await acl.authorize(op, "shipping:read_settings")).toBe(false);
+    expect(await acl.authorize(op, "shipping:update_settings")).toBe(false);
+    expect(await acl.authorize(who(["admin"]), "shipping:update_settings")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "shipping:read_settings")).toBe(true);
+    expect(await acl.authorize(who(["viewer"]), "shipping:read")).toBe(true);
+  });
+
   it("every staff role may change its own password; a customer may not (Plan 1C)", async () => {
     for (const role of ["admin", "operator", "viewer"]) {
       expect(await acl.authorize(who([role]), "account:update_self")).toBe(true);

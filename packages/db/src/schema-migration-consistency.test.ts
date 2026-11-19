@@ -323,6 +323,47 @@ describe("inventory.inventory_items and catalog.product_variants — stock per v
   });
 });
 
+describe("shipping.merchant_carrier_settings — migration history matches the Prisma model (Project 5)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every column was created by some migration", () => {
+    const actual = columnsEverAddedTo("shipping", "merchant_carrier_settings", allSql);
+    for (const column of [
+      "tenant_id",
+      "enabled_carriers",
+      "carrier_settings",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(
+        actual.has(column),
+        `expected "shipping"."merchant_carrier_settings"."${column}"`,
+      ).toBe(true);
+    }
+  });
+
+  it("is RLS-enabled and forced with the tenant_isolation policy (G-63)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "shipping"."merchant_carrier_settings" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'ALTER TABLE "shipping"."merchant_carrier_settings" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "shipping"."merchant_carrier_settings"',
+    );
+  });
+
+  it("indexes shipments by (tenant, carrier, tracking number) for webhook lookups", () => {
+    expect(allSql).toMatch(
+      /CREATE INDEX "shipments_tenant_id_carrier_tracking_number_idx"\s+ON "shipping"\."shipments"\("tenant_id", "carrier", "tracking_number"\);/,
+    );
+  });
+});
 describe("orders schema — order archive (order operations Part 1)", () => {
   it("a migration adds orders.orders.archived_at", () => {
     const sql = readdirSync(migrationsDir, { withFileTypes: true })

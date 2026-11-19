@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { BusinessRuleError, ProductRef, UniqueEntityId } from "@platform/domain";
 import { FulfillmentOrder } from "./fulfillment-order";
 import { FulfillmentItem } from "./value-objects/fulfillment-item";
@@ -14,6 +14,29 @@ function item(): FulfillmentItem {
   const result = FulfillmentItem.create(productRef("product-1"), 2);
   if (!result.ok) throw new Error("invalid fixture");
   return result.value;
+}
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function labelledOrder(tracked: boolean): FulfillmentOrder {
+  const order = FulfillmentOrder.create(UniqueEntityId.from("ff-1"), "order-1", [item()]);
+  order.requestReservation("e1", new Date(0));
+  order.confirmReservation("e2", new Date(0));
+  order.startPicking("e3", new Date(0));
+  order.completePicking("e4", new Date(0));
+  order.startPacking("e5", new Date(0));
+  order.completePacking("e6", new Date(0));
+  const ref = CarrierReference.create("bosta", "del-1");
+  const tracking = TrackingNumber.create("5108002");
+  if (!ref.ok || !tracking.ok) throw new Error("invalid fixture");
+  order.createShipment(ref.value, "e7", new Date(0));
+  if (tracked) order.assignTracking(tracking.value, "e8", new Date(0));
+  order.pullDomainEvents();
+  return order;
 }
 
 function fulfillmentOrder(): FulfillmentOrder {
@@ -83,5 +106,42 @@ describe("FulfillmentOrder", () => {
     expect(order.status.value).toBe("cancelled");
     order.close("evt-2", new Date(0));
     expect(order.status.value).toBe("closed");
+  });
+
+  it("attempt ids are valid UUIDs after requestReservation", () => {
+    const order = fulfillmentOrder();
+    order.requestReservation("evt-1", new Date(0));
+    order.failReservation("no stock", "evt-2", new Date(0));
+    expect(order.attempts).toHaveLength(2);
+    for (const attempt of order.attempts) {
+      expect(attempt.id.toString()).toMatch(UUID);
+    }
+    expect(order.attempts[0]?.id.toString()).not.toBe(order.attempts[1]?.id.toString());
+  });
+
+  describe("returnToPacking (label voided, 9a.3)", () => {
+    it("clears the carrier reference and tracking number from tracking_assigned", () => {
+      const order = labelledOrder(true);
+      order.returnToPacking("evt-r", new Date(1));
+      expect(order.status.value).toBe("packing_completed");
+      expect(order.carrierReference).toBeUndefined();
+      expect(order.trackingNumber).toBeUndefined();
+      expect(order.pullDomainEvents()).toHaveLength(1);
+    });
+
+    it("also works from shipment_created", () => {
+      const order = labelledOrder(false);
+      order.returnToPacking("evt-r", new Date(1));
+      expect(order.status.value).toBe("packing_completed");
+      expect(order.carrierReference).toBeUndefined();
+    });
+
+    it("refuses once the parcel is dispatched and keeps the label", () => {
+      const order = labelledOrder(true);
+      order.dispatch("evt-d", new Date(1));
+      expect(() => order.returnToPacking("evt-r", new Date(2))).toThrow(BusinessRuleError);
+      expect(order.trackingNumber?.value).toBe("5108002");
+      expect(order.carrierReference?.carrierShipmentId).toBe("del-1");
+    });
   });
 });
