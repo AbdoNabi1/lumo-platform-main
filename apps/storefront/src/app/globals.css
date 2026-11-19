@@ -4,6 +4,15 @@
 /* Scan the shared UI package so its utility classes are generated. */
 @source "../../../../packages/ui/src/**/*.{ts,tsx}";
 
+/*
+ * Font slots: the storefront keeps the families it always rendered (merchant fonts are separate).
+ * Locked with the brand; see docs/ui/BRAND_LOCK.md.
+ */
+:root {
+  --font-latin: "Geist";
+  --font-arabic-family: "IBM Plex Sans Arabic";
+}
+
 @layer base {
   * {
     @apply border-border;

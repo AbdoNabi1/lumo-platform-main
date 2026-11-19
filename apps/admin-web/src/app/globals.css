@@ -6,11 +6,12 @@
 
 :root {
   /*
-   * Bind the webfonts this app loads to the design system's font slots. `geist` and
-   * `@fontsource/ibm-plex-sans-arabic` both self-host, so nothing is fetched at build time.
+   * Bind the webfonts this app loads to the design system's font slots (Nusuj brand, locked:
+   * docs/ui/BRAND_LOCK.md). `@fontsource/*` self-hosts them, so nothing is fetched at build time.
    */
-  --font-geist: var(--font-geist-sans);
-  --font-arabic-family: "IBM Plex Sans Arabic";
+  --font-latin: "Plus Jakarta Sans";
+  --font-arabic-family: "Zain";
+  --font-display-family: "Baloo Bhaijaan 2";
 }
 
 @layer base {
@@ -26,6 +27,11 @@
     line-height: 20px;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+
+  /* Page titles use the display face; weight stays with each page's own utility. */
+  h1 {
+    font-family: var(--font-display);
   }
 }
 

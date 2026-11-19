@@ -48,6 +48,24 @@ describe("Button", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
+  it("is a pill (rounded-full), including the icon size, never rounded-xl", () => {
+    // Locked brand shape (docs/ui/BRAND_LOCK.md): buttons are pills.
+    expect.hasAssertions();
+    render(
+      <>
+        <Button>Save</Button>
+        <Button size="icon" aria-label="Menu">
+          x
+        </Button>
+      </>,
+    );
+    for (const name of ["Save", "Menu"]) {
+      const classes = screen.getByRole("button", { name }).className.split(/\s+/);
+      expect(classes).toContain("rounded-full");
+      expect(classes).not.toContain("rounded-xl");
+    }
+  });
+
   it("styles every variant from tokens, never a literal colour", () => {
     const variants = ["primary", "secondary", "outline", "ghost", "destructive", "link"] as const;
     for (const variant of variants) {

@@ -10,13 +10,13 @@ import { focusRing } from "../../lib/focus";
  *
  * Six variants, four sizes, and the six states the design system defines
  * (default / hover / active / focus / disabled / loading). Colour comes only from tokens —
- * `primary` resolves to `--primary` (#635BFF) with `--primary-foreground` on top. Every
+ * `primary` resolves to `--primary` (Nusuj terracotta) with `--primary-foreground` on top. Every
  * variant gets the same tactile micro-interaction: a barely-there scale on hover/press,
  * so the whole button system feels soft rather than static.
  */
 const buttonVariants = cva(
   [
-    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl",
+    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full",
     "font-medium transition-[background-color,color,box-shadow,transform] duration-(--duration-fast) ease-out",
     "hover:scale-[1.01] active:scale-[0.98]",
     "disabled:pointer-events-none disabled:opacity-50 disabled:hover:scale-100",
