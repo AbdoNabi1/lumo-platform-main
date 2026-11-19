@@ -57,10 +57,10 @@ export function DiscountsPagination({
     <div className="flex items-center justify-end gap-2">
       <Button variant="outline" size="sm" onClick={goPrevious} disabled={!canGoBack}>
         <ChevronLeftIcon aria-hidden="true" className="rtl:-scale-x-100" />
-        {t.discountsPage.previous}
+        {t.discounts.previous}
       </Button>
       <Button variant="outline" size="sm" onClick={goNext} disabled={!hasNextPage}>
-        {t.discountsPage.next}
+        {t.discounts.next}
         <ChevronRightIcon aria-hidden="true" className="rtl:-scale-x-100" />
       </Button>
     </div>
