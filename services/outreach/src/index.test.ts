@@ -24,4 +24,10 @@ describe("@platform/outreach package entry", () => {
     const issues: TemplateIssue[] = validateTemplateDraft(draft);
     expect(issues).toEqual([{ field: "name", code: "name_format" }]);
   });
+
+  it("does not re-export the test harness from the package root", async () => {
+    expect.hasAssertions();
+    const root = (await import("./index")) as Record<string, unknown>;
+    expect(Object.keys(root)).not.toContain("createMetaFetchHarness");
+  });
 });
