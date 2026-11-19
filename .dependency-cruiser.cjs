@@ -41,6 +41,10 @@ module.exports = {
         path: "^(packages|services)/",
         pathNot: [
           "^packages/(types|utils|domain)/src/",
+          // Scope: this rule's `from` covers packages/domain and every service's domain, so all of them may
+          // import the pure, dependency-light @platform/storefront-content (the single shared validator for
+          // theme documents; online-store is the only domain that does today). Narrow it if that changes.
+          "^packages/storefront-content/src/",
           "(^packages/domain/src/)|(^services/[^/]+/src/domain/)",
         ],
       },

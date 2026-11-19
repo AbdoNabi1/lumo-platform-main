@@ -19,6 +19,7 @@ import { LOCALIZATION_PUBLISHED_EVENTS } from "@platform/localization";
 import { LOYALTY_PUBLISHED_EVENTS } from "@platform/loyalty";
 import { MEDIA_LIBRARY_PUBLISHED_EVENTS, MEDIA_PUBLISHED_EVENTS } from "@platform/media";
 import { NOTIFICATIONS_PUBLISHED_EVENTS } from "@platform/notifications";
+import { ONLINE_STORE_PUBLISHED_EVENTS } from "@platform/online-store";
 import { ORDERS_PUBLISHED_EVENTS } from "@platform/orders";
 import { PAGES_PUBLISHED_EVENTS } from "@platform/pages";
 import { PAYMENTS_PUBLISHED_EVENTS } from "@platform/payments";
@@ -82,6 +83,7 @@ export const PRODUCED_EVENT_LISTS: Readonly<Record<string, readonly string[]>> =
   "@platform/media (asset)": MEDIA_PUBLISHED_EVENTS,
   "@platform/media (library)": MEDIA_LIBRARY_PUBLISHED_EVENTS,
   "@platform/notifications": NOTIFICATIONS_PUBLISHED_EVENTS,
+  "@platform/online-store": ONLINE_STORE_PUBLISHED_EVENTS,
   "@platform/orders": ORDERS_PUBLISHED_EVENTS,
   "@platform/pages": PAGES_PUBLISHED_EVENTS,
   "@platform/payments": PAYMENTS_PUBLISHED_EVENTS,

@@ -16,7 +16,7 @@ import {
   setContactEmail,
   setShippingAddress,
   type CheckoutActionResult,
-} from "@/app/checkout/actions";
+} from "@/app/(store)/checkout/actions";
 import { hasProvinces, PROVINCES } from "@platform/regions";
 import {
   countryName,
@@ -37,6 +37,8 @@ import type {
   ShippingQuoteSummary,
 } from "@/lib/runtime-api";
 import type { Dictionary } from "@/messages/en";
+import { IsolatedText } from "./isolated-text";
+import { CheckoutDiscountCode } from "./checkout-discount-code";
 import { LineThumb } from "./line-thumb";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
@@ -45,6 +47,8 @@ type ErrorReason =
   | "validation"
   | "unavailable"
   | "out-of-stock"
+  | "draft-locked"
+  | "discounts-changed"
   | "network"
   | "paymentOpen"
   | "handoff";
@@ -135,11 +139,18 @@ function signature(form: AddressForm): string {
   return JSON.stringify(toInput(form));
 }
 
-function errorBody(reason: ErrorReason, t: Dictionary): string {
+/** The merchant fixed an invoice checkout's terms, and there is no cart behind it to go "back" to. */
+function errorBody(reason: ErrorReason, t: Dictionary, invoice: boolean): string {
+  if (reason === "draft-locked") return t.checkout.draftLockedBody;
+  if (invoice && (reason === "ownership" || reason === "unavailable")) {
+    return t.checkout.invoiceUnavailableBody;
+  }
+  if (invoice && reason === "out-of-stock") return t.checkout.invoiceOutOfStock;
   if (reason === "ownership") return t.checkout.ownershipErrorBody;
   if (reason === "validation") return t.checkout.validationErrorBody;
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
   if (reason === "out-of-stock") return t.checkout.outOfStock;
+  if (reason === "discounts-changed") return t.checkout.discountsChanged;
   if (reason === "paymentOpen") return t.checkout.paymentOpenError;
   if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;
@@ -176,19 +187,26 @@ function ErrorBanner({
   reason,
   t,
   bannerRef,
+  invoice = false,
 }: {
   readonly reason: ErrorReason;
   readonly t: Dictionary;
   readonly bannerRef: React.RefObject<HTMLDivElement | null>;
+  readonly invoice?: boolean;
 }) {
   return (
     <div
       ref={bannerRef}
-      role="alert"
-      className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      // Changed discounts are news, not a failure: the summary already shows the new total.
+      role={reason === "discounts-changed" ? "status" : "alert"}
+      className={
+        reason === "discounts-changed"
+          ? "border-border bg-muted rounded-md border px-3 py-2 text-sm"
+          : "border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
+      }
     >
-      {errorBody(reason, t)}
-      {reason === "out-of-stock" && (
+      {errorBody(reason, t, invoice)}
+      {reason === "out-of-stock" && !invoice && (
         <>
           {" "}
           <Link href="/cart" className="font-medium underline">
@@ -339,6 +357,8 @@ function CheckoutForm({
   readonly shippableCountries: ShippableCountries | null;
 }) {
   const router = useRouter();
+  // Part 4: the merchant fixed this checkout's discount and shipping — shown, never quoted or chosen.
+  const draftMode = session.draftInvoice != null;
   const countries = useMemo(
     () => countryOptions(shippableCountries, locale),
     [shippableCountries, locale],
@@ -409,6 +429,11 @@ function CheckoutForm({
     return false;
   }
 
+  /** Like choosing a shipping method: a change the shopper just made supersedes the old message. */
+  function clearError(): void {
+    setError(null);
+  }
+
   /** Runs `job` after every earlier job, so address saves and the final submit never overlap. */
   function enqueue<T>(job: () => Promise<T>): Promise<T> {
     const next = queueRef.current.then(job, job);
@@ -449,6 +474,8 @@ function CheckoutForm({
     const saved = await setShippingAddress(session.id, toInput(form));
     if (!saved.ok) return seq !== requestedRef.current ? true : fail(saved.reason);
     lastSavedRef.current = sig;
+    // Part 4: the merchant fixed the shipping — save the address (tax follows it), never quote.
+    if (draftMode) return true;
 
     const quoted = await requestShippingQuote(session.id);
     if (seq !== requestedRef.current) return true;
@@ -495,10 +522,10 @@ function CheckoutForm({
       });
   });
   useEffect(() => {
-    if (initialQuotesRequested.current || !hasSavedAddress) return;
+    if (draftMode || initialQuotesRequested.current || !hasSavedAddress) return;
     initialQuotesRequested.current = true;
     void loadQuotesRef.current();
-  }, [hasSavedAddress]);
+  }, [draftMode, hasSavedAddress]);
 
   // Signed-in customer: apply their account email once, so it never has to be typed.
   useEffect(() => {
@@ -516,16 +543,19 @@ function CheckoutForm({
     });
   }, [accountEmail, session.contactEmail, session.id]);
 
-  const offered = paymentMethods ?? [];
+  // `manual` is the merchant's own "mark as paid" provider: the public list never holds it, and no
+  // path here may choose it even if it somehow did.
+  const offered = (paymentMethods ?? []).filter((method) => method !== "manual");
   const chosenPayment =
     paymentChoice !== null && offered.includes(paymentChoice)
       ? paymentChoice
       : (offered[0] ?? null);
-  const paymentBlocked = paymentMethods === null || paymentMethods.length === 0;
+  const paymentBlocked = paymentMethods === null || offered.length === 0;
   const offline = chosenPayment !== null && OFFLINE_METHODS.has(chosenPayment);
   const addressComplete = isShippingComplete(shipping);
-  const noDestinations = countries.length === 0;
-  const noRates = addressComplete && quotesLoaded && quotes.length === 0;
+  // An invoice's shipping is the merchant's: the shop's zones and rates do not gate it.
+  const noDestinations = !draftMode && countries.length === 0;
+  const noRates = !draftMode && addressComplete && quotesLoaded && quotes.length === 0;
 
   function onSelectShippingMethod(method: string): void {
     startTransition(async () => {
@@ -547,6 +577,12 @@ function CheckoutForm({
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
+    // The discounts the shopper reviewed. Tax and recalculation below refresh them server-side and
+    // store the new snapshot, so completion's own check would compare against the refreshed one.
+    const seen = {
+      order: session.totals?.discountMinor ?? 0,
+      shipping: session.totals?.shippingDiscountMinor ?? 0,
+    };
     // 1. Contact.
     if (contactSetRef.current !== emailValue) {
       const contact = await setContactEmail(session.id, emailValue);
@@ -558,7 +594,7 @@ function CheckoutForm({
     }
     // 2. Shipping address, its quote and a method (all skipped when the page already did them).
     if (!(await requestSync())) return;
-    if (selectedRef.current === null) {
+    if (!draftMode && selectedRef.current === null) {
       fail("validation");
       return;
     }
@@ -576,13 +612,37 @@ function CheckoutForm({
       fail(payment.reason);
       return;
     }
-    // 5-7. Tax, fresh totals, completion.
-    for (const step of [requestTax, recalculate, completeCheckout] as const) {
-      const result: CheckoutActionResult = await step(session.id);
-      if (!result.ok) {
-        fail(result.reason);
-        return;
-      }
+    // 5. Tax.
+    const taxed = await requestTax(session.id);
+    if (!taxed.ok) {
+      fail(taxed.reason);
+      return;
+    }
+    // 6. Fresh totals. Stop before completing when the discounts are no longer the ones the
+    // shopper saw (a code expired, a limit was reached): `recalculate` revalidated `/checkout`, so
+    // the new total is on screen. Only discounts are compared — tax may legitimately appear here.
+    // Unreadable figures (`null`) go on; completion's DISCOUNTS_CHANGED 409 is the backstop.
+    const recalculated = await recalculate(session.id);
+    if (!recalculated.ok) {
+      fail(recalculated.reason);
+      return;
+    }
+    const fresh = recalculated.discounts;
+    // An invoice checkout's discount is fixed by the merchant (the server refuses changes with
+    // DRAFT_LOCKED), so there is nothing the shopper reviewed that could move.
+    if (
+      session.draftInvoice == null &&
+      fresh !== null &&
+      (fresh.order !== seen.order || fresh.shipping !== seen.shipping)
+    ) {
+      fail("discounts-changed");
+      return;
+    }
+    // 7. Completion.
+    const completed: CheckoutActionResult = await completeCheckout(session.id);
+    if (!completed.ok) {
+      fail(completed.reason);
+      return;
     }
     // 8. Strictly after completion: the API only opens a payment for a completed checkout.
     setError(null);
@@ -619,7 +679,18 @@ function CheckoutForm({
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-semibold tracking-tight">{t.checkout.title}</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">{t.checkout.title}</h1>
+        {session.draftInvoice != null && (
+          <span className="bg-muted text-muted-foreground rounded-full px-3 py-1 text-xs font-medium">
+            <IsolatedText
+              template={t.checkout.invoiceBadge}
+              token="#{draft}"
+              value={`#${session.draftInvoice.draftNumber}`}
+            />
+          </span>
+        )}
+      </div>
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_380px]">
         <details className="border-border rounded-lg border lg:hidden">
@@ -641,12 +712,16 @@ function CheckoutForm({
               selected={selectedMethod}
               t={t}
               locale={locale}
+              onError={setError}
+              onDiscountChange={clearError}
             />
           </div>
         </details>
 
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-8">
-          {error !== null && <ErrorBanner reason={error} t={t} bannerRef={bannerRef} />}
+          {error !== null && (
+            <ErrorBanner reason={error} t={t} bannerRef={bannerRef} invoice={draftMode} />
+          )}
 
           <Section title={t.checkout.sections.contact}>
             {accountEmail !== null ? (
@@ -701,7 +776,19 @@ function CheckoutForm({
           </Section>
 
           <Section title={t.checkout.sections.shippingMethod}>
-            {noRates ? (
+            {draftMode ? (
+              <>
+                <p className="bg-muted/50 flex items-center justify-between gap-3 rounded-md px-3 py-3 text-sm">
+                  <span dir="auto">
+                    <bdi>{draftShippingLabel(session, t)}</bdi>
+                  </span>
+                  <span className="font-medium tabular-nums">
+                    {priceLabel(session.totals?.shippingMinor ?? 0, session.currency, locale, t)}
+                  </span>
+                </p>
+                <p className="text-muted-foreground text-xs">{t.checkout.fixedShippingHint}</p>
+              </>
+            ) : noRates ? (
               <div
                 role="alert"
                 className="border-destructive/40 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm"
@@ -843,6 +930,8 @@ function CheckoutForm({
             selected={selectedMethod}
             t={t}
             locale={locale}
+            onError={setError}
+            onDiscountChange={clearError}
           />
         </aside>
       </div>
@@ -1055,6 +1144,9 @@ function AddressFields({
   );
 }
 
+/** The sign shown before a discount amount (U+2212, a real minus). */
+const MINUS = "−";
+
 /** Display-only sum of the lines (price × quantity); the server's totals take over once they exist. */
 function linesTotal(session: CheckoutSessionSummary): number {
   return session.items.reduce((sum, item) => sum + item.unitPriceAmountMinor * item.quantity, 0);
@@ -1066,6 +1158,8 @@ function shippingAmount(
   quotes: readonly ShippingQuoteSummary[],
   selected: string | null,
 ): number | null {
+  // An invoice's shipping is fixed on its totals whether or not a method id was recorded.
+  if (session.draftInvoice != null && session.totals !== null) return session.totals.shippingMinor;
   if (selected === null) return null;
   if (session.totals !== null) return session.totals.shippingMinor;
   return quotes.find((quote) => quote.method === selected)?.rateAmountMinor ?? null;
@@ -1076,9 +1170,10 @@ function totalAmount(
   quotes: readonly ShippingQuoteSummary[],
   selected: string | null,
 ): number {
-  const subtotal = session.totals?.subtotalMinor ?? linesTotal(session);
-  if (selected === null) return subtotal;
+  // The server's total, always: with discounts in play the client never works one out itself.
   if (session.totals !== null) return session.totals.grandTotalMinor;
+  const subtotal = linesTotal(session);
+  if (selected === null) return subtotal;
   return subtotal + (shippingAmount(session, quotes, selected) ?? 0);
 }
 
@@ -1108,14 +1203,20 @@ function SummaryBody({
   selected,
   t,
   locale,
+  onError,
+  onDiscountChange,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly quotes: readonly ShippingQuoteSummary[];
   readonly selected: string | null;
   readonly t: Dictionary;
   readonly locale: Locale;
+  readonly onError: (reason: ErrorReason) => void;
+  /** A code was applied or removed: the page's banner/notice is stale. */
+  readonly onDiscountChange: () => void;
 }) {
   const shippingMinor = shippingAmount(session, quotes, selected);
+  const shippingDiscountMinor = session.totals?.shippingDiscountMinor ?? 0;
   return (
     <div className="flex flex-col gap-4">
       <ul className="flex flex-col gap-3">
@@ -1146,6 +1247,15 @@ function SummaryBody({
           </li>
         ))}
       </ul>
+      {session.draftInvoice == null && (
+        <CheckoutDiscountCode
+          checkoutSessionId={session.id}
+          codes={session.discount?.codes ?? []}
+          t={t}
+          onError={onError}
+          onSuccess={onDiscountChange}
+        />
+      )}
       <dl className="border-border flex flex-col gap-1.5 border-t pt-3 text-sm">
         <SummaryRow
           label={t.checkout.summary.subtotal}
@@ -1155,12 +1265,41 @@ function SummaryBody({
             session.currency,
           )}
         />
+        {session.draftInvoice != null && (session.totals?.discountMinor ?? 0) > 0 && (
+          <SummaryRow
+            label={<bdi>{discountLabel(session, t)}</bdi>}
+            value={`−${formatCurrency(locale, session.totals?.discountMinor ?? 0, session.currency)}`}
+          />
+        )}
+        {(session.draftInvoice != null ? [] : (session.discount?.applied ?? []))
+          .filter((applied) => applied.discountClass !== "shipping")
+          .map((applied, index) => (
+            <SummaryRow
+              key={`${applied.code ?? applied.title}-${index}`}
+              label={applied.code ?? applied.title}
+              value={`${MINUS}${formatCurrency(locale, applied.amountMinor, session.currency)}`}
+            />
+          ))}
         <SummaryRow
           label={t.checkout.summary.shipping}
           value={
-            shippingMinor === null
-              ? t.checkout.summary.enterShippingAddress
-              : priceLabel(shippingMinor, session.currency, locale, t)
+            shippingMinor === null ? (
+              t.checkout.summary.enterShippingAddress
+            ) : shippingDiscountMinor > 0 ? (
+              <>
+                <s className="text-muted-foreground me-2">
+                  {formatCurrency(locale, shippingMinor, session.currency)}
+                </s>
+                {priceLabel(
+                  Math.max(0, shippingMinor - shippingDiscountMinor),
+                  session.currency,
+                  locale,
+                  t,
+                )}
+              </>
+            ) : (
+              priceLabel(shippingMinor, session.currency, locale, t)
+            )
           }
           muted={shippingMinor === null}
         />
@@ -1193,13 +1332,40 @@ function SummaryBody({
   );
 }
 
+/** The server names a nameless merchant discount in English; the shopper sees it in their language. */
+const DEFAULT_DISCOUNT_TITLE = "Custom discount";
+
+/** The merchant's reason or title for the discount on an invoice, or the plain word "Discount". */
+function discountLabel(session: CheckoutSessionSummary, t: Dictionary): string {
+  const title = session.discount?.applied[0]?.title;
+  return title === undefined || title === "" || title === DEFAULT_DISCOUNT_TITLE
+    ? t.checkout.summary.discount
+    : title;
+}
+
+/** The server's English name for free shipping a merchant did not name in their own words. */
+const DEFAULT_FREE_SHIPPING_TITLE = "Free shipping";
+
+/**
+ * The name of an invoice's fixed shipping (final review M-2): the merchant's own, or — for the
+ * server's English "Free shipping" at no cost — the plain localized "Shipping", priced "Free".
+ */
+function draftShippingLabel(session: CheckoutSessionSummary, t: Dictionary): string {
+  const name = session.totals?.shippingName;
+  const freeByDefault =
+    name === DEFAULT_FREE_SHIPPING_TITLE && (session.totals?.shippingMinor ?? 0) === 0;
+  return name === undefined || name === null || name === "" || freeByDefault
+    ? t.checkout.summary.shipping
+    : name;
+}
+
 function SummaryRow({
   label,
   value,
   muted = false,
 }: {
-  readonly label: string;
-  readonly value: string;
+  readonly label: ReactNode;
+  readonly value: ReactNode;
   readonly muted?: boolean;
 }) {
   return (

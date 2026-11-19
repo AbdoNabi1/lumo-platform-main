@@ -205,6 +205,11 @@ vi.mock("./client", async (importOriginal) => {
       captures.push({ method: init.method, path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });
     }),
+    // Raw-byte uploads (product pictures, Online Store images) are always a POST.
+    sendAdminBinary: vi.fn((requestPath: string) => {
+      captures.push({ method: "POST", path: requestPath, file: currentFile, fn: currentFn });
+      return Promise.resolve({ outcome: "error", message: "mocked" });
+    }),
   };
 });
 

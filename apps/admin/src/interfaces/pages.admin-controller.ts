@@ -36,6 +36,15 @@ export class PagesAdminController {
     return this.pages.advancePage(input);
   }
 
+  async updatePageContent(
+    principal: Principal,
+    input: Parameters<PagesController["updatePageContent"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "pages:update_page");
+    if (denied) return denied;
+    return this.pages.updatePageContent(input);
+  }
+
   async createTemplate(
     principal: Principal,
     input: Parameters<PagesController["createTemplate"]>[0],

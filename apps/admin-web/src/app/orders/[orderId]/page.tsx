@@ -17,12 +17,17 @@ import {
 import { OrderCarrierCard } from "@/components/orders/order-carrier-card";
 import { OrderHeader } from "@/components/orders/order-header";
 import { OrderItemsCard } from "@/components/orders/order-items-card";
+import { OrderNotesCard } from "@/components/orders/order-notes-card";
 import { OrderPaymentCard, OrderPaymentCardSkeleton } from "@/components/orders/order-payment-card";
+import { OrderTagsCard } from "@/components/orders/order-tags-card";
 import { OrderTimeline } from "@/components/orders/order-timeline";
 import { fetchOrderCarrierShipment } from "@/lib/api/carrier-shipments";
 import { fetchOrder, type OrderDetailDto } from "@/lib/api/orders";
+import { storeSettingsOrDefaults } from "@/lib/api/store-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE, type Locale } from "@/lib/i18n";
+import { orderActionPermissionsFor } from "@/lib/orders/order-views";
 import type { Dictionary } from "@/messages/en";
 
 /** Shipping with a carrier can take up to 30 s (Ruling 36). */
@@ -41,8 +46,8 @@ interface OrderDetailPageProps {
  * the Dashboard.
  *
  * Main column: the fulfillment card, the payment card, the timeline, and — collapsed — the Advanced
- * section with the lifecycle controls this page used to lead with. Sidebar: the customer, the
- * shipping address (copy + map) and the billing address.
+ * section with the lifecycle controls this page used to lead with. Sidebar: Notes, the customer,
+ * the shipping address (copy + map), the billing address, then Tags (Shopify's order).
  */
 export default async function OrderDetailPage({ params }: OrderDetailPageProps) {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -51,7 +56,7 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
   const user = await getCurrentUser();
   const { orderId } = await params;
 
-  const result = await fetchOrder(orderId);
+  const [result, settings] = await Promise.all([fetchOrder(orderId), storeSettingsOrDefaults()]);
 
   if (result.outcome === "unauthorized") {
     return (
@@ -88,11 +93,13 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
   }
 
   const order = result.order;
+  // Archive, note and tag controls are operator/admin: a viewer sees none the API would refuse.
+  const permissions = orderActionPermissionsFor(highestRole((await readSession())?.roles ?? []));
 
   return (
     <AppShell t={t} locale={locale} activeNavId="orders" user={user}>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-        <OrderHeader order={order} t={t} locale={locale} />
+        <OrderHeader order={order} t={t} locale={locale} canArchive={permissions.canArchive} />
 
         <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
           <div className="flex flex-col gap-6 xl:col-span-2">
@@ -103,7 +110,12 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
             </Suspense>
 
             <Suspense fallback={<OrderPaymentCardSkeleton t={t} />}>
-              <OrderPaymentCard order={order} t={t} locale={locale} />
+              <OrderPaymentCard
+                order={order}
+                t={t}
+                locale={locale}
+                canMarkCashReceived={permissions.canMarkCashReceived}
+              />
             </Suspense>
 
             <OrderTimeline
@@ -113,12 +125,24 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
               paymentProvider={order.paymentProvider}
               t={t}
               locale={locale}
+              entries={order.timelineEntries ?? []}
+              timeZone={settings.timezone}
+              orderId={order.id}
+              canComment={permissions.canComment}
             />
 
             <OrderAdvancedSection order={order} t={t} locale={locale} />
           </div>
 
           <div className="flex flex-col gap-6">
+            <OrderNotesCard
+              orderId={order.id}
+              note={order.note ?? null}
+              canEdit={permissions.canEditNote}
+              locale={locale}
+              t={t}
+            />
+
             <Suspense fallback={<OrderCustomerCardSkeleton t={t} />}>
               <OrderCustomerCard order={order} t={t} />
             </Suspense>
@@ -130,6 +154,13 @@ export default async function OrderDetailPage({ params }: OrderDetailPageProps) 
               billingAddress={order.billingAddress}
               t={t}
               locale={locale}
+            />
+
+            <OrderTagsCard
+              orderId={order.id}
+              tags={order.tags ?? []}
+              canTag={permissions.canTag}
+              t={t}
             />
           </div>
         </div>

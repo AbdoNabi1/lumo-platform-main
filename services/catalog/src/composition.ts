@@ -32,12 +32,14 @@ import { DeleteCollection } from "./application/delete-collection.use-case";
 import { DeleteProduct } from "./application/delete-product.use-case";
 import { DetachMedia } from "./application/detach-media.use-case";
 import { GetCollectionBySlug } from "./application/get-collection-by-slug.use-case";
+import { GetCollectionsByIds } from "./application/get-collections-by-ids.use-case";
 import { GetProductBySlug } from "./application/get-product-by-slug.use-case";
 import { GetProduct } from "./application/get-product.use-case";
 import { ListBrands } from "./application/list-brands.use-case";
 import { ListCategories } from "./application/list-categories.use-case";
 import { ListCollectionProducts } from "./application/list-collection-products.use-case";
 import { ListCollections } from "./application/list-collections.use-case";
+import { ListNewestProducts } from "./application/list-newest-products.use-case";
 import { ListProducts } from "./application/list-products.use-case";
 import { MoveCategory } from "./application/move-category.use-case";
 import { MoveProductBetweenCollections } from "./application/move-product-between-collections.use-case";
@@ -66,6 +68,7 @@ import type { BrandRepository } from "./domain/brand-repository";
 import type { CategoryRepository } from "./domain/category-repository";
 import type { CollectionRepository } from "./domain/collection-repository";
 import type {
+  NewestProductsReader,
   ProductBatchReader,
   ProductRepository,
   VariantCurrencyRelabeler,
@@ -128,7 +131,10 @@ export interface WiredCatalog {
 }
 
 interface CatalogRepos {
-  readonly products: ProductRepository & VariantCurrencyRelabeler & ProductBatchReader;
+  readonly products: ProductRepository &
+    VariantCurrencyRelabeler &
+    ProductBatchReader &
+    NewestProductsReader;
   readonly categories: CategoryRepository;
   readonly brands: BrandRepository;
   readonly collections: CollectionRepository;
@@ -157,6 +163,7 @@ function buildControllers(
     getProductBySlug: new GetProductBySlug({ products }),
     getProductsByIds: new GetProductsByIds({ products }),
     listProducts: new ListProducts({ products }),
+    listNewestProducts: new ListNewestProducts({ products }),
     schedulePublishProduct: new SchedulePublishProduct({ products, unitOfWork, clock }),
     unpublishProduct: new UnpublishProduct({ products, unitOfWork, idGenerator, clock }),
     unlistProduct: new UnlistProduct({ products, unitOfWork, idGenerator, clock }),
@@ -235,6 +242,7 @@ function buildControllers(
     deleteCollection: new DeleteCollection({ collections, unitOfWork, idGenerator, clock }),
     listCollections: new ListCollections({ collections }),
     getCollectionBySlug: new GetCollectionBySlug({ collections }),
+    getCollectionsByIds: new GetCollectionsByIds({ collections }),
     listCollectionProducts: new ListCollectionProducts({ collections, products }),
   });
 

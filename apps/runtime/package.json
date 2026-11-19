@@ -64,6 +64,7 @@
     "@platform/messaging": "workspace:*",
     "@platform/notifications": "workspace:*",
     "@platform/observability": "workspace:*",
+    "@platform/online-store": "workspace:*",
     "@platform/orders": "workspace:*",
     "@platform/pages": "workspace:*",
     "@platform/payments": "workspace:*",

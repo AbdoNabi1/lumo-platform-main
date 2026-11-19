@@ -8,6 +8,7 @@ vi.mock("jose", () => ({
 }));
 
 const { middleware } = await import("./middleware");
+const { PRIMARY_NAV } = await import("@/components/navigation");
 
 function requestFor(path: string, sessionCookie?: string): NextRequest {
   const headers = new Headers();
@@ -63,6 +64,15 @@ describe("middleware", () => {
     expect(jwtVerifyMock).not.toHaveBeenCalled();
   });
 
+  it.each(["/signup", "/auth/signup"])(
+    "%s is public for visitors without a session",
+    async (path) => {
+      const response = await middleware(requestFor(path));
+      expect(response.headers.get("location")).toBeNull();
+      expect(jwtVerifyMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("the dependency-free health probe bypasses the auth gate", async () => {
     const response = await middleware(requestFor("/api/healthz"));
     expect(response.headers.get("location")).toBeNull();
@@ -113,9 +123,129 @@ describe("middleware", () => {
     expect(response.headers.get("location")).toContain("/forbidden");
   });
 
+  it("Online Store: viewers reach every sidebar link; the editor needs an operator (Project 4)", async () => {
+    const { ONLINE_STORE_NAV } = await import("@/components/navigation");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const href of [
+      ONLINE_STORE_NAV.href,
+      ...(ONLINE_STORE_NAV.children ?? []).map((c) => c.href),
+    ]) {
+      const response = await middleware(requestFor(href, "good.token"));
+      expect(response.headers.get("location"), href).toBeNull();
+    }
+    const denied = await middleware(requestFor("/online-store/themes/customize", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    expect(
+      (await middleware(requestFor("/online-store/themes/customize", "good.token"))).headers.get(
+        "location",
+      ),
+    ).toBeNull();
+  });
+
+  it("the section editor stays operator-only (Part 3 adds no route)", async () => {
+    const path = "/online-store/themes/customize";
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    const denied = await middleware(requestFor(path, "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    for (const role of ["operator", "admin"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const allowed = await middleware(requestFor(path, "good.token"));
+      expect(allowed.headers.get("location"), role).toBeNull();
+    }
+  });
+
+  it("Online Store → Navigation: viewers read menus; a new menu needs an operator (Part 2)", async () => {
+    const { ONLINE_STORE_NAV } = await import("@/components/navigation");
+    expect((ONLINE_STORE_NAV.children ?? []).map((c) => c.href)).toContain(
+      "/online-store/navigation",
+    );
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/online-store/navigation", "/online-store/navigation/main-menu"]) {
+      expect((await middleware(requestFor(path, "good.token"))).headers.get("location")).toBeNull();
+    }
+    const denied = await middleware(requestFor("/online-store/navigation/new", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    expect(
+      (await middleware(requestFor("/online-store/navigation/new", "good.token"))).headers.get(
+        "location",
+      ),
+    ).toBeNull();
+  });
+
+  it("Settings → Policies reads for viewers; the rest of Settings stays admin-only (Part 2)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/settings/policies", "/settings/policies/refund"]) {
+      expect((await middleware(requestFor(path, "good.token"))).headers.get("location")).toBeNull();
+    }
+    for (const path of ["/settings", "/settings/general", "/settings/policies-old"]) {
+      const denied = await middleware(requestFor(path, "good.token"));
+      expect(denied.headers.get("location"), path).toContain("/forbidden");
+    }
+  });
+
   it("/forbidden itself is reachable by any authenticated session regardless of role", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));
     expect(response.headers.get("location")).toBeNull();
+  });
+});
+
+describe("middleware role table for the orders screens", () => {
+  it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/draft-orders", "/draft-orders/2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+    const denied = await middleware(requestFor("/draft-orders/new", "good.token"));
+    expect(denied.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an operator create a draft", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const response = await middleware(requestFor("/draft-orders/new", "good.token"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("lets a viewer open abandoned checkouts and its detail (the API decides who may issue links)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/abandoned-checkouts",
+      "/abandoned-checkouts/2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("lets a viewer read every orders page", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/orders",
+      "/orders/abc",
+      "/orders/abc/fulfillment",
+      "/orders/abc/returns",
+      "/orders/abc/shipment",
+      "/orders/packing-slips",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("never sends an operator to /forbidden from a sidebar link, bar the admin-only sections", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const adminOnly = ["/finance", "/settings", "/integrations", "/security", "/feature-registry"];
+    const hrefs = PRIMARY_NAV.flatMap((item) => [
+      item.href,
+      ...(item.children ?? []).map((child) => child.href),
+    ]);
+    for (const href of hrefs) {
+      if (adminOnly.some((prefix) => href === prefix || href.startsWith(`${prefix}/`))) continue;
+      const response = await middleware(requestFor(href, "good.token"));
+      expect(response.headers.get("location"), href).toBeNull();
+    }
   });
 });

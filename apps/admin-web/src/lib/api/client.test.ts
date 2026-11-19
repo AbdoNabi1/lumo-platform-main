@@ -10,7 +10,8 @@ vi.mock("jose", () => ({
   jwtVerify: jwtVerifyMock,
 }));
 
-const { mutateAdminApi, postAdminApiForBytes } = await import("./client");
+const { currentTenantRef, getAdminApi, mutateAdminApi, postAdminApiForBytes } =
+  await import("./client");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -50,6 +51,15 @@ describe("mutateAdminApi", () => {
       isRecord,
     );
     expect(result).toMatchObject({ outcome: "conflict", code: "CARRIER_CREDENTIALS_REJECTED" });
+  });
+
+  it("keeps the HTTP status on an error answer (a 503 is read by status, not by wording)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(503, { message: "x" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord);
+
+    expect(result).toMatchObject({ outcome: "error", status: 503 });
   });
 
   it("maps a 201 with a valid body to ok", async () => {
@@ -214,5 +224,75 @@ describe("postAdminApiForBytes", () => {
     expect(await postAdminApiForBytes("/x", {})).toMatchObject({ outcome: "error" });
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
     expect(await postAdminApiForBytes("/x", {})).toEqual({ outcome: "error", message: "down" });
+  });
+});
+
+describe("ADMIN_API_TOKEN fallback", () => {
+  it("is used only when there is no session cookie at all", async () => {
+    vi.stubEnv("ADMIN_API_TOKEN", "server-token");
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAdminApi("/api/v1/products", isRecord);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer server-token");
+  });
+
+  it("is NOT used when a session cookie is present but invalid or expired", async () => {
+    vi.stubEnv("ADMIN_API_TOKEN", "server-token");
+    cookiesMock.mockResolvedValue({ get: () => ({ value: "expired-session-jwt" }) });
+    jwtVerifyMock.mockRejectedValue(new Error("JWTExpired"));
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(401, {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const read = await getAdminApi("/api/v1/products", isRecord);
+    const write = await mutateAdminApi("/api/v1/products", { method: "POST", body: {} }, isRecord);
+
+    expect(read).toEqual({ outcome: "unauthorized" });
+    expect(write).toEqual({ outcome: "unauthorized" });
+    for (const call of fetchMock.mock.calls as [string, RequestInit][]) {
+      expect((call[1].headers as Record<string, string>)["authorization"]).toBeUndefined();
+    }
+  });
+});
+
+describe("session tenant", () => {
+  function sessionAs(payload: Record<string, unknown>): void {
+    cookiesMock.mockResolvedValue({ get: () => ({ value: "staff-session-jwt" }) });
+    jwtVerifyMock.mockResolvedValue({ payload: { sub: "identity-1", kind: "staff", ...payload } });
+  }
+
+  it("sends the session's store as x-tenant-id and resolves currentTenantRef to it", async () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "shop-a");
+    sessionAs({ tenant_id: "shop-b" });
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAdminApi("/api/v1/products", isRecord);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init.headers as Record<string, string>;
+    expect(headers["x-tenant-id"]).toBe("shop-b");
+    expect(headers["authorization"]).toBe("Bearer staff-session-jwt");
+    expect(await currentTenantRef()).toBe("shop-b");
+  });
+
+  it("falls back to TENANT_DEFAULT_ID when there is no session", async () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "shop-a");
+    const fetchMock = vi.fn().mockImplementation(async () => jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getAdminApi("/api/v1/products", isRecord);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)["x-tenant-id"]).toBe("shop-a");
+    expect(await currentTenantRef()).toBe("shop-a");
+  });
+
+  it("falls back to TENANT_DEFAULT_ID when the session token has no tenant_id claim", async () => {
+    vi.stubEnv("TENANT_DEFAULT_ID", "shop-a");
+    sessionAs({});
+    expect(await currentTenantRef()).toBe("shop-a");
   });
 });

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button, Label } from "@platform/ui";
-import { submitProductReview } from "@/app/products/[slug]/actions";
+import { submitProductReview } from "@/app/(store)/products/[slug]/actions";
 import type { Dictionary } from "@/messages/en";
 
 const RATINGS = [5, 4, 3, 2, 1] as const;
@@ -29,9 +29,9 @@ export function WriteReviewForm({
   const [isPending, startTransition] = useTransition();
   const [rating, setRating] = useState(5);
   const [bodyText, setBodyText] = useState("");
-  const [result, setResult] = useState<
-    "idle" | "ok" | "duplicate" | "validation" | "network"
-  >("idle");
+  const [result, setResult] = useState<"idle" | "ok" | "duplicate" | "validation" | "network">(
+    "idle",
+  );
 
   const copy = t.product.reviewForm;
 

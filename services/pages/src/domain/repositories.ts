@@ -14,6 +14,10 @@ export interface PageRepository {
   findById(id: string, tenantId: string, tx?: unknown): Promise<Page | null>;
   findByRoutePath(routePath: string, tenantId: string, tx?: unknown): Promise<Page | null>;
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Page>>;
+  /** Unknown ids and other shops' pages are skipped. */
+  findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly Page[]>;
+  /** Published pages under `/pages/<handle>`, ordered by route path, at most `limit`. */
+  listPublished(tenantId: string, limit: number, tx?: unknown): Promise<readonly Page[]>;
 }
 
 /** Persistence port for {@link Template}. Same ADR-0014 shape as {@link PageRepository}. */

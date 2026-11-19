@@ -2,10 +2,12 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import type { EventContext, OutboxWriter } from "@platform/messaging";
 import type { Product } from "../domain/product";
-import type {
-  ProductBatchReader,
-  ProductRepository,
-  VariantCurrencyRelabeler,
+import {
+  clampNewestLimit,
+  type NewestProductsReader,
+  type ProductBatchReader,
+  type ProductRepository,
+  type VariantCurrencyRelabeler,
 } from "../domain/product-repository";
 
 export interface InMemoryProductRepositoryDeps {
@@ -22,7 +24,7 @@ export interface InMemoryProductRepositoryDeps {
  * here would be invisible to every isolation test.
  */
 export class InMemoryProductRepository
-  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader
+  implements ProductRepository, VariantCurrencyRelabeler, ProductBatchReader, NewestProductsReader
 {
   private readonly store = new Map<
     string,
@@ -56,6 +58,19 @@ export class InMemoryProductRepository
           ([id, entry]) => wanted.has(id) && entry.tenantId === tenantId && !entry.product.deleted,
         )
         .map(([, entry]) => entry.product),
+    );
+  }
+
+  listNewestListed(limit: number, tenantId: string): Promise<readonly Product[]> {
+    return Promise.resolve(
+      [...this.store.values()]
+        .filter(
+          (entry) =>
+            entry.tenantId === tenantId && !entry.product.deleted && entry.product.status.isListed,
+        )
+        .map((entry) => entry.product)
+        .sort((a, b) => b.id.toString().localeCompare(a.id.toString()))
+        .slice(0, clampNewestLimit(limit)),
     );
   }
 

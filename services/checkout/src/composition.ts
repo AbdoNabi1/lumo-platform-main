@@ -12,6 +12,17 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import {
+  GetAbandonedCheckout,
+  IssueRecoveryLink,
+  ListAbandonedCheckouts,
+  ResolveCheckoutLink,
+  StartRecoveredCheckout,
+} from "./application/abandoned-checkouts.use-cases";
+import type { AbandonedCheckoutQueries } from "./domain/abandoned-checkouts";
+import type { CheckoutLinkRepository } from "./domain/checkout-link-repository";
+import { InMemoryCheckoutLinkRepository } from "./infrastructure/in-memory-checkout-link-repository";
+import { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";
+import {
   LoadItems,
   SelectPayment,
   SelectShipping,
@@ -34,6 +45,16 @@ import {
 } from "./application/checkout-orchestration.use-cases";
 import { CompleteCheckout } from "./application/complete-checkout.use-case";
 import { AddDiscountCode, RemoveDiscountCode } from "./application/discount-code.use-cases";
+import {
+  ClaimInvoiceCheckout,
+  EstimateDraftTax,
+  IssueInvoiceLink,
+  ListDraftLinks,
+  QuoteDraftShipping,
+  RevokeDraftLinks,
+  SelectDraftPayment,
+  StartDraftCheckout,
+} from "./application/draft-checkout.use-cases";
 import { FailCheckout } from "./application/fail-checkout.use-case";
 import { GetCheckoutSession } from "./application/get-checkout-session.use-case";
 import { InitiatePayment, ListPaymentMethods } from "./application/payment-initiation.use-cases";
@@ -41,6 +62,7 @@ import { StartCheckout } from "./application/start-checkout.use-case";
 import type { CheckoutSessionRepository } from "./domain/checkout-session-repository";
 import type {
   DiscountUsagePort,
+  DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
   OrderStockReservationPort,
@@ -96,6 +118,8 @@ export interface CheckoutWiringDeps {
   readonly promotionValidation?: PromotionValidationPort;
   /** Phase 2: records each discount's use once an order is placed. Absent ⇒ nothing is recorded. */
   readonly discountUsage?: DiscountUsagePort;
+  /** Part 4: tells Orders a draft order's checkout became an order. Absent ⇒ nothing is reported. */
+  readonly draftCompletion?: DraftOrderCompletionPort;
   /**
    * C-2: the outbound seam `CompleteCheckout` uses to materialize an order from a completed
    * session. Same `deps.X ?? new InMemoryXAdapter()` convention as the 5 orchestration ports
@@ -128,7 +152,8 @@ export interface WiredCheckout {
 
 /** Builds the `CheckoutController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
 function buildController(
-  sessions: CheckoutSessionRepository,
+  sessions: CheckoutSessionRepository & AbandonedCheckoutQueries,
+  links: CheckoutLinkRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: CheckoutWiringDeps,
 ): CheckoutController {
@@ -140,6 +165,23 @@ function buildController(
   const orderCreation = deps.orderCreation ?? new InMemoryOrderCreationAdapter();
   const paymentMethods = deps.paymentMethods ?? new InMemoryPaymentMethodAdapter();
   const paymentInitiation = deps.paymentInitiation ?? new InMemoryPaymentInitiationAdapter();
+
+  const recoveryDeps = {
+    abandoned: sessions,
+    sessions,
+    links,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+  };
+  const draftDeps = {
+    sessions,
+    links,
+    unitOfWork,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    taxCalculation,
+  };
 
   return new CheckoutController({
     startCheckout: new StartCheckout({ sessions, unitOfWork, idGenerator: deps.idGenerator }),
@@ -163,6 +205,7 @@ function buildController(
       promotionValidation,
       taxCalculation,
       ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
+      ...(deps.draftCompletion === undefined ? {} : { draftCompletion: deps.draftCompletion }),
     }),
     failCheckout: new FailCheckout({
       sessions,
@@ -228,6 +271,19 @@ function buildController(
     }),
     generateOrderDraft: new GenerateOrderDraft({ sessions }),
     generatePaymentIntentRequest: new GeneratePaymentIntentRequest({ sessions }),
+    listAbandonedCheckouts: new ListAbandonedCheckouts(recoveryDeps),
+    getAbandonedCheckout: new GetAbandonedCheckout(recoveryDeps),
+    issueRecoveryLink: new IssueRecoveryLink(recoveryDeps),
+    resolveCheckoutLink: new ResolveCheckoutLink(recoveryDeps),
+    startRecoveredCheckout: new StartRecoveredCheckout(recoveryDeps),
+    startDraftCheckout: new StartDraftCheckout(draftDeps),
+    selectDraftPayment: new SelectDraftPayment(draftDeps),
+    quoteDraftShipping: new QuoteDraftShipping({ shippingCalculation }),
+    estimateDraftTax: new EstimateDraftTax({ taxCalculation }),
+    issueInvoiceLink: new IssueInvoiceLink(draftDeps),
+    claimInvoiceCheckout: new ClaimInvoiceCheckout(draftDeps),
+    revokeDraftLinks: new RevokeDraftLinks(draftDeps),
+    listDraftLinks: new ListDraftLinks({ links }),
   });
 }
 
@@ -253,7 +309,12 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      checkout: buildController(sessions, unitOfWork, deps),
+      checkout: buildController(
+        sessions,
+        new PrismaCheckoutLinkRepository({ prisma: deps.prisma }),
+        unitOfWork,
+        deps,
+      ),
       drainOutbox: async () => 0,
       deliveredEventTypes: [],
     };
@@ -269,9 +330,18 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
   });
   const context = rootEventContext(deps.idGenerator);
 
-  const sessions = new InMemoryCheckoutSessionRepository({ outbox: outboxWriter, context });
+  const sessions = new InMemoryCheckoutSessionRepository({
+    outbox: outboxWriter,
+    context,
+    clock: deps.clock,
+  });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(sessions, unitOfWork, deps);
+  const controller = buildController(
+    sessions,
+    new InMemoryCheckoutLinkRepository(),
+    unitOfWork,
+    deps,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];

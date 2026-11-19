@@ -76,6 +76,11 @@ export const EXEMPTIONS = {
     cls: "platform-global",
     reason: "Plan is platform-owned catalogue data readable by every merchant",
   },
+  "services/licensing/src/infrastructure/prisma-repositories.ts|plan.findMany": {
+    cls: "platform-global",
+    reason:
+      "listPublished: the public plan catalogue shown at sign-up; Plan has no tenant_id by design",
+  },
   // `where` is built by the caller and TYPED to carry the tenant: `{ readonly tenantId: string } & ...`.
   "services/fulfillment/src/infrastructure/prisma-fulfillment-order-repository.ts|fulfillmentOrder.findFirst":
     {

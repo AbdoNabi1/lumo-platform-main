@@ -11,8 +11,38 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: var(--shop-base-size, 14px);
     line-height: 20px;
     -webkit-font-smoothing: antialiased;
   }
+}
+
+/*
+ * Project 4 (Ruling 4): @platform/design inlines --radius-* into utilities (@theme inline), so a
+ * runtime override would do nothing. The storefront re-declares the scale through --shop-radius-*,
+ * which only a branded shop's <style id="brand"> sets; the fallbacks are the design values.
+ */
+@theme inline {
+  --radius-xs: var(--shop-radius-xs, 4px);
+  --radius-sm: var(--shop-radius-sm, 6px);
+  --radius-md: var(--shop-radius-md, 8px);
+  --radius-lg: var(--shop-radius-lg, 12px);
+  --radius-xl: var(--shop-radius-xl, 16px);
+  --radius-2xl: var(--shop-radius-2xl, 20px);
+  --radius-3xl: var(--shop-radius-3xl, 28px);
+}
+
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-heading, var(--font-sans));
+  }
+}
+
+/* The section the editor is pointing at in a preview: a fixed rule, no merchant value. */
+[data-section-focused="true"] {
+  outline: 2px dashed var(--primary);
+  outline-offset: 4px;
 }

@@ -13,6 +13,8 @@ import {
 export interface InMemorySalesSummaryQueryDeps {
   /** Every order of ONE shop; the query never sees another shop's orders. */
   readonly ordersOf: (tenantId: string) => readonly Order[];
+  /** Order operations Part 1: whether an order is archived (archived orders are not "to fulfill"). Absent = none are. */
+  readonly isArchived?: (orderId: string, tenantId: string) => boolean;
 }
 
 function isCancelled(order: Order): boolean {
@@ -88,7 +90,13 @@ export class InMemorySalesSummaryQuery implements SalesSummaryQuery {
       otherCurrencyOrders: inRange.length - counted.length,
       openOrderIds:
         input.includeOpenOrderIds === true
-          ? orders.filter((order) => isOpenOrder(order.history)).map((order) => order.id.toString())
+          ? orders
+              .filter(
+                (order) =>
+                  isOpenOrder(order.history) &&
+                  !(this.deps.isArchived?.(order.id.toString(), input.tenantId) ?? false),
+              )
+              .map((order) => order.id.toString())
           : [],
     });
   }

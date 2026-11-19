@@ -7,6 +7,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { OutboxWriter, rootEventContext } from "@platform/messaging";
 import { ConcurrencyError } from "@platform/utils";
 import { PaymentIntent } from "../domain/payment-intent";
+import { PaymentMethod, PspReference } from "../domain/value-objects/payment-references";
 import { PspToken } from "../domain/value-objects/psp-token";
 import { PaymentEventTranslator } from "./payment-event-translator";
 import { PrismaPaymentIntentRepository } from "./prisma-payment-intent-repository";
@@ -86,6 +87,50 @@ describe.runIf(Boolean(databaseUrl))("PrismaPaymentIntentRepository (integration
       true,
     );
     expect(rows.every((entry) => entry.status === "pending")).toBe(true); // CDC-drained, never marked by app code
+    await prisma.$disconnect();
+  });
+
+  it("persists the attempt log on authorize + capture, and re-saves stay append-only", async () => {
+    // `payment_attempts.id` is `@db.Uuid`. Attempt ids used to be `${intentId}${index}` (37 chars,
+    // 33 hex digits), which Postgres rejects with `invalid input syntax for type uuid`, so any save
+    // after authorize/capture/refund/webhook failed. The legacy `capture()` used above records no
+    // attempt, which is why this suite never caught it; this drives the real lifecycle path.
+    const { prisma, repository, unitOfWork, tenantId } = wire();
+    const intent = PaymentIntent.createIntent(
+      UniqueEntityId.from(ids.generate()),
+      crypto.randomUUID(),
+      unwrap(Money.create(5000, "USD")),
+      "stripe",
+    );
+    intent.markProcessing(ids.generate(), clock.now());
+    intent.authorize(
+      unwrap(PspReference.create(`pi_${crypto.randomUUID()}`)),
+      unwrap(PaymentMethod.create("tok_visa_4242", "visa")),
+      5000,
+      ids.generate(),
+      clock.now(),
+    );
+    await unitOfWork.run(async (tx) => repository.save(intent, tenantId, tx));
+
+    const loaded = await repository.findById(intent.id.toString(), tenantId);
+    if (loaded === null) throw new Error("setup failed");
+    loaded.requestCapture(ids.generate(), clock.now());
+    loaded.markCaptured(ids.generate(), new Date(clock.now().getTime() + 1000));
+    await unitOfWork.run(async (tx) => repository.save(loaded, tenantId, tx));
+
+    const rows = await prisma.paymentAttempt.findMany({
+      where: { intentId: intent.id.toString() },
+      orderBy: { occurredAt: "asc" },
+    });
+    expect(rows.map((row) => `${row.kind}:${row.outcome}`)).toEqual([
+      "authorize:succeeded",
+      "capture:succeeded",
+    ]);
+    // Reload keeps the persisted ids verbatim, and the second save re-sent the first attempt
+    // without duplicating it (`skipDuplicates` on the PK): the log stays append-only.
+    const reloaded = await repository.findById(intent.id.toString(), tenantId);
+    expect(reloaded?.attempts.map((a) => a.id.toString())).toEqual(rows.map((row) => row.id));
+    expect(loaded.attempts.map((a) => a.id.toString())).toEqual(rows.map((row) => row.id));
     await prisma.$disconnect();
   });
 

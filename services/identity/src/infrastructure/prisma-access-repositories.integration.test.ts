@@ -57,11 +57,14 @@ describe.runIf(Boolean(databaseUrl))("Prisma Identity access repositories (integ
     }
     // The outbox context tenantId is a fixed "tenant-itest" literal for this whole file (matching
     // the reference `PrismaOrderRepository` suite's convention), so outbox rows can't be cleaned
-    // up by the per-test tenant id above — clean up by `producer` instead. Only THIS suite ever
-    // writes `producer: "identity"` rows into the shared `platform.outbox` table, so this can't
-    // touch another bounded context's (or another test file's) rows.
+    // up by the per-test tenant id above. Clean up by that literal tenant (plus the producer):
+    // `prisma-customer-repository.integration.test.ts` also writes `producer: "identity"` rows and
+    // vitest runs the two files in parallel, so a producer-only delete here would remove the other
+    // file's rows mid-test.
     if (client !== undefined) {
-      await client.outboxEntry.deleteMany({ where: { producer: "identity" } });
+      await client.outboxEntry.deleteMany({
+        where: { producer: "identity", tenantId: "tenant-itest" },
+      });
     }
     await Promise.all(openClients.splice(0).map((c) => c.$disconnect()));
   });

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Input, Label } from "@platform/ui";
-import { completeAccountSignup } from "@/app/account/actions";
+import { completeAccountSignup } from "@/app/(store)/account/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**

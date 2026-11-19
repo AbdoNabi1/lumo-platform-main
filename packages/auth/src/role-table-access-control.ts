@@ -26,6 +26,8 @@ const SHOP_RESOURCES = [
   "seo",
   "localization",
   "notifications",
+  // Project 4: online_store_admin (publish, lock) is deliberately NOT here — admin only.
+  "online_store",
 ] as const;
 
 /** Read-only extras a viewer and operator may see (dashboards), never change. */

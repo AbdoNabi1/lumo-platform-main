@@ -9,6 +9,8 @@ export const en = {
     searchPlaceholder: "Search products…",
     searchSubmit: "Search",
     account: "Account",
+    menu: "Menu",
+    closeMenu: "Close navigation",
   },
   theme: {
     toggle: "Toggle theme",
@@ -16,17 +18,62 @@ export const en = {
   language: {
     switch: "Language",
   },
+  footer: {
+    poweredBy: "Powered by Morbeh",
+    social: "Follow us",
+    networks: {
+      facebook: "Facebook",
+      instagram: "Instagram",
+      tiktok: "TikTok",
+      x: "X",
+      youtube: "YouTube",
+      snapchat: "Snapchat",
+    },
+    links: "Links",
+    policies: "Policies",
+  },
+  meta: {
+    fallbackTitle: "Store",
+  },
+  preview: {
+    banner: "Preview — not visible to customers",
+    expires: "Link expires at {time}",
+    expired: "Preview link expired",
+    unavailable: "Not available in preview",
+  },
+  password: {
+    title: "Password",
+    defaultMessage: "Opening soon",
+    label: "Password",
+    submit: "Enter",
+    incorrect: "Incorrect password",
+    tooMany: "Too many attempts on this store. Try again in {duration}.",
+    /** Picked with `Intl.PluralRules(locale)`: every category a locale may need is present. */
+    minutes: {
+      zero: "{count} minutes",
+      one: "one minute",
+      two: "two minutes",
+      few: "{count} minutes",
+      many: "{count} minutes",
+      other: "{count} minutes",
+    },
+    unavailable: "Temporarily unavailable. Try again shortly.",
+    ownerPrompt: "Are you the store owner?",
+    ownerLink: "Log in to the admin",
+  },
   home: {
     title: "Shop",
-    subtitle: "Browse products and collections.",
-    productsTitle: "Products",
     productsEmpty: "No products are available yet.",
-    productsError: "Couldn't load products. Try refreshing the page.",
-    categoriesTitle: "Categories",
-    categoriesEmpty: "No categories are available yet.",
-    collectionsTitle: "Collections",
     collectionsEmpty: "No collections are available yet.",
-    collectionsError: "Couldn't load collections. Try refreshing the page.",
+  },
+  sections: {
+    hiddenPlaceholder: "Hidden section",
+    incompletePlaceholder: "Finish setting up this section",
+    viewAll: "View all",
+    rating: "Rated {rating} out of {max}",
+    announcement: "Announcement",
+    opensInNewTab: "Opens in a new tab",
+    whatsappDefault: "Message us on WhatsApp",
   },
   product: {
     unavailable: "This product isn't available right now.",
@@ -189,11 +236,35 @@ export const en = {
       quantity: "Quantity",
       subtotal: "Subtotal",
       shipping: "Shipping",
+      discount: "Discount",
       enterShippingAddress: "Enter shipping address",
       taxes: "Taxes",
       free: "Free",
       includingTaxes: "Including {tax} in taxes",
       total: "Total",
+    },
+    discount: {
+      label: "Discount code",
+      placeholder: "Discount code",
+      apply: "Apply",
+      applying: "Applying…",
+      removeLabel: "Remove code {code}",
+      notApplicable: "Not applicable: {reason}",
+      codesLabel: "Discount codes",
+      reasons: {
+        not_found: "That code doesn't exist. Check it and try again.",
+        expired: "This code has expired.",
+        not_started: "This code isn't active yet.",
+        minimum_not_met: "Your order doesn't meet the minimum for this code.",
+        not_eligible: "You aren't eligible for this code.",
+        usage_limit_reached: "This code has reached its usage limit.",
+        already_used: "You've already used this code.",
+        cannot_combine: "This code can't be combined with the discounts already applied.",
+        too_many_codes: "You've reached the maximum number of discount codes.",
+        too_many_attempts: "Too many attempts. Wait a moment and try again.",
+        no_matching_items: "None of the items in your cart qualify.",
+      },
+      genericReason: "This code can't be used.",
     },
     sameAsShipping: "Same as shipping address",
     paymentMethod: {
@@ -212,10 +283,26 @@ export const en = {
       "Your order was placed, but this payment method can't be completed online from here. Please contact the store to arrange payment.",
     ownershipErrorTitle: "We couldn't find your checkout",
     ownershipErrorBody: "Your checkout session may have expired. Start again from your cart.",
+    /** Part 4: an invoice checkout someone else opened since (the last opener owns it), or expired. */
+    invoiceOwnershipErrorTitle: "This invoice was opened elsewhere",
+    invoiceOwnershipErrorBody:
+      "This invoice's checkout was opened in another browser or has expired. Open your invoice link again to continue.",
     validationErrorBody: "Something about that step wasn't valid. Check the details and try again.",
     unavailableErrorBody: "This checkout can no longer be changed. Start again from your cart.",
     outOfStock:
       "Some items in your cart are no longer available in the quantity you chose. Update your cart and try again.",
+    itemsDropped: "Some items are no longer available",
+    /** Order operations Part 4 — a checkout that pays a merchant's draft order. */
+    invoiceBadge: "Invoice #{draft}",
+    fixedShippingHint: "Shipping was set by the store for this order.",
+    draftLockedBody:
+      "The store set the discount and shipping for this order, so they can't be changed here.",
+    invoiceUnavailableBody:
+      "This invoice can't be changed or paid from here right now. Open the invoice link again, or contact the store.",
+    invoiceOutOfStock:
+      "Some items on this invoice are no longer in stock. Please contact the store.",
+    discountsChanged:
+      "Your discounts changed — please review the new total before placing your order.",
     networkErrorBody: "Couldn't reach the checkout service. Try again.",
     confirmation: {
       title: "Thanks for your order",
@@ -229,6 +316,52 @@ export const en = {
       missingBody: "We couldn't find an order to confirm here.",
     },
   },
+  /** Order operations Part 3 — the recovery link landing page (`/c/<token>`). */
+  recovery: {
+    metaTitle: "Complete your order",
+    title: "Complete your order",
+    fromShop: "Your order from {shop}",
+    itemFallback: "Item",
+    quantity: "Qty {count}",
+    total: "Total",
+    pricesNote: "Prices and availability are confirmed at checkout.",
+    continue: "Continue to checkout",
+    continuing: "Opening checkout…",
+    invalidTitle: "This link has expired or is no longer valid",
+    invalidBody: "Ask the store for a new link, or keep shopping.",
+    /** The preview could not be loaded (network or server error) — the link itself may be fine. */
+    loadFailedTitle: "We couldn't load this link",
+    loadFailedBody: "Something went wrong on our side. Try again in a moment.",
+    tryAgain: "Try again",
+    backToShop: "Back to shop",
+    errors: {
+      invalid: "This link has expired or is no longer valid.",
+      unavailable: "None of these items are available anymore.",
+      completed: "This order has already been placed.",
+      notReady: "This invoice can't be paid right now. Please contact the store.",
+      busy: "The store is updating this invoice. Try again in a moment.",
+      tooLarge: "This invoice is too large to pay online. Please contact the store.",
+      outOfStock: "Some items on this invoice are no longer in stock. Please contact the store.",
+      network: "Couldn't open your checkout. Try again.",
+    },
+  },
+  /** Order operations Part 4 — an invoice link (`/c/<token>`) a merchant sent for a draft order. */
+  invoice: {
+    /** Generic on purpose: link previews (WhatsApp) show it, so no draft number or personal data. */
+    metaTitle: "Your invoice",
+    title: "Invoice #{draft}",
+    fromShop: "From {shop}",
+    totalNote:
+      "This is the total the store quoted, shipping included. Taxes are confirmed at checkout.",
+    /** The tax could not be estimated yet: the figure shown is the total before tax. */
+    totalBeforeTax: "Total before tax",
+    taxPendingNote:
+      "This is the total the store quoted, shipping included, before tax. Taxes are added at checkout.",
+    pay: "Pay now",
+    paying: "Opening checkout…",
+    completedTitle: "This order has already been placed",
+    completedBody: "The store has received this order. Thank you!",
+  },
   account: {
     title: "Your account",
     signedInAs: "Signed in as",
@@ -239,7 +372,7 @@ export const en = {
     errorBody: "Couldn't reach the account service. Try again.",
     signIn: {
       title: "Sign in",
-      subtitle: "Sign in to your Morbeh account.",
+      subtitle: "Sign in to your account.",
       emailLabel: "Email",
       passwordLabel: "Password",
       submit: "Sign in",
@@ -249,7 +382,7 @@ export const en = {
     },
     register: {
       title: "Create an account",
-      subtitle: "Create a Morbeh account to save your wishlist and track your orders.",
+      subtitle: "Create an account to save your wishlist and track your orders.",
       nameLabel: "Name",
       emailLabel: "Email",
       passwordLabel: "Password",
@@ -335,6 +468,14 @@ export const en = {
   },
   common: {
     loading: "Loading…",
+  },
+  content: {
+    lastUpdated: "Last updated {date}",
+    unavailableTitle: "Page unavailable",
+    unavailable: "This page is unavailable right now. Please try again later.",
+  },
+  locked: {
+    enter: "Enter using password",
   },
   notFound: {
     title: "Page not found",

@@ -42,6 +42,10 @@ function matchesOperator(actual: unknown, operator: string, expected: unknown): 
       return (actual as number | Date) >= (expected as number | Date);
     case "lt":
       return (actual as number | Date) < (expected as number | Date);
+    case "startsWith":
+      return (
+        typeof actual === "string" && typeof expected === "string" && actual.startsWith(expected)
+      );
     case "lte":
       return (actual as number | Date) <= (expected as number | Date);
     default:
@@ -95,6 +99,15 @@ function delegate(rows: Row[]) {
     createMany: async ({ data }: { data: Row[] }): Promise<{ count: number }> => {
       for (const row of data) rows.push({ ...row });
       return { count: data.length };
+    },
+    // No constraints are modelled, so every row is "inserted" and returned (whole, `select` ignored).
+    createManyAndReturn: ({ data }: { data: Row[] }): Promise<Row[]> => {
+      try {
+        for (const row of data) rows.push({ ...row });
+        return Promise.resolve(data.map((row) => ({ ...row })));
+      } catch (error) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
     },
     findFirst: async (args: Args = {}): Promise<Row | null> => {
       const found = rows.find((row) => matches(row, args.where));

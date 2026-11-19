@@ -89,14 +89,43 @@ describe("SidebarNav (Shopify layout)", () => {
     expect(screen.getByRole("link", { name: en.nav.categories })).toBeInTheDocument();
   });
 
-  it("puts Theme, Pages and SEO under the Online Store sales channel", () => {
-    renderNav("pages");
-
+  it("puts Themes, Pages, Preferences and SEO under Online Store, in Shopify's order", () => {
+    renderNav("online-store-preferences");
     const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
-    expect(within(channels).getByRole("link", { name: en.nav.onlineStore })).toBeInTheDocument();
-    expect(within(channels).getByRole("link", { name: en.nav.pages })).toHaveAttribute(
+    expect(within(channels).getByRole("link", { name: en.nav.onlineStore })).toHaveAttribute(
+      "href",
+      "/online-store/themes",
+    );
+    const labels = within(channels)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels).toEqual(
+      expect.arrayContaining([en.nav.themes, en.nav.pages, en.nav.preferences, en.nav.seo]),
+    );
+    expect(within(channels).getByRole("link", { name: en.nav.preferences })).toHaveAttribute(
       "aria-current",
       "page",
+    );
+  });
+
+  it("puts Navigation right after Pages under Online Store (Part 2)", () => {
+    renderNav("online-store-navigation");
+    const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
+    const labels = within(channels)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels.indexOf(en.nav.navigation)).toBe(labels.indexOf(en.nav.pages) + 1);
+    const link = within(channels).getByRole("link", { name: en.nav.navigation });
+    expect(link).toHaveAttribute("href", "/online-store/navigation");
+    expect(link).toHaveAttribute("aria-current", "page");
+  });
+
+  it("lists the raw theme tokens under Platform tools", () => {
+    renderNav("dashboard", { showPlatformTools: true });
+    const tools = screen.getByRole("navigation", { name: en.nav.platformTools });
+    expect(within(tools).getByRole("link", { name: en.nav.themeTokens })).toHaveAttribute(
+      "href",
+      "/theme",
     );
   });
 
@@ -135,5 +164,55 @@ describe("SidebarNav (Shopify layout)", () => {
     const tools = screen.getByRole("navigation", { name: en.nav.platformTools });
     expect(within(tools).getByRole("link", { name: en.nav.featureFlags })).toBeInTheDocument();
     expect(within(tools).getByRole("link", { name: en.nav.security })).toBeInTheDocument();
+  });
+
+  it("lists Abandoned checkouts under Orders while an Orders page is current (order operations Part 3)", () => {
+    renderNav("orders");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "href",
+      "/abandoned-checkouts",
+    );
+  });
+
+  it("marks Abandoned checkouts current on its own pages and keeps Orders in view", () => {
+    renderNav("abandoned-checkouts");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+  });
+
+  it("marks Drafts current on its own pages and keeps Orders in view (order operations Part 4)", () => {
+    renderNav("draft-orders");
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.drafts })).toHaveAttribute(
+      "href",
+      "/draft-orders",
+    );
+    expect(screen.getByRole("link", { name: en.nav.orders })).not.toHaveAttribute("aria-current");
+    expect(screen.getByRole("link", { name: en.nav.abandonedCheckouts })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("Orders' sub-pages are Drafts, then Part 3's Abandoned checkouts", () => {
+    expect(PRIMARY_NAV.find((item) => item.id === "orders")?.children?.map((c) => c.id)).toEqual([
+      "draft-orders",
+      "abandoned-checkouts",
+    ]);
+  });
+});
+
+describe("Orders children (Shopify order)", () => {
+  it("lists Drafts, then Abandoned checkouts", () => {
+    const orders = PRIMARY_NAV.find((item) => item.id === "orders");
+    expect(orders?.children?.map((child) => child.href)).toEqual([
+      "/draft-orders",
+      "/abandoned-checkouts",
+    ]);
   });
 });

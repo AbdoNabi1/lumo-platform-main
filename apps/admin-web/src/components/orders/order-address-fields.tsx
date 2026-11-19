@@ -7,8 +7,8 @@ import type { Dictionary } from "@/messages/en";
 /**
  * One address block (line1/city/postalCode/country) named with the `${prefix}Line1` /
  * `${prefix}City` / `${prefix}PostalCode` / `${prefix}Country` convention `app/orders/
- * actions.ts`'s `parseAddress` reads back off `FormData`. Shared by `OrderCreateForm` (shipping
- * only) and `OrderFromCheckoutForm` (billing + shipping). Per-field errors are looked up under the
+ * actions.ts`'s `parseAddress` reads back off `FormData`. Used by `OrderFromCheckoutForm` (billing
+ * + shipping). Per-field errors are looked up under the
  * server's zod dot-path key (e.g. `shippingAddress.line1`, per `packages/http/src/server.ts`'s
  * `issue.path.join(".")`); the whole-block key (e.g. `shippingAddress`) covers this form's own
  * client-side parse failure, rendered once above the block.

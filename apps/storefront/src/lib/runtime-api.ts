@@ -2,7 +2,7 @@ import { headers } from "next/headers";
 import { SHOP_ID_HEADER } from "./shop-host";
 import type { ShippableCountries } from "./checkout-address";
 
-const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
+export const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
 
 /**
@@ -10,7 +10,7 @@ const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
  * tenant, as before. With it on, the middleware put the resolved shop id on the request; its absence
  * is a wiring bug, so this throws rather than silently serving the default shop.
  */
-async function currentTenantId(): Promise<string> {
+export async function currentShopId(): Promise<string> {
   if (process.env.STOREFRONT_HOST_ROUTING !== "on") return TENANT_ID;
   const shopId = (await headers()).get(SHOP_ID_HEADER);
   if (shopId === null || shopId === "") {
@@ -171,7 +171,7 @@ async function fetchList<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -210,7 +210,7 @@ async function fetchPage<T>(
           ).toString()}`
         : "";
     const response = await fetch(`${RUNTIME_API_URL}${path}${query}`, {
-      headers: { "x-tenant-id": await currentTenantId() },
+      headers: { "x-tenant-id": await currentShopId() },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -227,6 +227,59 @@ async function fetchPage<T>(
   }
 }
 
+/** A hung Runtime must not hang the sitemap: each of its reads gives up after this. */
+const SHOP_PAGE_TIMEOUT_MS = 3_000;
+
+/**
+ * One cursor page of a public list for an EXPLICIT shop (preflight 1): it never reads request
+ * headers, so it is safe inside `unstable_cache`, unlike `fetchPage` (whose `currentShopId()` reads
+ * them). 3 s timeout (preflight 9). Null for any failure or a body that is not a page.
+ */
+async function fetchShopPage<T>(
+  shopId: string,
+  path: string,
+  after: string | undefined,
+): Promise<CursorPageResult<T> | null> {
+  const query = new URLSearchParams({ first: String(MAX_PAGE_SIZE) });
+  if (after !== undefined) query.set("after", after);
+  try {
+    const response = await fetch(`${RUNTIME_API_URL}${path}?${query.toString()}`, {
+      headers: { "x-tenant-id": shopId },
+      cache: "no-store",
+      signal: AbortSignal.timeout(SHOP_PAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const json = (await response.json()) as { items?: unknown; pageInfo?: unknown } | null;
+    if (json === null || typeof json !== "object" || !Array.isArray(json.items)) return null;
+    const info = (json.pageInfo ?? {}) as { hasNextPage?: unknown; endCursor?: unknown };
+    return {
+      items: json.items as readonly T[],
+      pageInfo: {
+        hasNextPage: info.hasNextPage === true,
+        endCursor: typeof info.endCursor === "string" ? info.endCursor : null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One page (100) of a shop's public products, for the sitemap (`GET /public/products`). */
+export function getProductsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<ProductSummary> | null> {
+  return fetchShopPage<ProductSummary>(shopId, "/api/v1/public/products", after);
+}
+
+/** One page (100) of a shop's public collections, for the sitemap (`GET /public/collections`). */
+export function getCollectionsPage(
+  shopId: string,
+  after?: string,
+): Promise<CursorPageResult<CollectionSummary> | null> {
+  return fetchShopPage<CollectionSummary>(shopId, "/api/v1/public/collections", after);
+}
+
 /**
  * Fetches a single-item PUBLIC route. Unlike `fetchList` (which collapses every failure to
  * `null`), this returns the real HTTP status alongside the body — Cart's empty-state (404, no
@@ -239,7 +292,7 @@ async function fetchItem<T>(
 ): Promise<{ readonly status: number; readonly body: T | null }> {
   try {
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
-      headers: { "x-tenant-id": await currentTenantId(), ...extraHeaders },
+      headers: { "x-tenant-id": await currentShopId(), ...extraHeaders },
       cache: "no-store",
     });
     if (!response.ok) return { status: response.status, body: null };
@@ -264,7 +317,7 @@ async function postItem<T>(
     const response = await fetch(`${RUNTIME_API_URL}${path}`, {
       method: "POST",
       headers: {
-        "x-tenant-id": await currentTenantId(),
+        "x-tenant-id": await currentShopId(),
         "content-type": "application/json",
         ...extraHeaders,
       },
@@ -318,6 +371,17 @@ export async function getShippableCountries(): Promise<ShippableCountries | null
   return { countries: body.countries, restOfWorld: body.restOfWorld };
 }
 
+/** Compatibility reads retained for main's category and collection callers. */
+export function getCategories(): Promise<readonly CategorySummary[] | null> {
+  return fetchList<CategorySummary>("/api/v1/public/categories");
+}
+
+export function getCollections(
+  first: number = MAX_PAGE_SIZE,
+): Promise<readonly CollectionSummary[] | null> {
+  return fetchList<CollectionSummary>("/api/v1/public/collections", { first });
+}
+
 /** Products — Catalog (`GET /public/products`, Phase 9). */
 export function getProducts(
   first: number = MAX_PAGE_SIZE,
@@ -345,18 +409,6 @@ export async function getProductBySlug(slug: string): Promise<ProductSummary | n
     `/api/v1/public/products/${encodeURIComponent(slug)}`,
   );
   return body;
-}
-
-/** Categories — Catalog (`GET /public/categories`, Phase 9). */
-export function getCategories(): Promise<readonly CategorySummary[] | null> {
-  return fetchList<CategorySummary>("/api/v1/public/categories");
-}
-
-/** Collections — Catalog (`GET /public/collections`, Phase 9). */
-export function getCollections(
-  first: number = MAX_PAGE_SIZE,
-): Promise<readonly CollectionSummary[] | null> {
-  return fetchList<CollectionSummary>("/api/v1/public/collections", { first });
 }
 
 /** One collection by slug (`GET /public/collections/:slug`). */
@@ -439,7 +491,7 @@ export interface AddCartItemInput {
 /**
  * The guest Cart transport (Phase 17.1 — Guest Cart Foundation). Every call carries the caller's
  * `sessionRef` — read server-side from the storefront's own HttpOnly session cookie
- * (`apps/storefront/src/app/cart/actions.ts`), never accepted from the browser directly — which
+ * (`apps/storefront/src/app/(store)/cart/actions.ts`), never accepted from the browser directly — which
  * the Runtime API checks against `cart.sessionRef` before any read/mutation. `POST` bodies never
  * carry a `customerRef`: these routes create and operate on guest carts only.
  *
@@ -846,6 +898,30 @@ export interface CheckoutTotalsSummary {
   readonly taxIncluded?: boolean;
   /** Plan 3C: the name of the shipping rate the shopper chose. */
   readonly shippingName?: string | null;
+  /** Discounts Part 3: what the applied discounts took off the items (absent on an older API). */
+  readonly discountMinor?: number;
+  /** Discounts Part 3: what the applied discounts took off the shipping (absent on an older API). */
+  readonly shippingDiscountMinor?: number;
+}
+
+/** A code the shopper entered and whether it applies; `reason` is a stable token the storefront words. */
+export interface CheckoutDiscountCodeSummary {
+  readonly code: string;
+  readonly applicable: boolean;
+  readonly reason: string | null;
+}
+
+/** One discount that took something off — its title and amount only, never promotion internals. */
+export interface CheckoutAppliedDiscountSummary {
+  readonly title: string;
+  readonly code: string | null;
+  readonly discountClass: string;
+  readonly amountMinor: number;
+}
+
+export interface CheckoutDiscountSummary {
+  readonly codes: readonly CheckoutDiscountCodeSummary[];
+  readonly applied: readonly CheckoutAppliedDiscountSummary[];
 }
 
 export interface CheckoutSessionSummary {
@@ -862,6 +938,10 @@ export interface CheckoutSessionSummary {
   /** The payment method the shopper selected ("cod", "stripe"…), or null before they choose. */
   readonly selectedPaymentMethod: string | null;
   readonly orderRef: string | null;
+  /** Part 4: this checkout pays a merchant's draft order — its discount and shipping are fixed. */
+  readonly draftInvoice?: { readonly draftNumber: string } | null;
+  /** Discounts Part 3: the entered codes and what was taken off (absent on an older API). */
+  readonly discount?: CheckoutDiscountSummary;
 }
 
 export interface ShippingQuoteSummary {
@@ -920,6 +1000,50 @@ export function loadCheckoutItems(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/items`,
     { sessionRef, cartId },
   );
+}
+
+/** Order operations Parts 3–4: what a recovery or invoice link holds — shop, items, total; no personal data. */
+export interface CheckoutLinkPreview {
+  readonly purpose: "recovery" | "invoice";
+  /** "D3" for an invoice; null for recovery. */
+  readonly draftNumber: string | null;
+  /** Invoice only: the order was already placed. */
+  readonly completed: boolean;
+  readonly shopName: string;
+  readonly itemCount: number;
+  readonly items: readonly {
+    readonly title: string | null;
+    readonly variantTitle: string | null;
+    readonly quantity: number;
+    readonly imageUrl: string | null;
+  }[];
+  readonly totalMinor: number;
+  /** Invoice only: the tax could not be estimated, so `totalMinor` is the total BEFORE tax. */
+  readonly taxPending: boolean;
+  readonly currency: string;
+}
+
+/** The caller's OWN new (or resumed) checkout, and how many lines could not be sold any more. */
+export interface CheckoutLinkClaim {
+  readonly checkoutSessionId: string;
+  readonly droppedItems: number;
+}
+
+/** A GET with no side effect: safe for page renders and link-preview bots. */
+export function getCheckoutLinkPreview(
+  token: string,
+): Promise<{ readonly status: number; readonly body: CheckoutLinkPreview | null }> {
+  return fetchItem<CheckoutLinkPreview>(
+    `/api/v1/public/checkout-links/${encodeURIComponent(token)}/preview`,
+  );
+}
+
+/** The ONLY call that claims a link — made by the landing page's button (a server action), never a render. */
+export function claimCheckoutLink(
+  token: string,
+  sessionRef: string,
+): Promise<{ readonly status: number; readonly body: CheckoutLinkClaim | null }> {
+  return postItem<CheckoutLinkClaim>("/api/v1/public/checkout-links/claim", { token, sessionRef });
 }
 
 export function setCheckoutBillingAddress(
@@ -998,6 +1122,42 @@ export function selectCheckoutPayment(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/payment-selection`,
     { sessionRef, paymentMethodRef, provider },
   );
+}
+
+/** Applies a typed discount code. Sends the code only — the runtime re-derives every amount. */
+export function applyCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  return postItem<unknown>(
+    `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes`,
+    { sessionRef, code },
+  );
+}
+
+/**
+ * Removes a code. The DELETE has no body, so ownership travels in the `x-cart-session` header —
+ * the form `resolveSessionRef` prefers (the querystring one is deprecated and only logs a warning).
+ */
+export async function removeCheckoutDiscountCode(
+  checkoutSessionId: string,
+  sessionRef: string,
+  code: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  try {
+    const response = await fetch(
+      `${RUNTIME_API_URL}/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/discount-codes/${encodeURIComponent(code)}`,
+      {
+        method: "DELETE",
+        headers: { "x-tenant-id": await currentShopId(), "x-cart-session": sessionRef },
+        cache: "no-store",
+      },
+    );
+    return { status: response.status, body: await response.json().catch(() => null) };
+  } catch {
+    return { status: 0, body: null };
+  }
 }
 
 export function recalculateCheckout(

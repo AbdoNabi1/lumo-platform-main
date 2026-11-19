@@ -23,14 +23,28 @@ interface SelectionValue {
   /** Selected order ids, in the order they were picked. */
   readonly ids: readonly string[];
   readonly notice: "tooMany" | null;
+  /**
+   * After an all-success bulk ship the selection is empty; the bar is held mounted (so focus has a
+   * target) until the merchant clears it.
+   */
+  readonly held: boolean;
+  readonly hold: () => void;
   readonly toggle: (orderId: string, checked: boolean) => void;
+  /** Replaces the selection (select all on this page); anything past the cap is refused with the notice. */
+  readonly setAll: (orderIds: readonly string[]) => void;
   readonly remove: (orderIds: readonly string[]) => void;
+  /** Empties the selection and releases the held bar. */
   readonly clear: () => void;
 }
 
 const SelectionContext = createContext<SelectionValue | null>(null);
 
-function useSelection(): SelectionValue {
+/** The selection when a provider is above, otherwise `null` (the table then supplies its own). */
+export function useOptionalOrdersSelection(): SelectionValue | null {
+  return useContext(SelectionContext);
+}
+
+export function useOrdersSelection(): SelectionValue {
   const value = useContext(SelectionContext);
   if (value === null)
     throw new Error("Selection components must sit inside OrdersSelectionProvider");
@@ -40,6 +54,7 @@ function useSelection(): SelectionValue {
 export function OrdersSelectionProvider({ children }: { readonly children: ReactNode }) {
   const [ids, setIds] = useState<readonly string[]>([]);
   const [notice, setNotice] = useState<"tooMany" | null>(null);
+  const [held, setHeld] = useState(false);
 
   const toggle = useCallback(
     (orderId: string, checked: boolean) => {
@@ -58,17 +73,23 @@ export function OrdersSelectionProvider({ children }: { readonly children: React
     },
     [ids],
   );
+  const setAll = useCallback((orderIds: readonly string[]) => {
+    setIds(orderIds.slice(0, MAX_SELECTED));
+    setNotice(orderIds.length > MAX_SELECTED ? "tooMany" : null);
+  }, []);
+  const hold = useCallback(() => setHeld(true), []);
   const remove = useCallback((orderIds: readonly string[]) => {
     setIds((current) => current.filter((id) => !orderIds.includes(id)));
   }, []);
   const clear = useCallback(() => {
     setIds([]);
     setNotice(null);
+    setHeld(false);
   }, []);
 
   const value = useMemo(
-    () => ({ ids, notice, toggle, remove, clear }),
-    [ids, notice, toggle, remove, clear],
+    () => ({ ids, notice, held, hold, toggle, setAll, remove, clear }),
+    [ids, notice, held, hold, toggle, setAll, remove, clear],
   );
   return <SelectionContext.Provider value={value}>{children}</SelectionContext.Provider>;
 }
@@ -78,18 +99,21 @@ export function OrderSelectCheckbox({
   orderId,
   orderNumber,
   t,
+  label,
 }: {
   readonly orderId: string;
   readonly orderNumber: string;
   readonly t: Dictionary;
+  /** The accessible name; defaults to the carrier-shipping wording. */
+  readonly label?: string;
 }) {
-  const { ids, toggle } = useSelection();
+  const { ids, toggle } = useOrdersSelection();
   return (
     <span className="relative z-10 inline-flex">
       <input
         type="checkbox"
-        className="size-4"
-        aria-label={t.carrierShipping.selectOrder.replace("{n}", orderNumber)}
+        className="accent-primary size-4"
+        aria-label={label ?? t.carrierShipping.selectOrder.replace("{n}", orderNumber)}
         checked={ids.includes(orderId)}
         onChange={(event) => toggle(orderId, event.currentTarget.checked)}
       />
@@ -103,28 +127,28 @@ interface Results {
   readonly shippedIds: readonly string[];
 }
 
-/** The sticky bar: count, ship, print, clear. Stays mounted while the results dialog is open. */
-export function OrdersBulkBar({
+/**
+ * Ship / print / clear for the selection, plus the results dialog. It lives inside the unified bulk bar
+ * (the orders table's bar and the standalone `OrdersBulkBar` below). Every state the dialog needs sits
+ * here, and the surrounding bar is held mounted (`hold`) until focus has been restored.
+ */
+export function CarrierBulkActions({
   carriers,
   t,
 }: {
   readonly carriers: readonly { readonly key: string; readonly displayName: string }[];
   readonly t: Dictionary;
 }) {
-  const { ids, notice, remove, clear } = useSelection();
+  const { ids, notice, remove, clear, hold } = useOrdersSelection();
   const copy = t.carrierShipping;
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [results, setResults] = useState<Results | null>(null);
   const [open, setOpen] = useState(false);
-  // After an all-success run the selection is empty; the bar stays (so focus has a target) until cleared.
-  const [lingering, setLingering] = useState(false);
   const clearRef = useRef<HTMLButtonElement>(null);
   const shipRef = useRef<HTMLButtonElement>(null);
   const printRef = useRef<HTMLButtonElement>(null);
   const carrier = carriers[0];
-
-  if (ids.length === 0 && !open && !lingering) return null;
 
   function ship(): void {
     if (carrier === undefined) return;
@@ -142,7 +166,7 @@ export function OrdersBulkBar({
         failed: result.failed,
         shippedIds: selected.filter((id) => !failedIds.has(id)),
       });
-      setLingering(true);
+      hold();
       setOpen(true);
     });
   }
@@ -157,14 +181,7 @@ export function OrdersBulkBar({
   }
 
   return (
-    <div
-      role="toolbar"
-      aria-label={copy.selected.replace("{count}", String(ids.length))}
-      className="bg-card border-border sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2 shadow-sm"
-    >
-      <span className="text-sm font-medium">
-        {copy.selected.replace("{count}", String(ids.length))}
-      </span>
+    <>
       {carrier !== undefined && (
         <Button
           ref={shipRef}
@@ -187,16 +204,7 @@ export function OrdersBulkBar({
       >
         {copy.printWaybills}
       </Button>
-      <Button
-        ref={clearRef}
-        type="button"
-        size="sm"
-        variant="ghost"
-        onClick={() => {
-          setLingering(false);
-          clear();
-        }}
-      >
+      <Button ref={clearRef} type="button" size="sm" variant="ghost" onClick={clear}>
         {copy.clearSelection}
       </Button>
       {notice === "tooMany" && (
@@ -221,6 +229,35 @@ export function OrdersBulkBar({
           (target ?? clearRef.current)?.focus();
         }}
       />
+    </>
+  );
+}
+
+/**
+ * The carrier-only sticky bar (count + {@link CarrierBulkActions}): the Bosta half of the bulk bar on its
+ * own. The orders list renders the unified bar inside the table header instead (order operations'
+ * actions and these, one selection), so this is for a surface that has only the carrier actions.
+ */
+export function OrdersBulkBar({
+  carriers,
+  t,
+}: {
+  readonly carriers: readonly { readonly key: string; readonly displayName: string }[];
+  readonly t: Dictionary;
+}) {
+  const { ids, held } = useOrdersSelection();
+  const copy = t.carrierShipping;
+  if (ids.length === 0 && !held) return null;
+  return (
+    <div
+      role="toolbar"
+      aria-label={copy.selected.replace("{count}", String(ids.length))}
+      className="bg-card border-border sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-xl border px-4 py-2 shadow-sm"
+    >
+      <span className="text-sm font-medium">
+        {copy.selected.replace("{count}", String(ids.length))}
+      </span>
+      <CarrierBulkActions carriers={carriers} t={t} />
     </div>
   );
 }

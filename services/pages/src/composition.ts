@@ -20,7 +20,13 @@ import {
   ArchiveTemplate,
   CreatePage,
   CreateTemplate,
+  UpdatePageContent,
 } from "./application/pages.use-cases";
+import {
+  GetPagesByIds,
+  GetPublishedPageByPath,
+  ListPublishedPages,
+} from "./application/public-pages.use-cases";
 import type { PageRepository, TemplateRepository } from "./domain/repositories";
 import {
   InMemoryPageRepository,
@@ -77,10 +83,14 @@ function buildController(
   return new PagesController({
     createPage: new CreatePage(pagesDeps),
     advancePage: new AdvancePage(pagesDeps),
+    updatePageContent: new UpdatePageContent(pagesDeps),
     createTemplate: new CreateTemplate(pagesDeps),
     archiveTemplate: new ArchiveTemplate(pagesDeps),
     listPages: new ListPages({ pages: repos.pages }),
     getPage: new GetPage({ pages: repos.pages }),
+    getPublishedPageByPath: new GetPublishedPageByPath({ pages: repos.pages }),
+    listPublishedPages: new ListPublishedPages({ pages: repos.pages }),
+    getPagesByIds: new GetPagesByIds({ pages: repos.pages }),
     listTemplates: new ListTemplates({ templates: repos.templates }),
     getTemplate: new GetTemplate({ templates: repos.templates }),
   });

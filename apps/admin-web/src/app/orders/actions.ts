@@ -4,14 +4,20 @@ import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
+import type { MutationResult } from "@/lib/api/client";
 import {
   advanceOrder,
+  archiveOrder,
+  bulkOrders,
+  BULK_ORDER_ACTIONS,
   createOrderFromCheckout,
   markOrderPaid,
-  placeOrder,
   refundOrder,
   requestFulfillment,
   requestPaymentCapture,
+  unarchiveOrder,
+  type BulkOrderAction,
+  type BulkOrderResultDto,
   type OrderAddressInput,
   type OrderLineItemInput,
 } from "@/lib/api/orders";
@@ -82,46 +88,6 @@ async function formErrorDictionary() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   return dictionaryFor(locale).formErrors;
-}
-
-/** Places a backoffice order (`app/orders/new`). */
-export async function placeOrderAction(
-  _previous: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const t = await formErrorDictionary();
-
-  const customerRef = stringField(formData, "customerRef");
-  const currency = stringField(formData, "currency");
-  const items = parseLineItems(formData);
-  const shippingAddress = parseAddress(formData, "shipping");
-
-  if (
-    customerRef.length === 0 ||
-    currency.length === 0 ||
-    items === null ||
-    shippingAddress === null
-  ) {
-    const fieldErrors: Record<string, string> = {};
-    if (customerRef.length === 0) fieldErrors["customerRef"] = t.invalid;
-    if (currency.length === 0) fieldErrors["currency"] = t.invalid;
-    if (items === null) fieldErrors["items"] = t.invalid;
-    if (shippingAddress === null) fieldErrors["shippingAddress"] = t.invalid;
-    return { status: "error", message: t.invalid, fieldErrors };
-  }
-
-  const result = await placeOrder(
-    { customerRef, currency, items, shippingAddress },
-    newIdempotencyKey(),
-  );
-
-  if (result.outcome === "ok") {
-    revalidatePath("/orders");
-    const id = result.data.id;
-    redirect(id.length > 0 ? `/orders/${id}` : "/orders");
-  }
-
-  return toFormState(result, t);
 }
 
 /** Creates an order from a checkout session's snapshot (`app/orders/from-checkout`) — recovery path. */
@@ -278,7 +244,8 @@ export async function requestFulfillmentAction(
  * Plan 3A — "Mark cash as received" on the order page. The amount and currency sent to the API are
  * read from the payment intent HERE, on the server; the form carries only the two ids, so a
  * tampered browser cannot settle for another amount. The intent must be a cash-on-delivery payment
- * of THIS order, and the API itself accepts only a full collection.
+ * — or a pending staff-recorded `manual` one, a draft's "Mark as paid" whose settling step failed
+ * (Task 9) — of THIS order, and the API itself accepts only a full collection (admin-only).
  */
 export async function confirmCodCollectionAction(
   _previous: FormState,
@@ -294,7 +261,9 @@ export async function confirmCodCollectionAction(
   const intent = await fetchPaymentIntent(paymentIntentId);
   if (intent.outcome !== "ok") return toFormState(intent, t);
   const { paymentIntent } = intent;
-  if (paymentIntent.provider !== "cod" || paymentIntent.orderRef !== orderId) {
+  const settledByCollection =
+    paymentIntent.provider === "cod" || paymentIntent.provider === "manual";
+  if (!settledByCollection || paymentIntent.orderRef !== orderId) {
     return { status: "error", message: t.invalid, fieldErrors: {} };
   }
 
@@ -310,4 +279,86 @@ export async function confirmCodCollectionAction(
     return { status: "success" };
   }
   return toFormState(result, t);
+}
+
+/** What the bulk bar shows after an action (order operations Part 1). */
+export type BulkActionState =
+  | { readonly status: "idle" }
+  | { readonly status: "done"; readonly results: readonly BulkOrderResultDto[] }
+  | { readonly status: "error"; readonly message: string };
+
+const MAX_BULK_ORDERS = 50;
+const MAX_BULK_TAGS = 20;
+
+function isBulkOrderAction(value: string): value is BulkOrderAction {
+  return (BULK_ORDER_ACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * Runs one bulk action on the selected orders (`POST /orders/bulk`). Called directly by the client bar,
+ * so every argument is untrusted: the action must be a known one and the ids 1..50 strings;
+ * add_tags/remove_tags also need 1..20 tags. One fresh idempotency key per click.
+ */
+export async function runBulkOrderAction(
+  action: string,
+  orderIds: readonly string[],
+  tags?: readonly string[],
+): Promise<BulkActionState> {
+  const t = await formErrorDictionary();
+  const ids = [
+    ...new Set(orderIds.filter((id): id is string => typeof id === "string" && id.length > 0)),
+  ];
+  const needsTags = action === "add_tags" || action === "remove_tags";
+  const cleanTags = Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === "string" && tag.trim().length > 0)
+    : [];
+  if (
+    !isBulkOrderAction(action) ||
+    ids.length === 0 ||
+    ids.length > MAX_BULK_ORDERS ||
+    (needsTags && (cleanTags.length === 0 || cleanTags.length > MAX_BULK_TAGS))
+  ) {
+    return { status: "error", message: t.invalid };
+  }
+  const key = newIdempotencyKey();
+  const result = needsTags
+    ? await bulkOrders(action, ids, key, cleanTags)
+    : await bulkOrders(action, ids, key);
+  if (result.outcome !== "ok") {
+    const state = toFormState(result, t);
+    return { status: "error", message: state.status === "error" ? state.message : t.unexpected };
+  }
+  revalidatePath("/orders");
+  return { status: "done", results: result.data.results };
+}
+
+async function setArchived(
+  formData: FormData,
+  call: (orderId: string, idempotencyKey: string) => Promise<MutationResult<unknown>>,
+): Promise<FormState> {
+  const t = await formErrorDictionary();
+  const orderId = stringField(formData, "orderId");
+  if (orderId.length === 0) return { status: "error", message: t.invalid, fieldErrors: {} };
+  const result = await call(orderId, newIdempotencyKey());
+  if (result.outcome === "ok") {
+    revalidatePath("/orders");
+    revalidatePath(`/orders/${orderId}`);
+    return { status: "success" };
+  }
+  return toFormState(result, t);
+}
+
+/** "More actions → Archive" on the order page (order operations Part 1). */
+export async function archiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return setArchived(formData, archiveOrder);
+}
+
+export async function unarchiveOrderAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return setArchived(formData, unarchiveOrder);
 }

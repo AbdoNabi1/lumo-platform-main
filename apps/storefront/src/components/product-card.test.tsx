@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { en } from "@/messages/en";
 import type { PublishedProduct } from "@/lib/catalog";
-import type { CartActionResult } from "@/app/cart/actions";
+import type { CartActionResult } from "@/app/(store)/cart/actions";
 import { ProductCard } from "./product-card";
 
 const addToCart =
@@ -13,7 +13,7 @@ const addToCart =
       variantId: string | undefined,
     ) => Promise<CartActionResult>
   >();
-vi.mock("@/app/cart/actions", () => ({
+vi.mock("@/app/(store)/cart/actions", () => ({
   addToCart: (productId: string, quantity: number, variantId: string | undefined) =>
     addToCart(productId, quantity, variantId),
 }));

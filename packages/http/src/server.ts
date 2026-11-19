@@ -555,6 +555,7 @@ async function executeRoute(
     requestId: request.requestId,
     correlationId: request.correlationId,
     ...(request.rawBody !== undefined ? { rawBody: new Uint8Array(request.rawBody) } : {}),
+    ...(request.ip !== undefined ? { ip: request.ip } : {}),
     headers: request.headers,
   };
 

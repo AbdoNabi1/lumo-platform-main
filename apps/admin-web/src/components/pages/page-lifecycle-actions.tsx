@@ -1,65 +1,106 @@
 "use client";
 
-import { useActionState, useId } from "react";
-import { Button, Label } from "@platform/ui";
+import { useEffect, useId, useRef, useState } from "react";
+import { Button } from "@platform/ui";
 import { advancePageAction } from "@/app/pages/actions";
-import type { FormState } from "@/lib/api/mutation";
+import type { LiveSaveState } from "@/lib/api/mutation";
+import { settleAction } from "@/lib/online-store/settle-action";
 import { pageAdvanceableStatusesFrom } from "@/lib/pages-lifecycle";
 import type { Dictionary } from "@/messages/en";
-
-const INITIAL_STATE: FormState = { status: "idle" };
-
-const SELECT_CLASS =
-  "border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-9 rounded-xl border px-3.5 text-sm transition-colors ease-out";
+import { SaveStatus } from "@/components/online-store/save-status";
 
 /**
- * The Page Detail "advance to…" control (T5.9a Part B), gated by `lib/pages-lifecycle.ts`'s
- * `PAGE_LIFECYCLE_TRANSITIONS` — same "no control at all for a terminal status" discipline as
- * `OrderLifecycleActions`' own `AdvanceOrderForm`.
+ * The page's visibility (Ruling 15), gated by the hand-copied `PAGE_LIFECYCLE_TRANSITIONS`:
+ * **Publish** a draft, **Hide** a published page (back to draft), **Archive** either (asked first:
+ * it cannot be undone). Each change reaches the storefront. The server refresh swaps the buttons,
+ * so keyboard focus moves to this group instead of falling back to the page. An archived page
+ * keeps the group, saying it is archived, so focus has somewhere to land after Archive (review
+ * M-2). Nothing for a viewer.
  */
 export function PageLifecycleActions({
+  t,
   pageId,
   status,
-  t,
+  canEdit,
 }: {
+  readonly t: Dictionary;
   readonly pageId: string;
   readonly status: string;
-  readonly t: Dictionary;
+  readonly canEdit: boolean;
 }) {
-  const [state, formAction, isPending] = useActionState(advancePageAction, INITIAL_STATE);
-  const formId = useId();
-  const targets = pageAdvanceableStatusesFrom(status);
+  const e = t.pageEditor;
+  const headingId = useId();
+  const group = useRef<HTMLDivElement>(null);
+  const refocus = useRef(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [state, setState] = useState<LiveSaveState>({ status: "idle" });
+  const targets = canEdit ? pageAdvanceableStatusesFrom(status) : [];
+  const archived = canEdit && status === "archived";
 
-  if (targets.length === 0) return null;
+  // The buttons for the new status replaced the one that had focus: keep focus in this group.
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    group.current?.focus();
+  }, [status]);
+
+  if (targets.length === 0 && !archived) return null;
+
+  const labelOf = (target: string) =>
+    target === "published" ? e.publish : target === "draft" ? e.hide : e.archive;
+
+  const advance = async (target: string) => {
+    if (target === "archived" && !window.confirm(e.archiveConfirm)) return;
+    setPending(target);
+    setState({ status: "idle" });
+    try {
+      const result = await settleAction(() => advancePageAction(pageId, target), {
+        status: "error",
+        message: t.formErrors.unexpected,
+        fieldErrors: {},
+      });
+      setState(result);
+      if (result.status === "success") {
+        refocus.current = true;
+        group.current?.focus();
+      }
+    } finally {
+      setPending(null);
+    }
+  };
 
   return (
-    <div className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold">{t.pageLifecycle.title}</h2>
-      <form action={formAction} className="flex flex-col items-start gap-1">
-        <input type="hidden" name="pageId" value={pageId} />
-        <div className="flex items-end gap-2">
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`${formId}-toStatus`} className="text-muted-foreground text-xs">
-              {t.pageLifecycle.advanceToLabel}
-            </Label>
-            <select id={`${formId}-toStatus`} name="toStatus" className={SELECT_CLASS}>
-              {targets.map((target) => (
-                <option key={target} value={target}>
-                  {(t.pageStatus as Record<string, string>)[target] ?? target}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button type="submit" size="sm" variant="outline" loading={isPending} disabled={isPending}>
-            {isPending ? t.pageLifecycle.advancing : t.pageLifecycle.advance}
+    <div
+      ref={group}
+      role="group"
+      aria-labelledby={headingId}
+      tabIndex={-1}
+      className="flex flex-col gap-3 outline-none"
+    >
+      <h2 id={headingId} className="text-lg font-semibold">
+        {t.pageLifecycle.title}
+      </h2>
+      {archived ? (
+        <p role="note" className="text-muted-foreground text-sm">
+          {e.archived}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {targets.map((target) => (
+          <Button
+            key={target}
+            type="button"
+            size="sm"
+            variant={target === "archived" ? "outline" : "primary"}
+            loading={pending === target}
+            disabled={pending !== null}
+            onClick={() => void advance(target)}
+          >
+            {labelOf(target)}
           </Button>
-        </div>
-        {state.status === "error" && (
-          <p role="alert" className="text-destructive text-xs">
-            {state.message}
-          </p>
-        )}
-      </form>
+        ))}
+      </div>
+      <SaveStatus t={t} state={state} />
     </div>
   );
 }

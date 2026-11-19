@@ -155,4 +155,13 @@ describe("PrismaSalesSummaryQuery", () => {
     expect(open?.values).toContain("tenant-a");
     expect(open?.sql).not.toContain("created_at");
   });
+
+  it("leaves archived orders out of the open orders (Home's card = the Unfulfilled tab)", async () => {
+    const withOpen = fakeDatabase([[], [], [], []]);
+    await new PrismaSalesSummaryQuery({ prisma: withOpen.database }).summarize({
+      ...RANGE,
+      includeOpenOrderIds: true,
+    });
+    expect(withOpen.calls[3]?.sql).toContain('o."archived_at" IS NULL');
+  });
 });

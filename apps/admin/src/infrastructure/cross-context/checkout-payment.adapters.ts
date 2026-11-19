@@ -80,6 +80,7 @@ export class CheckoutPaymentInitiationAdapter implements PaymentInitiationPort {
       provider: input.provider,
       amountMinor: input.amountMinor,
       currency: input.currency,
+      allowStaffRecorded: input.allowStaffRecorded === true,
     });
     if (response.status !== 201) {
       const message =

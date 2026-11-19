@@ -2,9 +2,10 @@
 
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
-import { newIdempotencyKey, toFormState, type FormState } from "@/lib/api/mutation";
+import { newIdempotencyKey, toFormState, type LiveSaveState } from "@/lib/api/mutation";
 import { updateStoreSettings, type WeightUnit } from "@/lib/api/store-settings";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
+import { revalidateStorefront } from "@/lib/storefront-revalidate";
 
 const WEIGHT_UNITS: readonly string[] = ["kg", "g", "lb", "oz"];
 
@@ -24,9 +25,9 @@ function text(formData: FormData, name: string): string {
  * idempotent.
  */
 export async function saveStoreSettingsAction(
-  _previous: FormState,
+  _previous: LiveSaveState,
   formData: FormData,
-): Promise<FormState> {
+): Promise<LiveSaveState> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const dictionary = dictionaryFor(isLocale(stored) ? stored : DEFAULT_LOCALE);
 
@@ -53,5 +54,9 @@ export async function saveStoreSettingsAction(
   if (result.outcome !== "ok") return toFormState(result, dictionary.formErrors);
 
   revalidatePath("/settings/general");
-  return { status: "success" };
+  // Ruling 24: the store name is in the storefront's cached shell. Best effort, never fails the save;
+  // when it could not be done the form says the live store may lag (Ruling 5).
+  return (await revalidateStorefront())
+    ? { status: "success" }
+    : { status: "success", liveDelayed: true };
 }

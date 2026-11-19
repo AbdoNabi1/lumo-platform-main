@@ -40,7 +40,7 @@ export default defineConfig({
     },
     {
       name: "admin-web",
-      testMatch: /(operator-create-product|authorization)\.spec\.ts/,
+      testMatch: /(operator-create-product|authorization|online-store-sections)\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         baseURL: process.env["ADMIN_WEB_URL"] ?? "http://localhost:3100",

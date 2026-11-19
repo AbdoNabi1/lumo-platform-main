@@ -43,7 +43,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/storefront/.next/standalone 
 COPY --from=builder --chown=nextjs:nodejs /app/apps/storefront/.next/static ./apps/storefront/.next/static
 USER nextjs
 EXPOSE 3000
-# Healthcheck hits the home page (no API routes exist in Sprint 0.1).
+# A static 200 outside the middleware: `/` is 302 on a locked store and 503 with the Runtime down.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/healthz || exit 1
 CMD ["node", "apps/storefront/server.js"]

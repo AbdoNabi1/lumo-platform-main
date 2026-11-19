@@ -37,6 +37,8 @@ export class StoreSettings {
   readonly currency: string;
   readonly timezone: string;
   readonly weightUnit: WeightUnit;
+  /** When the merchant dismissed Home's setup guide; `null` while it is still showing. */
+  readonly setupGuideDismissedAt: Date | null;
 
   private constructor(props: {
     storeName: string;
@@ -44,12 +46,14 @@ export class StoreSettings {
     currency: string;
     timezone: string;
     weightUnit: WeightUnit;
+    setupGuideDismissedAt: Date | null;
   }) {
     this.storeName = props.storeName;
     this.contactEmail = props.contactEmail;
     this.currency = props.currency;
     this.timezone = props.timezone;
     this.weightUnit = props.weightUnit;
+    this.setupGuideDismissedAt = props.setupGuideDismissedAt;
   }
 
   static defaults(): StoreSettings {
@@ -59,6 +63,25 @@ export class StoreSettings {
       currency: "EGP",
       timezone: "Africa/Cairo",
       weightUnit: "kg",
+      setupGuideDismissedAt: null,
+    });
+  }
+
+  /** Marks the setup guide dismissed at `at`; an already-dismissed value keeps its first timestamp. */
+  withSetupGuideDismissed(at: Date): StoreSettings {
+    if (this.setupGuideDismissedAt !== null) return this;
+    return this.withSetupGuideDismissedAt(at);
+  }
+
+  /** A copy with the dismissal set to `at` (or cleared with `null`); every other field is kept. */
+  withSetupGuideDismissedAt(at: Date | null): StoreSettings {
+    return new StoreSettings({
+      storeName: this.storeName,
+      contactEmail: this.contactEmail,
+      currency: this.currency,
+      timezone: this.timezone,
+      weightUnit: this.weightUnit,
+      setupGuideDismissedAt: at,
     });
   }
 
@@ -92,6 +115,7 @@ export class StoreSettings {
         currency: input.currency,
         timezone: input.timezone,
         weightUnit: input.weightUnit as WeightUnit,
+        setupGuideDismissedAt: null,
       }),
     );
   }

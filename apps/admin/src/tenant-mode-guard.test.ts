@@ -176,6 +176,56 @@ describe("assertMultiTenantReady", () => {
     for (const path of paths) expect(path.startsWith("tenancy.")).toBe(true);
   });
 
+  it("the online store adds no construction-time tenant (Project 4)", () => {
+    const found = findConstructionTimeTenants(pinnedProductionShapedGraph(), []);
+    expect(
+      found.filter((path) => path.startsWith("onlineStore") || path.startsWith("publicReads")),
+    ).toEqual([]);
+  });
+
+  it("the link-target adapter adds no construction-time tenant", () => {
+    const graph = pinnedProductionShapedGraph() as unknown as {
+      onlineStore: { onlineStore: { deps: { getMenu: { deps: { linkTargets: object } } } } };
+    };
+    // The guard really reaches the port: it is in the graph, and it is closures only.
+    const port = graph.onlineStore.onlineStore.deps.getMenu.deps.linkTargets;
+    expect(Object.keys(port).sort()).toEqual(["resolve", "search"]);
+    for (const value of Object.values(port)) expect(typeof value).toBe("function");
+    expect(
+      findConstructionTimeTenants(graph, []).filter((path) => path.includes("linkTargets")),
+    ).toEqual([]);
+  });
+
+  it("really walks the online-store graph: a pin planted under its use cases is reported", () => {
+    const graph = pinnedProductionShapedGraph() as unknown as {
+      onlineStore: { onlineStore: { deps: { getPreferences: { deps: object } } } };
+    };
+    // The object every use case shares, the one a spread of AdminWiringDeps would have reached.
+    const shared = graph.onlineStore.onlineStore.deps.getPreferences.deps;
+    expect(Object.keys(shared)).toEqual(expect.arrayContaining(["imageRefs", "passwordHasher"]));
+    Object.assign(shared, { tenantId: "tenant-local" });
+    expect(findConstructionTimeTenants(graph)).toEqual([
+      "onlineStore.onlineStore.deps.getPreferences.deps.tenantId",
+    ]);
+  });
+
+  it("finds no pin under merchantOnboarding, which holds only closures and plain config", () => {
+    const graph = wireAdmin({
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: ids,
+      clock,
+      prisma: {} as unknown as Database,
+      tenantId: "tenant-local",
+      platformTenantId: "tenant-platform",
+      defaultPlanKey: "basic",
+      platformStoreDomain: "morbeh.test",
+    });
+    expect(graph.merchantOnboarding).toBeDefined();
+    const paths = findConstructionTimeTenants(graph, []);
+    expect(paths.filter((path) => path.startsWith("merchantOnboarding"))).toEqual([]);
+    expect(() => assertMultiTenantReady({ resolvers: realChain, graph })).not.toThrow();
+  });
+
   it("does not exempt a second context that pins a tenant", () => {
     const graph = {
       ...pinnedProductionShapedGraph(),

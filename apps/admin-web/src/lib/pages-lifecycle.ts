@@ -7,7 +7,8 @@
  */
 export const PAGE_LIFECYCLE_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
   draft: ["published", "archived"],
-  published: ["archived"],
+  // Ruling 15: a published page can be hidden (back to draft, Shopify's "Hidden") or archived.
+  published: ["draft", "archived"],
   archived: [],
 };
 

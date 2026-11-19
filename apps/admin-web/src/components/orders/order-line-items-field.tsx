@@ -19,9 +19,8 @@ function newItemRowKey(): string {
  * The repeated-field-group form array for order line items (`itemProductId`/`itemName`/
  * `itemUnitPriceAmountMinor`/`itemQuantity`, one set of inputs per row) — the same technique
  * `app/products/actions.ts`'s `parseVariants` / `ProductCreateForm`'s variant rows use, reused
- * here for `placeOrderAction`/`createOrderFromCheckoutAction`'s `parseLineItems`. Shared by both
- * `OrderCreateForm` and `OrderFromCheckoutForm` since `placeOrderBody`/`createOrderFromCheckoutBody`
- * declare identical per-item fields.
+ * here for `createOrderFromCheckoutAction`'s `parseLineItems`. Used by `OrderFromCheckoutForm`,
+ * whose `createOrderFromCheckoutBody` declares these per-item fields.
  */
 export function OrderLineItemsField({
   t,

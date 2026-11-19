@@ -25,6 +25,7 @@ import {
 } from "./application/media-library.use-cases";
 import type { ObjectStoragePort } from "./application/object-storage.port";
 import { ResolveMediaImages } from "./application/resolve-media-images.use-case";
+import { UploadImage } from "./application/upload-image.use-case";
 import { UpdateMediaAlt, UploadProductImage } from "./application/upload-product-image.use-case";
 import type { LegacyStorageKeys } from "./application/storage-key-ownership";
 import type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
@@ -118,6 +119,15 @@ function buildController(
     listMediaAssets: new ListMediaAssets({ mediaAssets: repos.mediaAssets }),
     getMediaAsset: new GetMediaAsset({ mediaAssets: repos.mediaAssets }),
     uploadProductImage: new UploadProductImage({
+      mediaAssets: repos.mediaAssets,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+      objectStorage,
+      keyFactory: new StorageKeyFactory({ idGenerator: deps.idGenerator, clock: deps.clock }),
+      ...(deps.publicMediaBaseUrl === undefined ? {} : { publicBaseUrl: deps.publicMediaBaseUrl }),
+    }),
+    uploadImage: new UploadImage({
       mediaAssets: repos.mediaAssets,
       unitOfWork,
       idGenerator: deps.idGenerator,

@@ -71,4 +71,74 @@ describe("RoleTableAccessControl", () => {
       ),
     ).toBe(false);
   });
+
+  it("online store: viewers read, operators edit, only admins publish and lock (Project 4)", async () => {
+    const writes = [
+      "online_store:update_preferences",
+      "online_store:upload_image",
+      "online_store:edit_theme",
+      "online_store:manage_menus",
+      "online_store:manage_policies",
+    ];
+    const adminOnly = ["online_store_admin:publish_theme", "online_store_admin:update_access"];
+    // The ninth new string (Part 2 pages): covered by `pages:*`, so operators and admins, not viewers.
+    expect(await acl.authorize(who(["viewer"]), "pages:update_page")).toBe(false);
+    expect(await acl.authorize(who(["operator"]), "pages:update_page")).toBe(true);
+    expect(await acl.authorize(who(["admin"]), "pages:update_page")).toBe(true);
+    for (const role of ["viewer", "operator", "admin"]) {
+      expect(await acl.authorize(who([role]), "online_store:read"), role).toBe(true);
+    }
+    for (const permission of writes) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(true);
+    }
+    for (const permission of adminOnly) {
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(false);
+      expect(await acl.authorize(who(["admin"]), permission), permission).toBe(true);
+    }
+  });
+
+  it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
+    const op = who(["operator"]);
+    const viewer = who(["viewer"]);
+    expect(await acl.authorize(op, "orders:archive")).toBe(true);
+    expect(await acl.authorize(op, "orders:export")).toBe(true);
+    expect(await acl.authorize(viewer, "orders:archive")).toBe(false);
+    expect(await acl.authorize(viewer, "orders:export")).toBe(false);
+    expect(await acl.authorize(viewer, "orders:read")).toBe(true);
+    expect(await acl.authorize(op, "payments:confirm_cod_collection")).toBe(false);
+    expect(await acl.authorize(who(["admin"]), "payments:confirm_cod_collection")).toBe(true);
+  });
+  it("operators and admins write notes, tags and comments; viewers only read; only admins moderate comments (orders Part 2)", async () => {
+    const op = who(["operator"]);
+    const viewer = who(["viewer"]);
+    const admin = who(["admin"]);
+    for (const permission of ["orders:edit_note", "orders:tag", "orders:comment"]) {
+      expect(await acl.authorize(op, permission), permission).toBe(true);
+      expect(await acl.authorize(admin, permission), permission).toBe(true);
+      expect(await acl.authorize(viewer, permission), permission).toBe(false);
+    }
+    expect(await acl.authorize(op, "comments:moderate")).toBe(false);
+    expect(await acl.authorize(viewer, "comments:moderate")).toBe(false);
+    expect(await acl.authorize(admin, "comments:moderate")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "comments:moderate")).toBe(true);
+  });
+  it("operators and admins issue recovery links; viewers only read abandoned checkouts (orders Part 3)", async () => {
+    expect(await acl.authorize(who(["operator"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["admin"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "orders:recover_checkout")).toBe(true);
+    expect(await acl.authorize(who(["viewer"]), "orders:recover_checkout")).toBe(false);
+    expect(await acl.authorize(who(["viewer"]), "orders:read")).toBe(true);
+  });
+  it("operators and admins build and complete drafts; viewers only read them (orders Part 4)", async () => {
+    for (const permission of ["orders:draft", "orders:complete_draft"]) {
+      expect(await acl.authorize(who(["operator"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["admin"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["platform-admin"]), permission), permission).toBe(true);
+      expect(await acl.authorize(who(["viewer"]), permission), permission).toBe(false);
+    }
+    // "Mark as paid" also needs the money permission, which stays admin-only.
+    expect(await acl.authorize(who(["operator"]), "payments:confirm_cod_collection")).toBe(false);
+  });
 });

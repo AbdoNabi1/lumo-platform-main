@@ -1,0 +1,633 @@
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+import { signAccessCookie } from "./lib/access-cookie";
+import { config } from "./middleware";
+
+const SECRET = "m".repeat(32);
+const TOKEN = "T".repeat(43);
+const UNKNOWN_TOKEN = "U".repeat(43);
+/** A Runtime answer; "timeout" is what `AbortSignal.timeout` makes fetch reject with. */
+type Answer = { status: number; body: unknown } | "timeout" | "throw";
+let access: Record<string, { locked: boolean; accessVersion: number } | "fail" | "timeout">;
+let hosts: Record<string, { shopId: string; shopStatus: string }>;
+/** What `GET /public/online-store` answers for a preview token (anything absent: 401). */
+let previews: Record<string, Answer>;
+let fetchMock: ReturnType<typeof vi.fn<(input: string, init?: RequestInit) => Promise<Response>>>;
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+const timeoutError = () =>
+  new DOMException("The operation was aborted due to timeout", "TimeoutError");
+
+/** A live preview, expiring an hour from the (possibly faked) clock. */
+const livePreview = (): Answer => ({
+  status: 200,
+  body: { mode: "preview", previewExpiresAt: new Date(Date.now() + 3_600_000).toISOString() },
+});
+
+const previewCalls = () =>
+  fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("/online-store"));
+const accessCalls = () =>
+  fetchMock.mock.calls.filter(([input]) => new URL(input).pathname.endsWith("/access"));
+
+beforeEach(() => {
+  vi.resetModules();
+  access = { "shop-a": { locked: false, accessVersion: 1 } };
+  hosts = {
+    "a.example": { shopId: "shop-a", shopStatus: "active" },
+    "b.example": { shopId: "shop-b", shopStatus: "active" },
+    "c.example": { shopId: "shop-c", shopStatus: "suspended" },
+  };
+  previews = { [TOKEN]: livePreview() };
+  vi.stubEnv("STOREFRONT_HOST_ROUTING", "off");
+  vi.stubEnv("TENANT_DEFAULT_ID", "shop-a");
+  vi.stubEnv("STOREFRONT_ACCESS_SECRET", SECRET);
+  vi.stubEnv("ADMIN_ORIGIN", "https://admin.example");
+  fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    // Every Runtime read must carry an abort signal, so a hung Runtime cannot hold the page.
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    const url = new URL(input);
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    if (url.pathname.endsWith("/public/domains/resolve")) {
+      const shop = hosts[url.searchParams.get("host") ?? ""];
+      return shop === undefined
+        ? json({}, 404)
+        : json({ ...shop, hostname: "h", primaryHostname: "h" });
+    }
+    if (url.pathname.endsWith("/public/online-store")) {
+      const answer = previews[headers["x-preview-token"] ?? ""] ?? {
+        status: 401,
+        body: { code: "PREVIEW_INVALID" },
+      };
+      if (answer === "timeout") throw timeoutError();
+      if (answer === "throw") throw new Error("down");
+      return json(answer.body, answer.status);
+    }
+    const state = access[headers["x-tenant-id"] ?? ""];
+    if (state === "timeout") throw timeoutError();
+    if (state === "fail" || state === undefined) return json({}, 503);
+    return json({ ...state, message: {} });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
+
+async function run(
+  path: string,
+  options: {
+    method?: string;
+    cookie?: string;
+    host?: string;
+    headers?: Record<string, string>;
+  } = {},
+) {
+  const { middleware } = await import("./middleware");
+  const headers = new Headers(options.headers ?? {});
+  if (options.cookie !== undefined)
+    headers.set("cookie", `morbeh-storefront-access=${options.cookie}`);
+  headers.set("host", options.host ?? "a.example");
+  return middleware(
+    new NextRequest(new URL(path, `https://${options.host ?? "a.example"}`), {
+      method: options.method ?? "GET",
+      headers,
+    }),
+  );
+}
+const cookieFor = (
+  shopId: string,
+  accessVersion: number,
+  expUnix = Math.floor(Date.now() / 1000) + 3600,
+  secret = SECRET,
+) => signAccessCookie({ secret, shopId, accessVersion, expUnix });
+const forwarded = (res: Response, name: string) => res.headers.get(`x-middleware-request-${name}`);
+
+/** Review C-1 and preflight 17: each must land on the shop's home, never another host. */
+const REDIRECT_ATTACKS = [
+  "//evil.example",
+  "/\\evil.example",
+  "/\t/evil.example",
+  "/\n/evil.example",
+  "https://evil.example/",
+  "javascript:alert(1)",
+  "/.//evil.example",
+  "/..//evil.example",
+  "/%2e//evil.example",
+  "/%2e//evil.example/x",
+  "/%2E%2E//evil.example/x?y#z",
+  "/.\t//evil.example",
+  "/a/..//evil.example",
+  "//evil",
+  "/\t/evil",
+  "https://evil",
+  "javascript:",
+];
+
+// Next compiles the matcher with path-to-regexp; this pattern is also a plain regular expression.
+const matcher = new RegExp(`^${config.matcher[0]}$`);
+
+describe("middleware matcher (preflight 24, 27)", () => {
+  it("skips only the exact excluded paths", () => {
+    for (const path of [
+      "/_next/static/chunk.js",
+      "/_next/image",
+      "/favicon.ico",
+      "/api/tls-allowed",
+      "/api/revalidate",
+      "/api/revalidate/",
+      "/api/revalidate/x",
+      "/api/healthz",
+      "/api/healthz/",
+    ]) {
+      expect(matcher.test(path), path).toBe(false);
+    }
+  });
+
+  it("keeps everything else behind the middleware, including look-alike prefixes", () => {
+    for (const path of [
+      "/",
+      "/products/abc",
+      "/password",
+      "/api/revalidates",
+      "/api/revalidate-x",
+      "/favicon.ico2",
+      "/favicon.icon",
+      "/api/tls-allowedx",
+      "/api/healthzx",
+      "/_nextx",
+      "/next/static/x.js",
+    ]) {
+      expect(matcher.test(path), path).toBe(true);
+    }
+  });
+});
+
+describe("storefront middleware (spec 1.12)", () => {
+  it("an unlocked shop passes; responses forbid framing except by itself", async () => {
+    const res = await run("/");
+    expect(res.headers.get("location")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    // Preflight 25: the Ingress no longer sets this, so the app does.
+    expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+  });
+
+  it("strips client-sent x-shop-id, x-morbeh-preview and x-morbeh-return-path", async () => {
+    const res = await run("/", {
+      headers: {
+        "x-shop-id": "shop-evil",
+        "x-morbeh-preview": "forged",
+        "x-morbeh-return-path": "//evil.example",
+      },
+    });
+    expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+    expect(forwarded(res, "x-shop-id")).toBeNull();
+    expect(forwarded(res, "x-morbeh-return-path")).toBe("/");
+  });
+
+  it("tells the layout where the visitor was, without the token or Next internals (review M-4)", async () => {
+    const res = await run(`/products/lamp?c=1&_rsc=abc&preview=${UNKNOWN_TOKEN}`);
+    expect(forwarded(res, "x-morbeh-return-path")).toBe("/products/lamp?c=1");
+  });
+
+  it("an unlocked shop forwards a token only after the Runtime calls it a preview (final review M-2)", async () => {
+    const res = await run(`/?preview=${TOKEN}`);
+    expect(res.headers.get("location")).toBeNull();
+    expect(forwarded(res, "x-morbeh-preview")).toBe(TOKEN);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("content-security-policy")).toBe(
+      "frame-ancestors 'self' https://admin.example",
+    );
+    expect(previewCalls()).toHaveLength(1);
+  });
+
+  it("an unlocked shop serves a refused token as an ordinary live visit, with no preview headers", async () => {
+    const res = await run(`/?preview=${UNKNOWN_TOKEN}`);
+    expect(res.headers.get("location")).toBeNull();
+    expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+    expect(res.headers.get("cache-control")).toBeNull();
+    expect(res.headers.get("x-robots-tag")).toBeNull();
+    expect(res.headers.get("referrer-policy")).toBe("strict-origin-when-cross-origin");
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    expect(previewCalls()).toHaveLength(1);
+  });
+
+  it("an unlocked shop treats a Runtime error on the token as a live visit too", async () => {
+    previews[TOKEN] = "timeout";
+    const res = await run(`/?preview=${TOKEN}`);
+    expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+    expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+  });
+
+  it("an unlocked shop asks the Runtime once per token (the same cache as a locked one)", async () => {
+    await run(`/?preview=${TOKEN}`);
+    await run(`/a?preview=${TOKEN}`);
+    expect(previewCalls()).toHaveLength(1);
+  });
+
+  it("every preview response is noindex, nofollow (final review M-1)", async () => {
+    expect((await run(`/?preview=${TOKEN}`)).headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    access["shop-a"] = { locked: true, accessVersion: 3 };
+    expect((await run(`/?preview=${TOKEN}`)).headers.get("x-robots-tag")).toBe("noindex, nofollow");
+  });
+
+  describe("locked shop", () => {
+    beforeEach(() => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+    });
+
+    it("GET without a cookie → 302 /password?return_to=<path> (preview param dropped), noindex", async () => {
+      const res = await run("/products/lamp?color=red");
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe(
+        "https://a.example/password?return_to=%2Fproducts%2Flamp%3Fcolor%3Dred",
+      );
+      expect(res.headers.get("x-robots-tag")).toBe("noindex");
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+    });
+
+    it("return_to never carries Next's _rsc (a client navigation that hit the gate, review M-5)", async () => {
+      const res = await run("/products/lamp?_rsc=1x2y&c=1");
+      expect(res.headers.get("location")).toBe(
+        "https://a.example/password?return_to=%2Fproducts%2Flamp%3Fc%3D1",
+      );
+    });
+
+    it("POST without a cookie → 403", async () => {
+      expect((await run("/cart", { method: "POST" })).status).toBe(403);
+    });
+
+    it("a valid cookie passes; expired, other shop, old version or no secret do not", async () => {
+      expect(
+        (await run("/", { cookie: await cookieFor("shop-a", 3) })).headers.get("location"),
+      ).toBeNull();
+      expect((await run("/", { cookie: await cookieFor("shop-a", 3, 1) })).status).toBe(302);
+      expect((await run("/", { cookie: await cookieFor("shop-b", 3) })).status).toBe(302);
+      expect((await run("/", { cookie: await cookieFor("shop-a", 2) })).status).toBe(302);
+      const valid = await cookieFor("shop-a", 3);
+      vi.stubEnv("STOREFRONT_ACCESS_SECRET", "");
+      expect((await run("/", { cookie: valid })).status).toBe(302); // fail closed
+    });
+
+    it("a valid cookie lets a POST through (the shop's own actions work once unlocked)", async () => {
+      const res = await run("/cart", { method: "POST", cookie: await cookieFor("shop-a", 3) });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("location")).toBeNull();
+    });
+
+    it("a forged or tampered cookie is redirected", async () => {
+      const forged = await cookieFor("shop-a", 3, undefined, "x".repeat(32));
+      expect((await run("/", { cookie: forged })).status).toBe(302);
+      const valid = await cookieFor("shop-a", 3);
+      const [, , exp, mac] = valid.split(".");
+      const later = `v1.3.${Number(exp) + 86_400}.${mac}`; // extended expiry, same signature
+      expect((await run("/", { cookie: later })).status).toBe(302);
+      const flipped = `${valid.slice(0, -2)}${valid.at(-2) === "a" ? "b" : "a"}${valid.at(-1)}`;
+      expect((await run("/", { cookie: flipped })).status).toBe(302);
+      expect((await run("/", { cookie: "v1.3.9999999999.not-a-mac" })).status).toBe(302);
+    });
+
+    it("a stale accessVersion (password changed, or re-locked) is revoked", async () => {
+      const before = await cookieFor("shop-a", 3);
+      expect((await run("/", { cookie: before })).headers.get("location")).toBeNull();
+      access["shop-a"] = { locked: true, accessVersion: 4 };
+      vi.resetModules(); // a fresh access cache, as after the 15 s TTL
+      expect((await run("/", { cookie: before })).status).toBe(302);
+    });
+
+    it("/password and Next's own assets stay reachable", async () => {
+      for (const path of [
+        "/password",
+        "/password?return_to=%2F",
+        "/_next/static/chunks/main.js",
+        "/_next/image?url=https%3A%2F%2Fcdn.test%2Fa.jpg&w=640&q=75",
+      ]) {
+        expect((await run(path)).headers.get("location"), path).toBeNull();
+      }
+    });
+
+    it("the reachable routes pass a locked store for reads, marked as the locked view (Ruling 5)", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 1 };
+      for (const path of ["/policies/refund-policy", "/robots.txt", "/sitemap.xml"]) {
+        const res = await run(path);
+        expect(res.headers.get("location"), path).toBeNull();
+        expect(forwarded(res, "x-morbeh-locked-view"), path).toBe("1");
+      }
+      expect((await run("/policies/refund-policy", { method: "POST" })).status).toBe(403);
+      expect((await run("/policies/refund")).status).toBe(302);
+      expect((await run("/password/x")).status).toBe(302);
+    });
+
+    it("look-alikes of reachable paths are gated", async () => {
+      for (const path of [
+        "/passwords",
+        "/Password",
+        "/policies",
+        "/policiesx/a",
+        "/robots.txt/x",
+      ]) {
+        expect((await run(path)).status, path).toBe(302);
+      }
+    });
+
+    it("a route listed as reachable while locked allows only GET and HEAD (review M-2)", async () => {
+      for (const method of ["GET", "HEAD"]) {
+        const res = await run("/policies/refund-policy", { method });
+        expect(res.status, method).toBe(200);
+        expect(res.headers.get("location"), method).toBeNull();
+      }
+      for (const method of ["POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+        expect((await run("/policies/refund-policy", { method })).status, method).toBe(403);
+      }
+      // Anything the list does not name is still gated.
+      expect((await run("/policies/a/b")).status).toBe(302);
+      expect((await run("/policies/refund-policy/x")).status).toBe(302);
+      // An unverified token is never forwarded on a locked store.
+      const res = await run(`/policies/refund-policy?preview=${UNKNOWN_TOKEN}`);
+      expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+    });
+
+    it("the password page is noindex and never cached", async () => {
+      const res = await run("/password");
+      expect(res.headers.get("x-robots-tag")).toBe("noindex");
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+    });
+
+    it("a GET with a VALID preview token passes, private and frameable by the admin only (Ruling 36)", async () => {
+      const res = await run(`/products/lamp?preview=${TOKEN}`);
+      expect(res.headers.get("location")).toBeNull();
+      expect(forwarded(res, "x-morbeh-preview")).toBe(TOKEN);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("content-security-policy")).toBe(
+        "frame-ancestors 'self' https://admin.example",
+      );
+      const [call] = previewCalls();
+      expect(call?.[1]?.headers).toEqual({ "x-tenant-id": "shop-a", "x-preview-token": TOKEN });
+    });
+
+    it("a well-shaped but unknown or expired token → 302, and nothing is forwarded", async () => {
+      const res = await run(`/products/lamp?preview=${UNKNOWN_TOKEN}`);
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe(
+        "https://a.example/password?return_to=%2Fproducts%2Flamp",
+      );
+      expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+    });
+
+    it("a proxy that drops the preview header gets the live 200: that is NOT a preview → 302", async () => {
+      previews[TOKEN] = { status: 200, body: { mode: "live", locked: true } };
+      expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+    });
+
+    it("the token check answering 429, 503, garbage, throwing or timing out → 302 (fail closed)", async () => {
+      for (const answer of [
+        { status: 429, body: { mode: "preview" } },
+        { status: 503, body: {} },
+        { status: 200, body: "garbage" },
+        "throw" as const,
+        "timeout" as const,
+      ]) {
+        previews[TOKEN] = answer;
+        expect((await run(`/?preview=${TOKEN}`)).status, JSON.stringify(answer)).toBe(302);
+      }
+    });
+
+    it("an invalid token with a valid cookie passes as an ordinary unlocked visit", async () => {
+      const res = await run(`/?preview=${UNKNOWN_TOKEN}`, {
+        cookie: await cookieFor("shop-a", 3),
+      });
+      expect(res.headers.get("location")).toBeNull();
+      expect(forwarded(res, "x-morbeh-preview")).toBeNull();
+      expect(res.headers.get("content-security-policy")).toBe("frame-ancestors 'self'");
+    });
+
+    it("a malformed preview value is ignored (gated like any GET, never sent to the Runtime)", async () => {
+      expect((await run("/?preview=<script>")).status).toBe(302);
+      expect((await run(`/?preview=${"T".repeat(31)}`)).status).toBe(302);
+      expect((await run(`/?preview=${"T".repeat(101)}`)).status).toBe(302);
+      expect(previewCalls()).toHaveLength(0);
+    });
+
+    it("a Runtime that times out with no known lock state → 503, not a hung page", async () => {
+      access["shop-a"] = "timeout";
+      const res = await run("/");
+      expect(res.status).toBe(503);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+    });
+
+    it("a Runtime that fails AFTER a known state keeps the gate locked (stale for 5 min)", async () => {
+      expect((await run("/")).status).toBe(302);
+      access["shop-a"] = "fail";
+      expect((await run("/")).status).toBe(302);
+      access["shop-a"] = "timeout";
+      expect((await run("/")).status).toBe(302);
+    });
+
+    describe("token answers are cached briefly, by hash (review M-3)", () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        vi.setSystemTime(new Date("2026-11-02T10:00:00.000Z"));
+        previews[TOKEN] = livePreview();
+      });
+
+      it("a valid token is asked once per 30 s", async () => {
+        expect(forwarded(await run(`/?preview=${TOKEN}`), "x-morbeh-preview")).toBe(TOKEN);
+        expect(forwarded(await run(`/a?preview=${TOKEN}`), "x-morbeh-preview")).toBe(TOKEN);
+        expect(previewCalls()).toHaveLength(1);
+        vi.setSystemTime(new Date("2026-11-02T10:00:30.000Z"));
+        previews[TOKEN] = { status: 401, body: {} }; // revoked or expired meanwhile
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        expect(previewCalls()).toHaveLength(2);
+      });
+
+      it("never past the token's own expiry", async () => {
+        previews[TOKEN] = {
+          status: 200,
+          body: { mode: "preview", previewExpiresAt: "2026-11-02T10:00:05.000Z" },
+        };
+        expect((await run(`/?preview=${TOKEN}`)).headers.get("location")).toBeNull();
+        vi.setSystemTime(new Date("2026-11-02T10:00:05.000Z"));
+        previews[TOKEN] = { status: 401, body: {} };
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        expect(previewCalls()).toHaveLength(2);
+      });
+
+      it("a refused token is asked once per 30 s, so flooding it does not reach the Runtime", async () => {
+        for (let i = 0; i < 20; i += 1) {
+          expect((await run(`/?preview=${UNKNOWN_TOKEN}`)).status).toBe(302);
+        }
+        expect(previewCalls()).toHaveLength(1);
+      });
+
+      it("a Runtime error or timeout is never cached", async () => {
+        previews[TOKEN] = { status: 429, body: {} };
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        previews[TOKEN] = "timeout";
+        expect((await run(`/?preview=${TOKEN}`)).status).toBe(302);
+        previews[TOKEN] = livePreview();
+        expect((await run(`/?preview=${TOKEN}`)).headers.get("location")).toBeNull();
+        expect(previewCalls()).toHaveLength(3);
+      });
+    });
+  });
+
+  describe("GET /password (preflight 21)", () => {
+    it("an unlocked store sends the visitor on to a safe return_to", async () => {
+      const res = await run("/password?return_to=%2Fproducts%2Flamp%3Fc%3D1");
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://a.example/products/lamp?c=1");
+    });
+
+    it("never redirects off the shop (open redirect attempts, review C-1)", async () => {
+      for (const raw of REDIRECT_ATTACKS) {
+        const res = await run(`/password?return_to=${encodeURIComponent(raw)}`);
+        expect(res.headers.get("location"), JSON.stringify(raw)).toBe("https://a.example/");
+      }
+      const encoded = await run(`/password?return_to=${encodeURIComponent("/%2F%2Fevil")}`);
+      expect(encoded.headers.get("location")).toBe("https://a.example/%2F%2Fevil");
+    });
+
+    it("a locked store with a valid unlock cookie sends the visitor on (final review M-3)", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      const cookie = await cookieFor("shop-a", 3);
+      const res = await run("/password?return_to=%2Fproducts%2Flamp%3Fc%3D1", { cookie });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("https://a.example/products/lamp?c=1");
+    });
+
+    it("that redirect still goes through the output-checked safeReturnTo", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      const cookie = await cookieFor("shop-a", 3);
+      for (const raw of REDIRECT_ATTACKS) {
+        const res = await run(`/password?return_to=${encodeURIComponent(raw)}`, { cookie });
+        expect(res.headers.get("location"), JSON.stringify(raw)).toBe("https://a.example/");
+      }
+    });
+
+    it("a locked store with a stale, foreign or forged cookie still renders the form", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      for (const cookie of [
+        await cookieFor("shop-a", 2),
+        await cookieFor("shop-b", 3),
+        await cookieFor("shop-a", 3, Math.floor(Date.now() / 1000) - 10),
+        await cookieFor("shop-a", 3, undefined, "x".repeat(32)),
+        "garbage",
+      ]) {
+        const res = await run("/password?return_to=%2F", { cookie });
+        expect(res.status).toBe(200);
+        expect(res.headers.get("location")).toBeNull();
+      }
+    });
+
+    it("the unlock POST is not redirected even with a valid cookie", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      const cookie = await cookieFor("shop-a", 3);
+      const res = await run("/password?return_to=%2F", { method: "POST", cookie });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("location")).toBeNull();
+    });
+
+    it("a locked store renders the page", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      const res = await run("/password?return_to=%2F");
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+
+    it("an unknown lock state renders the page (never a 503, never a redirect)", async () => {
+      access["shop-a"] = "fail";
+      const res = await run("/password");
+      expect(res.headers.get("location")).toBeNull();
+      expect(res.status).toBe(200);
+    });
+
+    it("the unlock POST itself goes through, locked or not", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      const res = await run("/password?return_to=%2F", { method: "POST" });
+      expect(res.status).toBe(200);
+      expect(res.headers.get("location")).toBeNull();
+    });
+  });
+
+  it("the locked view header is set only by the gate: stripped from clients, absent with access", async () => {
+    const sent = { headers: { "x-morbeh-locked-view": "1" } };
+    expect(forwarded(await run("/", sent), "x-morbeh-locked-view")).toBeNull(); // unlocked shop
+    expect(forwarded(await run("/robots.txt", sent), "x-morbeh-locked-view")).toBeNull();
+    access["shop-a"] = { locked: true, accessVersion: 2 };
+    vi.resetModules();
+    const cookie = await cookieFor("shop-a", 2);
+    expect(
+      forwarded(await run("/policies/refund-policy", { ...sent, cookie }), "x-morbeh-locked-view"),
+    ).toBeNull();
+    expect(
+      forwarded(await run(`/policies/refund-policy?preview=${TOKEN}`), "x-morbeh-locked-view"),
+    ).toBeNull();
+  });
+
+  it("any POST carrying ?preview= is refused, locked or not (view-only preview, Ruling 15)", async () => {
+    expect((await run(`/products/lamp?preview=${TOKEN}`, { method: "POST" })).status).toBe(403);
+    expect((await run("/cart?preview=x", { method: "PUT" })).status).toBe(403);
+    expect((await run("/password?preview=x", { method: "POST" })).status).toBe(403);
+    access["shop-a"] = { locked: true, accessVersion: 3 };
+    vi.resetModules();
+    const cookie = await cookieFor("shop-a", 3);
+    expect((await run(`/cart?preview=${TOKEN}`, { method: "POST", cookie })).status).toBe(403);
+    expect(previewCalls()).toHaveLength(0);
+  });
+
+  it("unknown access with a failing Runtime → 503 (fail closed)", async () => {
+    access["shop-a"] = "fail";
+    const res = await run("/");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(accessCalls()).toHaveLength(1);
+  });
+
+  describe("host routing on", () => {
+    beforeEach(() => {
+      vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
+    });
+
+    it("A's cookie on B's host is redirected (Review Focus 2)", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      access["shop-b"] = { locked: true, accessVersion: 3 };
+      const aCookie = await cookieFor("shop-a", 3);
+      expect(
+        (await run("/", { host: "a.example", cookie: aCookie })).headers.get("location"),
+      ).toBeNull();
+      expect((await run("/", { host: "b.example", cookie: aCookie })).status).toBe(302);
+    });
+
+    it("a preview token is checked against the host's shop, and its answer is never shared", async () => {
+      access["shop-a"] = { locked: true, accessVersion: 3 };
+      access["shop-b"] = { locked: true, accessVersion: 3 };
+      const res = await run(`/?preview=${TOKEN}`, { host: "b.example" });
+      await run(`/?preview=${TOKEN}`, { host: "a.example" });
+      const tenants = previewCalls().map(
+        ([, init]) => (init?.headers as Record<string, string>)["x-tenant-id"],
+      );
+      expect(tenants).toEqual(["shop-b", "shop-a"]);
+      expect(forwarded(res, "x-shop-id")).toBe("shop-b");
+    });
+
+    it("refusals for an unknown, inactive or unreadable host are never cached (review M-6)", async () => {
+      const unknown = await run("/", { host: "nowhere.example" });
+      expect(unknown.status).toBe(404);
+      const inactive = await run("/", { host: "c.example" });
+      expect(inactive.status).toBe(503);
+      for (const res of [unknown, inactive]) {
+        expect(res.headers.get("cache-control")).toBe("private, no-store");
+      }
+    });
+  });
+});

@@ -41,6 +41,10 @@ import type {
 import type { UnlistProduct, UnlistProductInput } from "../application/unlist-product.use-case";
 import type { UpdateProduct, UpdateProductInput } from "../application/update-product.use-case";
 import type {
+  ListNewestProducts,
+  ListNewestProductsInput,
+} from "../application/list-newest-products.use-case";
+import type {
   GetProductsByIds,
   GetProductsByIdsInput,
 } from "../application/get-products-by-ids.use-case";
@@ -59,6 +63,7 @@ export interface ProductControllerDeps {
   readonly getProductBySlug: GetProductBySlug;
   readonly getProductsByIds: GetProductsByIds;
   readonly listProducts: ListProducts;
+  readonly listNewestProducts: ListNewestProducts;
   readonly schedulePublishProduct: SchedulePublishProduct;
   readonly unpublishProduct: UnpublishProduct;
   readonly unlistProduct: UnlistProduct;
@@ -177,6 +182,10 @@ export class ProductController {
 
   async getByIds(input: GetProductsByIdsInput): Promise<ControllerResponse> {
     return present(await this.deps.getProductsByIds.execute(input), 200);
+  }
+
+  async listNewest(input: ListNewestProductsInput): Promise<ControllerResponse> {
+    return present(await this.deps.listNewestProducts.execute(input), 200);
   }
 
   async setVariantImage(input: SetVariantImageInput): Promise<ControllerResponse> {

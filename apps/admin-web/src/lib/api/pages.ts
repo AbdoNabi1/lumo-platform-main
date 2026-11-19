@@ -1,3 +1,4 @@
+import type { LocalizedText } from "@platform/storefront-content";
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
 /**
@@ -17,6 +18,15 @@ export interface PageDto {
   readonly seoProfileRef: string | null;
   readonly localeRef: string | null;
   readonly status: string;
+  /** Part 2 (spec 2.4): the merchant's text. An empty title displays `name` (Ruling 16). */
+  readonly title: LocalizedText;
+  readonly metaDescription: LocalizedText;
+  /** Morbeh text. Absent on list rows (Ruling 17): read the page itself to edit it. */
+  readonly body?: LocalizedText;
+  readonly publishedAt: string | null;
+  readonly updatedAt: string | null;
+  /** What a content save sends back as `expectedVersion`. */
+  readonly version: number;
 }
 
 export interface TemplateDto {
@@ -41,12 +51,30 @@ interface TemplatesPageDto {
   readonly pageInfo: PagesPageInfo;
 }
 
-function isPagesPageDto(value: unknown): value is PagesPageDto {
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+const isNullableString = (value: unknown): value is string | null =>
+  value === null || typeof value === "string";
+
+/** A list row: no body (Ruling 17), but the title and the version are always there. */
+function isPageRow(value: unknown): value is PageDto {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    Array.isArray((value as { items?: unknown }).items)
+    isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["name"] === "string" &&
+    typeof value["routePath"] === "string" &&
+    typeof value["status"] === "string" &&
+    isRecord(value["title"]) &&
+    isRecord(value["metaDescription"]) &&
+    isNullableString(value["publishedAt"]) &&
+    isNullableString(value["updatedAt"]) &&
+    typeof value["version"] === "number" &&
+    Number.isInteger(value["version"])
   );
+}
+
+function isPagesPageDto(value: unknown): value is PagesPageDto {
+  return isRecord(value) && Array.isArray(value["items"]) && value["items"].every(isPageRow);
 }
 
 function isTemplatesPageDto(value: unknown): value is TemplatesPageDto {
@@ -57,12 +85,9 @@ function isTemplatesPageDto(value: unknown): value is TemplatesPageDto {
   );
 }
 
-function isPageDto(value: unknown): value is PageDto {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    typeof (value as { id?: unknown }).id === "string"
-  );
+/** One page, as the editor needs it: with its body. */
+function isPageDto(value: unknown): value is PageDto & { readonly body: LocalizedText } {
+  return isPageRow(value) && isRecord(value["body"]);
 }
 
 function isTemplateDto(value: unknown): value is TemplateDto {
@@ -101,7 +126,7 @@ export async function fetchPagesPage(query: {
 }
 
 export type FetchPageResult =
-  | { readonly outcome: "ok"; readonly page: PageDto }
+  | { readonly outcome: "ok"; readonly page: PageDto & { readonly body: LocalizedText } }
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "error"; readonly message: string };
@@ -182,7 +207,9 @@ function isUnknown(_value: unknown): _value is unknown {
   return true;
 }
 
-function isCreatedRecord(value: unknown): value is { readonly id?: unknown } {
+function isCreatedRecord(
+  value: unknown,
+): value is { readonly id?: unknown; readonly pageId?: unknown } {
   return typeof value === "object" && value !== null;
 }
 
@@ -193,9 +220,16 @@ export interface CreatePageInput {
   readonly experienceRef?: string;
   readonly seoProfileRef?: string;
   readonly localeRef?: string;
+  /** Part 2 (Ruling 17): "Add page" sends the content in the same call. */
+  readonly title?: LocalizedText;
+  readonly body?: LocalizedText;
+  readonly metaDescription?: LocalizedText;
 }
 
-/** `POST /pages` (`idempotent: true`, `pages:create_page`). */
+/**
+ * `POST /pages` (`idempotent: true`, `pages:create_page`). The answer is `{ pageId, status }`;
+ * `id` is still read for an older API.
+ */
 export async function createPage(
   input: CreatePageInput,
   idempotencyKey: string,
@@ -206,8 +240,38 @@ export async function createPage(
     isCreatedRecord,
   );
   if (result.outcome !== "ok") return result;
-  const id = typeof result.data.id === "string" ? result.data.id : "";
-  return { outcome: "ok", data: { id } };
+  const { pageId, id } = result.data;
+  return {
+    outcome: "ok",
+    data: { id: typeof pageId === "string" ? pageId : typeof id === "string" ? id : "" },
+  };
+}
+
+const isContentSaved = (value: unknown): value is { pageId: string; version: number } =>
+  isRecord(value) &&
+  typeof value["pageId"] === "string" &&
+  typeof value["version"] === "number" &&
+  Number.isInteger(value["version"]);
+
+/**
+ * `PUT /pages/:pageId/content` (`pages:update_page`): replaces the title, body and meta
+ * description of a draft or published page, guarded by `expectedVersion`. One key per save.
+ */
+export function updatePageContent(
+  pageId: string,
+  body: {
+    title: LocalizedText;
+    body: LocalizedText;
+    metaDescription: LocalizedText;
+    expectedVersion: number;
+  },
+  idempotencyKey: string,
+): Promise<MutationResult<{ pageId: string; version: number }>> {
+  return mutateAdminApi(
+    `/api/v1/pages/${encodeURIComponent(pageId)}/content`,
+    { method: "PUT", body, idempotencyKey },
+    isContentSaved,
+  );
 }
 
 /** `POST /pages/:pageId/transitions` (`idempotent: true`, `pages:advance_page`). */

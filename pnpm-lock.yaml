@@ -158,6 +158,9 @@ importers:
       '@platform/notifications':
         specifier: workspace:*
         version: link:../../services/notifications
+      '@platform/online-store':
+        specifier: workspace:*
+        version: link:../../services/online-store
       '@platform/orders':
         specifier: workspace:*
         version: link:../../services/orders
@@ -203,6 +206,9 @@ importers:
       '@platform/shipping':
         specifier: workspace:*
         version: link:../../services/shipping
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/tenancy':
         specifier: workspace:*
         version: link:../../services/tenancy
@@ -249,8 +255,23 @@ importers:
 
   apps/admin-web:
     dependencies:
+      '@fontsource/almarai':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/amiri':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/cairo':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/ibm-plex-sans-arabic':
         specifier: ^5.1.0
+        version: 5.3.0
+      '@fontsource/readex-pro':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/tajawal':
+        specifier: ^5.3.0
         version: 5.3.0
       '@platform/design':
         specifier: workspace:*
@@ -258,6 +279,9 @@ importers:
       '@platform/regions':
         specifier: workspace:*
         version: link:../../packages/regions
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -521,6 +545,9 @@ importers:
       '@platform/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@platform/online-store':
+        specifier: workspace:*
+        version: link:../../services/online-store
       '@platform/orders':
         specifier: workspace:*
         version: link:../../services/orders
@@ -636,8 +663,23 @@ importers:
 
   apps/storefront:
     dependencies:
+      '@fontsource/almarai':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/amiri':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/cairo':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/ibm-plex-sans-arabic':
         specifier: ^5.1.0
+        version: 5.3.0
+      '@fontsource/readex-pro':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/tajawal':
+        specifier: ^5.3.0
         version: 5.3.0
       '@platform/config':
         specifier: workspace:*
@@ -648,6 +690,9 @@ importers:
       '@platform/regions':
         specifier: workspace:*
         version: link:../../packages/regions
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/tracking':
         specifier: workspace:*
         version: link:../../packages/tracking
@@ -1645,6 +1690,34 @@ importers:
       '@platform/utils':
         specifier: workspace:*
         version: link:../utils
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
+  packages/storefront-content:
+    dependencies:
+      '@platform/design':
+        specifier: workspace:*
+        version: link:../design
     devDependencies:
       '@platform/eslint-config':
         specifier: workspace:*
@@ -3101,6 +3174,64 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
 
+  services/online-store:
+    dependencies:
+      '@platform/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@platform/domain-events':
+        specifier: workspace:*
+        version: link:../../packages/domain-events
+      '@platform/messaging':
+        specifier: workspace:*
+        version: link:../../packages/messaging
+      '@platform/repository':
+        specifier: workspace:*
+        version: link:../../packages/repository
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@platform/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+      '@prisma/client':
+        specifier: ^6.5.0
+        version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@types/node':
+        specifier: ^22.7.5
+        version: 22.20.0
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
   services/orders:
     dependencies:
       '@platform/application':
@@ -3176,6 +3307,9 @@ importers:
       '@platform/repository':
         specifier: workspace:*
         version: link:../../packages/repository
+      '@platform/storefront-content':
+        specifier: workspace:*
+        version: link:../../packages/storefront-content
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -4667,8 +4801,23 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
+  '@fontsource/almarai@5.3.0':
+    resolution: {integrity: sha512-btLbQO3LSL6F6KLQeZqTFwmS3wArSDJxHdXAYJMaKLyxhp8C7ZQqTYjPFqENx+SwROzDyAyFRK5fKFWh5+uZtQ==}
+
+  '@fontsource/amiri@5.3.0':
+    resolution: {integrity: sha512-i4SWJnVIphj8556EdVzNrEG/Qu82k6JXjXTtSUIohx3tHmo2GHw1Kv60TWo+xjk7Yf1Etb2Gskh0lUFclTKyUw==}
+
+  '@fontsource/cairo@5.3.0':
+    resolution: {integrity: sha512-MdY6+gee1DVz4eUvx1Dd8Y1f50WcRELRKwKBarYZA3zT8dMhkuTWbcoE1LzezAy97h/9rob87s02NI6L8MaDgA==}
+
   '@fontsource/ibm-plex-sans-arabic@5.3.0':
     resolution: {integrity: sha512-ZZ4g+JDgQY0NqSh4o0MNWU1sHQmtcee1g++aKAwyJvZxnT5y51JXsN1cIXnaQaMd40dcbK6QFYa+Z1LbaiNuqA==}
+
+  '@fontsource/readex-pro@5.3.0':
+    resolution: {integrity: sha512-llvAZL81cEA7kgp9AnhgMRUVsZqb2i5njgLN0uQCNa0+jI8jjscZPOVyiqnUUGvzwmCFhsHw2OBQeF4MyygCXA==}
+
+  '@fontsource/tajawal@5.3.0':
+    resolution: {integrity: sha512-R2GUdHHAebeZ+CyYvulaSECfZe3BWbNjEWX3TXG0Csnx4RADO/zyqk6Y//NYdSx5n74zRJh9HTvd61mpX/UzZQ==}
 
   '@grpc/grpc-js@1.14.6':
     resolution: {integrity: sha512-SgC/B3/VZ8lTyOZ4Cwk6f1skWhmkNAaVfiX90qd5u1rRXGKk1//8FTUEN9GvOUq7rfWIqAYkA3CoyumYVpOS6g==}
@@ -10263,7 +10412,17 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
+  '@fontsource/almarai@5.3.0': {}
+
+  '@fontsource/amiri@5.3.0': {}
+
+  '@fontsource/cairo@5.3.0': {}
+
   '@fontsource/ibm-plex-sans-arabic@5.3.0': {}
+
+  '@fontsource/readex-pro@5.3.0': {}
+
+  '@fontsource/tajawal@5.3.0': {}
 
   '@grpc/grpc-js@1.14.6':
     dependencies:

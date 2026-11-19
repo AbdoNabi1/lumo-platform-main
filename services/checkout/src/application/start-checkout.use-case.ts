@@ -15,6 +15,12 @@ export interface StartCheckoutInput {
   readonly customerRef?: string;
   readonly sessionRef: string;
   readonly currency: string;
+  /**
+   * Order operations Part 3: set ONLY by the recovery-link claim (server side) — the abandoned session
+   * this one clones. The public start route's `.strict()` body cannot carry it, so a shopper can never
+   * point their session at someone else's checkout (which completion would then expire).
+   */
+  readonly recoveredFromRef?: string;
 }
 
 export interface StartCheckoutOutput {
@@ -60,6 +66,7 @@ export class StartCheckout implements UseCase<
         input.customerRef,
         input.sessionRef,
         input.currency,
+        input.recoveredFromRef === undefined ? {} : { recoveredFromRef: input.recoveredFromRef },
       );
       await this.deps.sessions.save(session, input.tenantId, tx);
       return ok({ checkoutSessionId: id.toString() });

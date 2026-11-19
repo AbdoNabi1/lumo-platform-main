@@ -53,6 +53,8 @@ const PUBLIC_PREFIXES = [
   "/consent",
   "/auth/callback",
   "/auth/native-login",
+  "/signup",
+  "/auth/signup",
   "/forgot-password",
   "/reset-password",
   "/auth/forgot",
@@ -73,6 +75,9 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 };
 // operator; read-only operational screens require viewer. Longest-prefix match; unlisted routes
 // (public auth routes aside) default to "admin" — deny-by-default rather than accidentally open.
 const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
+  // Part 2: the store policies read for viewers (the API refuses their writes; the screen shows
+  // them read-only). The rest of Settings stays admin-only.
+  ["/settings/policies", "viewer"],
   ["/settings", "admin"],
   ["/integrations", "admin"],
   ["/security", "admin"],
@@ -96,6 +101,12 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/seo/sitemaps/new", "operator"],
   ["/seo/robots-policies/new", "operator"],
   ["/seo", "viewer"],
+  // Project 4: Online Store. Every page reads for viewers (the API refuses their writes, and the
+  // screens show them read-only); the theme editor is an editing surface, so operator and up.
+  ["/online-store/themes/customize", "operator"],
+  // Part 2: a new menu is created on its own screen, so operator and up (menus read for viewers).
+  ["/online-store/navigation/new", "operator"],
+  ["/online-store", "viewer"],
   ["/theme/new", "operator"],
   ["/theme", "viewer"],
   ["/components-library/new", "operator"],
@@ -113,6 +124,12 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/orders/new", "operator"],
   ["/orders/from-checkout", "operator"],
   ["/orders", "viewer"],
+  // Abandoned checkouts read like orders (`orders:read`); the API refuses link issuance to viewers.
+  ["/abandoned-checkouts", "viewer"],
+  // Drafts read like orders (`orders:read`); creating one is operator work. The API decides who may
+  // send an invoice or collect payment (Mark as paid is admin-only).
+  ["/draft-orders/new", "operator"],
+  ["/draft-orders", "viewer"],
   ["/products/new", "operator"],
   ["/products", "viewer"],
   ["/categories", "viewer"],

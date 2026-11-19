@@ -10,7 +10,7 @@ import {
  * Storefront-facing Cart resolution (Phase 17.1 — Guest Cart Foundation).
  *
  * Cart identity is now session-derived, not a `?cartId=` link or a `cartId`-holding cookie: the
- * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/cart/actions.ts`) is the only
+ * guest session cookie (`GUEST_SESSION_COOKIE`, written by `app/(store)/cart/actions.ts`) is the only
  * client-held reference, and the Runtime API resolves "the current cart" from it via
  * `GET /public/carts/current`. This supersedes the old `CART_COOKIE` (`morbeh-storefront-cart-id`)
  * design from Productization Phase 3, which stored a bare cart id with no ownership check at all
@@ -51,6 +51,14 @@ export const CHECKOUT_SESSION_COOKIE_OPTIONS = {
   secure: process.env.NODE_ENV === "production",
   sameSite: "lax" as const,
 };
+
+/**
+ * Order operations Part 4: the checkout id an invoice link's claim opened (same options as
+ * `CHECKOUT_SESSION_COOKIE`). Only compared with that cookie, so `/checkout` can tell an invoice
+ * shopper whose session someone else opened since to "open your link again" rather than "start
+ * from your cart". Never the token, never a `sessionRef`.
+ */
+export const INVOICE_CHECKOUT_COOKIE = "morbeh_invoice_checkout";
 
 export interface ResolvedCartLine {
   readonly productId: string;
