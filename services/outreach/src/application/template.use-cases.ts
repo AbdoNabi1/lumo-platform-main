@@ -6,7 +6,7 @@ import {
   validateTemplateDraft,
   type TemplateDraft,
 } from "../domain/message-template";
-import type { TemplateRecord, TemplateStatusChange } from "../domain/repositories";
+import type { FetchedTemplate, TemplateRecord, TemplateStatusChange } from "../domain/repositories";
 import { type TemplateDto, templateDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
 import { conflict, emit, isMetaError, metaConflictCode } from "./support";
@@ -30,22 +30,16 @@ async function emitTemplateChange(
   wabaId: string,
   c: TemplateStatusChange,
 ): Promise<void> {
-  await emit(
-    deps,
-    tx,
-    tenantId,
-    "outreach.template.status_changed",
-    c.metaTemplateId ?? `${c.name}:${c.language}`,
-    {
-      wabaId,
-      metaTemplateId: c.metaTemplateId,
-      name: c.name,
-      language: c.language,
-      from: c.from,
-      to: c.to,
-      category: c.category,
-    },
-  );
+  // The aggregate id is the stable local row id for every producer (create, sync, webhook, freshness).
+  await emit(deps, tx, tenantId, "outreach.template.status_changed", c.id, {
+    wabaId,
+    metaTemplateId: c.metaTemplateId,
+    name: c.name,
+    language: c.language,
+    from: c.from,
+    to: c.to,
+    category: c.category,
+  });
 }
 
 /** Runs a Meta call, mapping an adapter failure to `META_<code>` (and nothing else: provider text never escapes). */
@@ -188,50 +182,69 @@ export class CreateTemplate implements UseCase<CreateTemplateInput, TemplateDto,
       if (!(await connectionUnchanged(deps, tenantId, snapshot, tx))) {
         return err(conflict("CONNECTION_CHANGED"));
       }
-      const inserted = await deps.templates.insert(record, tx);
-      if (inserted === "duplicate") {
-        const existing = await deps.templates.findByNameLanguage(
-          tenantId,
-          snapshot.wabaId,
-          record.name,
-          record.language,
-          tx,
-        );
-        if (existing === null || existing.status !== "DELETED")
+      const existing = await deps.templates.findByNameLanguage(
+        tenantId,
+        snapshot.wabaId,
+        record.name,
+        record.language,
+        tx,
+      );
+      if (existing === null) {
+        if ((await deps.templates.insert(record, tx)) === "duplicate") {
           return err(conflict("TEMPLATE_ALREADY_EXISTS"));
-        const applied = await deps.templates.applyFetched(
-          tenantId,
-          snapshot.wabaId,
-          {
-            id: record.id,
-            metaTemplateId: created.value.id,
-            name: record.name,
-            language: record.language,
-            category: record.category,
-            components,
-            status: record.status,
-            rejectedReason: null,
-            qualityScore: null,
-          },
-          { revisionAtFetchStart: existing.revision, fetchStartedAt: now },
-          tx,
-        );
-        if (applied !== "applied") return err(conflict("TEMPLATE_ALREADY_EXISTS"));
+        }
         await emitTemplateChange(deps, tx, tenantId, snapshot.wabaId, {
-          metaTemplateId: created.value.id,
-          name: record.name,
-          language: record.language,
-          category: record.category,
-          from: existing.status,
-          to: record.status,
-        });
-      } else {
-        await emitTemplateChange(deps, tx, tenantId, snapshot.wabaId, {
+          id: record.id,
           metaTemplateId: record.metaTemplateId,
           name: record.name,
           language: record.language,
           category: record.category,
           from: null,
+          to: record.status,
+        });
+      } else {
+        // Only the DELETED tombstone seen BEFORE the remote create, still at the revision seen then, is replaced: by its
+        // stable local id + scoped name/language + expected revision (the new provider id may differ from the old one).
+        if (local === null || existing.id !== local.id || existing.status !== "DELETED") {
+          return err(conflict("TEMPLATE_ALREADY_EXISTS"));
+        }
+        const fetched: FetchedTemplate = {
+          id: existing.id,
+          metaTemplateId: created.value.id,
+          name: record.name,
+          language: record.language,
+          category: record.category,
+          components,
+          status: record.status,
+          rejectedReason: null,
+          qualityScore: null,
+        };
+        const replaced = await deps.templates.replaceTombstone(
+          tenantId,
+          snapshot.wabaId,
+          {
+            id: local.id,
+            name: record.name,
+            language: record.language,
+            expectedRevision: local.revision,
+          },
+          fetched,
+          now,
+          tx,
+        );
+        if (replaced !== "applied") {
+          // A sync that already adopted the very template we just created is a success, not a conflict.
+          return existing.metaTemplateId === created.value.id
+            ? ok(templateDto(existing))
+            : err(conflict("TEMPLATE_ALREADY_EXISTS"));
+        }
+        await emitTemplateChange(deps, tx, tenantId, snapshot.wabaId, {
+          id: existing.id,
+          metaTemplateId: created.value.id,
+          name: record.name,
+          language: record.language,
+          category: record.category,
+          from: existing.status,
           to: record.status,
         });
       }
@@ -290,6 +303,7 @@ export class DeleteTemplate implements UseCase<
       await deps.templates.markDeletedByName(tenantId, snapshot.wabaId, name, tx);
       for (const t of before) {
         await emitTemplateChange(deps, tx, tenantId, snapshot.wabaId, {
+          id: t.id,
           metaTemplateId: t.metaTemplateId,
           name: t.name,
           language: t.language,

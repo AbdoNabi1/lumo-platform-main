@@ -8,7 +8,7 @@ import {
   UNEXPECTED_UNIQUE_CONFLICT,
   type FetchedTemplate,
   type TemplateCategoryValue,
-  type TemplateEventResult,
+  type TemplateEventOutcome,
   type TemplateFetchResult,
   type TemplateRecord,
   type TemplateSnapshotResult,
@@ -138,13 +138,19 @@ async function applyEvent(
   access: TemplateRowAccess,
   metaTemplateId: string,
   decide: (row: TemplateRecord) => EventDecision,
-): Promise<TemplateEventResult> {
+): Promise<TemplateEventOutcome> {
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     const row = await access.findByMetaId(metaTemplateId);
-    if (row === null) return "not_found";
+    if (row === null) return { result: "not_found", change: null };
     const decision = decide(row);
-    if (!("patch" in decision)) return decision.result;
-    if (await access.update(row, decision.patch)) return decision.result;
+    if (!("patch" in decision)) return { result: decision.result, change: null };
+    // The transition is the one THIS compare-and-set made: `row` is exactly what it replaced.
+    if (await access.update(row, decision.patch)) {
+      return {
+        result: decision.result,
+        change: { before: row, after: patchedRow(row, decision.patch) },
+      };
+    }
   }
   throw new ConcurrencyError(`Template ${metaTemplateId} kept changing during an event apply`);
 }
@@ -153,7 +159,7 @@ export function applyStatusEventTo(
   access: TemplateRowAccess,
   metaTemplateId: string,
   event: { status: TemplateStatus; reason: string | null; eventAt: Date },
-): Promise<TemplateEventResult> {
+): Promise<TemplateEventOutcome> {
   return applyEvent(access, metaTemplateId, (row) => decideStatusEvent(row, event));
 }
 
@@ -161,7 +167,7 @@ export function applyCategoryEventTo(
   access: TemplateRowAccess,
   metaTemplateId: string,
   event: { category: TemplateCategoryValue; eventAt: Date },
-): Promise<TemplateEventResult> {
+): Promise<TemplateEventOutcome> {
   return applyEvent(access, metaTemplateId, (row) => decideCategoryEvent(row, event));
 }
 
@@ -176,6 +182,42 @@ export async function applyFetchedTo(
   if (decision.result !== "applied") return decision.result;
   // A miss means a write landed between the read and the CAS: the snapshot is stale by definition.
   return (await access.update(current, decision.patch)) ? "applied" : "raced";
+}
+
+/**
+ * Rewrites a `DELETED` tombstone in place under a new provider id (see `TemplateRepository.replaceTombstone`). The row
+ * is looked up by its scoped name/language key and must be the expected local id, still `DELETED`, at the expected
+ * revision.
+ */
+export async function replaceTombstoneTo(
+  access: TemplateRowAccess,
+  tombstone: { id: string; name: string; language: string; expectedRevision: number },
+  row: FetchedTemplate,
+  at: Date,
+): Promise<"applied" | "raced"> {
+  const current = await access.findByNameLanguage(tombstone.name, tombstone.language);
+  if (
+    current === null ||
+    current.id !== tombstone.id ||
+    current.status !== "DELETED" ||
+    current.revision !== tombstone.expectedRevision
+  ) {
+    return "raced";
+  }
+  const patch: TemplatePatch = {
+    metaTemplateId: row.metaTemplateId,
+    category: row.category,
+    components: row.components,
+    status: row.status,
+    rejectedReason: row.rejectedReason,
+    qualityScore: row.qualityScore,
+    lastSyncedAt: at,
+    // The markers ordered events of the OLD provider object; they must not fence the new one.
+    statusEventAt: null,
+    categoryEventAt: null,
+    reconciledAt: maxDate(current.reconciledAt, at),
+  };
+  return (await access.update(current, patch)) ? "applied" : "raced";
 }
 
 const nameLanguageKey = (name: string, language: string): string => `${name}\u0000${language}`;
@@ -252,6 +294,7 @@ export async function reconcileSnapshotTo(
   const seen = new Set<string>();
   const result: TemplateSnapshotResult = { statusChanges: [], raced: 0, fenceNewer: 0 };
   const change = (
+    id: string,
     r: {
       metaTemplateId: string | null;
       name: string;
@@ -262,6 +305,7 @@ export async function reconcileSnapshotTo(
     to: TemplateStatus,
   ): void => {
     const c: TemplateStatusChange = {
+      id,
       metaTemplateId: r.metaTemplateId,
       name: r.name,
       language: r.language,
@@ -281,7 +325,7 @@ export async function reconcileSnapshotTo(
         access,
         newTemplateRow(identity.tenantId, identity.wabaId, fetched, fetch.fetchStartedAt),
       );
-      if (inserted === "inserted") change(fetched, null, fetched.status);
+      if (inserted === "inserted") change(fetched.id, fetched, null, fetched.status);
       else result.raced += 1;
       continue;
     }
@@ -298,7 +342,8 @@ export async function reconcileSnapshotTo(
     if (decision.result === "raced") result.raced += 1;
     else if (decision.result === "fence_newer") result.fenceNewer += 1;
     else if (!(await access.update(existing, decision.patch))) result.raced += 1;
-    else if (existing.status !== fetched.status) change(fetched, existing.status, fetched.status);
+    else if (existing.status !== fetched.status)
+      change(existing.id, fetched, existing.status, fetched.status);
   }
 
   for (const l of local) {
@@ -319,7 +364,7 @@ export async function reconcileSnapshotTo(
     });
     // DELETED → DELETED refreshes the fence and the revision (a newer authoritative absence) without a status change.
     if (!ok) result.raced += 1;
-    else if (l.status !== "DELETED") change(l, l.status, "DELETED");
+    else if (l.status !== "DELETED") change(l.id, l, l.status, "DELETED");
   }
   return result;
 }

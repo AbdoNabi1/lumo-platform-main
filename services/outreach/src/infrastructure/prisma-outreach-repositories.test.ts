@@ -1067,15 +1067,17 @@ describe("PrismaTemplateRepository arguments", () => {
       updatedAt: NOW,
     };
     const { tx, calls } = recordingClient({ "messageTemplate.findFirst": [row] });
-    expect(
-      await repo.applyStatusEvent(
-        "t-1",
-        "waba-1",
-        "meta-1",
-        { status: "APPROVED", reason: null, eventAt: NOW },
-        tx,
-      ),
-    ).toBe("applied");
+    const outcome = await repo.applyStatusEvent(
+      "t-1",
+      "waba-1",
+      "meta-1",
+      { status: "APPROVED", reason: null, eventAt: NOW },
+      tx,
+    );
+    expect(outcome.result).toBe("applied");
+    // the transition is the one this compare-and-set made: the row it replaced and the row it wrote
+    expect(outcome.change?.before).toMatchObject({ status: "PENDING", revision: 5 });
+    expect(outcome.change?.after).toMatchObject({ status: "APPROVED", revision: 6 });
     expect(calls[1]?.args).toEqual({
       where: { tenantId: "t-1", wabaId: "waba-1", id: row.id, revision: 5 },
       data: {
@@ -1152,6 +1154,7 @@ describe("PrismaTemplateRepository arguments", () => {
     );
     expect(result.statusChanges).toEqual([
       {
+        id: row.id,
         metaTemplateId: "meta-1",
         name: "promo",
         language: "en_US",

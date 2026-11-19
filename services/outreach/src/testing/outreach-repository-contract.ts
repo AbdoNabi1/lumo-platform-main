@@ -902,11 +902,13 @@ export function runOutreachRepositoryContract(
         const id = row.metaTemplateId!;
 
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(10),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(10),
+            })
+          ).result,
         ).toBe("applied");
         let s = await r.templates.findByProviderId(tenant, waba, id);
         expect(s).toMatchObject({
@@ -917,28 +919,34 @@ export function runOutreachRepositoryContract(
         });
 
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(10),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(10),
+            })
+          ).result,
         ).toBe("noop");
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "REJECTED",
-            reason: "x",
-            eventAt: at(5),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "REJECTED",
+              reason: "x",
+              eventAt: at(5),
+            })
+          ).result,
         ).toBe("stale");
         s = await r.templates.findByProviderId(tenant, waba, id);
         expect(s).toMatchObject({ status: "APPROVED", revision: row.revision + 1 });
 
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "PAUSED",
-            reason: null,
-            eventAt: at(10),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "PAUSED",
+              reason: null,
+              eventAt: at(10),
+            })
+          ).result,
         ).toBe("conflict");
         s = await r.templates.findByProviderId(tenant, waba, id);
         expect(s).toMatchObject({ status: "UNKNOWN", revision: row.revision + 2 });
@@ -946,11 +954,13 @@ export function runOutreachRepositoryContract(
         // Triage I4: a webhook never moves a row OUT of UNKNOWN (only an authoritative fetch does), so a later
         // APPROVED status event is a no-op on the value and leaves the row non-sendable.
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(20),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(20),
+            })
+          ).result,
         ).toBe("noop");
         s = await r.templates.findByProviderId(tenant, waba, id);
         // the ordering marker is recorded (one more revision); the value stays UNKNOWN
@@ -980,30 +990,38 @@ export function runOutreachRepositoryContract(
         const t = at(30);
 
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, first.metaTemplateId!, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: t,
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, first.metaTemplateId!, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: t,
+            })
+          ).result,
         ).toBe("applied");
         expect(
-          await r.templates.applyCategoryEvent(tenant, waba, first.metaTemplateId!, {
-            category: "MARKETING",
-            eventAt: t,
-          }),
+          (
+            await r.templates.applyCategoryEvent(tenant, waba, first.metaTemplateId!, {
+              category: "MARKETING",
+              eventAt: t,
+            })
+          ).result,
         ).toBe("applied");
         expect(
-          await r.templates.applyCategoryEvent(tenant, waba, second.metaTemplateId!, {
-            category: "MARKETING",
-            eventAt: t,
-          }),
+          (
+            await r.templates.applyCategoryEvent(tenant, waba, second.metaTemplateId!, {
+              category: "MARKETING",
+              eventAt: t,
+            })
+          ).result,
         ).toBe("applied");
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, second.metaTemplateId!, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: t,
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, second.metaTemplateId!, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: t,
+            })
+          ).result,
         ).toBe("applied");
         for (const row of [first, second]) {
           expect(
@@ -1028,16 +1046,20 @@ export function runOutreachRepositoryContract(
           eventAt: at(40),
         });
         expect(
-          await r.templates.applyCategoryEvent(tenant, waba, id, {
-            category: "MARKETING",
-            eventAt: at(40),
-          }),
+          (
+            await r.templates.applyCategoryEvent(tenant, waba, id, {
+              category: "MARKETING",
+              eventAt: at(40),
+            })
+          ).result,
         ).toBe("noop");
         expect(
-          await r.templates.applyCategoryEvent(tenant, waba, id, {
-            category: "UTILITY",
-            eventAt: at(40),
-          }),
+          (
+            await r.templates.applyCategoryEvent(tenant, waba, id, {
+              category: "UTILITY",
+              eventAt: at(40),
+            })
+          ).result,
         ).toBe("conflict");
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("UNKNOWN");
         await close();
@@ -1050,13 +1072,15 @@ export function runOutreachRepositoryContract(
         const row = template(tenant, waba);
         await r.templates.insert(row);
         const ev = { status: "PAUSED" as const, reason: null, eventAt: at(50) };
-        expect(await r.templates.applyStatusEvent(other, waba, row.metaTemplateId!, ev)).toBe(
+        expect(
+          (await r.templates.applyStatusEvent(other, waba, row.metaTemplateId!, ev)).result,
+        ).toBe("not_found");
+        expect(
+          (await r.templates.applyStatusEvent(tenant, uid("waba"), row.metaTemplateId!, ev)).result,
+        ).toBe("not_found");
+        expect((await r.templates.applyStatusEvent(tenant, waba, "nope", ev)).result).toBe(
           "not_found",
         );
-        expect(
-          await r.templates.applyStatusEvent(tenant, uid("waba"), row.metaTemplateId!, ev),
-        ).toBe("not_found");
-        expect(await r.templates.applyStatusEvent(tenant, waba, "nope", ev)).toBe("not_found");
         expect(
           (await r.templates.findByProviderId(tenant, waba, row.metaTemplateId!))?.status,
         ).toBe("APPROVED");
@@ -1175,26 +1199,32 @@ export function runOutreachRepositoryContract(
           fetchStartedAt: at(300),
         });
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(300),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(300),
+            })
+          ).result,
         ).toBe("stale");
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(299),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(299),
+            })
+          ).result,
         ).toBe("stale");
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("REJECTED");
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(301),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(301),
+            })
+          ).result,
         ).toBe("applied");
         await close();
       });
@@ -1212,11 +1242,13 @@ export function runOutreachRepositoryContract(
         });
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("DELETED");
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(390),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(390),
+            })
+          ).result,
         ).toBe("stale");
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("DELETED");
         await close();
@@ -1388,11 +1420,13 @@ export function runOutreachRepositoryContract(
         });
         // T2 (between the two snapshots) would beat the T1 fence but not the T3 one
         expect(
-          await r.templates.applyStatusEvent(tenant, waba, id, {
-            status: "APPROVED",
-            reason: null,
-            eventAt: at(200),
-          }),
+          (
+            await r.templates.applyStatusEvent(tenant, waba, id, {
+              status: "APPROVED",
+              reason: null,
+              eventAt: at(200),
+            })
+          ).result,
         ).toBe("stale");
         expect((await r.templates.findByProviderId(tenant, waba, id))?.status).toBe("DELETED");
         await close();
@@ -1528,6 +1562,136 @@ export function runOutreachRepositoryContract(
         ]);
         expect(rows.find((x) => x.name === "other")?.status).toBe("APPROVED");
         expect(rows.find((x) => x.id === en.id)?.revision).toBe(en.revision + 1);
+        await close();
+      });
+
+      it("an event outcome carries the transition of the winning CAS: before and after for applied, conflict and a marker-only advance, none otherwise", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const row = template(tenant, waba, { status: "PENDING" });
+        await r.templates.insert(row);
+        const id = row.metaTemplateId!;
+        const applied = await r.templates.applyStatusEvent(tenant, waba, id, {
+          status: "APPROVED",
+          reason: null,
+          eventAt: at(10),
+        });
+        expect(applied.result).toBe("applied");
+        expect(applied.change?.before).toMatchObject({ status: "PENDING", revision: row.revision });
+        expect(applied.change?.after).toMatchObject({
+          status: "APPROVED",
+          statusEventAt: at(10),
+          revision: row.revision + 1,
+        });
+        // a later repeat: a marker-only advance (the status does not change) still reports its own transition
+        const repeat = await r.templates.applyStatusEvent(tenant, waba, id, {
+          status: "APPROVED",
+          reason: null,
+          eventAt: at(20),
+        });
+        expect(repeat.result).toBe("applied");
+        expect(repeat.change?.before.status).toBe("APPROVED");
+        expect(repeat.change?.after.status).toBe("APPROVED");
+        expect(repeat.change?.after.statusEventAt).toEqual(at(20));
+        const conflict = await r.templates.applyStatusEvent(tenant, waba, id, {
+          status: "PAUSED",
+          reason: null,
+          eventAt: at(20),
+        });
+        expect(conflict.result).toBe("conflict");
+        expect(conflict.change).toMatchObject({
+          before: { status: "APPROVED" },
+          after: { status: "UNKNOWN" },
+        });
+        const stale = await r.templates.applyStatusEvent(tenant, waba, id, {
+          status: "APPROVED",
+          reason: null,
+          eventAt: at(5),
+        });
+        expect(stale).toEqual({ result: "stale", change: null });
+        const missing = await r.templates.applyCategoryEvent(tenant, waba, "nope", {
+          category: "MARKETING",
+          eventAt: at(30),
+        });
+        expect(missing).toEqual({ result: "not_found", change: null });
+        await close();
+      });
+
+      it("replaceTombstone rewrites a DELETED row in place under a NEW provider id, clears its markers and refuses anything else", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [tenant, waba] = [uid("t"), uid("waba")];
+        const tomb = template(tenant, waba, {
+          status: "DELETED",
+          statusEventAt: at(3),
+          categoryEventAt: at(4),
+          reconciledAt: at(5),
+        });
+        await r.templates.insert(tomb);
+        const key = { id: tomb.id, name: tomb.name, language: tomb.language };
+        const next = fetched(tomb, { metaTemplateId: uid("meta-new"), status: "PENDING" });
+        // a stale expectation or a different local id never replaces
+        expect(
+          await r.templates.replaceTombstone(
+            tenant,
+            waba,
+            { ...key, expectedRevision: tomb.revision + 1 },
+            next,
+            at(50),
+          ),
+        ).toBe("raced");
+        expect(
+          await r.templates.replaceTombstone(
+            tenant,
+            waba,
+            { ...key, id: randomUUID(), expectedRevision: tomb.revision },
+            next,
+            at(50),
+          ),
+        ).toBe("raced");
+        expect(await r.templates.findByProviderId(tenant, waba, next.metaTemplateId)).toBeNull();
+        // another tenant's scope never sees it
+        expect(
+          await r.templates.replaceTombstone(
+            uid("t"),
+            waba,
+            { ...key, expectedRevision: tomb.revision },
+            next,
+            at(50),
+          ),
+        ).toBe("raced");
+
+        expect(
+          await r.templates.replaceTombstone(
+            tenant,
+            waba,
+            { ...key, expectedRevision: tomb.revision },
+            next,
+            at(50),
+          ),
+        ).toBe("applied");
+        expect(await r.templates.findByProviderId(tenant, waba, tomb.metaTemplateId!)).toBeNull();
+        expect(await r.templates.findByProviderId(tenant, waba, next.metaTemplateId)).toMatchObject(
+          {
+            id: tomb.id,
+            status: "PENDING",
+            statusEventAt: null,
+            categoryEventAt: null,
+            reconciledAt: at(50),
+            revision: tomb.revision + 1,
+          },
+        );
+        // a row that is no longer DELETED is never overwritten
+        expect(
+          await r.templates.replaceTombstone(
+            tenant,
+            waba,
+            { ...key, expectedRevision: tomb.revision + 1 },
+            fetched(tomb, { metaTemplateId: uid("meta-other") }),
+            at(60),
+          ),
+        ).toBe("raced");
         await close();
       });
 

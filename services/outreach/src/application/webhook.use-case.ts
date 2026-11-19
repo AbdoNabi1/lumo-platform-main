@@ -4,12 +4,21 @@ import type { DomainError } from "@platform/utils";
 import { isStopKeyword } from "../domain/consent";
 import { toE164 } from "../domain/phone";
 import type { OutboundStatus } from "../domain/outbound-message";
-import type { InboundRecord, InboundType, OutboundRecord } from "../domain/repositories";
+import type {
+  InboundRecord,
+  InboundType,
+  OutboundRecord,
+  TemplateEventOutcome,
+} from "../domain/repositories";
 import { applyConsentInTx, findOrCreateContact } from "./contact-support";
 import type { OutreachDeps } from "./outreach-deps";
 import { applyStatusFact } from "./status-support";
 import { emit } from "./support";
-import { normalizeTemplateCategory, normalizeTemplateStatus } from "./template-support";
+import {
+  emitTemplateTransition,
+  normalizeTemplateCategory,
+  normalizeTemplateStatus,
+} from "./template-support";
 
 export interface WebhookResult {
   processed: number;
@@ -291,7 +300,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
       return;
     }
     const reason = str(value.reason);
-    await this.applyTemplateEvent(owner.shopTenantId, scope.wabaId, scope.metaTemplateId, (tx) =>
+    await this.applyTemplateEvent(owner.shopTenantId, (tx) =>
       this.deps.templates.applyStatusEvent(
         owner.shopTenantId,
         scope.wabaId,
@@ -326,7 +335,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
       counts.skipped += 1;
       return;
     }
-    await this.applyTemplateEvent(owner.shopTenantId, scope.wabaId, scope.metaTemplateId, (tx) =>
+    await this.applyTemplateEvent(owner.shopTenantId, (tx) =>
       this.deps.templates.applyCategoryEvent(
         owner.shopTenantId,
         scope.wabaId,
@@ -341,26 +350,15 @@ export class ProcessWhatsAppWebhook implements UseCase<
   /** `template.status_changed` is emitted only on `applied` and `conflict`; stale / noop / unknown rows emit nothing. */
   private async applyTemplateEvent(
     tenantId: string,
-    wabaId: string,
-    metaTemplateId: string,
-    apply: (tx: unknown) => Promise<"applied" | "noop" | "stale" | "conflict" | "not_found">,
+    apply: (tx: unknown) => Promise<TemplateEventOutcome>,
   ): Promise<void> {
     const { deps } = this;
     await deps.unitOfWork.run(tenantId, async (tx) => {
-      const before = await deps.templates.findByProviderId(tenantId, wabaId, metaTemplateId, tx);
-      const result = await apply(tx);
-      if (result !== "applied" && result !== "conflict") return;
-      const after = await deps.templates.findByProviderId(tenantId, wabaId, metaTemplateId, tx);
-      if (after === null) return;
-      await emit(deps, tx, tenantId, "outreach.template.status_changed", after.id, {
-        wabaId,
-        metaTemplateId,
-        name: after.name,
-        language: after.language,
-        from: before?.status ?? null,
-        to: after.status,
-        category: after.category,
-      });
+      const { change } = await apply(tx);
+      // The transition is the one the winning CAS made (never a separate pre-read); emitted only when material.
+      if (change !== null) {
+        await emitTemplateTransition(deps, tx, tenantId, change.before, change.after);
+      }
     });
   }
 }

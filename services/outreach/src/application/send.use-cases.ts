@@ -18,6 +18,7 @@ import { conflict, emailDisplayName, normalizeEmail, sessionWindowOpen } from ".
 import {
   fetchedFromMeta,
   loadActiveConnection,
+  emitTemplateTransition,
   normalizeLanguage,
   openToken,
 } from "./template-support";
@@ -193,9 +194,42 @@ export class SendWhatsAppTemplate implements UseCase<
       return uncertain();
     }
     const fetched = fetchedFromMeta(deps, remote);
-    const applied = await deps.templates.applyFetched(tenantId, auth.wabaId, fetched, {
-      revisionAtFetchStart: auth.revisionAtFetchStart,
-      fetchStartedAt,
+    // Fenced read → apply → compare → emit in ONE unit of work: a material status/category change is committed WITH its
+    // `template.status_changed` event (and rolled back with it), even when the send is then refused.
+    const applied = await deps.unitOfWork.run(tenantId, async (tx) => {
+      const before = await deps.templates.findByNameLanguage(
+        tenantId,
+        auth.wabaId,
+        stored.name,
+        stored.language,
+        tx,
+      );
+      if (
+        before === null ||
+        before.id !== stored.id ||
+        before.metaTemplateId !== auth.metaTemplateId ||
+        before.revision !== auth.revisionAtFetchStart
+      ) {
+        return "raced" as const;
+      }
+      const result = await deps.templates.applyFetched(
+        tenantId,
+        auth.wabaId,
+        fetched,
+        { revisionAtFetchStart: auth.revisionAtFetchStart, fetchStartedAt },
+        tx,
+      );
+      if (result !== "applied") return result;
+      // The revision fence makes `before` exactly the row this write replaced (every write bumps the revision).
+      const after = await deps.templates.findByNameLanguage(
+        tenantId,
+        auth.wabaId,
+        stored.name,
+        stored.language,
+        tx,
+      );
+      if (after !== null) await emitTemplateTransition(deps, tx, tenantId, before, after);
+      return result;
     });
     if (applied !== "applied" || fetched.status !== "APPROVED") return uncertain();
 

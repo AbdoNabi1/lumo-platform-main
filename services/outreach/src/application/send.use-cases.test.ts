@@ -61,15 +61,17 @@ const emailInput = (over: Partial<SendEmailInput> = {}): SendEmailInput => ({
 const sendEmail = (kit: OutreachKit, over: Partial<SendEmailInput> = {}) =>
   new SendEmail(kit.deps).execute(emailInput(over));
 
-/** Runs `fn` right after the first unit of work (the reservation) commits. */
+/** Runs `fn` right after the first unit of work that leaves an outbound row (the reservation) commits. */
 function afterReservation(kit: OutreachKit, fn: () => Promise<void> | void): void {
   const inner = kit.deps.unitOfWork;
-  let n = 0;
+  let fired = false;
   kit.deps.unitOfWork = {
     run: async (tenantId, work) => {
       const result = await inner.run(tenantId, work);
-      n += 1;
-      if (n === 1) await fn();
+      if (!fired && kit.mem.store.outbound.values().length > 0) {
+        fired = true;
+        await fn();
+      }
       return result;
     },
   };
@@ -1178,5 +1180,183 @@ describe("ReconcileUnresolvedOutbound", () => {
     expect(kit.events.ofType("outreach.message.status_changed")).toHaveLength(1);
     expect(allOutbound(kit).find((o) => o.tenantId === T2)?.status).toBe("pending");
     expect(okValue(await run(kit, T2))).toBe(1);
+  });
+});
+
+describe("SendWhatsAppTemplate — per-send freshness reconciles in ONE unit of work (I2)", () => {
+  const templateEvents = (kit: OutreachKit) =>
+    kit.events.ofType("outreach.template.status_changed");
+
+  it("a Meta-side PAUSED is persisted together with one template.status_changed, even though the send is refused", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const { tpl } = await seedSendScenario(kit);
+    kit.whatsapp.templates = [metaTemplate(tpl, { status: "PAUSED" })];
+    expect(errorOf(await sendTemplate(kit)).message).toBe("TEMPLATE_STATUS_UNCERTAIN");
+    expect(kit.mem.store.templates.values()[0]?.status).toBe("PAUSED");
+    const events = templateEvents(kit);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      aggregateId: tpl.id,
+      payload: {
+        wabaId: "waba-1",
+        metaTemplateId: tpl.metaTemplateId,
+        from: "APPROVED",
+        to: "PAUSED",
+        category: "UTILITY",
+      },
+    });
+    expect(kit.whatsapp.count("sendTemplate")).toBe(0);
+  });
+
+  it("a category change is persisted with one event and the send then runs under the new category", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const { tpl } = await seedSendScenario(kit, {
+      contact: { transactional: "allowed", marketing: "revoked" },
+    });
+    kit.whatsapp.templates = [metaTemplate(tpl, { category: "MARKETING" })];
+    expect(okValue(await sendTemplate(kit)).status).toBe("suppressed");
+    const events = templateEvents(kit);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      aggregateId: tpl.id,
+      payload: { from: "APPROVED", to: "APPROVED", category: "MARKETING" },
+    });
+  });
+
+  it("a revision-only refresh (same status and category) emits no template event", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const { tpl } = await seedSendScenario(kit);
+    expect(okValue(await sendTemplate(kit)).status).toBe("accepted");
+    expect(templateEvents(kit)).toHaveLength(0);
+    expect(kit.mem.store.templates.values()[0]?.revision).toBe(tpl.revision + 1);
+  });
+
+  it("an outbox failure on the event rolls the reconciliation back: the row is unchanged and nothing is sent", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit({
+      eventSink: (recorder) => ({
+        emit: (e, tx) =>
+          e.type === "outreach.template.status_changed"
+            ? Promise.reject(new Error("outbox down"))
+            : recorder.emit(e, tx),
+      }),
+    });
+    const { tpl } = await seedSendScenario(kit);
+    kit.whatsapp.templates = [metaTemplate(tpl, { status: "PAUSED" })];
+    await expect(sendTemplate(kit)).rejects.toThrow("outbox down");
+    expect(kit.mem.store.templates.values()[0]).toMatchObject({
+      status: "APPROVED",
+      revision: tpl.revision,
+    });
+    expect(allOutbound(kit)).toHaveLength(0);
+    expect(kit.whatsapp.count("sendTemplate")).toBe(0);
+  });
+
+  it("the freshness fence is read inside the unit of work: a row that moved since the pre-read is not applied", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const { tpl } = await seedSendScenario(kit);
+    kit.whatsapp.templates = [metaTemplate(tpl, { status: "PAUSED" })];
+    kit.whatsapp.set("getTemplate", () => {
+      // a concurrent writer (a webhook) lands while the Meta fetch is in flight
+      const row = kit.mem.store.templates.values()[0];
+      if (row !== undefined) {
+        kit.mem.store.templates.set(row.id, { ...row, revision: row.revision + 1 }, undefined);
+      }
+      return metaTemplate(tpl, { status: "PAUSED" });
+    });
+    expect(errorOf(await sendTemplate(kit)).message).toBe("TEMPLATE_STATUS_UNCERTAIN");
+    expect(kit.mem.store.templates.values()[0]?.status).toBe("APPROVED");
+    expect(templateEvents(kit)).toHaveLength(0);
+  });
+});
+
+describe("SendWhatsAppTemplate — both sides of the commit boundary (ruling f)", () => {
+  it("before a winner exists the loser is TEMPLATE_STATUS_UNCERTAIN with no dispatch; the retry returns the stored winner", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const gate = deferred<void>();
+    const real = kit.whatsapp;
+    // B reads the stored template, then waits inside its Meta fetch
+    kit.whatsapp.once("getTemplate", async () => {
+      await gate.promise;
+      return structuredClone(real.templates[0]);
+    });
+    const loser = sendTemplate(kit);
+    await flush();
+    // A: right after its freshness commits (before it reserves) B resumes and finishes completely
+    const inner = kit.deps.unitOfWork;
+    let first = true;
+    let loserResult: Awaited<typeof loser> | undefined;
+    kit.deps.unitOfWork = {
+      run: async (tenantId, work) => {
+        const result = await inner.run(tenantId, work);
+        if (first) {
+          first = false;
+          gate.resolve();
+          loserResult = await loser;
+        }
+        return result;
+      },
+    };
+    const winner = okValue(await sendTemplate(kit));
+    expect(errorOf(loserResult as NonNullable<typeof loserResult>).message).toBe(
+      "TEMPLATE_STATUS_UNCERTAIN",
+    );
+    expect(kit.whatsapp.count("sendTemplate")).toBe(1);
+    kit.deps.unitOfWork = inner;
+    expect(okValue(await sendTemplate(kit))).toEqual(winner);
+    expect(kit.whatsapp.count("sendTemplate")).toBe(1);
+    expect(allOutbound(kit)).toHaveLength(1);
+  });
+
+  it("once the winner is committed the same loser is answered with the stored row, not a refusal", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const gate = deferred<void>();
+    const real = kit.whatsapp;
+    kit.whatsapp.once("getTemplate", async () => {
+      await gate.promise;
+      return structuredClone(real.templates[0]);
+    });
+    const loser = sendTemplate(kit);
+    await flush();
+    const winner = okValue(await sendTemplate(kit));
+    gate.resolve();
+    expect(okValue(await loser)).toEqual(winner);
+    expect(kit.whatsapp.count("sendTemplate")).toBe(1);
+    expect(allOutbound(kit)).toHaveLength(1);
+  });
+
+  it("an actual duplicate insert replays the winner and dispatches nothing", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const winner = okValue(await sendTemplate(kit));
+    const real = kit.mem.outbound;
+    let blind = 2; // the standalone replay check and the in-transaction check both miss the committed winner
+    kit.deps.outbound = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "findByIdempotencyKey") {
+          return async (...args: Parameters<typeof real.findByIdempotencyKey>) => {
+            if (blind > 0) {
+              blind -= 1;
+              return null;
+            }
+            return target.findByIdempotencyKey(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    expect(okValue(await sendTemplate(kit))).toEqual(winner);
+    expect(kit.whatsapp.count("sendTemplate")).toBe(1);
+    expect(allOutbound(kit)).toHaveLength(1);
   });
 });

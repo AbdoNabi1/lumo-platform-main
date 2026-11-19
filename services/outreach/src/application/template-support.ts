@@ -4,12 +4,13 @@ import type {
   ConnectionStatus,
   FetchedTemplate,
   TemplateCategoryValue,
+  TemplateRecord,
   TemplateStatus,
   WhatsAppConnectionRecord,
 } from "../domain/repositories";
 import type { MetaTemplateRecord } from "./ports";
 import type { OutreachDeps } from "./outreach-deps";
-import { conflict } from "./support";
+import { conflict, type EventDeps, emit } from "./support";
 
 const STATUS_ALLOWLIST: ReadonlySet<string> = new Set([
   "APPROVED",
@@ -58,6 +59,31 @@ export function fetchedFromMeta(deps: OutreachDeps, m: MetaTemplateRecord): Fetc
     rejectedReason: m.rejectedReason,
     qualityScore: m.qualityScore,
   };
+}
+
+/**
+ * Emits `template.status_changed` for ONE transition of a template row, but only when something material changed (the
+ * status or the category). A write that only advanced ordering markers / the revision emits nothing. The aggregate id
+ * is always the stable local row id, whatever the provider id is or becomes. Returns whether an event was emitted.
+ */
+export async function emitTemplateTransition(
+  deps: EventDeps,
+  tx: unknown,
+  tenantId: string,
+  before: TemplateRecord,
+  after: TemplateRecord,
+): Promise<boolean> {
+  if (before.status === after.status && before.category === after.category) return false;
+  await emit(deps, tx, tenantId, "outreach.template.status_changed", after.id, {
+    wabaId: after.wabaId,
+    metaTemplateId: after.metaTemplateId,
+    name: after.name,
+    language: after.language,
+    from: before.status,
+    to: after.status,
+    category: after.category,
+  });
+  return true;
 }
 
 export interface ActiveConnection {

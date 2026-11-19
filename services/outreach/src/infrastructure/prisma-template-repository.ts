@@ -3,7 +3,7 @@ import type { TransactionClient } from "@platform/db";
 import {
   type FetchedTemplate,
   type TemplateCategoryValue,
-  type TemplateEventResult,
+  type TemplateEventOutcome,
   type TemplateFetchResult,
   type TemplateRecord,
   type TemplateRepository,
@@ -16,6 +16,7 @@ import {
   applyStatusEventTo,
   insertTemplateRow,
   reconcileSnapshotTo,
+  replaceTombstoneTo,
   type TemplatePatch,
   type TemplateRowAccess,
 } from "../domain/template-reconcile";
@@ -162,7 +163,7 @@ export class PrismaTemplateRepository implements TemplateRepository {
     metaTemplateId: string,
     event: { status: TemplateStatus; reason: string | null; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult> {
+  ): Promise<TemplateEventOutcome> {
     return this.run(tenantId, wabaId, tx, (a) => applyStatusEventTo(a, metaTemplateId, event));
   }
 
@@ -172,8 +173,19 @@ export class PrismaTemplateRepository implements TemplateRepository {
     metaTemplateId: string,
     event: { category: TemplateCategoryValue; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult> {
+  ): Promise<TemplateEventOutcome> {
     return this.run(tenantId, wabaId, tx, (a) => applyCategoryEventTo(a, metaTemplateId, event));
+  }
+
+  replaceTombstone(
+    tenantId: string,
+    wabaId: string,
+    tombstone: { id: string; name: string; language: string; expectedRevision: number },
+    row: FetchedTemplate,
+    at: Date,
+    tx?: unknown,
+  ): Promise<"applied" | "raced"> {
+    return this.run(tenantId, wabaId, tx, (a) => replaceTombstoneTo(a, tombstone, row, at));
   }
 
   async markDeletedByName(

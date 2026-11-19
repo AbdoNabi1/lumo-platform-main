@@ -677,3 +677,135 @@ describe("ProcessWhatsAppWebhook — template events", () => {
     expect(kit.events.calls).toHaveLength(0);
   });
 });
+
+describe("ProcessWhatsAppWebhook — template events emit only on a material change (I11)", () => {
+  async function setup() {
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const tpl = await seedTemplate(kit, { status: "PENDING" });
+    kit.clock.advance(10_000);
+    return { kit, tpl, time: now(kit) };
+  }
+  const template = (kit: OutreachKit) => kit.mem.store.templates.values()[0];
+  const approved = (time: number) =>
+    templateStatusPayload({
+      time,
+      metaTemplateId: "meta-cod_confirmation_ar",
+      event: "APPROVED",
+    });
+
+  it("a repeated APPROVED at a later second advances the marker but emits nothing", async () => {
+    expect.hasAssertions();
+    const { kit, time } = await setup();
+    await run(kit, approved(time));
+    expect(kit.events.ofType("outreach.template.status_changed")).toHaveLength(1);
+    const revision = template(kit)?.revision ?? 0;
+    await run(kit, approved(time + 5));
+    await run(kit, approved(time + 9));
+    expect(kit.events.ofType("outreach.template.status_changed")).toHaveLength(1);
+    expect(template(kit)).toMatchObject({
+      status: "APPROVED",
+      statusEventAt: new Date((time + 9) * 1000),
+    });
+    expect(template(kit)?.revision).toBe(revision + 2);
+  });
+
+  it("a category-only change emits exactly one event with the new category", async () => {
+    expect.hasAssertions();
+    const { kit, time } = await setup();
+    await run(
+      kit,
+      templateCategoryPayload({
+        time,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        newCategory: "MARKETING",
+      }),
+    );
+    const events = kit.events.ofType("outreach.template.status_changed");
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({
+      from: "PENDING",
+      to: "PENDING",
+      category: "MARKETING",
+    });
+    // the same category at a later second is a marker-only advance: nothing more
+    await run(
+      kit,
+      templateCategoryPayload({
+        time: time + 4,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        newCategory: "MARKETING",
+      }),
+    );
+    expect(kit.events.ofType("outreach.template.status_changed")).toHaveLength(1);
+  });
+
+  it("an equal-second contradiction emits one event, to UNKNOWN", async () => {
+    expect.hasAssertions();
+    const { kit, time } = await setup();
+    await run(kit, approved(time));
+    await run(
+      kit,
+      templateStatusPayload({
+        time,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        event: "REJECTED",
+      }),
+    );
+    const events = kit.events.ofType("outreach.template.status_changed");
+    expect(events.map((e) => [e.payload.from, e.payload.to])).toEqual([
+      ["PENDING", "APPROVED"],
+      ["APPROVED", "UNKNOWN"],
+    ]);
+    expect(template(kit)?.status).toBe("UNKNOWN");
+  });
+
+  it("a status event on an UNKNOWN row only advances the marker and emits nothing", async () => {
+    expect.hasAssertions();
+    const { kit, time } = await setup();
+    await run(kit, approved(time));
+    await run(
+      kit,
+      templateStatusPayload({
+        time,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        event: "REJECTED",
+      }),
+    );
+    kit.events.calls.length = 0;
+    await run(kit, approved(time + 3));
+    expect(template(kit)?.status).toBe("UNKNOWN");
+    expect(kit.events.calls).toHaveLength(0);
+  });
+
+  it("the transition comes from the winning CAS: a writer that lands between the read and the CAS cannot skew from/to", async () => {
+    expect.hasAssertions();
+    const { kit, time } = await setup();
+    // A concurrent writer moves the row PENDING → PAUSED right before this event's own read inside the repository.
+    const real = kit.mem.templates;
+    kit.deps.templates = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "applyStatusEvent") {
+          return (...args: Parameters<typeof real.applyStatusEvent>) => {
+            const row = kit.mem.store.templates.values()[0];
+            if (row !== undefined) {
+              kit.mem.store.templates.set(
+                row.id,
+                { ...row, status: "PAUSED", revision: row.revision + 1 },
+                undefined,
+              );
+            }
+            return target.applyStatusEvent(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await run(kit, approved(time));
+    const events = kit.events.ofType("outreach.template.status_changed");
+    expect(events).toHaveLength(1);
+    // the CAS replaced the PAUSED row (the writer's), so the event says PAUSED → APPROVED, never PENDING → APPROVED
+    expect(events[0]?.payload).toMatchObject({ from: "PAUSED", to: "APPROVED" });
+  });
+});

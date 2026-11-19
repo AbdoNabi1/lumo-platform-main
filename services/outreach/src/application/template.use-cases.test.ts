@@ -12,6 +12,8 @@ import {
   T2,
 } from "../testing/outreach-kit";
 import { errorOf, okValue } from "../testing/result-helpers";
+import { seconds, templateStatusPayload } from "../testing/webhook-fixtures";
+import { ProcessWhatsAppWebhook } from "./webhook.use-case";
 import { CreateTemplate, DeleteTemplate, ListTemplates, SyncTemplates } from "./template.use-cases";
 
 const draft: TemplateDraft = {
@@ -367,5 +369,149 @@ describe("ListTemplates", () => {
       1,
     );
     expect(okValue(await new ListTemplates(kit.deps).execute({ tenantId: T1 }))).toEqual([]);
+  });
+});
+
+describe("CreateTemplate — replacing a DELETED tombstone (I7) and a stable aggregate id (M2)", () => {
+  const seedTombstone = async (kit: ReturnType<typeof createOutreachKit>) => {
+    const tombstone = await seedTemplate(kit, {
+      id: "tpl-stable",
+      name: "order_update",
+      language: "en_US",
+      status: "DELETED",
+      metaTemplateId: "meta-old",
+    });
+    // markers of the OLD provider object
+    kit.mem.store.templates.set(
+      tombstone.id,
+      {
+        ...tombstone,
+        statusEventAt: new Date("2026-11-19T09:00:00.000Z"),
+        categoryEventAt: new Date("2026-11-19T09:30:00.000Z"),
+      },
+      undefined,
+    );
+    return tombstone;
+  };
+
+  it("a remote create that returns a DIFFERENT provider id replaces the tombstone in place", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedTombstone(kit);
+    kit.whatsapp.set("createTemplate", () => ({
+      id: "meta-NEW",
+      status: "PENDING",
+      category: "UTILITY",
+    }));
+    const dto = okValue(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft }));
+    expect(dto).toMatchObject({ name: "order_update", language: "en_US", status: "PENDING" });
+    const rows = kit.mem.store.templates.values();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: "tpl-stable",
+      metaTemplateId: "meta-NEW",
+      status: "PENDING",
+      statusEventAt: null,
+      categoryEventAt: null,
+      revision: 2,
+    });
+    // both lookup directions: the new provider id finds the row, the old one no longer does
+    expect((await kit.mem.templates.findByProviderId(T1, "waba-1", "meta-NEW"))?.id).toBe(
+      "tpl-stable",
+    );
+    expect(await kit.mem.templates.findByProviderId(T1, "waba-1", "meta-old")).toBeNull();
+    const events = kit.events.ofType("outreach.template.status_changed");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      aggregateId: "tpl-stable",
+      payload: { metaTemplateId: "meta-NEW", from: "DELETED", to: "PENDING" },
+    });
+  });
+
+  it("a write that landed on the tombstone after the pre-check (revision moved) is TEMPLATE_ALREADY_EXISTS and replaces nothing", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const tombstone = await seedTombstone(kit);
+    kit.whatsapp.set("createTemplate", () => {
+      kit.mem.store.templates.set(
+        tombstone.id,
+        { ...tombstone, revision: tombstone.revision + 1, version: tombstone.version + 1 },
+        undefined,
+      );
+      return { id: "meta-NEW", status: "PENDING", category: "UTILITY" };
+    });
+    expect(
+      errorOf(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft })).message,
+    ).toBe("TEMPLATE_ALREADY_EXISTS");
+    expect(kit.mem.store.templates.values()[0]).toMatchObject({
+      metaTemplateId: "meta-old",
+      status: "DELETED",
+    });
+    expect(kit.events.calls).toHaveLength(0);
+  });
+
+  it("a row that came back live (not DELETED) during the remote create is never overwritten", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const tombstone = await seedTombstone(kit);
+    kit.whatsapp.set("createTemplate", () => {
+      kit.mem.store.templates.set(
+        tombstone.id,
+        { ...tombstone, status: "APPROVED", revision: tombstone.revision + 1 },
+        undefined,
+      );
+      return { id: "meta-NEW", status: "PENDING", category: "UTILITY" };
+    });
+    expect(
+      errorOf(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft })).message,
+    ).toBe("TEMPLATE_ALREADY_EXISTS");
+    expect(kit.mem.store.templates.values()[0]).toMatchObject({
+      metaTemplateId: "meta-old",
+      status: "APPROVED",
+    });
+  });
+
+  it("create, sync and webhook events all carry the one stable local row id as aggregate id", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    kit.whatsapp.set("createTemplate", () => ({
+      id: "m-77",
+      status: "PENDING",
+      category: "UTILITY",
+    }));
+    okValue(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft }));
+    const local = kit.mem.store.templates.values()[0];
+    expect(local).toBeDefined();
+    kit.clock.advance(10_000);
+    kit.whatsapp.templates = [
+      {
+        id: "m-77",
+        name: "order_update",
+        language: "en_US",
+        category: "UTILITY",
+        status: "APPROVED",
+        components: local?.components as unknown[],
+        rejectedReason: null,
+        qualityScore: null,
+      },
+    ];
+    okValue(await new SyncTemplates(kit.deps).execute({ tenantId: T1 }));
+    kit.clock.advance(10_000);
+    okValue(
+      await new ProcessWhatsAppWebhook(kit.deps).execute({
+        payload: templateStatusPayload({
+          time: seconds(kit.clock.now()),
+          metaTemplateId: "m-77",
+          event: "PAUSED",
+        }),
+      }),
+    );
+    const events = kit.events.ofType("outreach.template.status_changed");
+    expect(events.map((e) => e.payload.to)).toEqual(["PENDING", "APPROVED", "PAUSED"]);
+    expect(events.map((e) => e.aggregateId)).toEqual([local?.id, local?.id, local?.id]);
   });
 });

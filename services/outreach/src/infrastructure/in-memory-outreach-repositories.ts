@@ -17,7 +17,7 @@ import {
   type PhoneDirectory,
   type StatusEventRecord,
   type TemplateCategoryValue,
-  type TemplateEventResult,
+  type TemplateEventOutcome,
   type TemplateFetchResult,
   type TemplateRecord,
   type TemplateRepository,
@@ -36,6 +36,7 @@ import {
   insertTemplateRow,
   patchedRow,
   reconcileSnapshotTo,
+  replaceTombstoneTo,
   type TemplateRowAccess,
 } from "../domain/template-reconcile";
 import {
@@ -420,7 +421,7 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     metaTemplateId: string,
     event: { status: TemplateStatus; reason: string | null; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult> {
+  ): Promise<TemplateEventOutcome> {
     return this.store.owned(tx, (t) =>
       applyStatusEventTo(this.access(tenantId, wabaId, t), metaTemplateId, event),
     );
@@ -432,9 +433,22 @@ export class InMemoryTemplateRepository implements TemplateRepository {
     metaTemplateId: string,
     event: { category: TemplateCategoryValue; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult> {
+  ): Promise<TemplateEventOutcome> {
     return this.store.owned(tx, (t) =>
       applyCategoryEventTo(this.access(tenantId, wabaId, t), metaTemplateId, event),
+    );
+  }
+
+  replaceTombstone(
+    tenantId: string,
+    wabaId: string,
+    tombstone: { id: string; name: string; language: string; expectedRevision: number },
+    row: FetchedTemplate,
+    at: Date,
+    tx?: unknown,
+  ): Promise<"applied" | "raced"> {
+    return this.store.owned(tx, (t) =>
+      replaceTombstoneTo(this.access(tenantId, wabaId, t), tombstone, row, at),
     );
   }
 

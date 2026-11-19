@@ -197,9 +197,22 @@ export interface FetchedTemplate {
 }
 
 export type TemplateEventResult = "applied" | "noop" | "stale" | "conflict" | "not_found";
+
+/**
+ * The verdict of one template event plus, when the winning compare-and-set wrote the row, the row exactly as that CAS
+ * replaced it (`before`) and as it wrote it (`after`). A caller that needs the transition (the `status_changed`
+ * event) takes it from here, never from a separate pre-read that a concurrent writer could make stale. `change` is
+ * `null` for stale / noop (no write) / not_found; it is present for applied, conflict and a marker-only advance.
+ */
+export interface TemplateEventOutcome {
+  result: TemplateEventResult;
+  change: { before: TemplateRecord; after: TemplateRecord } | null;
+}
 export type TemplateFetchResult = "applied" | "raced" | "fence_newer";
 
 export interface TemplateStatusChange {
+  /** The stable local row id (the aggregate id of every template event of this row). */
+  id: string;
   metaTemplateId: string | null;
   name: string;
   language: string;
@@ -277,14 +290,29 @@ export interface TemplateRepository {
     metaTemplateId: string,
     event: { status: TemplateStatus; reason: string | null; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult>;
+  ): Promise<TemplateEventOutcome>;
   applyCategoryEvent(
     tenantId: string,
     wabaId: string,
     metaTemplateId: string,
     event: { category: TemplateCategoryValue; eventAt: Date },
     tx?: unknown,
-  ): Promise<TemplateEventResult>;
+  ): Promise<TemplateEventOutcome>;
+  /**
+   * Re-creates a `DELETED` tombstone under a NEW provider id: the row is found by its scoped (tenant, WABA, name,
+   * language) key AND its stable local `id`, must still be `DELETED` at `expectedRevision`, and is then rewritten in
+   * place (same local id) with the new provider id, status, category and components. Its status/category event markers
+   * are cleared (they belong to the old provider object) and its fence is raised to `at`. `raced` when the row is not
+   * exactly that tombstone any more. Increments `revision`.
+   */
+  replaceTombstone(
+    tenantId: string,
+    wabaId: string,
+    tombstone: { id: string; name: string; language: string; expectedRevision: number },
+    row: FetchedTemplate,
+    at: Date,
+    tx?: unknown,
+  ): Promise<"applied" | "raced">;
   /** Every language of `name` becomes `DELETED` (revision + 1). Already-deleted rows are untouched. */
   markDeletedByName(tenantId: string, wabaId: string, name: string, tx?: unknown): Promise<void>;
 }
