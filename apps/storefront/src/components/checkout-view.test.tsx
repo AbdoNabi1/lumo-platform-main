@@ -527,7 +527,8 @@ describe("CheckoutView — Complete order runs everything in order", () => {
     fireEvent.click(submit());
 
     expect(await screen.findByRole("alert")).toHaveTextContent(en.checkout.validationErrorBody);
-    expect(scrollIntoView).toHaveBeenCalled();
+    // The scroll runs in an effect after the banner renders, so a loaded runner can see the alert first.
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
     expect(selectPayment).not.toHaveBeenCalled();
     expect(completeCheckout).not.toHaveBeenCalled();
     expect(initiatePayment).not.toHaveBeenCalled();
