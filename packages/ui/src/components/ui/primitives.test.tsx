@@ -48,8 +48,10 @@ describe("Button", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
-  it("is a pill (rounded-full), including the icon size, never rounded-xl", () => {
-    // Locked brand shape (docs/ui/BRAND_LOCK.md): buttons are pills.
+  it("uses the rounded-button radius token, including the icon size, never rounded-xl or rounded-full", () => {
+    // Locked brand shape (docs/ui/BRAND_LOCK.md): buttons are pills in the dashboard, and the
+    // storefront re-maps --radius-button to the merchant's corner setting. A hard rounded-full
+    // would pill every storefront CTA, so it must not come back.
     expect.hasAssertions();
     render(
       <>
@@ -61,8 +63,9 @@ describe("Button", () => {
     );
     for (const name of ["Save", "Menu"]) {
       const classes = screen.getByRole("button", { name }).className.split(/\s+/);
-      expect(classes).toContain("rounded-full");
+      expect(classes).toContain("rounded-button");
       expect(classes).not.toContain("rounded-xl");
+      expect(classes).not.toContain("rounded-full");
     }
   });
 

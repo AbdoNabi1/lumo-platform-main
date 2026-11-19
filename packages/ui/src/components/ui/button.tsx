@@ -13,10 +13,14 @@ import { focusRing } from "../../lib/focus";
  * `primary` resolves to `--primary` (Nusuj terracotta) with `--primary-foreground` on top. Every
  * variant gets the same tactile micro-interaction: a barely-there scale on hover/press,
  * so the whole button system feels soft rather than static.
+ *
+ * Shape: `rounded-button` — a Nusuj pill in the dashboard (9999px). The storefront re-maps that
+ * token to the merchant's corner setting, so a square shop still gets square buttons. Never use
+ * the fixed full radius here: it is not re-mapped and would pill every storefront CTA.
  */
 const buttonVariants = cva(
   [
-    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-full",
+    "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-button",
     "font-medium transition-[background-color,color,box-shadow,transform] duration-(--duration-fast) ease-out",
     "hover:scale-[1.01] active:scale-[0.98]",
     "disabled:pointer-events-none disabled:opacity-50 disabled:hover:scale-100",

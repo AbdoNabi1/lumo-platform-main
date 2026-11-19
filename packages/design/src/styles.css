@@ -320,6 +320,8 @@
   --radius-xl: 16px;
   --radius-2xl: 22px;
   --radius-3xl: 28px;
+  /* Buttons are Nusuj pills. A separate token so the storefront can re-map it to the merchant's corners. */
+  --radius-button: 9999px;
 
   --shadow-sm: var(--lumo-shadow-sm);
   --shadow-md: var(--lumo-shadow-md);

@@ -39,6 +39,11 @@
   --radius-xl: var(--shop-radius-xl, 16px);
   --radius-2xl: var(--shop-radius-2xl, 20px);
   --radius-3xl: var(--shop-radius-3xl, 28px);
+  /*
+   * Buttons: unbranded shops get the Nusuj pill. A branded shop gets its corner scale's xl step —
+   * what buttons used before the pill change (square 0px, rounded 16px, pill 24px).
+   */
+  --radius-button: var(--shop-radius-xl, 9999px);
 }
 
 @layer base {

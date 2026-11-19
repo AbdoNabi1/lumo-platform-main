@@ -265,18 +265,19 @@ Arbitrary values (`p-[13px]`) are not permitted.
 
 ## 6. Radius
 
-| Token          | Value  | Use                                  |
-| -------------- | ------ | ------------------------------------ |
-| `rounded-xs`   | 4px    | keyboard hints, micro chips          |
-| `rounded-sm`   | 6px    | small controls                       |
-| `rounded-md`   | 8px    |                                      |
-| `rounded-lg`   | 12px   | dropdown menu items                  |
-| `rounded-xl`   | 16px   | inputs, dropdown panels              |
-| `rounded-2xl`  | 22px   | cards, KPI tiles                     |
-| `rounded-3xl`  | 28px   | dialogs, large surfaces              |
-| `rounded-full` | 9999px | **buttons (pills)**, badges, avatars |
+| Token            | Value  | Use                         |
+| ---------------- | ------ | --------------------------- |
+| `rounded-xs`     | 4px    | keyboard hints, micro chips |
+| `rounded-sm`     | 6px    | small controls              |
+| `rounded-md`     | 8px    |                             |
+| `rounded-lg`     | 12px   | dropdown menu items         |
+| `rounded-xl`     | 16px   | inputs, dropdown panels     |
+| `rounded-2xl`    | 22px   | cards, KPI tiles            |
+| `rounded-3xl`    | 28px   | dialogs, large surfaces     |
+| `rounded-button` | 9999px | **buttons (pills)**         |
+| `rounded-full`   | 9999px | badges, avatars             |
 
-Buttons are pills, including the icon button, which is a circle. The storefront re-declares the
+Buttons are pills (`rounded-button` = 9999px in the dashboard); storefront buttons follow the merchant's corner setting. The storefront re-declares the
 radius scale through `--shop-radius-*` for branded shops; its fallbacks are its own.
 
 ---
@@ -369,7 +370,7 @@ Not yet built (next expansion): `Select`, `Checkbox`, `Radio`, `Switch`, `Alert`
 | `destructive` | `--destructive` fill                                                             |
 | `link`        | text + underline on hover                                                        |
 
-Sizes `sm` (32px) · `md` (36px) · `lg` (40px) · `icon` (36² circle). All buttons are pills (`rounded-full`). States: default,
+Sizes `sm` (32px) · `md` (36px) · `lg` (40px) · `icon` (36² circle). All dashboard buttons are pills (`rounded-button` = 9999px); storefront buttons follow the merchant's corner setting. States: default,
 hover, active, focus, disabled, loading (`loading` disables the button, swaps in a spinner,
 and sets `aria-busy`).
 

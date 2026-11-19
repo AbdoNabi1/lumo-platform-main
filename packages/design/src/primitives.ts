@@ -108,7 +108,7 @@ export const spacing = {
 } as const;
 
 /**
- * Border radius. Inputs/dropdowns 16, buttons are pills (`full`), cards 22, large
+ * Border radius. Inputs/dropdowns 16, buttons are pills (`button`), cards 22, large
  * surfaces/modals 28. `2xl`/`3xl` exist for the soft-premium surfaces (cards, KPI tiles, modals) —
  * everything else keeps using the smaller steps.
  */
@@ -121,6 +121,11 @@ export const radius = {
   "2xl": "22px",
   "3xl": "28px",
   full: "9999px",
+  /**
+   * Buttons are Nusuj pills (`rounded-button`). A separate token from `full` so the storefront
+   * can re-map it to the merchant's saved corner setting without squaring avatars or badges.
+   */
+  button: "9999px",
 } as const;
 
 /**

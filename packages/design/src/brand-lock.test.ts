@@ -257,8 +257,10 @@ describe("locked radius and typography", () => {
       "2xl": "22px",
       "3xl": "28px",
       full: "9999px",
+      button: "9999px",
     });
     expect(radius["2xl"]).toBe("22px");
+    expect(radius.button).toBe("9999px");
   });
 
   it("pins the three font stacks exactly", () => {
@@ -412,6 +414,8 @@ describe("styles.css ↔ TypeScript parity", () => {
       expect(theme, `--radius-${step}`).toContain(`--radius-${step}: ${value};`);
     }
     expect(theme).toContain("--radius-2xl: 22px;");
+    // Buttons are Nusuj pills through their own token; the storefront re-maps it (button-corners.test.ts).
+    expect(theme).toContain("--radius-button: 9999px;");
   });
 
   it("exposes the font and brand utilities in @theme inline", () => {

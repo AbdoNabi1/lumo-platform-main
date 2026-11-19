@@ -12,6 +12,7 @@
 /apps/admin-web/src/app/globals.css @AbdoNabi1
 /apps/admin-web/src/app/layout.tsx @AbdoNabi1
 /apps/storefront/src/app/globals.css @AbdoNabi1
+/apps/storefront/src/app/button-corners.test.ts @AbdoNabi1
 /docs/ui/BRAND_LOCK.md @AbdoNabi1
 /AGENTS.md @AbdoNabi1
 /.github/CODEOWNERS @AbdoNabi1
