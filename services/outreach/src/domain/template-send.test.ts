@@ -180,6 +180,84 @@ describe("shapeOfStoredTemplate", () => {
       supported: false,
     });
   });
+
+  const urlButton = (url: unknown): unknown[] => [
+    { type: "BODY", text: "Order update." },
+    { type: "BUTTONS", buttons: [{ type: "URL", text: "Track", url }] },
+  ];
+  const UNSUPPORTED_SHAPE = {
+    bodyVariableCount: 0,
+    headerHasVariable: false,
+    buttons: [],
+    supported: false,
+  };
+  const TEMPLATE_UNSUPPORTED = {
+    ok: false,
+    issues: [{ field: "template", code: "template_unsupported" }],
+  };
+
+  it.each([
+    ["a static URL with no braces", "https://shop.example/o/1"],
+    ["a single trailing {{1}}", "https://shop.example/o/{{1}}"],
+  ])("accepts %s as a supported URL button", (name, url) => {
+    expect.hasAssertions();
+    expect(shapeOfStoredTemplate(urlButton(url))).toEqual({
+      bodyVariableCount: 0,
+      headerHasVariable: false,
+      buttons: [{ index: 0, type: "URL", urlHasVariable: name.includes("{{1}}") }],
+      supported: true,
+    });
+  });
+
+  it.each([
+    ["named parameter", "https://shop.example/o/{{order_id}}"],
+    ["non-1 positional parameter", "https://shop.example/o/{{2}}"],
+    ["non-suffix {{1}}", "https://shop.example/o/{{1}}/details"],
+    ["repeated {{1}}{{1}}", "https://shop.example/o/{{1}}{{1}}"],
+    ["unclosed braces", "https://shop.example/o/{{1"],
+    ["triple braces", "https://shop.example/o/{{{1}}}"],
+    ["stray brace", "https://shop.example/o/}"],
+    ["padded parameter", "https://shop.example/o/{{ 1 }}"],
+    ["non-string url", 42],
+    ["missing url", undefined],
+  ])("marks a URL button with %s as unsupported and unbuildable", (_name, url) => {
+    expect.hasAssertions();
+    const shape = shapeOfStoredTemplate(urlButton(url));
+    expect(shape).toEqual(UNSUPPORTED_SHAPE);
+    expect(buildTemplateSendComponents(shape, { body: [] }, String)).toEqual(TEMPLATE_UNSUPPORTED);
+  });
+
+  it.each([
+    [
+      "a variable header followed by a static header",
+      [
+        { type: "HEADER", format: "TEXT", text: "Hi {{1}}" },
+        { type: "HEADER", format: "TEXT", text: "Static" },
+        { type: "BODY", text: "Order update." },
+      ],
+    ],
+    [
+      "a static header followed by a variable header",
+      [
+        { type: "HEADER", format: "TEXT", text: "Static" },
+        { type: "HEADER", format: "TEXT", text: "Hi {{1}}" },
+        { type: "BODY", text: "Order update." },
+      ],
+    ],
+    [
+      "two static headers",
+      [
+        { type: "HEADER", format: "TEXT", text: "One" },
+        { type: "HEADER", format: "TEXT", text: "Two" },
+        { type: "BODY", text: "Order update." },
+      ],
+    ],
+  ])("marks %s as unsupported and unbuildable", (_name, components) => {
+    expect.hasAssertions();
+    const shape = shapeOfStoredTemplate(components);
+    expect(shape).toEqual(UNSUPPORTED_SHAPE);
+    expect(buildTemplateSendComponents(shape, { body: [] }, String)).toEqual(TEMPLATE_UNSUPPORTED);
+  });
 });
 
 describe("buildTemplateSendComponents", () => {
@@ -357,7 +435,6 @@ describe("validateSessionInput", () => {
   it.each([
     ["plain text", { text: "hello" }],
     ["text of 4096 chars", { text: "a".repeat(4096) }],
-    ["empty buttons array behaves like no buttons", { text: "hello", buttons: [] }],
     ["one button", { text: "Pick one", buttons: buttons(1) }],
     ["three buttons", { text: "Pick one", buttons: buttons(3) }],
     ["1024-char body with buttons", { text: "a".repeat(1024), buttons: buttons(2) }],
@@ -378,6 +455,19 @@ describe("validateSessionInput", () => {
       "body over 1024 with buttons",
       { text: "a".repeat(1025), buttons: buttons(1) },
       [{ field: "text", code: "text_length" }],
+    ],
+    [
+      "a supplied empty button list",
+      { text: "hello", buttons: [] },
+      [{ field: "buttons", code: "buttons_count" }],
+    ],
+    [
+      "a supplied empty button list with 1025-char text",
+      { text: "a".repeat(1025), buttons: [] },
+      [
+        { field: "text", code: "text_length" },
+        { field: "buttons", code: "buttons_count" },
+      ],
     ],
     [
       "4 buttons",

@@ -47,12 +47,15 @@ export function shapeOfStoredTemplate(components: unknown): StoredTemplateShape 
   let bodyVariableCount = 0;
   let headerHasVariable = false;
   let bodySeen = false;
+  let headerSeen = false;
   const buttons: StoredTemplateShape["buttons"] = [];
 
   for (const c of components as unknown[]) {
     if (!isRecord(c) || typeof c.type !== "string") return unsupported();
     switch (c.type.toUpperCase()) {
       case "HEADER": {
+        if (headerSeen) return unsupported();
+        headerSeen = true;
         if (
           typeof c.format !== "string" ||
           c.format.toUpperCase() !== "TEXT" ||
@@ -89,8 +92,17 @@ export function shapeOfStoredTemplate(components: unknown): StoredTemplateShape 
           const type = b.type.toUpperCase();
           if (type !== "QUICK_REPLY" && type !== "URL" && type !== "PHONE_NUMBER")
             return unsupported();
-          const urlHasVariable =
-            type === "URL" && typeof b.url === "string" && /\{\{1\}\}$/.test(b.url);
+          let urlHasVariable = false;
+          if (type === "URL") {
+            // Part 1 URL model: a static URL, or exactly one clean positional {{1}} at the very end.
+            if (typeof b.url !== "string") return unsupported();
+            const vars = parseVariables(b.url);
+            if (vars.malformed || vars.indices.length > 1) return unsupported();
+            if (vars.indices.length === 1) {
+              if (vars.indices[0] !== 1 || !b.url.endsWith("{{1}}")) return unsupported();
+              urlHasVariable = true;
+            }
+          }
           buttons.push({ index: buttons.length, type, urlHasVariable });
         }
         break;
@@ -189,8 +201,8 @@ export function validateSessionInput(i: {
 }): TemplateIssue[] {
   const issues: TemplateIssue[] = [];
   const text = typeof i.text === "string" ? i.text : "";
+  const hasButtons = i.buttons !== undefined;
   const buttons = i.buttons ?? [];
-  const hasButtons = buttons.length > 0;
 
   if (text.trim().length === 0) {
     issues.push({ field: "text", code: "text_required" });
@@ -199,7 +211,7 @@ export function validateSessionInput(i: {
   }
 
   if (hasButtons) {
-    if (buttons.length > SESSION_BUTTONS_MAX)
+    if (buttons.length < 1 || buttons.length > SESSION_BUTTONS_MAX)
       issues.push({ field: "buttons", code: "buttons_count" });
     const ids = new Set<string>();
     const titles = new Set<string>();
