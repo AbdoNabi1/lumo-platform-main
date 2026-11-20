@@ -82,7 +82,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
         }
         switch (change.field) {
           case "messages":
-            await this.messages(change.value, counts);
+            await this.messages(entry, change.value, counts);
             break;
           case "message_template_status_update":
             await this.templateStatus(entry, change.value, counts);
@@ -100,22 +100,25 @@ export class ProcessWhatsAppWebhook implements UseCase<
 
   // ---- messages: statuses + inbound ---------------------------------------------------------------------------
 
-  private async messages(value: Rec, counts: WebhookResult): Promise<void> {
+  private async messages(entry: Rec, value: Rec, counts: WebhookResult): Promise<void> {
     const statuses = Array.isArray(value.statuses) ? (value.statuses as unknown[]) : [];
     const messages = Array.isArray(value.messages) ? (value.messages as unknown[]) : [];
     const items = statuses.length + messages.length;
     const phoneNumberId = isRec(value.metadata) ? str(value.metadata.phone_number_id) : null;
-    if (phoneNumberId === null || items === 0) {
+    // The WABA of the entry is part of the verified routing tuple: an item of another (e.g. the old) WABA is never
+    // consumed by whoever owns the phone now.
+    const wabaId = idString(entry.id);
+    if (phoneNumberId === null || wabaId === null || items === 0) {
       counts.skipped += Math.max(1, items);
       return;
     }
     const owner = await this.deps.directory.find(phoneNumberId);
-    if (owner === null) {
-      // Unknown phone_number_id: ignored (the route logs a warning without the payload).
+    if (owner === null || owner.wabaId !== wabaId) {
+      // Unknown phone_number_id or a stale WABA: ignored (the route logs a warning without the payload).
       counts.skipped += items;
       return;
     }
-    const scope = { tenantId: owner.shopTenantId, wabaId: owner.wabaId, phoneNumberId };
+    const scope = { tenantId: owner.shopTenantId, wabaId, phoneNumberId };
     for (const s of statuses) {
       if (await this.status(scope, s)) counts.processed += 1;
       else counts.skipped += 1;
@@ -152,7 +155,10 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const { deps } = this;
     const { tenantId, wabaId, phoneNumberId } = scope;
 
-    await deps.unitOfWork.run(tenantId, async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
+      // The directory owner is revalidated (and fenced) inside this transaction: a hand-over since the batch was
+      // routed means this item is not ours to consume.
+      if (!(await this.stillOwned(tx, scope))) return false;
       let row: OutboundRecord | null = await deps.outbound.findByProviderId(tenantId, id, tx);
       let viaCorrelation = false;
       if (row === null && correlation !== null) {
@@ -184,7 +190,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
           },
           tx,
         );
-        return;
+        return true;
       }
       await applyStatusFact(deps, tx, row, {
         providerMessageId: id,
@@ -193,8 +199,17 @@ export class ProcessWhatsAppWebhook implements UseCase<
         providerEventId,
         errorCode,
       });
+      return true;
     });
-    return true;
+  }
+
+  /** The verified (phone, WABA) tuple still belongs to the shop this unit of work is scoped to (row share-locked). */
+  private async stillOwned(
+    tx: unknown,
+    scope: { tenantId: string; wabaId: string; phoneNumberId: string },
+  ): Promise<boolean> {
+    const owner = await this.deps.directory.fencePhone(scope.phoneNumberId, tx);
+    return owner !== null && owner.shopTenantId === scope.tenantId && owner.wabaId === scope.wabaId;
   }
 
   private async inboundMessage(
@@ -217,9 +232,10 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const profileName = profileNameFor(value, from);
     const { tenantId } = scope;
 
-    await deps.unitOfWork.run(tenantId, async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
+      if (!(await this.stillOwned(tx, scope))) return false;
       // A duplicate delivery mutates nothing: no contact write, no window change, no event, no consent.
-      if ((await deps.inbound.findByProviderMessageId(tenantId, id, tx)) !== null) return;
+      if ((await deps.inbound.findByProviderMessageId(tenantId, id, tx)) !== null) return true;
       let contact = await findOrCreateContact(
         deps,
         tx,
@@ -239,7 +255,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
         occurredAt,
         receivedAt: deps.clock.now(),
       };
-      if ((await deps.inbound.insert(record, tx)) === "duplicate") return;
+      if ((await deps.inbound.insert(record, tx)) === "duplicate") return true;
 
       const lastInboundAt =
         contact.lastInboundAt !== null && contact.lastInboundAt.getTime() > occurredAt.getTime()
@@ -272,8 +288,8 @@ export class ProcessWhatsAppWebhook implements UseCase<
           evidence: null,
         });
       }
+      return true;
     });
-    return true;
   }
 
   // ---- template events ----------------------------------------------------------------------------------------
@@ -303,7 +319,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
       return;
     }
     const reason = str(value.reason);
-    await this.applyTemplateEvent(owner.shopTenantId, (tx) =>
+    const applied = await this.applyTemplateEvent(owner.shopTenantId, scope.wabaId, (tx) =>
       this.deps.templates.applyStatusEvent(
         owner.shopTenantId,
         scope.wabaId,
@@ -316,7 +332,8 @@ export class ProcessWhatsAppWebhook implements UseCase<
         tx,
       ),
     );
-    counts.processed += 1;
+    if (applied) counts.processed += 1;
+    else counts.skipped += 1;
   }
 
   private async templateCategory(entry: Rec, value: Rec, counts: WebhookResult): Promise<void> {
@@ -337,7 +354,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
       counts.skipped += 1;
       return;
     }
-    await this.applyTemplateEvent(owner.shopTenantId, (tx) =>
+    const applied = await this.applyTemplateEvent(owner.shopTenantId, scope.wabaId, (tx) =>
       this.deps.templates.applyCategoryEvent(
         owner.shopTenantId,
         scope.wabaId,
@@ -346,21 +363,27 @@ export class ProcessWhatsAppWebhook implements UseCase<
         tx,
       ),
     );
-    counts.processed += 1;
+    if (applied) counts.processed += 1;
+    else counts.skipped += 1;
   }
 
   /** `template.status_changed` is emitted only on `applied` and `conflict`; stale / noop / unknown rows emit nothing. */
   private async applyTemplateEvent(
     tenantId: string,
+    wabaId: string,
     apply: (tx: unknown) => Promise<TemplateEventOutcome>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const { deps } = this;
-    await deps.unitOfWork.run(tenantId, async (tx) => {
+    return deps.unitOfWork.run(tenantId, async (tx) => {
+      // The WABA's owner is revalidated (and fenced) inside this transaction (entry.id is the routing key).
+      const owner = await deps.directory.fenceWaba(wabaId, tx);
+      if (owner === null || owner.shopTenantId !== tenantId) return false;
       const { change } = await apply(tx);
       // The transition is the one the winning CAS made (never a separate pre-read); emitted only when material.
       if (change !== null) {
         await emitTemplateTransition(deps, tx, tenantId, change.before, change.after);
       }
+      return true;
     });
   }
 }

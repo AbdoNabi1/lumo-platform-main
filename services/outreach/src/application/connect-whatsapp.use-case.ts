@@ -492,6 +492,11 @@ export class ConnectWhatsApp implements UseCase<
           ONBOARDING_LEASE_MS,
           tx,
         );
+        // KNOWN RESIDUAL RISK (review I12, deferred to the Part 2 backlog): this claim arbitrates LOCAL ownership only,
+        // AFTER the remote subscribe/register calls. Two shops that hold business tokens listing the SAME phone in the
+        // SAME WABA can both reach registration with different PINs. A platform-wide provisional claim taken before
+        // subscribe/register (fenced and recovered across ambiguous registration, separate from this live webhook
+        // directory) is a design change and is NOT part of Part 1.
         const claim = await deps.directory.claim(phoneNumberId, wabaId, tenantId, tx);
         if (claim !== "claimed") {
           throw new NotClaimed(claim === "phone_in_use" ? "PHONE_IN_USE" : "WABA_IN_USE");

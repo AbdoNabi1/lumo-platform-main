@@ -189,6 +189,9 @@ const holdsLease = (row: WhatsAppConnectionRecord, h: LeaseHolder, now: Date): b
   row.onboardingLeaseUntil !== null &&
   row.onboardingLeaseUntil.getTime() > now.getTime();
 
+const noFenceTx = (): Error =>
+  new Error("a directory fence needs the caller's unit-of-work transaction");
+
 export class InMemoryPhoneDirectory implements PhoneDirectory {
   /** `platformTenantId` mirrors the Prisma twin: every row of the directory carries the platform scope. */
   constructor(
@@ -230,6 +233,25 @@ export class InMemoryPhoneDirectory implements PhoneDirectory {
       const row = this.rows().find((r) => r.shopTenantId === shopTenantId);
       return row === undefined ? null : { phoneNumberId: row.phoneNumberId, wabaId: row.wabaId };
     });
+  }
+
+  // The in-memory unit of work serialises every transaction, so reading inside it IS the fence.
+  fencePhone(
+    phoneNumberId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; wabaId: string } | null> {
+    return tx === undefined || tx === null
+      ? Promise.reject(noFenceTx())
+      : this.find(phoneNumberId, tx);
+  }
+
+  fenceWaba(
+    wabaId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; phoneNumberId: string } | null> {
+    return tx === undefined || tx === null
+      ? Promise.reject(noFenceTx())
+      : this.findByWaba(wabaId, tx);
   }
 
   claim(

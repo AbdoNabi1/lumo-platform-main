@@ -497,6 +497,34 @@ describe("PrismaPhoneDirectory arguments (platform scope, no exemptions)", () =>
     expect(scopes).toEqual([PLATFORM, SHOP, PLATFORM, SHOP]);
   });
 
+  it("fences take a FOR SHARE lock on the platform-scoped directory row and restore the shop scope (I10)", async () => {
+    expect.hasAssertions();
+    const { tx, raw, rawAnswers } = recordingClient();
+    rawAnswers.push([{ shop_tenant_id: "s-1", waba_id: "w-1" }]);
+    expect(await directory.fencePhone("p-1", tx)).toEqual({ shopTenantId: "s-1", wabaId: "w-1" });
+    rawAnswers.push([{ shop_tenant_id: "s-1", phone_number_id: "p-1" }]);
+    expect(await directory.fenceWaba("w-1", tx)).toEqual({
+      shopTenantId: "s-1",
+      phoneNumberId: "p-1",
+    });
+    const locks = raw.filter((x) => x.kind === "queryRaw");
+    expect(locks).toHaveLength(2);
+    for (const lock of locks) expect(lock.sql).toMatch(/FOR SHARE$/);
+    expect(locks[0]?.values).toEqual([PLATFORM, "p-1"]);
+    expect(locks[1]?.values).toEqual([PLATFORM, "w-1"]);
+    const scopeSwitches = raw.filter((x) => x.kind === "executeRaw").map((x) => x.values[0]);
+    expect(scopeSwitches).toEqual([PLATFORM, SHOP, PLATFORM, SHOP]);
+  });
+
+  it("a fence of an unowned phone or WABA is null, and a fence needs the unit-of-work tx", async () => {
+    expect.hasAssertions();
+    const { tx } = recordingClient();
+    expect(await directory.fencePhone("p-none", tx)).toBeNull();
+    expect(await directory.fenceWaba("w-none", tx)).toBeNull();
+    await expect(directory.fencePhone("p-1", undefined)).rejects.toThrow(/unit-of-work/);
+    await expect(directory.fenceWaba("w-1", undefined)).rejects.toThrow(/unit-of-work/);
+  });
+
   it("restores the shop scope even when the directory call throws", async () => {
     expect.hasAssertions();
     const { tx, raw } = recordingClient({

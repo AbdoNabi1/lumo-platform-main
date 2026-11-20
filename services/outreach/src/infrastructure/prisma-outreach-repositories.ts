@@ -275,6 +275,8 @@ export interface PrismaPhoneDirectoryDeps extends PrismaOutreachDeps {
   readonly platformTenantId: string;
 }
 
+const NO_FENCE_TX = "a directory fence needs the caller's unit-of-work transaction";
+
 export class PrismaPhoneDirectory implements PhoneDirectory {
   constructor(private readonly deps: PrismaPhoneDirectoryDeps) {}
 
@@ -329,6 +331,43 @@ export class PrismaPhoneDirectory implements PhoneDirectory {
       c.whatsAppPhoneDirectory.findFirst({ where: { tenantId: platform, shopTenantId } }),
     );
     return row === null ? null : { phoneNumberId: row.phoneNumberId, wabaId: row.wabaId };
+  }
+
+  async fencePhone(
+    phoneNumberId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; wabaId: string } | null> {
+    if (tx === undefined || tx === null) throw new Error(NO_FENCE_TX);
+    const platform = this.deps.platformTenantId;
+    // `FOR SHARE`: a concurrent release / claim of this row (DELETE) waits until the caller's transaction ends.
+    const rows = await this.scoped(
+      tx,
+      (c) =>
+        c.$queryRaw<{ shop_tenant_id: string; waba_id: string }[]>`
+        SELECT "shop_tenant_id", "waba_id" FROM "outreach"."whatsapp_phone_directory"
+        WHERE "tenant_id" = ${platform} AND "phone_number_id" = ${phoneNumberId} FOR SHARE`,
+    );
+    const row = rows[0];
+    return row === undefined ? null : { shopTenantId: row.shop_tenant_id, wabaId: row.waba_id };
+  }
+
+  async fenceWaba(
+    wabaId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; phoneNumberId: string } | null> {
+    if (tx === undefined || tx === null) throw new Error(NO_FENCE_TX);
+    const platform = this.deps.platformTenantId;
+    const rows = await this.scoped(
+      tx,
+      (c) =>
+        c.$queryRaw<{ shop_tenant_id: string; phone_number_id: string }[]>`
+        SELECT "shop_tenant_id", "phone_number_id" FROM "outreach"."whatsapp_phone_directory"
+        WHERE "tenant_id" = ${platform} AND "waba_id" = ${wabaId} FOR SHARE`,
+    );
+    const row = rows[0];
+    return row === undefined
+      ? null
+      : { shopTenantId: row.shop_tenant_id, phoneNumberId: row.phone_number_id };
   }
 
   claim(

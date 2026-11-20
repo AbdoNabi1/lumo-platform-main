@@ -131,6 +131,20 @@ export interface PhoneDirectory {
     tx?: unknown,
   ): Promise<{ phoneNumberId: string; wabaId: string } | null>;
   /**
+   * Re-reads the owner of a phone INSIDE the caller's unit of work and holds a share lock on that row until the
+   * transaction ends: a concurrent release / claim of the row waits for this transaction, so the owner it returns is
+   * still the owner when the caller's writes commit. `tx` is required (a standalone read cannot fence anything).
+   */
+  fencePhone(
+    phoneNumberId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; wabaId: string } | null>;
+  /** Same fence, keyed by WABA (template events). */
+  fenceWaba(
+    wabaId: string,
+    tx: unknown,
+  ): Promise<{ shopTenantId: string; phoneNumberId: string } | null>;
+  /**
    * One `tx`, in this order: (1) release the shop's existing tuple when it differs from `(phone, waba, shop)`;
    * (2) insert `(phone, waba, shop)` skipping duplicates; (3) read back by phone and by WABA; (4) `claimed` ONLY when
    * the phone row equals the full tuple and the WABA row belongs to the shop; (5) otherwise `phone_in_use` /

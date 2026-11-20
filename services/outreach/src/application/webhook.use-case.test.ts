@@ -639,6 +639,161 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
   });
 });
 
+describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's transaction (I10)", () => {
+  /** Runs `fn` right before the n-th (1-based) unit of work opens, with no transaction held. */
+  function beforeRun(kit: OutreachKit, n: number, fn: () => Promise<void>): void {
+    const inner = kit.deps.unitOfWork;
+    let calls = 0;
+    kit.deps.unitOfWork = {
+      run: async (tenantId, work) => {
+        calls += 1;
+        if (calls === n) await fn();
+        return inner.run(tenantId, work);
+      },
+    };
+  }
+  /** phone-1 / waba-1 leaves T1 and is claimed by T2. */
+  async function handOffToT2(kit: OutreachKit): Promise<void> {
+    await kit.mem.directory.release("phone-1", T1);
+    expect(await kit.mem.directory.claim("phone-1", "waba-1", T2)).toBe("claimed");
+  }
+  const contactsOf = (kit: OutreachKit, tenantId: string) =>
+    kit.mem.store.contacts.values().filter((c) => c.tenantId === tenantId);
+
+  it("a phone handed to another shop between two items: the old shop gets no STOP, the new shop gets nothing", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const seeded = await seedContact(kit, {
+      phone: "+201044444444",
+      transactional: "allowed",
+      marketing: "granted",
+    });
+    const ts = now(kit) - 30;
+    beforeRun(kit, 2, () => handOffToT2(kit));
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        messages: [
+          textMessage({ id: "first", from: "201012345678", timestamp: ts, body: "hello" }),
+          textMessage({ id: "second", from: "201044444444", timestamp: ts, body: "STOP" }),
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 1, skipped: 1 });
+    expect(kit.mem.store.inbound.values().map((i) => i.providerMessageId)).toEqual(["first"]);
+    expect(contactsOf(kit, T2)).toHaveLength(0);
+    expect(contactsOf(kit, T1).find((c) => c.id === seeded.id)).toMatchObject({
+      whatsappMarketing: "granted",
+      whatsappTransactional: "allowed",
+      lastInboundAt: null,
+    });
+    expect(await kit.mem.contacts.listConsentEvents(T1, seeded.id)).toHaveLength(0);
+    expect(kit.events.calls.filter((e) => e.tenantId === T2)).toHaveLength(0);
+    expect(kit.events.ofType("outreach.whatsapp.inbound_received")).toHaveLength(1);
+    expect(kit.events.ofType("outreach.contact.consent_changed")).toHaveLength(0);
+  });
+
+  it("an old-WABA inbound is not consumed once the phone belongs to another WABA, before or during the batch", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const ts = now(kit) - 30;
+    const payload = (waba: string) =>
+      messagesPayload(
+        "phone-1",
+        {
+          messages: [
+            textMessage({ id: `m-${waba}`, from: "201012345678", timestamp: ts, body: "hi" }),
+          ],
+        },
+        waba,
+      );
+    // the phone moves to waba-2 (same shop) AFTER the owner was resolved, before the item's transaction
+    beforeRun(kit, 1, async () => {
+      await kit.mem.directory.release("phone-1", T1);
+      expect(await kit.mem.directory.claim("phone-1", "waba-2", T1)).toBe("claimed");
+    });
+    expect(await run(kit, payload("waba-1"))).toEqual({ processed: 0, skipped: 1 });
+    expect(kit.mem.store.contacts.values()).toHaveLength(0);
+    expect(kit.mem.store.inbound.values()).toHaveLength(0);
+    expect(kit.events.calls).toHaveLength(0);
+    // already moved when the batch arrives: the stale WABA is skipped, the current one is processed
+    kit.deps.unitOfWork = kit.mem.unitOfWork;
+    expect(await run(kit, payload("waba-1"))).toEqual({ processed: 0, skipped: 1 });
+    expect(await run(kit, payload("waba-2"))).toEqual({ processed: 1, skipped: 0 });
+    expect(kit.mem.store.inbound.values().map((i) => i.providerMessageId)).toEqual(["m-waba-2"]);
+  });
+
+  it("a status for a phone handed over mid-batch is not applied and stored for nobody", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await sentMessage(kit);
+    const ts = now(kit);
+    beforeRun(kit, 2, () => handOffToT2(kit));
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        statuses: [
+          statusItem({ id: "wamid.1", status: "sent", timestamp: ts, recipient: "201012345678" }),
+          statusItem({
+            id: "wamid.1",
+            status: "read",
+            timestamp: ts + 1,
+            recipient: "201012345678",
+          }),
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 1, skipped: 1 });
+    expect(outbound(kit)[0]?.status).toBe("sent");
+    expect(kit.mem.store.unmatched.values()).toHaveLength(0);
+    expect(kit.mem.store.statusEvents.values()).toHaveLength(1);
+  });
+
+  it("a template event is not applied once the WABA belongs to another shop", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedTemplate(kit, { status: "PENDING" });
+    kit.clock.advance(10_000);
+    const time = now(kit);
+    beforeRun(kit, 1, () => handOffToT2(kit));
+    const out = await run(
+      kit,
+      templateStatusPayload({
+        time,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        event: "APPROVED",
+      }),
+    );
+    expect(out).toEqual({ processed: 0, skipped: 1 });
+    expect(kit.mem.store.templates.values()[0]?.status).toBe("PENDING");
+    expect(kit.events.calls).toHaveLength(0);
+  });
+
+  it("a category event is not applied once the WABA belongs to another shop", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedTemplate(kit);
+    kit.clock.advance(10_000);
+    const time = now(kit);
+    beforeRun(kit, 1, () => handOffToT2(kit));
+    const out = await run(
+      kit,
+      templateCategoryPayload({
+        time,
+        metaTemplateId: "meta-cod_confirmation_ar",
+        newCategory: "MARKETING",
+      }),
+    );
+    expect(out).toEqual({ processed: 0, skipped: 1 });
+    expect(kit.mem.store.templates.values()[0]?.category).toBe("UTILITY");
+    expect(kit.events.calls).toHaveLength(0);
+  });
+});
+
 describe("ProcessWhatsAppWebhook — template events", () => {
   async function setup() {
     const kit = createOutreachKit();

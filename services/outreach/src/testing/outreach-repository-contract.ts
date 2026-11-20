@@ -683,6 +683,28 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("fences the owner of a phone and of a WABA inside a unit of work, and only inside one (I10)", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [shop, phone, waba] = [uid("shop"), uid("phone"), uid("waba")];
+        await r.unitOfWork.run(shop, (tx) => r.directory.claim(phone, waba, shop, tx));
+        await r.unitOfWork.run(shop, async (tx) => {
+          expect(await r.directory.fencePhone(phone, tx)).toEqual({
+            shopTenantId: shop,
+            wabaId: waba,
+          });
+          expect(await r.directory.fenceWaba(waba, tx)).toEqual({
+            shopTenantId: shop,
+            phoneNumberId: phone,
+          });
+          expect(await r.directory.fencePhone(uid("phone"), tx)).toBeNull();
+          expect(await r.directory.fenceWaba(uid("waba"), tx)).toBeNull();
+        });
+        await expect(r.directory.fencePhone(phone, undefined)).rejects.toThrow();
+        await expect(r.directory.fenceWaba(waba, undefined)).rejects.toThrow();
+        await close();
+      });
+
       it("is idempotent for the same shop and tuple", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
