@@ -32,14 +32,15 @@ const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? 
 const idString = (v: unknown): string | null =>
   typeof v === "number" && Number.isFinite(v) ? String(v) : str(v);
 
-/** Unix seconds (number or digit string) → Date, or null. */
+/** Unix seconds (a safe positive integer, as a number or a digit string) → a VALID Date, or null. */
 function fromSeconds(v: unknown): Date | null {
   let n: number;
   if (typeof v === "number") n = v;
   else if (typeof v === "string" && /^\d{1,12}$/.test(v)) n = Number(v);
   else return null;
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return new Date(n * 1000);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  const date = new Date(n * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 const PROVIDER_STATUSES: ReadonlySet<string> = new Set(["sent", "delivered", "read", "failed"]);
@@ -210,8 +211,9 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const phone = toE164(`+${from}`);
     // A timestamp in the future is never accepted (no clock-skew allowance).
     if (phone === null || occurredAt.getTime() > deps.clock.now().getTime()) return false;
-
+    // A real type and the required fields of a known shape, all checked BEFORE any write.
     const mapped = mapInbound(raw);
+    if (mapped === null) return false;
     const profileName = profileNameFor(value, from);
     const { tenantId } = scope;
 
@@ -374,26 +376,40 @@ function profileNameFor(value: Rec, waId: string): string | null {
   return null;
 }
 
+/**
+ * Maps an inbound item, or `null` when it is malformed: a missing / non-string / ill-shaped `type`, or a known shape
+ * (text, button, interactive button reply) without its required fields. A legitimate type this service does not
+ * interpret (image, sticker, reaction, unsupported, …) is kept as `other`.
+ */
 function mapInbound(raw: Rec): {
   type: InboundType;
   text: string | null;
   buttonPayload: string | null;
-} {
+} | null {
   const type = str(raw.type);
-  const clip = (s: string | null): string | null => (s === null ? null : s.slice(0, 4096));
-  if (type === "text" && isRec(raw.text)) {
-    return { type: "text", text: clip(str(raw.text.body)), buttonPayload: null };
+  if (type === null || !/^[a-z][a-z_]{0,31}$/.test(type)) return null;
+  const clip = (s: string): string => s.slice(0, 4096);
+  if (type === "text") {
+    const body = isRec(raw.text) ? str(raw.text.body) : null;
+    return body === null ? null : { type: "text", text: clip(body), buttonPayload: null };
   }
-  if (type === "button" && isRec(raw.button)) {
-    return {
-      type: "button",
-      text: clip(str(raw.button.text)),
-      buttonPayload: str(raw.button.payload),
-    };
+  if (type === "button") {
+    const text = isRec(raw.button) ? str(raw.button.text) : null;
+    const payload = isRec(raw.button) ? str(raw.button.payload) : null;
+    return text === null || payload === null
+      ? null
+      : { type: "button", text: clip(text), buttonPayload: payload };
   }
-  if (type === "interactive" && isRec(raw.interactive) && isRec(raw.interactive.button_reply)) {
-    const reply = raw.interactive.button_reply;
-    return { type: "interactive", text: clip(str(reply.title)), buttonPayload: str(reply.id) };
+  if (type === "interactive") {
+    if (!isRec(raw.interactive)) return null;
+    if (isRec(raw.interactive.button_reply)) {
+      const reply = raw.interactive.button_reply;
+      const title = str(reply.title);
+      const id = str(reply.id);
+      return title === null || id === null
+        ? null
+        : { type: "interactive", text: clip(title), buttonPayload: id };
+    }
   }
   return { type: "other", text: null, buttonPayload: null };
 }

@@ -476,6 +476,169 @@ describe("ProcessWhatsAppWebhook — inbound", () => {
   });
 });
 
+describe("ProcessWhatsAppWebhook — strict item validation before the unit of work (I5)", () => {
+  const phones = (kit: OutreachKit): Array<string | null> =>
+    kit.mem.store.contacts.values().map((c) => c.phoneE164);
+
+  it("invalid numeric dates and malformed text open no window and block no valid sibling", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const ts = now(kit) - 30;
+    const item = (id: string, from: string, timestamp: unknown) => ({
+      id,
+      from,
+      timestamp,
+      type: "text",
+      text: { body: "hi" },
+    });
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        messages: [
+          item("bad-huge", "201011111111", 1e20),
+          item("bad-max", "201011111112", Number.MAX_SAFE_INTEGER),
+          item("bad-neg", "201011111113", -5),
+          item("bad-frac", "201011111114", 1.5),
+          item("bad-nan", "201011111115", Number.NaN),
+          item("bad-inf", "201011111116", Number.POSITIVE_INFINITY),
+          item("bad-digits", "201011111117", "99999999999999"),
+          item("bad-bool", "201011111118", true),
+          // malformed text shapes, each from a distinct sender
+          { id: "m-notype", from: "201022222221", timestamp: String(ts), text: { body: "hi" } },
+          { id: "m-badtype", from: "201022222222", timestamp: String(ts), type: 5 },
+          { id: "m-notext", from: "201022222223", timestamp: String(ts), type: "text" },
+          {
+            id: "m-numbody",
+            from: "201022222224",
+            timestamp: String(ts),
+            type: "text",
+            text: { body: 42 },
+          },
+          {
+            id: "m-emptybody",
+            from: "201022222225",
+            timestamp: String(ts),
+            type: "text",
+            text: { body: "" },
+          },
+          {
+            id: "m-strtext",
+            from: "201022222226",
+            timestamp: String(ts),
+            type: "text",
+            text: "hi",
+          },
+          { id: "m-btn", from: "201022222227", timestamp: String(ts), type: "button", button: {} },
+          {
+            id: "m-int",
+            from: "201022222228",
+            timestamp: String(ts),
+            type: "interactive",
+            interactive: { button_reply: {} },
+          },
+          item("good", "201033333333", ts),
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 1, skipped: 16 });
+    expect(phones(kit)).toEqual(["+201033333333"]);
+    expect(kit.mem.store.inbound.values().map((i) => i.providerMessageId)).toEqual(["good"]);
+    expect(kit.events.ofType("outreach.whatsapp.inbound_received")).toHaveLength(1);
+  });
+
+  it("an invalid STOP-shaped item changes no consent; legitimate unsupported types are still kept as other", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedContact(kit, { transactional: "allowed", marketing: "granted" });
+    const ts = now(kit) - 30;
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        messages: [
+          {
+            id: "stop-bad-date",
+            from: "201012345678",
+            timestamp: 1e20,
+            type: "text",
+            text: { body: "STOP" },
+          },
+          {
+            id: "img",
+            from: "201012345678",
+            timestamp: String(ts),
+            type: "image",
+            image: { id: "x" },
+          },
+          { id: "sticker", from: "201012345678", timestamp: String(ts), type: "sticker" },
+          { id: "unsup", from: "201012345678", timestamp: String(ts), type: "unsupported" },
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 3, skipped: 1 });
+    expect(kit.mem.store.contacts.values()[0]).toMatchObject({
+      whatsappMarketing: "granted",
+      whatsappTransactional: "allowed",
+    });
+    expect(kit.mem.store.inbound.values().map((i) => i.type)).toEqual(["other", "other", "other"]);
+  });
+
+  it("an invalid numeric status date writes no marker and no unmatched fact; the valid sibling applies", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await sentMessage(kit);
+    const bad = (timestamp: unknown, id = "wamid.1") => ({
+      id,
+      status: "delivered",
+      timestamp,
+      recipient_id: "201012345678",
+    });
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        statuses: [
+          bad(1e20),
+          bad(Number.MAX_SAFE_INTEGER),
+          bad(-1),
+          bad(2.5),
+          bad(Number.NaN, "wamid.nobody"),
+          statusItem({
+            id: "wamid.1",
+            status: "sent",
+            timestamp: now(kit),
+            recipient: "201012345678",
+          }),
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 1, skipped: 5 });
+    expect(kit.mem.store.unmatched.values()).toHaveLength(0);
+    expect(kit.mem.store.statusEvents.values()).toHaveLength(1);
+    expect(outbound(kit)[0]?.status).toBe("sent");
+  });
+
+  it("infrastructure failures on a valid item still escape after invalid siblings were skipped", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    kit.deps.events = { emit: () => Promise.reject(new Error("outbox down")) };
+    const ts = now(kit) - 5;
+    await expect(
+      new ProcessWhatsAppWebhook(kit.deps).execute({
+        payload: messagesPayload("phone-1", {
+          messages: [
+            { id: "bad", from: "201011111111", timestamp: 1e20, type: "text", text: { body: "x" } },
+            textMessage({ id: "good", from: "201033333333", timestamp: ts, body: "hello" }),
+          ],
+        }),
+      }),
+    ).rejects.toThrow("outbox down");
+    expect(kit.mem.store.inbound.values()).toHaveLength(0);
+    expect(kit.mem.store.contacts.values()).toHaveLength(0);
+  });
+});
+
 describe("ProcessWhatsAppWebhook — template events", () => {
   async function setup() {
     const kit = createOutreachKit();
