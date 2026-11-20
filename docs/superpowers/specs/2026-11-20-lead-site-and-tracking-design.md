@@ -52,3 +52,15 @@ removed because Snap collapses repeated ids [17].
 ## Non-goals (this round)
 
 Lead stages after submission (qualified / converted), Instant-Forms CRM integrations, changing site type.
+
+## Handoff to Plans C and D (binding for those plans; from plan review 1)
+
+- **Event allow-list (C/D):** a resolved `lead_site` shop admits exactly `page_viewed`, `form_submitted`,
+  `contact_clicked`; any commerce event is refused before delivery. A `store` shop's behavior is unchanged.
+- **Lead route (C):** saves every valid submission; resolves the collector session (minting one with the collector's
+  own rules and returning the cookie when missing) **before** calling `decideLeadEmission`; forwards only on `emit`.
+  Production ledger = Redis `SET key 1 NX EX 172800`.
+- **Ingest (D):** wire `checkProvidedDedupId` — `"invalid"` → permanent refusal `dedup_id_invalid` (value never echoed).
+  Remove the `session_minute` fallback only after the browser SDK supplies `mb_<uuid>` on every beacon and queued
+  legacy events are drained; never mint an independent random id at ingest. Server events use `businessEventId`.
+- **Delivery (D):** per-destination identity from `platformMatchKeys`; the shared `hashIdentity` stops feeding mappings.

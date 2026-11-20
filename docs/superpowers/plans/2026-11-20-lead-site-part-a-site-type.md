@@ -3,21 +3,28 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan
 > task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** `OPUS: PENDING · Sol: PENDING`
+**Status:** `OPUS: PENDING · Sol: PENDING` (revised after plan review 1 — see `2026-11-20-lead-site-plan-review-1.md`,
+section "Opus triage (round 1)")
 
-**Goal:** a new merchant chooses, once and forever, whether they are building an online store or a lead website; the
-choice is stored on the shop and drives the setup guide (and, in later plans, the storefront and tracking events).
+**Goal:** a new merchant chooses whether they are building an online store or a lead website; the choice is stored on
+the shop, can never be changed after sign-up, and drives the setup guide (and, in later plans, storefront and tracking).
 
-**Architecture:** `site_type` lives on `tenancy.store_settings` next to `setup_guide_dismissed_at` and follows the same
-"preserved across a Settings save" pattern. It is written only by an internal `ChooseSiteType` use case that the sign-up
-orchestrator calls; there is no HTTP route that writes it, so it cannot be changed from any UI or merchant API.
+**Architecture:** `site_type` lives on `tenancy.store_settings`. Its **only writer** is a dedicated repository method
+called by the sign-up orchestrator, which runs only for new or still-pending sign-ups (a completed email answers
+`409 EMAIL_TAKEN`). Ordinary settings saves and the setup-guide dismissal never write the column. Immutability is
+structural: after activation no code path can write it.
 
-**Tech stack:** TypeScript, Prisma (hand-written additive SQL migration), zod, Next.js App Router (admin-web), vitest.
+**Decision on retries (Plan review 1, finding 3 — Opus ruling):** while a sign-up is still **pending**, a retry applies
+the retrier's choice, exactly as it already applies the retrier's store name, password and country (comment at the
+resume branch of `apps/admin/src/merchant-onboarding/merchant-onboarding.ts`). A pending store cannot be signed in to,
+so nothing has used the first choice. The owner's rule "cannot be changed after onboarding" starts at activation.
 
-**Spec:** `docs/superpowers/specs/2026-11-20-lead-site-and-tracking-design.md` (owner decisions 1–2).
+**Tech stack:** TypeScript, Prisma (hand-written additive SQL), zod, Next.js App Router, vitest.
 
-**Base:** branch `morbeh/lead-site` at `5f9a2549` (= `morbeh/storefront-customization`, which contains
-`morbeh/merchant-onboarding`). Worktree `F:/New folder/morbeh-lead-site`.
+**Spec:** `docs/superpowers/specs/2026-11-20-lead-site-and-tracking-design.md` (decisions 1–2).
+
+**Base:** branch `morbeh/lead-site` (worktree `F:/New folder/morbeh-lead-site`); dependencies already installed with
+`pnpm install --offline --frozen-lockfile`.
 
 ## Implementers
 
@@ -25,190 +32,211 @@ Task 1 `impl-terra` · Task 2 `impl-sonnet` · Task 3 `impl-sonnet` (UI) · Task
 
 ## Global Constraints
 
-- `SITE_TYPES = ["store", "lead_site"] as const`. Wire values are exactly these strings. No third value.
-- Existing rows become `store`; a new shop without a choice is `store` until sign-up chooses.
-- The site type is **immutable once chosen** (`site_type_chosen_at` not null). Re-choosing keeps the first value.
-- No HTTP route, server action or settings form may write `siteType`. `UpdateStoreSettings` must carry it over.
-- Migration is additive, hand-written, owner deploys it. Never run `prisma migrate` / `db push`.
-- pnpm: `node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs` (the shim fails in agents).
+- `SITE_TYPES = ["store", "lead_site"] as const`. No third value. Existing rows and new rows default to `store`.
+- No HTTP route, server action or settings form may write `site_type`. `PUT /store/settings` keeps its five-field
+  allow-list (`apps/admin/src/http/store-settings-routes.ts:5-11`); unknown keys stay stripped.
+- Store-settings Prisma writes run in `runInTenantTransaction(prisma, <shop tenant id>, …)`
+  (`packages/db/src/transaction.ts:41`) — never the unscoped `PrismaUnitOfWork` (Plan review 1, finding 2).
+- Migration additive, hand-written, owner deploys. Never run `prisma migrate` / `db push`.
+- Every command runs as printed (bash): `cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs …`
+  — the `pnpm` shim fails in agent shells.
 - Commit identity `git -c user.name="Abdullah Nabil" -c user.email="abdoheyday@gmail.com"`, conventional types,
   trailer `Co-Authored-By: <model that wrote it>`. Stage only the task's files. Never stash/checkout/reset/`--no-verify`.
-- Admin-web UI: Arabic + English copy side by side as the sign-up page already does, RTL-safe, existing `Label`/`Input`
-  components and design tokens; new test files start with `expect.hasAssertions()`.
+- New test files: `beforeEach(() => { expect.hasAssertions(); })`. Exact-shape assertions are updated to include
+  `siteType`, never loosened to partial matches.
+- Admin-web UI: Arabic + English side by side as the sign-up page does, existing `Label`/design tokens, RTL-safe.
 
 ## Review Focus
 
-1. A sign-up **retry** (same email, the resume path) with a different `siteType` must keep the first choice.
-2. A merchant saving Settings → General after sign-up must not reset `lead_site` to `store`.
-3. A sign-up POST without `siteType` (old client, crafted request) must be refused `422` by the route schema, not
-   default silently to `store`.
-4. A stored row with an unknown `site_type` (impossible under the CHECK, but a corrupt restore) must fail loudly in the
-   mapper rather than silently become `store`.
-5. The storefront public store read must expose `siteType` without exposing anything else new.
+1. A merchant saving Settings → General (even with a crafted `siteType` in the body) must not change the type.
+2. A sign-up POST without `siteType`, or with `"lead"`, is refused `422` `VALIDATION` by the real server.
+3. A stored row with an unknown `site_type` fails loudly in the mapper (message contains `site_type`).
+4. A viewer who cannot read private settings never sees commerce steps on a lead site.
+5. The storefront public reader exposes exactly `name`, `currency`, `siteType`.
 
 ---
 
-### Task 1: `siteType` on store settings (tenancy domain, persistence, use case, views)
+### Task 1: `siteType` on store settings (tenancy)
 
 **Files:**
-- Modify: `services/tenancy/src/domain/store-settings.ts`
-- Modify: `services/tenancy/src/application/store-settings.use-cases.ts` (`StoreSettingsView`, `toStoreSettingsView`,
-  `UpdateStoreSettings` line ~76, `PublicStoreView`, `GetPublicStore`; add `ChooseSiteType`)
-- Modify: `services/tenancy/src/infrastructure/mappers.ts` (row ↔ domain, lines ~139–157)
-- Modify: `services/tenancy/src/infrastructure/prisma-repositories.ts`, `in-memory-repositories.ts` (persist the 2 fields)
-- Modify: `services/tenancy/src/interfaces/tenancy.controller.ts` (expose `chooseSiteType`, no route), `src/composition.ts`,
-  `src/index.ts` (export `SITE_TYPES`, `SiteType`, `isSiteType`)
-- Modify: `packages/db/prisma/schema/tenancy.prisma` (`StoreSettings`)
+- Modify: `services/tenancy/src/domain/store-settings.ts`, `services/tenancy/src/domain/repositories.ts:42-46`
+- Modify: `services/tenancy/src/application/store-settings.use-cases.ts`
+- Modify: `services/tenancy/src/infrastructure/mappers.ts:139-157`, `prisma-repositories.ts:259-289`,
+  `in-memory-repositories.ts` (store-settings repository)
+- Modify: `services/tenancy/src/interfaces/tenancy.controller.ts` (deps + method), `services/tenancy/src/composition.ts`,
+  `services/tenancy/src/index.ts` (export `SITE_TYPES`, `SiteType`, `isSiteType`)
+- Modify: `packages/db/prisma/schema/tenancy.prisma` (`StoreSettings`), `packages/db/prisma/MIGRATIONS.md`
 - Create: `packages/db/prisma/schema/migrations/20261120000000_store_site_type/migration.sql`
-- Modify: `packages/db/prisma/MIGRATIONS.md` (one line, same style as the existing entries)
-- Test: `services/tenancy/src/domain/store-settings.test.ts`, `services/tenancy/src/application/store-settings.use-cases.test.ts`
+- Test: `services/tenancy/src/domain/store-settings.test.ts`, `services/tenancy/src/application/store-settings.use-cases.test.ts`,
+  `services/tenancy/src/infrastructure/prisma-store-settings.test.ts`
 
-**Interfaces:**
-- Produces (domain): `export const SITE_TYPES = ["store", "lead_site"] as const; export type SiteType = (typeof SITE_TYPES)[number];`
-  `export function isSiteType(value: unknown): value is SiteType;`
-  `StoreSettings.siteType: SiteType`, `StoreSettings.siteTypeChosenAt: Date | null`,
-  `StoreSettings.withSiteType(siteType: SiteType, chosenAt: Date | null): StoreSettings` (copies every other field).
-  `defaults()` → `siteType "store"`, `siteTypeChosenAt null`. `create(input)` → same defaults (input has no site type).
-- Produces (application): `StoreSettingsView.siteType: SiteType`; `PublicStoreView.siteType: SiteType`;
-  `class ChooseSiteType` with `execute({ tenantId: string; siteType: SiteType }): Promise<Result<{ siteType: SiteType; changed: boolean }, DomainError>>`.
-- Produces (controller): `chooseSiteType(tenantId: string, siteType: SiteType): Promise<AdminResponse>` → `200 { siteType, changed }`.
-  Not registered as an HTTP route.
-
-- [ ] **Step 1: Write the failing domain tests** (`store-settings.test.ts`)
+**Interfaces (produced):**
 
 ```ts
-it("defaults to a store with no choice recorded", () => {
-  const s = StoreSettings.defaults();
-  expect(s.siteType).toBe("store");
-  expect(s.siteTypeChosenAt).toBeNull();
-});
-it("withSiteType copies every other field", () => {
-  const at = new Date("2026-11-20T10:00:00.000Z");
-  const base = StoreSettings.defaults().withSetupGuideDismissedAt(at);
-  const next = base.withSiteType("lead_site", at);
-  expect(next.siteType).toBe("lead_site");
-  expect(next.siteTypeChosenAt).toEqual(at);
-  expect(next.setupGuideDismissedAt).toEqual(at);
-  expect(next.currency).toBe(base.currency);
-});
-it("isSiteType accepts only the two wire values", () => {
-  expect(isSiteType("store")).toBe(true);
-  expect(isSiteType("lead_site")).toBe(true);
-  expect(isSiteType("lead")).toBe(false);
-  expect(isSiteType(undefined)).toBe(false);
-});
-it("withSetupGuideDismissedAt keeps the site type", () => {
-  const at = new Date("2026-11-20T10:00:00.000Z");
-  const s = StoreSettings.defaults().withSiteType("lead_site", at).withSetupGuideDismissedAt(null);
-  expect(s.siteType).toBe("lead_site");
-});
+// domain/store-settings.ts
+export const SITE_TYPES = ["store", "lead_site"] as const;
+export type SiteType = (typeof SITE_TYPES)[number];
+export function isSiteType(value: unknown): value is SiteType;
+// StoreSettings gains `readonly siteType: SiteType` and `withSiteType(siteType: SiteType): StoreSettings`
+// (copies every other field); every existing with* method copies siteType. defaults() and create() give "store".
+
+// domain/repositories.ts — StoreSettingsRepository:
+get(tenantId: string, tx?: unknown): Promise<StoreSettings | null>;           // unchanged
+save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void>; // upsert UPDATE data excludes site_type
+/** Read-modify-write in one tenant-scoped transaction; `change` gets the row or defaults; site_type is never written. */
+modify(tenantId: string, change: (current: StoreSettings) => StoreSettings): Promise<StoreSettings>;
+/** The only writer of site_type. Upsert: create { tenantId, siteType } (other columns default) / update { siteType }. */
+recordSignupSiteType(tenantId: string, siteType: SiteType): Promise<void>;
+
+// application
+// StoreSettingsView.siteType: SiteType;  PublicStoreView.siteType: SiteType
+export class RecordSignupSiteType {
+  constructor(deps: { readonly settings: StoreSettingsRepository });
+  execute(input: { readonly tenantId: string; readonly siteType: SiteType }): Promise<Result<{ siteType: SiteType }, DomainError>>;
+}
+// UpdateStoreSettings and DismissSetupGuide: deps become { settings } (+ clock for Dismiss); they call settings.modify
+// instead of unitOfWork.run, and present the value modify returns. StoreSettingsDeps drops unitOfWork.
+
+// interfaces/tenancy.controller.ts — no HTTP route registers it:
+recordSignupSiteType(tenantId: string, siteType: SiteType): Promise<ControllerResponse>; // present(result, 200)
 ```
 
-- [ ] **Step 2: Write the failing use-case tests** (`store-settings.use-cases.test.ts`, in-memory repos + fixed clock
-  `2026-11-20T10:00:00.000Z`, same harness the file already uses)
+- [ ] **Step 1: Failing tests.** In `store-settings.use-cases.test.ts`: update `harness()` to the new deps (no
+  `unitOfWork`), add `dismiss: new DismissSetupGuide({ settings, clock: { now: () => AT } })` and
+  `record: new RecordSignupSiteType({ settings })` with `const AT = new Date("2026-11-20T10:00:00.000Z")`; add
+  `siteType: "store"` to every existing exact view expectation; then add:
 
 ```ts
-it("ChooseSiteType records the first choice with the clock time", async () => {
-  const r = await chooseSiteType.execute({ tenantId: "t-1", siteType: "lead_site" });
-  expect(r.ok && r.value).toEqual({ siteType: "lead_site", changed: true });
-  const view = await getStoreSettings.execute({ tenantId: "t-1" });
+it("records the sign-up site type", async () => {
+  const h = harness();
+  expect(await h.record.execute({ tenantId: TENANT, siteType: "lead_site" })).toEqual({ ok: true, value: { siteType: "lead_site" } });
+  const view = await h.get.execute({ tenantId: TENANT });
   expect(view.ok && view.value.siteType).toBe("lead_site");
 });
-it("ChooseSiteType never changes an existing choice", async () => {
-  await chooseSiteType.execute({ tenantId: "t-1", siteType: "lead_site" });
-  const r = await chooseSiteType.execute({ tenantId: "t-1", siteType: "store" });
-  expect(r.ok && r.value).toEqual({ siteType: "lead_site", changed: false });
+it("a settings save keeps the site type", async () => {
+  const h = harness();
+  await h.record.execute({ tenantId: TENANT, siteType: "lead_site" });
+  const saved = await h.update.execute(input);
+  expect(saved.ok && saved.value.siteType).toBe("lead_site");
 });
-it("ChooseSiteType on the same value again is a no-op success", async () => {
-  await chooseSiteType.execute({ tenantId: "t-1", siteType: "store" });
-  const r = await chooseSiteType.execute({ tenantId: "t-1", siteType: "store" });
-  expect(r.ok && r.value).toEqual({ siteType: "store", changed: false });
-});
-it("UpdateStoreSettings keeps the chosen site type (Review Focus 2)", async () => {
-  await chooseSiteType.execute({ tenantId: "t-1", siteType: "lead_site" });
-  await updateStoreSettings.execute({ tenantId: "t-1", storeName: "Clinic", contactEmail: null,
-    currency: "EGP", timezone: "Africa/Cairo", weightUnit: "kg" });
-  const view = await getStoreSettings.execute({ tenantId: "t-1" });
-  expect(view.ok && view.value.siteType).toBe("lead_site");
-});
-it("GetPublicStore exposes siteType and nothing else new (Review Focus 5)", async () => {
-  await chooseSiteType.execute({ tenantId: "t-1", siteType: "lead_site" });
-  const r = await getPublicStore.execute({ tenantId: "t-1" });
-  expect(r.ok && Object.keys(r.value).sort()).toEqual(["currency", "name", "siteType"]);
+it("dismissing the guide keeps the site type", async () => {
+  const h = harness();
+  await h.record.execute({ tenantId: TENANT, siteType: "lead_site" });
+  const r = await h.dismiss.execute({ tenantId: TENANT });
   expect(r.ok && r.value.siteType).toBe("lead_site");
+  expect(r.ok && r.value.setupGuideDismissedAt).toBe(AT.toISOString());
+});
+it("a stale settings snapshot cannot restore the old type", async () => {
+  const h = harness();
+  const stale = StoreSettings.defaults(); // siteType "store"
+  await h.record.execute({ tenantId: TENANT, siteType: "lead_site" });
+  await h.settings.save(TENANT, stale);
+  expect((await h.settings.get(TENANT))?.siteType).toBe("lead_site");
+});
+it("public store exposes exactly name, currency, siteType", async () => {
+  const h = harness();
+  await h.record.execute({ tenantId: TENANT, siteType: "lead_site" });
+  expect(await h.publicStore.execute({ tenantId: TENANT })).toEqual({
+    ok: true, value: { name: "", currency: "EGP", siteType: "lead_site" },
+  });
 });
 ```
 
-Add a mapper test in the nearest existing mapper test (or a new `mappers.test.ts`):
-`StoreSettingsMapper.toDomain({ ...validRow, siteType: "shop" })` **throws** `Error` whose message contains `site_type`
-(Review Focus 4); `toRow(defaults().withSiteType("lead_site", at))` has `siteType: "lead_site", siteTypeChosenAt: at`.
+  Domain (`store-settings.test.ts`): `defaults()` and `create(...)` give `"store"`; `withSiteType("lead_site")` keeps
+  currency, timezone and `setupGuideDismissedAt`; `withSetupGuideDismissedAt(null)` keeps `siteType`; `isSiteType` is
+  true only for `"store"`/`"lead_site"` (false for `"lead"`, `""`, `undefined`, `1`).
+  Prisma adapter (`prisma-store-settings.test.ts`, its existing `fakeClient` call recorder; add `siteType: "store"` to
+  the existing row fixtures):
+  - `modify("tenant-a", (s) => s)` records `set_config` with `"tenant-a"` before `findFirst` and the `upsert`; the
+    upsert's `update` object has no `siteType` key.
+  - `save("tenant-a", StoreSettings.defaults().withSiteType("lead_site"))`: upsert `update` has no `siteType` key,
+    `create` has `siteType: "lead_site"`.
+  - `recordSignupSiteType("tenant-b", "lead_site")` records `set_config "tenant-b"` then upsert
+    `{ where: { tenantId: "tenant-b" }, create: { tenantId: "tenant-b", siteType: "lead_site" }, update: { siteType: "lead_site" } }`.
+  - `get` on a row with `siteType: "shop"` rejects with an `Error` whose message contains `site_type`.
+- [ ] **Step 2: Run, expect FAIL**
 
-- [ ] **Step 3: Run, expect FAIL**
+```bash
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/tenancy exec vitest run src/domain/store-settings.test.ts src/application/store-settings.use-cases.test.ts src/infrastructure/prisma-store-settings.test.ts
+```
 
-`node <pnpm.cjs> --filter @platform/tenancy exec vitest run src/domain/store-settings.test.ts src/application/store-settings.use-cases.test.ts`
-→ fails (`siteType` / `ChooseSiteType` not defined).
-
-- [ ] **Step 4: Implement** domain, use case (`ChooseSiteType` runs inside `unitOfWork.run`: read current or
-  `defaults()`; if `siteTypeChosenAt !== null` return `{ siteType: current.siteType, changed: false }` without writing;
-  else save `current.withSiteType(input.siteType, clock.now())` and return `changed: true`), view mapping,
-  `UpdateStoreSettings` carry-over (`.withSiteType(current?.siteType ?? "store", current?.siteTypeChosenAt ?? null)`
-  chained after the existing `withSetupGuideDismissedAt`), mapper, both repositories, controller method, composition.
-
-- [ ] **Step 5: Prisma + migration**
-
-`tenancy.prisma` `StoreSettings`: `siteType String @default("store") @map("site_type")` and
-`siteTypeChosenAt DateTime? @map("site_type_chosen_at")`. Migration file:
+- [ ] **Step 3: Implement** domain, both repository adapters (in-memory `save`/`modify` keep the stored `siteType`),
+  use cases, mapper (unknown value → `throw new Error(\`store_settings.site_type is not a site type: ${value}\`)`),
+  controller, composition (`RecordSignupSiteType` in the controller deps).
+- [ ] **Step 4: Prisma schema + migration.** Add `siteType String @default("store") @map("site_type")` to `StoreSettings`.
 
 ```sql
-ALTER TABLE "tenancy"."store_settings"
-  ADD COLUMN "site_type" TEXT NOT NULL DEFAULT 'store',
-  ADD COLUMN "site_type_chosen_at" TIMESTAMP(3);
+ALTER TABLE "tenancy"."store_settings" ADD COLUMN "site_type" TEXT NOT NULL DEFAULT 'store';
 ALTER TABLE "tenancy"."store_settings"
   ADD CONSTRAINT "store_settings_site_type_check" CHECK ("site_type" IN ('store', 'lead_site'));
 ```
 
-Run `node <pnpm.cjs> --filter @platform/db exec prisma validate` → `The schema ... is valid`. Run
-`node <pnpm.cjs> --filter @platform/db exec prisma generate` → success. Do **not** run migrate.
+```bash
+cd 'F:/New folder/morbeh-lead-site' && DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy DIRECT_URL=postgresql://dummy:dummy@localhost:5432/dummy node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/db exec prisma validate
+cd 'F:/New folder/morbeh-lead-site' && DATABASE_URL=postgresql://dummy:dummy@localhost:5432/dummy DIRECT_URL=postgresql://dummy:dummy@localhost:5432/dummy node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/db exec prisma generate
+```
 
-- [ ] **Step 6: Run tests + typecheck, expect PASS**
+  Expected: "is valid", generate succeeds. The dummy URLs are only for these two commands.
+- [ ] **Step 5: Run, expect PASS**
 
-`node <pnpm.cjs> --filter @platform/tenancy test` → all pass. `node <pnpm.cjs> --filter @platform/tenancy typecheck` → 0 errors.
-Tenant-where guard:
-`node -e "import('./scripts/dev/check-prisma-tenant-where.mjs').then(async m=>console.log(JSON.stringify(await m.scanPrismaTenantWhere(process.cwd()))))"`
-→ no new finding in `services/tenancy`.
+```bash
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/tenancy test
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/tenancy typecheck
+cd 'F:/New folder/morbeh-lead-site' && node -e "import('./scripts/dev/check-prisma-tenant-where.mjs').then(async m=>console.log(JSON.stringify(await m.scanPrismaTenantWhere(process.cwd()))))"
+```
 
-- [ ] **Step 7: Commit** `feat(tenancy): record a shop's site type once, at sign-up`.
+  Expected: all pass, 0 type errors, no new tenant-where finding under `services/tenancy`.
+- [ ] **Step 6: Commit** `feat(tenancy): store a shop's site type, written only at sign-up`.
 
 ---
 
-### Task 2: sign-up API accepts and records `siteType`
+### Task 2: sign-up API records `siteType`; storefront reads it
 
 **Files:**
-- Modify: `apps/admin/src/http/public-merchant-routes.ts:17-28` (`signupBody`)
-- Modify: `apps/admin/src/merchant-onboarding/merchant-onboarding.ts` (`SignupInput`, ports, step after `saveStoreSettings` ~line 156)
-- Modify: `apps/admin/src/composition.ts` (~line 1629, add the `chooseSiteType` port next to `saveStoreSettings`)
-- Test: `apps/admin/src/merchant-onboarding/merchant-onboarding.test.ts`, `apps/admin/src/http/public-merchant-routes.test.ts`
+- Modify: `apps/admin/src/http/public-merchant-routes.ts:17-28` (`signupBody`) and both 201 bodies (~164–185)
+- Modify: `apps/admin/src/merchant-onboarding/merchant-onboarding.ts` (`SignupInput`, ports, outcome; call after `saveStoreSettings` ~156)
+- Modify: `apps/admin/src/composition.ts:1629-1631` (new port next to `saveStoreSettings`)
+- Modify: `apps/storefront/src/lib/runtime-api.ts:334-354` (`PublicStore`, `getPublicStore`)
+- Test: `apps/admin/src/merchant-onboarding/merchant-onboarding.test.ts`, `apps/admin/src/http/public-merchant-routes.test.ts`,
+  `apps/admin/src/http/server.multi-tenant.test.ts`, `apps/admin/src/http/merchant-onboarding-isolation.e2e.test.ts`,
+  `apps/admin/src/http/store-settings-routes.test.ts`, `apps/storefront/src/lib/runtime-api.calls.test.ts`
 
 **Interfaces:**
-- Consumes: Task 1 `SiteType`, controller `chooseSiteType(tenantId, siteType)`.
-- Produces: `SignupInput.siteType: SiteType` (required). Port
-  `readonly chooseSiteType: (tenantId: string, siteType: SiteType) => Promise<{ siteType: SiteType; changed: boolean }>`.
-  Sign-up success body gains `siteType: SiteType` (the recorded value) next to `tenantId`/`storeUrl`.
+- Consumes: Task 1 `SiteType`, controller `recordSignupSiteType`.
+- Produces: `SignupInput.siteType: SiteType` (required); port
+  `readonly recordSiteType: (tenantId: string, siteType: SiteType) => Promise<void>` — composition closure
+  `expectSuccess(await tenancy.recordSignupSiteType(tenantId, siteType), "recordSignupSiteType")`; the `created` outcome
+  gains `siteType: SiteType` (= `input.siteType`); **both** 201 bodies (token branch and `signInRequired` branch)
+  include it. Storefront: `PublicStore.siteType: "store" | "lead_site"`; `getPublicStore` returns exactly
+  `{ name, currency, siteType }`; absent `siteType` → `"store"` (older runtime); any other value → `null`.
 
 - [ ] **Step 1: Failing tests**
-  - route: body without `siteType` → `422` with code `VALIDATION` (Review Focus 3); `siteType: "lead"` → `422`;
-    `siteType: "lead_site"` → handler receives it.
-  - orchestrator (existing fake ports): a sign-up with `siteType: "lead_site"` calls `chooseSiteType("<tenant>", "lead_site")`
-    **after** `saveStoreSettings` and before `startTrial`, and the `created` outcome carries `siteType: "lead_site"`.
-  - resume (Review Focus 1): fake `chooseSiteType` returns `{ siteType: "store", changed: false }` for a retry asking
-    `lead_site` → outcome carries `siteType: "store"` and the fake logger received one `warn` whose message contains
-    `site type already chosen`; no exception.
-- [ ] **Step 2:** run `node <pnpm.cjs> --filter @platform/admin exec vitest run src/merchant-onboarding src/http/public-merchant-routes.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** `signupBody` adds `siteType: z.enum(["store", "lead_site"])` (stays `.strict()`).
-  Orchestrator records via the port and returns the recorded type. Composition port calls
-  `tenancy.chooseSiteType(tenantId, siteType)` and `expectSuccess` like `saveStoreSettings` does.
-- [ ] **Step 4:** same command → PASS; `node <pnpm.cjs> --filter @platform/admin typecheck` → 0 errors; the isolation
-  e2e `apps/admin/src/http/merchant-onboarding-isolation.e2e.test.ts` still passes (send `siteType` in its bodies).
+  - Add `siteType: "store"` to every valid sign-up fixture: `merchant-onboarding.test.ts:120-125`,
+    `merchant-onboarding-isolation.e2e.test.ts:206,437-447`, `server.multi-tenant.test.ts:137-158`, and
+    `public-merchant-routes.test.ts` (including the stub and exact body at ~272–297).
+  - `server.multi-tenant.test.ts` (real server, its existing harness): sign-up POST without `siteType` → `422` with
+    `body.code === "VALIDATION"`; with `siteType: "lead"` → same. Do not test validation through the route helper in
+    `public-merchant-routes.test.ts` (it fabricates its own 400).
+  - orchestrator: `siteType: "lead_site"` → `recordSiteType(<tenant>, "lead_site")` is called after
+    `saveStoreSettings` and before `startTrial`; the outcome has `siteType: "lead_site"`. Resume after the existing
+    provisioning-failure path (`merchant-onboarding.test.ts:200-228`): first attempt `lead_site` fails at provision,
+    retry with `store` succeeds → `recordSiteType` is called once, with `"store"`, and the outcome carries `"store"`.
+  - route: both 201 bodies include `siteType` from the outcome.
+  - `store-settings-routes.test.ts`: existing exact read bodies gain `siteType: "store"`; new case — after recording
+    `lead_site` through the tenancy controller, `PUT /store/settings` whose body also carries `siteType: "store"`
+    answers 200, and a following GET still shows `siteType: "lead_site"`.
+  - storefront `runtime-api.calls.test.ts` (near 181–192): body `{name,currency,siteType:"lead_site",extra:1}` →
+    `{ name, currency, siteType: "lead_site" }`; no `siteType` → `"store"`; `siteType: "x"` → `null`.
+- [ ] **Step 2: Run, expect FAIL** 
+
+```bash
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/admin exec vitest run src/merchant-onboarding src/http/public-merchant-routes.test.ts src/http/server.multi-tenant.test.ts src/http/merchant-onboarding-isolation.e2e.test.ts src/http/store-settings-routes.test.ts
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter storefront exec vitest run src/lib/runtime-api.calls.test.ts
+```
+
+- [ ] **Step 3: Implement.** `signupBody` adds `siteType: z.enum(["store", "lead_site"])` and stays `.strict()`.
+- [ ] **Step 4: Run, expect PASS** — Step 2 commands, then `--filter @platform/admin typecheck` and the storefront
+  `typecheck`: 0 errors.
 - [ ] **Step 5: Commit** `feat(admin): take the site type at merchant sign-up`.
 
 ---
@@ -216,30 +244,35 @@ Tenant-where guard:
 ### Task 3: sign-up screen — choose store or lead website (UI)
 
 **Files:**
-- Modify: `apps/admin-web/src/app/signup/page.tsx` (form at ~line 52; `ERROR_TEXT` at ~line 14)
-- Modify: `apps/admin-web/src/app/auth/signup/route.ts` (~lines 30–50)
-- Modify: `apps/admin-web/src/lib/auth/merchant.ts` (`signUpMerchant` input ~line 88)
-- Test: `apps/admin-web/src/app/signup/page.test.tsx`, `apps/admin-web/src/app/auth/signup/route.test.ts`, `apps/admin-web/src/lib/auth/merchant.test.ts`
+- Modify: `apps/admin-web/src/app/signup/page.tsx` (form ~52; `ERROR_TEXT` ~14)
+- Modify: `apps/admin-web/src/app/auth/signup/route.ts` (~30–50)
+- Modify: `apps/admin-web/src/lib/auth/merchant.ts` (`signUpMerchant` ~88)
+- Test: `apps/admin-web/src/app/signup/page.test.tsx`, `apps/admin-web/src/app/auth/signup/route.test.ts` (fixtures
+  ~17–27), `apps/admin-web/src/lib/auth/merchant.test.ts` (~35, ~74–79)
 
-**Interfaces:** Consumes Task 2 (`siteType` in the POST body). Produces `SITE_TYPE_VALUES = ["store", "lead_site"] as const`
-in `merchant.ts` and `signUpMerchant({ ..., siteType })`.
+**Interfaces:** consumes Task 2's body field; produces `SITE_TYPE_VALUES = ["store", "lead_site"] as const` in
+`merchant.ts` and `signUpMerchant({ ..., siteType })`.
 
-- [ ] **Step 1: Failing tests**
-  - page: a `fieldset` whose `legend` reads `What are you building? / بتعمل إيه؟`, containing two radio inputs
-    `name="siteType"` with values `store` and `lead_site`, **neither checked by default**, `required` on the group;
-    labels exactly `Online store / متجر إلكتروني` and `Lead website / موقع لجمع العملاء`; helper texts
+- [ ] **Step 1: Failing tests** (existing fixtures gain `siteType`)
+  - page: a `fieldset` with legend `What are you building? / بتعمل إيه؟`, before the country select; two radios
+    `name="siteType"` with values `store` and `lead_site`, **neither checked**, the first `required`; labels exactly
+    `Online store / متجر إلكتروني` and `Lead website / موقع لجمع العملاء`; helper texts
     `Sell products with a cart and cash on delivery / بيع منتجات بسلة ودفع عند الاستلام` and
-    `Collect enquiries through a form, WhatsApp and calls / استقبل طلبات العملاء من فورم وواتساب واتصال`;
-    a note `You can't change this later / مش هتقدر تغيّر النوع بعد كده`. The fieldset sits before the country select.
-  - page: `?error=site-type` renders the alert `Choose what you're building / اختار نوع موقعك`.
-  - route: form without `siteType` → 303 redirect to `/signup?error=site-type` and `signUpMerchant` not called;
-    `siteType=lead_site` → `signUpMerchant` called with `siteType: "lead_site"`.
-  - merchant.ts: the JSON body POSTed contains `"siteType":"lead_site"`.
-- [ ] **Step 2:** `node <pnpm.cjs> --filter admin-web exec vitest run src/app/signup src/app/auth/signup src/lib/auth/merchant.test.ts` → FAIL.
-- [ ] **Step 3: Implement** with the existing `Label` and the radio-card look of the design system (a bordered card per
-  option, the whole card clickable via the `label`, visible focus ring, works in RTL). Use the existing `back(origin, code)`
-  helper for `site-type`.
-- [ ] **Step 4:** same command → PASS; `node <pnpm.cjs> --filter admin-web typecheck` → 0 errors.
+    `Collect enquiries through a form, WhatsApp and calls / استقبل طلبات العملاء من فورم وواتساب واتصال`; note
+    `You can't change this later / مش هتقدر تغيّر النوع بعد كده`.
+  - page: `?error=site-type` shows the alert `Choose what you're building / اختار نوع موقعك`.
+  - route: no `siteType`, and `siteType=lead` → 303 to `/signup?error=site-type`, `signUpMerchant` not called;
+    `siteType=lead_site` → called with `siteType: "lead_site"`.
+  - merchant.ts: the POSTed JSON contains `"siteType":"lead_site"`.
+- [ ] **Step 2: Run, expect FAIL**
+
+```bash
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter admin-web exec vitest run src/app/signup src/app/auth/signup src/lib/auth/merchant.test.ts
+```
+
+- [ ] **Step 3: Implement** with existing `Label`, one bordered card per option (the whole card is the `label`),
+  visible focus ring, RTL-safe; reuse the route's `back(origin, code)` helper.
+- [ ] **Step 4: Run, expect PASS** — Step 2 command, then `--filter admin-web typecheck`: 0 errors.
 - [ ] **Step 5: Commit** `feat(admin-web): choose store or lead website at sign-up`.
 
 ---
@@ -247,21 +280,33 @@ in `merchant.ts` and `signUpMerchant({ ..., siteType })`.
 ### Task 4: setup guide per site type (UI)
 
 **Files:**
-- Modify: `apps/admin-web/src/lib/api/store-settings.ts` (`StoreSettingsDto.siteType?: "store" | "lead_site"`, the
-  guard ~line 29 accepts it, `DEFAULT_STORE_SETTINGS.siteType = "store"`)
+- Modify: `apps/admin-web/src/lib/api/store-settings.ts` (read DTO `siteType?: "store" | "lead_site"`; the guard ~29
+  accepts absent or one of the two and rejects anything else; `DEFAULT_STORE_SETTINGS.siteType = "store"`;
+  `updateStoreSettings` (~48–55) sends only `storeName, contactEmail, currency, timezone, weightUnit`)
 - Modify: `apps/admin-web/src/lib/dashboard/setup-guide.ts` (`SetupFacts.siteType`, `buildSetupSteps`)
-- Modify: `apps/admin-web/src/components/dashboard/setup-guide-section.tsx` (pass `storeSettings?.siteType ?? "store"`)
-- Test: `apps/admin-web/src/lib/dashboard/setup-guide.test.ts`, `apps/admin-web/src/lib/api/store-settings.test.ts` (create if absent)
+- Modify: `apps/admin-web/src/components/dashboard/setup-guide-section.tsx:38-75` (resolve `siteType` from the settings
+  fact **before** building `facts`: ok → its `siteType ?? "store"`, otherwise `null`)
+- Test: `apps/admin-web/src/lib/dashboard/setup-guide.test.ts` (fixtures 4–18, 57–65, 115ff),
+  `apps/admin-web/src/components/dashboard/setup-guide.test.tsx` (fixtures 33–43),
+  `apps/admin-web/src/components/dashboard/setup-guide-section.test.tsx`,
+  `apps/admin-web/src/lib/api/store-settings.test.ts` (create if absent)
 
-**Interfaces:** Consumes Task 1 view field `siteType`. Produces `SetupFacts.siteType: "store" | "lead_site"`.
+**Interfaces:** `SetupFacts.siteType: "store" | "lead_site" | null` (`null` = settings unreadable).
 
 - [ ] **Step 1: Failing tests**
-  - `buildSetupSteps({ ...facts, siteType: "store" }).map(s => s.id)` →
-    `["product", "shipping", "payments", "theme", "domain", "order"]` (unchanged).
-  - `buildSetupSteps({ ...facts, siteType: "lead_site" }).map(s => s.id)` → `["theme", "domain"]`
-    (the lead-form and test-lead steps arrive with Plan C).
-  - DTO guard accepts `{ ...valid, siteType: "lead_site" }`, accepts it absent, rejects `siteType: "x"`.
-- [ ] **Step 2:** `node <pnpm.cjs> --filter admin-web exec vitest run src/lib/dashboard src/lib/api/store-settings.test.ts` → FAIL.
-- [ ] **Step 3: Implement.** No new copy needed (existing step labels).
-- [ ] **Step 4:** PASS; `node <pnpm.cjs> --filter admin-web typecheck` → 0 errors.
+  - `buildSetupSteps({ ...facts, siteType: "store" })` ids → `["product","shipping","payments","theme","domain","order"]`.
+  - `siteType: "lead_site"` → `["theme","domain"]`; `siteType: null` → `["theme","domain"]` (only steps both types
+    share). Lead-form steps arrive with Plan C.
+  - section: settings fact `unauthorized` → steps rendered are theme and domain only, and no Dismiss; ok + `lead_site`
+    → theme and domain; ok + `store` → all six.
+  - DTO guard accepts `siteType` absent / `"lead_site"` and rejects `"x"`;
+    `updateStoreSettings({ ...dto, siteType: "lead_site" }, "k")` sends a body without `siteType` (assert on the mocked fetch).
+- [ ] **Step 2: Run, expect FAIL**
+
+```bash
+cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter admin-web exec vitest run src/lib/dashboard src/components/dashboard src/lib/api/store-settings.test.ts
+```
+
+- [ ] **Step 3: Implement.** No new copy.
+- [ ] **Step 4: Run, expect PASS** — Step 2 command, then `--filter admin-web typecheck`: 0 errors.
 - [ ] **Step 5: Commit** `feat(admin-web): show the setup steps that fit the site type`.
