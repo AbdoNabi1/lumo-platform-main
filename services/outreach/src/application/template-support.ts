@@ -8,6 +8,7 @@ import type {
   TemplateStatus,
   WhatsAppConnectionRecord,
 } from "../domain/repositories";
+import { templateReason } from "./error-codes";
 import type { MetaTemplateRecord } from "./ports";
 import type { OutreachDeps } from "./outreach-deps";
 import { conflict, type EventDeps, emit } from "./support";
@@ -56,7 +57,7 @@ export function fetchedFromMeta(deps: OutreachDeps, m: MetaTemplateRecord): Fetc
     category: category ?? "MARKETING",
     status: category === null ? "UNKNOWN" : normalizeTemplateStatus(m.status),
     components: m.components,
-    rejectedReason: m.rejectedReason,
+    rejectedReason: templateReason(m.rejectedReason),
     qualityScore: m.qualityScore,
   };
 }

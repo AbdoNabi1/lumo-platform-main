@@ -131,13 +131,13 @@ export class SendWhatsAppTemplate implements UseCase<
     }
     const keyProblem = keyIssue(input.idempotencyKey);
     if (keyProblem !== null) return keyProblem;
+    // A stored tenant + key row answers first: current provider configuration never changes a committed result.
+    const replayed = await replay(deps, tenantId, input.idempotencyKey);
+    if (replayed !== null) return ok(replayed);
     const notConfigured = requireWhatsApp(deps);
     if (notConfigured !== null) return notConfigured;
     const whatsapp = deps.whatsapp;
     if (whatsapp === undefined) return err(conflict("WHATSAPP_NOT_CONFIGURED"));
-
-    const replayed = await replay(deps, tenantId, input.idempotencyKey);
-    if (replayed !== null) return ok(replayed);
 
     const active = await loadActiveConnection(deps, tenantId);
     if (!active.ok) return active;
@@ -377,13 +377,13 @@ export class SendWhatsAppSessionMessage implements UseCase<
         ),
       );
     }
+    // A stored tenant + key row answers first: current provider configuration never changes a committed result.
+    const replayed = await replay(deps, tenantId, input.idempotencyKey);
+    if (replayed !== null) return ok(replayed);
     const notConfigured = requireWhatsApp(deps);
     if (notConfigured !== null) return notConfigured;
     const whatsapp = deps.whatsapp;
     if (whatsapp === undefined) return err(conflict("WHATSAPP_NOT_CONFIGURED"));
-
-    const replayed = await replay(deps, tenantId, input.idempotencyKey);
-    if (replayed !== null) return ok(replayed);
 
     const active = await loadActiveConnection(deps, tenantId);
     if (!active.ok) return active;
@@ -498,14 +498,14 @@ export class SendEmail implements UseCase<SendEmailInput, SendResultDto, DomainE
       return invalid("text", "text_required");
     const keyProblem = keyIssue(input.idempotencyKey);
     if (keyProblem !== null) return keyProblem;
+    // Stored tenant + key first: before the marketing policy, readiness and the profile lookup.
+    const replayed = await replay(deps, tenantId, input.idempotencyKey);
+    if (replayed !== null) return ok(replayed);
     if (input.purpose === "marketing") return err(conflict("EMAIL_MARKETING_NOT_AVAILABLE"));
     const email = deps.email;
     const emailFrom = deps.emailFrom;
     if (email === undefined || emailFrom === undefined)
       return err(conflict("EMAIL_NOT_CONFIGURED"));
-
-    const replayed = await replay(deps, tenantId, input.idempotencyKey);
-    if (replayed !== null) return ok(replayed);
 
     const profile = await deps.storeProfile.get(tenantId);
     const from = `${emailDisplayName(profile.storeName)} <${emailFrom}>`;

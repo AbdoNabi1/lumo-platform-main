@@ -7,6 +7,7 @@ import type {
   OutboundPurpose,
   OutboundRecord,
 } from "../domain/repositories";
+import { GENERIC_ERROR_CODE, safeCode } from "./error-codes";
 import { type SendResultDto, sendResultDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
 import type { SendOutcome } from "./ports";
@@ -201,11 +202,11 @@ async function settleOnce(
       break;
     case "rejected":
       incoming = "failed";
-      errorCode = outcome.code;
+      errorCode = safeCode(outcome.code) ?? GENERIC_ERROR_CODE;
       break;
     case "local_failure":
       incoming = "failed";
-      errorCode = outcome.code;
+      errorCode = safeCode(outcome.code) ?? GENERIC_ERROR_CODE;
       break;
     default:
       incoming = "unknown";

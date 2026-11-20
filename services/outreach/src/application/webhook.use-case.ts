@@ -10,6 +10,7 @@ import type {
   OutboundRecord,
   TemplateEventOutcome,
 } from "../domain/repositories";
+import { templateReason, webhookErrorCode } from "./error-codes";
 import { applyConsentInTx, findOrCreateContact } from "./contact-support";
 import type { OutreachDeps } from "./outreach-deps";
 import { applyStatusFact } from "./status-support";
@@ -145,7 +146,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
     const status = statusText as OutboundStatus;
     const correlation = str(raw.biz_opaque_callback_data);
     const firstError = Array.isArray(raw.errors) ? (raw.errors as unknown[])[0] : undefined;
-    const errorCode = isRec(firstError) ? idString(firstError.code) : null;
+    const errorCode = isRec(firstError) ? webhookErrorCode(firstError.code) : null;
     const providerEventId = `${id}:${statusText}:${String(raw.timestamp)}`;
     const { deps } = this;
     const { tenantId, wabaId, phoneNumberId } = scope;
@@ -307,8 +308,7 @@ export class ProcessWhatsAppWebhook implements UseCase<
         scope.metaTemplateId,
         {
           status: normalizeTemplateStatus(event),
-          reason:
-            reason !== null && /^[A-Z_]{1,40}$/.test(reason) && reason !== "NONE" ? reason : null,
+          reason: templateReason(reason),
           eventAt: scope.eventAt,
         },
         tx,

@@ -1,5 +1,6 @@
 import { ConcurrencyError, ConflictError } from "@platform/utils";
 import { err, type Result } from "@platform/types";
+import { metaConflictCodeOf } from "./error-codes";
 import type { OutreachEventInput, OutreachEventPayloads, OutreachEventType } from "./events";
 import type { OutreachDeps } from "./outreach-deps";
 
@@ -21,17 +22,12 @@ export function isMetaError(e: unknown): e is MetaErrorLike & Error {
   );
 }
 
-const CODE_SAFE = /^[A-Za-z0-9_]{1,40}$/;
-
-/** `META_<code>` with the code sanitised: provider text never leaves the adapter. */
+/** `META_<code>` for a validated provider code, else `META_ERROR`: provider text never leaves the adapter. */
 export function metaConflictCode(e: MetaErrorLike): string {
-  return `META_${CODE_SAFE.test(e.code) ? e.code : "ERROR"}`;
+  return metaConflictCodeOf(e.code);
 }
 
-/** Only an allowlisted code shape is ever stored or shown (`lastError`, `onboardingFailure`). */
-export function safeCode(code: string | null | undefined): string | null {
-  return typeof code === "string" && /^[A-Z0-9_]{1,64}$/.test(code) ? code : null;
-}
+export { safeCode } from "./error-codes";
 
 export function isConcurrency(e: unknown): boolean {
   return e instanceof ConcurrencyError;

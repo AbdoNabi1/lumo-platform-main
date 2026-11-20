@@ -79,7 +79,7 @@ describe("GetWhatsAppConnection", () => {
     expect(json).not.toContain("sealed");
     expect(dto).toMatchObject({
       status: "connected",
-      lastError: null,
+      lastError: "PROVIDER_ERROR",
       onboardingFailure: "META_190",
       displayPhoneNumber: "+20 101 234 5678",
     });

@@ -1,5 +1,6 @@
 import { nextStatus, type OutboundStatus } from "../domain/outbound-message";
 import type { OutboundRecord } from "../domain/repositories";
+import { safeCode } from "./error-codes";
 import type { OutreachDeps } from "./outreach-deps";
 import { type EventDeps, emit } from "./support";
 
@@ -40,7 +41,7 @@ export async function applyStatusFact(
       raw: {
         status: fact.status,
         timestamp: fact.occurredAt.toISOString(),
-        errorCode: fact.errorCode,
+        errorCode: safeCode(fact.errorCode),
       },
     },
     tx,
@@ -53,7 +54,7 @@ export async function applyStatusFact(
     row.acceptedAt ?? (ACCEPTED_BY_PROVIDER.has(fact.status) ? fact.occurredAt : null);
   const errorCode =
     fact.status === "failed" && status === "failed"
-      ? (fact.errorCode ?? row.errorCode)
+      ? (safeCode(fact.errorCode) ?? row.errorCode)
       : row.errorCode;
 
   const changed =

@@ -6,7 +6,7 @@ import type {
   WhatsAppConnectionRecord,
 } from "../domain/repositories";
 import type { OutboundStatus } from "../domain/outbound-message";
-import { safeCode } from "./support";
+import { safeCode, templateReason } from "./error-codes";
 
 export interface WhatsAppConnectionDto {
   available: boolean;
@@ -102,8 +102,7 @@ export function templateDto(t: TemplateRecord): TemplateDto {
     language: t.language,
     category: t.category,
     status: t.status,
-    rejectedReason:
-      reason !== null && /^[A-Z_]{1,40}$/.test(reason) && reason !== "NONE" ? reason : null,
+    rejectedReason: templateReason(reason),
     components: t.components,
     variableCount: shape.bodyVariableCount,
     buttons: storedButtons(t.components),

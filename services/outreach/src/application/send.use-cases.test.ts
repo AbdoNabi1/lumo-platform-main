@@ -1033,7 +1033,7 @@ describe("SendEmail", () => {
     expect(okValue(await sendEmail(kit, { idempotencyKey: "r" }))).toMatchObject({
       status: "failed",
       acceptedAt: null,
-      errorCode: null,
+      errorCode: "validation_error",
     });
     kit.email.respond(() => ({ kind: "unknown", message: "timeout" }));
     expect(okValue(await sendEmail(kit, { idempotencyKey: "u" }))).toMatchObject({
@@ -1480,5 +1480,109 @@ describe("SendWhatsAppSessionMessage — customer-initiated reply without a gran
     await seedContact(allowed, { transactional: "allowed", marketing: "revoked" });
     await inbound(allowed, "wamid.in1");
     expect(okValue(await sendSession(allowed)).status).toBe("accepted");
+  });
+});
+
+describe("replays are answered by the stored row before any current configuration (I6)", () => {
+  function disablePorts(kit: OutreachKit): void {
+    kit.deps.whatsapp = undefined;
+    kit.deps.vault = undefined;
+    kit.deps.email = undefined;
+    kit.deps.emailFrom = undefined;
+    kit.deps.storeProfile = {
+      get: () => Promise.reject(new Error("profile lookup must not run on a replay")),
+    };
+  }
+
+  it("a final template row is replayed with the whatsapp port and vault removed, with zero calls", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const first = okValue(await sendTemplate(kit));
+    const calls = kit.whatsapp.total;
+    disablePorts(kit);
+    expect(okValue(await sendTemplate(kit))).toEqual(first);
+    expect(kit.whatsapp.total).toBe(calls);
+    expect(allOutbound(kit)).toHaveLength(1);
+  });
+
+  it("a pending template row is replayed as stored, even with the provider removed", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const flag = { fail: true };
+    failOutboundUpdateWhen(kit, flag);
+    expect(errorOf(await sendTemplate(kit)).message).toBe("SEND_OUTCOME_UNRECORDED");
+    const calls = kit.whatsapp.total;
+    disablePorts(kit);
+    const stored = okValue(await sendTemplate(kit));
+    expect(stored.status).toBe("pending");
+    expect(kit.whatsapp.total).toBe(calls);
+    expect(allOutbound(kit)).toHaveLength(1);
+  });
+
+  it("session replays (final and suppressed) ignore removed ports and vault", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedContact(kit, { transactional: "allowed", lastInboundAt: kit.clock.now() });
+    const sent = okValue(await sendSession(kit, { idempotencyKey: "s-ok" }));
+    await seedContact(kit, {
+      phone: "+201099999999",
+      transactional: "revoked",
+      lastInboundAt: kit.clock.now(),
+    });
+    const suppressed = okValue(
+      await sendSession(kit, { to: "01099999999", idempotencyKey: "s-sup" }),
+    );
+    expect(suppressed.status).toBe("suppressed");
+    const calls = kit.whatsapp.total;
+    disablePorts(kit);
+    expect(okValue(await sendSession(kit, { idempotencyKey: "s-ok" }))).toEqual(sent);
+    expect(okValue(await sendSession(kit, { to: "01099999999", idempotencyKey: "s-sup" }))).toEqual(
+      suppressed,
+    );
+    expect(kit.whatsapp.total).toBe(calls);
+  });
+
+  it("a pending session row is replayed as stored with the vault removed", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedContact(kit, { transactional: "allowed", lastInboundAt: kit.clock.now() });
+    const flag = { fail: true };
+    failOutboundUpdateWhen(kit, flag);
+    expect(errorOf(await sendSession(kit)).message).toBe("SEND_OUTCOME_UNRECORDED");
+    disablePorts(kit);
+    expect(okValue(await sendSession(kit)).status).toBe("pending");
+    expect(kit.whatsapp.count("sendText")).toBe(1);
+  });
+
+  it("email replays (final and pending) need neither the sender nor the profile, and consume no slot", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const first = okValue(await sendEmail(kit));
+    const flag = { fail: true };
+    failOutboundUpdateWhen(kit, flag);
+    expect(errorOf(await sendEmail(kit, { idempotencyKey: "e-pending" })).message).toBe(
+      "SEND_OUTCOME_UNRECORDED",
+    );
+    const sends = kit.email.calls.length;
+    const slots = kit.mem.store.emailCounters.values();
+    disablePorts(kit);
+    expect(okValue(await sendEmail(kit))).toEqual(first);
+    expect(okValue(await sendEmail(kit, { idempotencyKey: "e-pending" })).status).toBe("pending");
+    expect(kit.email.calls).toHaveLength(sends);
+    expect(kit.mem.store.emailCounters.values()).toEqual(slots);
+    expect(allOutbound(kit)).toHaveLength(2);
+  });
+
+  it("without a stored row the readiness refusals still apply", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    disablePorts(kit);
+    expect(errorOf(await sendTemplate(kit)).message).toBe("WHATSAPP_NOT_CONFIGURED");
+    expect(errorOf(await sendSession(kit)).message).toBe("WHATSAPP_NOT_CONFIGURED");
+    expect(errorOf(await sendEmail(kit)).message).toBe("EMAIL_NOT_CONFIGURED");
   });
 });
