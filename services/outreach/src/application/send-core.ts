@@ -11,7 +11,7 @@ import { GENERIC_ERROR_CODE, safeCode } from "./error-codes";
 import { type SendResultDto, sendResultDto } from "./dto";
 import type { OutreachDeps } from "./outreach-deps";
 import type { SendOutcome } from "./ports";
-import { applyStatusFact, emitStatusChanged } from "./status-support";
+import { drainUnmatched, emitStatusChanged } from "./status-support";
 import { conflict } from "./support";
 
 /** What the channel-specific `decide` hands to the shared algorithm once it is allowed to reserve. */
@@ -234,29 +234,8 @@ async function settleOnce(
     current = next;
   }
 
-  // Drain: statuses that arrived before the provider id was known are applied now, in this same transaction.
-  if (
-    outcome.kind === "accepted" &&
-    current.providerMessageId !== null &&
-    current.channel === "whatsapp" &&
-    current.dispatchPhoneNumberId !== null
-  ) {
-    const facts = await deps.unmatched.takeFor(
-      current.tenantId,
-      current.dispatchPhoneNumberId,
-      { providerMessageId: current.providerMessageId },
-      tx,
-    );
-    for (const f of facts) {
-      const applied = await applyStatusFact(deps, tx, current, {
-        providerMessageId: f.providerMessageId,
-        status: f.status,
-        occurredAt: f.occurredAt,
-        providerEventId: f.providerEventId,
-        errorCode: null,
-      });
-      current = applied.row;
-    }
-  }
+  // Drain: statuses that arrived before the provider id was known are applied now (after their evidence is
+  // re-verified), in this same transaction.
+  if (outcome.kind === "accepted") current = await drainUnmatched(deps, tx, current);
   return current;
 }

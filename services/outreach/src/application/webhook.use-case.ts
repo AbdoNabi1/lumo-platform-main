@@ -13,7 +13,7 @@ import type {
 import { templateReason, webhookErrorCode } from "./error-codes";
 import { applyConsentInTx, findOrCreateContact } from "./contact-support";
 import type { OutreachDeps } from "./outreach-deps";
-import { applyStatusFact } from "./status-support";
+import { applyStatusFact, drainUnmatched, recipientDigits } from "./status-support";
 import { emit } from "./support";
 import {
   emitTemplateTransition,
@@ -44,9 +44,6 @@ function fromSeconds(v: unknown): Date | null {
 }
 
 const PROVIDER_STATUSES: ReadonlySet<string> = new Set(["sent", "delivered", "read", "failed"]);
-
-/** Digits only: Meta reports `recipient_id` without the `+`. */
-const digits = (e164: string): string => e164.replace(/^\+/, "");
 
 /**
  * Processes an (already signature-verified) Meta webhook payload. The tenant is unknown: it is resolved from the phone
@@ -172,9 +169,13 @@ export class ProcessWhatsAppWebhook implements UseCase<
         row.channel === "whatsapp" &&
         row.dispatchPhoneNumberId === phoneNumberId &&
         row.dispatchWabaId === wabaId &&
-        digits(row.recipient) === recipientId &&
+        recipientDigits(row.recipient) === recipientId &&
         (!viaCorrelation || row.providerMessageId === null);
       if (row === null || !trusted) {
+        // No row yet: an UNBOUND fact, kept with its evidence (recipient, WABA, error code) so the drain can re-verify
+        // it. A row that EXISTS but does not match (phone, WABA, recipient, forged correlation) is QUARANTINED:
+        // stored already resolved, with no correlation id, and never drained.
+        const quarantined = row !== null;
         await deps.unmatched.put(
           {
             id: deps.idGenerator.generate(),
@@ -182,23 +183,31 @@ export class ProcessWhatsAppWebhook implements UseCase<
             phoneNumberId,
             providerEventId,
             providerMessageId: id,
-            // A rejected-as-forged match must not be drainable through its correlation id.
-            correlationId: row === null ? correlation : null,
+            correlationId: quarantined ? null : correlation,
             status,
             occurredAt,
-            resolvedAt: null,
+            resolvedAt: quarantined ? deps.clock.now() : null,
+            recipientId,
+            wabaId,
+            errorCode,
+            quarantined,
           },
           tx,
         );
         return true;
       }
-      await applyStatusFact(deps, tx, row, {
+      const applied = await applyStatusFact(deps, tx, row, {
         providerMessageId: id,
         status,
         occurredAt,
         providerEventId,
         errorCode,
       });
+      // A trusted callback that INSTALLED the provider id (the send response was lost or late) also drains the facts
+      // that arrived earlier under that id.
+      if (row.providerMessageId === null && applied.row.providerMessageId !== null) {
+        await drainUnmatched(deps, tx, applied.row);
+      }
       return true;
     });
   }

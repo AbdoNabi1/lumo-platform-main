@@ -1586,3 +1586,187 @@ describe("replays are answered by the stored row before any current configuratio
     expect(errorOf(await sendEmail(kit)).message).toBe("EMAIL_NOT_CONFIGURED");
   });
 });
+
+describe("unmatched status facts keep their trust evidence (I1)", () => {
+  async function inFlight(kit: OutreachKit) {
+    const gate = deferred<{ kind: "accepted"; providerMessageId: string }>();
+    kit.whatsapp.set("sendTemplate", () => gate.promise);
+    const sending = sendTemplate(kit);
+    await flush();
+    const message = (
+      kit.whatsapp.callsOf("sendTemplate")[0] as [string, string, { correlationId: string }]
+    )[2];
+    return { gate, sending, correlationId: message.correlationId };
+  }
+  const webhook = (kit: OutreachKit, statuses: unknown[]) =>
+    new ProcessWhatsAppWebhook(kit.deps).execute({
+      payload: messagesPayload("phone-1", { statuses }),
+    });
+  const statusEvents = (kit: OutreachKit) =>
+    kit.events.ofType("outreach.message.status_changed").map((e) => e.payload.to);
+
+  it("an early callback for another recipient with the eventual provider id changes nothing when the send settles", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const { gate, sending } = await inFlight(kit);
+    const ts = seconds(kit.clock.now()) + 5;
+    await webhook(kit, [
+      statusItem({ id: "wamid.real", status: "read", timestamp: ts, recipient: "201199999999" }),
+    ]);
+    expect(kit.mem.store.unmatched.values()).toHaveLength(1);
+    gate.resolve({ kind: "accepted", providerMessageId: "wamid.real" });
+    const dto = okValue(await sending);
+    expect(dto.status).toBe("accepted");
+    expect(dto.acceptedAt).toBe(kit.clock.now().toISOString());
+    expect(statusEvents(kit)).toEqual(["accepted"]);
+    expect(kit.mem.store.statusEvents.values()).toHaveLength(0);
+  });
+
+  it("a rejected correlated mismatch is quarantined: kept as evidence, never drained", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const { gate, sending, correlationId } = await inFlight(kit);
+    await webhook(kit, [
+      statusItem({
+        id: "wamid.real",
+        status: "delivered",
+        timestamp: seconds(kit.clock.now()) + 5,
+        recipient: "201199999999",
+        correlation: correlationId,
+      }),
+    ]);
+    const kept = kit.mem.store.unmatched.values();
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatchObject({ quarantined: true, correlationId: null });
+    expect(kept[0]?.resolvedAt).not.toBeNull();
+    gate.resolve({ kind: "accepted", providerMessageId: "wamid.real" });
+    expect(okValue(await sending).status).toBe("accepted");
+    expect(statusEvents(kit)).toEqual(["accepted"]);
+    // a merely unbound fact is NOT quarantined
+    const other = createOutreachKit();
+    await seedSendScenario(other);
+    const second = await inFlight(other);
+    await webhook(other, [
+      statusItem({
+        id: "wamid.unbound",
+        status: "sent",
+        timestamp: seconds(other.clock.now()),
+        recipient: "201012345678",
+      }),
+    ]);
+    expect(other.mem.store.unmatched.values()[0]).toMatchObject({
+      quarantined: false,
+      resolvedAt: null,
+      recipientId: "201012345678",
+      wabaId: "waba-1",
+    });
+    second.gate.resolve({ kind: "accepted", providerMessageId: "wamid.unbound" });
+    expect(okValue(await second.sending).status).toBe("sent");
+  });
+
+  it("a stored fact whose WABA is not the dispatch WABA is consumed without effect", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const { gate, sending } = await inFlight(kit);
+    await kit.mem.unmatched.put({
+      id: "u-foreign-waba",
+      tenantId: T1,
+      phoneNumberId: "phone-1",
+      providerEventId: "wamid.real:read:1",
+      providerMessageId: "wamid.real",
+      correlationId: null,
+      status: "read",
+      occurredAt: kit.clock.now(),
+      resolvedAt: null,
+      recipientId: "201012345678",
+      wabaId: "waba-other",
+      errorCode: null,
+      quarantined: false,
+    });
+    gate.resolve({ kind: "accepted", providerMessageId: "wamid.real" });
+    expect(okValue(await sending).status).toBe("accepted");
+    expect(kit.mem.store.unmatched.values()[0]?.resolvedAt).not.toBeNull();
+    expect(kit.mem.store.statusEvents.values()).toHaveLength(0);
+  });
+
+  it("a drained failed fact keeps its error code", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    const { gate, sending } = await inFlight(kit);
+    await webhook(kit, [
+      statusItem({
+        id: "wamid.f",
+        status: "failed",
+        timestamp: seconds(kit.clock.now()) + 1,
+        recipient: "201012345678",
+        errorCode: 131026,
+      }),
+    ]);
+    gate.resolve({ kind: "accepted", providerMessageId: "wamid.f" });
+    const dto = okValue(await sending);
+    expect(dto).toMatchObject({ status: "failed", errorCode: "131026" });
+    expect(kit.mem.store.statusEvents.values()[0]?.raw).toMatchObject({ errorCode: "131026" });
+  });
+
+  it("lost response: an earlier uncorrelated delivered fact is drained when a correlated callback installs the id", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    kit.whatsapp.set("sendTemplate", () => ({ kind: "unknown", message: "timeout" }));
+    expect(okValue(await sendTemplate(kit)).status).toBe("unknown");
+    const row = allOutbound(kit)[0]!;
+    const ts = seconds(kit.clock.now());
+    await webhook(kit, [
+      statusItem({
+        id: "wamid.lost",
+        status: "delivered",
+        timestamp: ts,
+        recipient: "201012345678",
+      }),
+    ]);
+    expect(allOutbound(kit)[0]?.status).toBe("unknown");
+    expect(kit.mem.store.unmatched.values()[0]?.resolvedAt).toBeNull();
+    await webhook(kit, [
+      statusItem({
+        id: "wamid.lost",
+        status: "sent",
+        timestamp: ts - 1,
+        recipient: "201012345678",
+        correlation: row.correlationId,
+      }),
+    ]);
+    expect(allOutbound(kit)[0]).toMatchObject({
+      status: "delivered",
+      providerMessageId: "wamid.lost",
+    });
+    expect(allOutbound(kit)[0]?.acceptedAt?.getTime()).toBe((ts - 1) * 1000);
+    expect(kit.mem.store.unmatched.values()[0]?.resolvedAt).not.toBeNull();
+  });
+
+  it("a mismatching earlier fact is not drained by a correlated callback that installs the id", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    kit.whatsapp.set("sendTemplate", () => ({ kind: "unknown", message: "timeout" }));
+    okValue(await sendTemplate(kit));
+    const row = allOutbound(kit)[0]!;
+    const ts = seconds(kit.clock.now());
+    await webhook(kit, [
+      statusItem({ id: "wamid.lost", status: "read", timestamp: ts, recipient: "201199999999" }),
+    ]);
+    await webhook(kit, [
+      statusItem({
+        id: "wamid.lost",
+        status: "sent",
+        timestamp: ts,
+        recipient: "201012345678",
+        correlation: row.correlationId,
+      }),
+    ]);
+    expect(allOutbound(kit)[0]).toMatchObject({ status: "sent", providerMessageId: "wamid.lost" });
+  });
+});

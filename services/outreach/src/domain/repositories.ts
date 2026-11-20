@@ -508,6 +508,19 @@ export interface UnmatchedStatusRecord {
   status: OutboundStatus;
   occurredAt: Date;
   resolvedAt: Date | null;
+  /**
+   * Trust evidence of the callback, re-verified before the fact is ever consumed: the `recipient_id` it reported
+   * (digits), the WABA of the webhook entry it arrived under, and the first (allowlisted) error code of a failure.
+   */
+  recipientId: string;
+  wabaId: string;
+  errorCode: string | null;
+  /**
+   * `true` for a fact REJECTED against an existing outbound row (wrong phone, WABA or recipient, or a forged
+   * correlation): it is kept as evidence, is stored already resolved and is never drained. `false` is a merely
+   * unbound fact (no matching row yet) that may still be drained once its message id is known.
+   */
+  quarantined: boolean;
 }
 
 export interface UnmatchedStatusRepository {
@@ -515,7 +528,8 @@ export interface UnmatchedStatusRepository {
   put(e: UnmatchedStatusRecord, tx?: unknown): Promise<"inserted" | "duplicate">;
   /**
    * Returns (oldest first) and marks `resolvedAt` on the UNRESOLVED rows of this tenant AND this phone that match the
-   * provider message id or the correlation id. With neither, it returns nothing. A row is taken once.
+   * provider message id or the correlation id. With neither, it returns nothing. A row is taken once. A quarantined
+   * row is stored resolved, so it is never returned.
    */
   takeFor(
     tenantId: string,

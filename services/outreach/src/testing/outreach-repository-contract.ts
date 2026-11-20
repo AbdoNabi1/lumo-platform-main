@@ -254,6 +254,10 @@ function unmatched(
     status: "sent",
     occurredAt: T0,
     resolvedAt: null,
+    recipientId: "201012345678",
+    wabaId: "waba-1",
+    errorCode: null,
+    quarantined: false,
     ...over,
   };
 }
@@ -2331,6 +2335,43 @@ export function runOutreachRepositoryContract(
           (await r.unmatched.takeFor(b, "phone-1", { providerMessageId: wamid })).map((x) => x.id),
         ).toEqual([otherTenant.id]);
         expect(await r.unmatched.takeFor(a, "phone-1", {})).toEqual([]);
+        await close();
+      });
+
+      it("preserves the trust evidence (recipient, WABA, error code) and never returns a quarantined row (I1)", async () => {
+        expect.hasAssertions();
+        const { r, clock, close } = await open();
+        const tenant = uid("t");
+        const wamid = uid("wamid");
+        const unbound = unmatched(tenant, {
+          providerMessageId: wamid,
+          status: "failed",
+          recipientId: "201099998888",
+          wabaId: "waba-evidence",
+          errorCode: "131026",
+          occurredAt: at(1),
+        });
+        const quarantined = unmatched(tenant, {
+          providerMessageId: wamid,
+          occurredAt: at(2),
+          resolvedAt: at(2),
+          quarantined: true,
+          recipientId: "201111111111",
+        });
+        await r.unmatched.put(unbound);
+        await r.unmatched.put(quarantined);
+        clock.set(at(1000));
+        const taken = await r.unmatched.takeFor(tenant, "phone-1", { providerMessageId: wamid });
+        expect(taken).toHaveLength(1);
+        expect(taken[0]).toMatchObject({
+          id: unbound.id,
+          status: "failed",
+          recipientId: "201099998888",
+          wabaId: "waba-evidence",
+          errorCode: "131026",
+          quarantined: false,
+        });
+        expect(taken[0]?.resolvedAt).not.toBeNull();
         await close();
       });
 

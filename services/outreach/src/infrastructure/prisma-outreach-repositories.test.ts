@@ -1007,7 +1007,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     providerEventId: "evt-1",
     providerMessageId: "wamid-1",
     correlationId: null,
-    status: "sent",
+    status: "sent?r=201012345678&w=waba-1&e=&q=0",
     occurredAt: NOW,
     resolvedAt: null,
     createdAt: NOW,
@@ -1046,6 +1046,58 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     // the lost race (count 0) is not returned
     expect(taken.map((x: UnmatchedStatusRecord) => x.id)).toEqual(["u-1"]);
     expect(taken[0]?.resolvedAt).toEqual(NOW);
+  });
+
+  it("the trust evidence rides in the status column and round-trips; a plain status carries none (I1)", async () => {
+    expect.hasAssertions();
+    const insert = recordingClient({ "unmatchedStatusEvent.createMany": [{ count: 1 }] });
+    const record: UnmatchedStatusRecord = {
+      id: "u-1",
+      tenantId: "t-1",
+      phoneNumberId: "phone-1",
+      providerEventId: "evt-1",
+      providerMessageId: "wamid-1",
+      correlationId: null,
+      status: "failed",
+      occurredAt: NOW,
+      resolvedAt: null,
+      recipientId: "201012345678",
+      wabaId: "waba 1&x",
+      errorCode: "131026",
+      quarantined: true,
+    };
+    await repo.put(record, insert.tx);
+    const written = (insert.calls[0]?.args as { data: Array<{ status: string }> }).data[0]?.status;
+    expect(written).toBe("failed?r=201012345678&w=waba+1%26x&e=131026&q=1");
+    const back = recordingClient({
+      "unmatchedStatusEvent.findMany": [[unmatchedRow({ status: written })]],
+      "unmatchedStatusEvent.updateMany": [{ count: 1 }],
+    });
+    const [taken] = await repo.takeFor("t-1", "phone-1", { providerMessageId: "wamid-1" }, back.tx);
+    expect(taken).toMatchObject({
+      status: "failed",
+      recipientId: "201012345678",
+      wabaId: "waba 1&x",
+      errorCode: "131026",
+      quarantined: true,
+    });
+    const plain = recordingClient({
+      "unmatchedStatusEvent.findMany": [[unmatchedRow({ status: "delivered" })]],
+      "unmatchedStatusEvent.updateMany": [{ count: 1 }],
+    });
+    const [legacy] = await repo.takeFor(
+      "t-1",
+      "phone-1",
+      { providerMessageId: "wamid-1" },
+      plain.tx,
+    );
+    expect(legacy).toMatchObject({
+      status: "delivered",
+      recipientId: "",
+      wabaId: "",
+      errorCode: null,
+      quarantined: false,
+    });
   });
 
   it("takeFor without a criterion touches nothing", async () => {

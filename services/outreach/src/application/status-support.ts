@@ -96,3 +96,52 @@ export async function emitStatusChanged(
     contextRef: row.contextRef,
   });
 }
+
+/** Digits only: Meta reports `recipient_id` without the `+`. */
+export const recipientDigits = (e164: string): string => e164.replace(/^\+/, "");
+
+/**
+ * Applies the unbound facts stored for this row's provider id, in the caller's `tx`. A fact is consumed (taken) but
+ * only APPLIED if its preserved evidence still matches the row: the dispatching phone (already part of the lookup),
+ * the dispatch WABA and the recipient. A mismatching or quarantined fact never changes the row.
+ */
+export async function drainUnmatched(
+  deps: OutreachDeps,
+  tx: unknown,
+  row: OutboundRecord,
+): Promise<OutboundRecord> {
+  if (
+    row.providerMessageId === null ||
+    row.channel !== "whatsapp" ||
+    row.dispatchPhoneNumberId === null ||
+    row.dispatchWabaId === null
+  ) {
+    return row;
+  }
+  const facts = await deps.unmatched.takeFor(
+    row.tenantId,
+    row.dispatchPhoneNumberId,
+    { providerMessageId: row.providerMessageId },
+    tx,
+  );
+  let current = row;
+  for (const f of facts) {
+    if (
+      f.quarantined ||
+      f.phoneNumberId !== row.dispatchPhoneNumberId ||
+      f.wabaId !== row.dispatchWabaId ||
+      f.recipientId !== recipientDigits(row.recipient)
+    ) {
+      continue;
+    }
+    const applied = await applyStatusFact(deps, tx, current, {
+      providerMessageId: f.providerMessageId,
+      status: f.status,
+      occurredAt: f.occurredAt,
+      providerEventId: f.providerEventId,
+      errorCode: f.errorCode,
+    });
+    current = applied.row;
+  }
+  return current;
+}
