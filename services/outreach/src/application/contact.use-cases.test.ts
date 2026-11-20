@@ -88,10 +88,32 @@ describe("UpsertContact", () => {
   it("requires at least one identity", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
-    const error = errorOf(await new UpsertContact(kit.deps).execute({ tenantId: T1, phone: "  " }));
+    const error = errorOf(await new UpsertContact(kit.deps).execute({ tenantId: T1 }));
     expect((error as ValidationError).fields).toEqual([
       { field: "phone", message: "identity_required" },
     ]);
+  });
+
+  it("a supplied but blank identity is a field issue, whichever side is blank (M1)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const uc = new UpsertContact(kit.deps);
+    const blankPhone = errorOf(await uc.execute({ tenantId: T1, phone: "  ", email: "a@b.test" }));
+    const blankEmail = errorOf(await uc.execute({ tenantId: T1, phone: "01012345678", email: "" }));
+    const blankAlone = errorOf(await uc.execute({ tenantId: T1, phone: "  " }));
+    expect((blankPhone as ValidationError).fields).toEqual([
+      { field: "phone", message: "phone_invalid" },
+    ]);
+    expect((blankEmail as ValidationError).fields).toEqual([
+      { field: "email", message: "email_invalid" },
+    ]);
+    expect((blankAlone as ValidationError).fields).toEqual([
+      { field: "phone", message: "phone_invalid" },
+    ]);
+    expect(kit.mem.store.contacts.values()).toHaveLength(0);
+    // valid single-identity input, and an unsupplied (undefined) side, are untouched
+    okValue(await uc.execute({ tenantId: T1, phone: "01012345678" }));
+    okValue(await uc.execute({ tenantId: T1, email: "a@b.test" }));
   });
 
   it("reports CONTACT_IDENTITY_CONFLICT when the phone and the email belong to two contacts", async () => {

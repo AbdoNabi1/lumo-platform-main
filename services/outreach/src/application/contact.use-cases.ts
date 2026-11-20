@@ -33,12 +33,13 @@ export class UpsertContact implements UseCase<UpsertContactInput, ContactDto, Do
     const issues: { field: string; message: string }[] = [];
     let phone: string | null = null;
     let email: string | null = null;
-    if (present(input.phone)) {
-      phone = toE164(input.phone);
+    // `undefined` means "not supplied"; anything else supplied (including blank) must be a valid identity.
+    if (input.phone !== undefined) {
+      phone = typeof input.phone === "string" ? toE164(input.phone) : null;
       if (phone === null) issues.push({ field: "phone", message: "phone_invalid" });
     }
-    if (present(input.email)) {
-      email = normalizeEmail(input.email);
+    if (input.email !== undefined) {
+      email = typeof input.email === "string" ? normalizeEmail(input.email) : null;
       if (email === null) issues.push({ field: "email", message: "email_invalid" });
     }
     if (issues.length === 0 && phone === null && email === null) {

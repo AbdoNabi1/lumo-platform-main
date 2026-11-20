@@ -4,6 +4,12 @@
  * Policy note: an inbound STOP keyword revokes EVERY WhatsApp purpose (marketing and transactional). Meta treats STOP as
  * an opt-out of everything; this all-purpose revoke is Morbeh's deliberately conservative policy. An admin/API revoke of
  * one purpose never touches the other, and a grant never changes the other purpose.
+ *
+ * Sessions vs templates (Task 5 ruling a): a free-form SESSION message is a reply inside a customer-initiated 24 h
+ * window, so it needs only `whatsappTransactional !== "revoked"` plus the window bound to the connected business
+ * number; marketing consent is ignored for it. `canSend` below stays strict and governs TEMPLATES (utility needs
+ * `allowed`, marketing needs `granted`). An inbound message NEVER records a grant, and a later inbound never undoes a
+ * STOP.
  */
 
 export type Channel = "whatsapp" | "email";
@@ -12,7 +18,7 @@ export type ConsentSource = "admin" | "import" | "inbound_keyword" | "checkout" 
 
 export interface ConsentState {
   whatsappMarketing: "granted" | "revoked" | "unknown";
-  /** `unknown` is the default: transactional WhatsApp is only sent after a recorded grant (Part 3 records it at checkout). */
+  /** `unknown` is the default: transactional WhatsApp TEMPLATES are only sent after a recorded grant (Part 3 records it at checkout); a session reply is allowed unless this is `revoked`. */
   whatsappTransactional: "allowed" | "revoked" | "unknown";
   emailMarketing: "granted" | "revoked" | "unknown";
 }

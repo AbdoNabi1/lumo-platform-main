@@ -404,7 +404,9 @@ export class SendWhatsAppSessionMessage implements UseCase<
         }
         return {
           contactId: contact.id,
-          suppressed: !canSend(consentStateOf(contact), "whatsapp", "transactional"),
+          // A session reply to a customer-initiated conversation needs no recorded grant, only the absence of an
+          // opt-out (ruling a). Marketing consent is irrelevant here.
+          suppressed: contact.whatsappTransactional === "revoked",
           base: {
             channel: "whatsapp",
             kind: interactive ? "session_interactive" : "session_text",
@@ -430,7 +432,7 @@ export class SendWhatsAppSessionMessage implements UseCase<
             : await deps.contacts.findById(tenantId, record.contactId);
         if (
           contact === null ||
-          !canSend(consentStateOf(contact), "whatsapp", "transactional") ||
+          contact.whatsappTransactional === "revoked" ||
           !sessionWindowOpen(contact.lastInboundAt, deps.clock.now())
         ) {
           return EXPIRED;

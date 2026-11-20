@@ -15,7 +15,7 @@ import {
   type OutreachKit,
 } from "../testing/outreach-kit";
 import { errorOf, okValue } from "../testing/result-helpers";
-import { messagesPayload, seconds, statusItem } from "../testing/webhook-fixtures";
+import { messagesPayload, seconds, statusItem, textMessage } from "../testing/webhook-fixtures";
 import { createMetaFetchHarness } from "../testing/meta-fetch-harness";
 import { ReconcileUnresolvedOutbound } from "./reconcile-unresolved.use-case";
 import {
@@ -1358,5 +1358,127 @@ describe("SendWhatsAppTemplate — both sides of the commit boundary (ruling f)"
     expect(okValue(await sendTemplate(kit))).toEqual(winner);
     expect(kit.whatsapp.count("sendTemplate")).toBe(1);
     expect(allOutbound(kit)).toHaveLength(1);
+  });
+});
+
+describe("SendWhatsAppSessionMessage — customer-initiated reply without a grant (ruling a)", () => {
+  const inbound = async (kit: OutreachKit, id: string, body = "hello", ageSeconds = 60) =>
+    okValue(
+      await new ProcessWhatsAppWebhook(kit.deps).execute({
+        payload: messagesPayload("phone-1", {
+          messages: [
+            textMessage({
+              id,
+              from: "201012345678",
+              timestamp: seconds(kit.clock.now()) - ageSeconds,
+              body,
+            }),
+          ],
+        }),
+      }),
+    );
+  const contactOf = (kit: OutreachKit) => kit.mem.store.contacts.values()[0];
+
+  it("a real inbound with unknown transactional and revoked marketing lets a session reply through, recording no grant", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await seedContact(kit, { transactional: "unknown", marketing: "revoked" });
+    await inbound(kit, "wamid.in1");
+    kit.events.calls.length = 0;
+    const dto = okValue(await sendSession(kit));
+    expect(dto.status).toBe("accepted");
+    expect(kit.whatsapp.count("sendText")).toBe(1);
+    expect(contactOf(kit)).toMatchObject({
+      whatsappTransactional: "unknown",
+      whatsappMarketing: "revoked",
+    });
+    expect(await kit.mem.contacts.listConsentEvents(T1, contactOf(kit)?.id ?? "")).toHaveLength(0);
+    expect(kit.events.ofType("outreach.contact.consent_changed")).toHaveLength(0);
+  });
+
+  it("the same contact still has utility and marketing templates suppressed (no grant exists)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const utility = await seedTemplate(kit, { name: "util_tpl" });
+    const marketing = await seedTemplate(kit, { name: "mkt_tpl", category: "MARKETING" });
+    kit.whatsapp.templates = [metaTemplate(utility), metaTemplate(marketing)];
+    await seedContact(kit, { transactional: "unknown", marketing: "revoked" });
+    await inbound(kit, "wamid.in1");
+    expect(okValue(await sendSession(kit)).status).toBe("accepted");
+    const u = okValue(await sendTemplate(kit, { templateName: "util_tpl", idempotencyKey: "tu" }));
+    const m = okValue(await sendTemplate(kit, { templateName: "mkt_tpl", idempotencyKey: "tm" }));
+    expect([u.status, m.status]).toEqual(["suppressed", "suppressed"]);
+    expect(kit.whatsapp.count("sendTemplate")).toBe(0);
+  });
+
+  it("STOP before the reservation suppresses the session reply with zero sends", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await inbound(kit, "wamid.stop", "STOP");
+    expect(contactOf(kit)?.whatsappTransactional).toBe("revoked");
+    expect(okValue(await sendSession(kit)).status).toBe("suppressed");
+    expect(kit.whatsapp.total).toBe(0);
+  });
+
+  it("STOP after the reservation, before dispatch → AUTHORIZATION_EXPIRED with zero sends", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await inbound(kit, "wamid.in1");
+    afterReservation(kit, async () => {
+      await inbound(kit, "wamid.stop", "STOP", 30);
+    });
+    expect(errorOf(await sendSession(kit)).message).toBe("AUTHORIZATION_EXPIRED");
+    expect(kit.whatsapp.total).toBe(0);
+    expect(allOutbound(kit)[0]).toMatchObject({
+      status: "failed",
+      errorCode: "AUTHORIZATION_EXPIRED",
+    });
+  });
+
+  it("a new inbound after STOP does not undo it", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    await inbound(kit, "wamid.stop", "STOP", 120);
+    await inbound(kit, "wamid.again", "hello again", 10);
+    expect(contactOf(kit)?.whatsappTransactional).toBe("revoked");
+    expect(okValue(await sendSession(kit)).status).toBe("suppressed");
+    expect(kit.whatsapp.total).toBe(0);
+  });
+
+  it("a missing contact, a missing window, a future window and exactly 24 h all refuse with zero sends", async () => {
+    expect.hasAssertions();
+    const none = createOutreachKit();
+    await seedConnection(none);
+    expect(errorOf(await sendSession(none)).message).toBe("SESSION_WINDOW_CLOSED");
+    const H = 3600 * 1000;
+    for (const offset of [null, -1, 24 * H] as const) {
+      const kit = createOutreachKit();
+      await seedConnection(kit);
+      await seedContact(kit, {
+        transactional: "unknown",
+        lastInboundAt: offset === null ? null : new Date(kit.clock.now().getTime() - offset),
+      });
+      expect(errorOf(await sendSession(kit)).message).toBe("SESSION_WINDOW_CLOSED");
+      expect(kit.whatsapp.total).toBe(0);
+    }
+  });
+
+  it("an explicit transactional revoke with a fresh window is suppressed; allowed still sends", async () => {
+    expect.hasAssertions();
+    const revoked = createOutreachKit();
+    await seedConnection(revoked);
+    await seedContact(revoked, { transactional: "revoked" });
+    await inbound(revoked, "wamid.in1");
+    expect(okValue(await sendSession(revoked)).status).toBe("suppressed");
+    const allowed = createOutreachKit();
+    await seedConnection(allowed);
+    await seedContact(allowed, { transactional: "allowed", marketing: "revoked" });
+    await inbound(allowed, "wamid.in1");
+    expect(okValue(await sendSession(allowed)).status).toBe("accepted");
   });
 });
