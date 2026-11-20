@@ -13,12 +13,16 @@ export default defineConfig({
       // are added; never lower them to make a red run green.
       // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
       // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 59->53 (CI 54.54%), functions 76->62 (CI 63.63%), statements 59->53 (CI 54.54%).
-      // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: tests for requireEnvelopeTenant/MissingEnvelopeTenantError,
+      // JsonEventSerializer and the public entry points raised local (Windows, a lower bound for CI)
+      // coverage to lines 70.21%, statements 70.21%, functions 90.9%, branches 95.23% — back above the
+      // 2026-09-01 floors. Thresholds re-ratcheted to 1pt under that; serializer.ts is type-only and
+      // reads 0%. Never lower them to make a red run green.
       thresholds: {
-        lines: 53,
-        statements: 53,
-        functions: 62,
-        branches: 80,
+        lines: 69,
+        statements: 69,
+        functions: 89,
+        branches: 94,
       },
     },
 
