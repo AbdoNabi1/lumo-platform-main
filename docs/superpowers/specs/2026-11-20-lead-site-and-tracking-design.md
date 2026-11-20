@@ -20,15 +20,15 @@ sources with verbatim quotes, 38 verified expert quotes). Official-source number
 
 ## Per-platform identity format (normalize → per-platform form → SHA-256 lowercase hex)
 
-| Field | Meta [1][8] | Snap [15] | TikTok [9][32] | Google Ads [20][22] | GA4 MP [23] |
-|---|---|---|---|---|---|
-| email | trim+lower, hash | same | trim+lower only, hash | lower; gmail.com/googlemail.com: drop dots and `+suffix`; hash | gmail/googlemail: drop dots only; hash |
-| phone (`01012345678`, EG) | `201012345678` hash | `201012345678` hash | `+201012345678` hash | `+201012345678` hash | `+201012345678` hash |
-| first/last name | lower, no punctuation, hash | same | same, hash | hash, **only when fn+ln+country+postal all present** | lower, no digits/symbols, hash |
-| city / state | hash | hash | **plain** | plain (address only) | plain |
-| country | `eg` hash | `eg` hash | `eg` plain | `EG` plain (address only) | `EG` plain |
-| postal | hash | hash | hash | plain (address only) | plain |
-| external id | hash | hash | hash | — | — (user_id) |
+| Field                     | Meta [1][8]                 | Snap [15]           | TikTok [9][32]        | Google Ads [20][22]                                            | GA4 MP [23]                            |
+| ------------------------- | --------------------------- | ------------------- | --------------------- | -------------------------------------------------------------- | -------------------------------------- |
+| email                     | trim+lower, hash            | same                | trim+lower only, hash | lower; gmail.com/googlemail.com: drop dots and `+suffix`; hash | gmail/googlemail: drop dots only; hash |
+| phone (`01012345678`, EG) | `201012345678` hash         | `201012345678` hash | `+201012345678` hash  | `+201012345678` hash                                           | `+201012345678` hash                   |
+| first/last name           | lower, no punctuation, hash | same                | same, hash            | hash, **only when fn+ln+country+postal all present**           | lower, no digits/symbols, hash         |
+| city / state              | hash                        | hash                | **plain**             | plain (address only)                                           | plain                                  |
+| country                   | `eg` hash                   | `eg` hash           | `eg` plain            | `EG` plain (address only)                                      | `EG` plain                             |
+| postal                    | hash                        | hash                | hash                  | plain (address only)                                           | plain                                  |
+| external id               | hash                        | hash                | hash                  | —                                                              | — (user_id)                            |
 
 Arabic-Indic (`٠-٩`) and Persian (`۰-۹`) digits are converted to Latin before any phone normalization. A lead form has
 one "name" field: first token = first name, the rest = last name.
@@ -42,12 +42,12 @@ removed because Snap collapses repeated ids [17].
 
 ## Delivery order (separate plans)
 
-| Plan | Scope | Branch |
-|---|---|---|
-| A — site type in onboarding | `site_type` column + immutable choice at sign-up + sign-up cards + setup guide per type | `morbeh/lead-site` |
-| B — tracking identity core | phone/digit/name normalization fixes, per-platform match keys, event ids, once-per-session lead ledger | `morbeh/lead-site` |
-| C — lead form + leads | `lead_form` section, leads service (honeypot, rate limit), leads inbox, `siteType` gate in storefront | later |
-| D — delivery wiring | profile store, click-id capture, per-destination match keys in mapping, browser SDK + pixels, event emission | later |
+| Plan                        | Scope                                                                                                        | Branch             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ |
+| A — site type in onboarding | `site_type` column + immutable choice at sign-up + sign-up cards + setup guide per type                      | `morbeh/lead-site` |
+| B — tracking identity core  | phone/digit/name normalization fixes, per-platform match keys, event ids, once-per-session lead ledger       | `morbeh/lead-site` |
+| C — lead form + leads       | `lead_form` section, leads service (honeypot, rate limit), leads inbox, `siteType` gate in storefront        | later              |
+| D — delivery wiring         | profile store, click-id capture, per-destination match keys in mapping, browser SDK + pixels, event emission | later              |
 
 ## Non-goals (this round)
 
@@ -59,7 +59,9 @@ Lead stages after submission (qualified / converted), Instant-Forms CRM integrat
   `contact_clicked`; any commerce event is refused before delivery. A `store` shop's behavior is unchanged.
 - **Lead route (C):** saves every valid submission; resolves the collector session (minting one with the collector's
   own rules and returning the cookie when missing) **before** calling `decideLeadEmission`; forwards only on `emit`.
-  Production ledger = Redis `SET key 1 NX EX 172800`.
+  Production ledger: claim = Redis `SET key 1 NX EX 1800`; the collector calls `extendLeadClaim` (Redis `EXPIRE key 1800`,
+  never creating the key) on every request of a `lead_site` shop that renews an existing session, so the claim lives
+  exactly as long as the session.
 - **Ingest (D):** wire `checkProvidedDedupId` — `"invalid"` → permanent refusal `dedup_id_invalid` (value never echoed).
   Remove the `session_minute` fallback only after the browser SDK supplies `mb_<uuid>` on every beacon and queued
   legacy events are drained; never mint an independent random id at ingest. Server events use `businessEventId`.
