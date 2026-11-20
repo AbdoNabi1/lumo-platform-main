@@ -171,6 +171,10 @@ model UnmatchedStatusEvent {
   providerMessageId String @map("provider_message_id")
   correlationId String? @map("correlation_id")
   status String
+  recipient String? @map("recipient")
+  dispatchWabaId String? @map("dispatch_waba_id")
+  errorCode String? @map("error_code")
+  quarantined Boolean @default(false) @map("quarantined")
   occurredAt DateTime @map("occurred_at")
   resolvedAt DateTime? @map("resolved_at")
   createdAt DateTime @default(now()) @map("created_at")

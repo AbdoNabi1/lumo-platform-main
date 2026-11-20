@@ -510,10 +510,11 @@ export interface UnmatchedStatusRecord {
   resolvedAt: Date | null;
   /**
    * Trust evidence of the callback, re-verified before the fact is ever consumed: the `recipient_id` it reported
-   * (digits), the WABA of the webhook entry it arrived under, and the first (allowlisted) error code of a failure.
+   * (digits; column `recipient`), the WABA of the webhook entry it arrived under (column `dispatch_waba_id`) and the
+   * first (allowlisted) error code of a failure. `null` evidence never matches a row, so such a fact is never applied.
    */
-  recipientId: string;
-  wabaId: string;
+  recipientId: string | null;
+  wabaId: string | null;
   errorCode: string | null;
   /**
    * `true` for a fact REJECTED against an existing outbound row (wrong phone, WABA or recipient, or a forged

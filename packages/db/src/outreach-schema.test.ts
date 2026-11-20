@@ -75,6 +75,10 @@ describe("outreach migration", () => {
       ["InboundMessage", "occurredAt", "DateTime"],
       ["UnmatchedStatusEvent", "correlationId", "String?"],
       ["UnmatchedStatusEvent", "resolvedAt", "DateTime?"],
+      ["UnmatchedStatusEvent", "recipient", "String?"],
+      ["UnmatchedStatusEvent", "dispatchWabaId", "String?"],
+      ["UnmatchedStatusEvent", "errorCode", "String?"],
+      ["UnmatchedStatusEvent", "quarantined", "Boolean @default(false)"],
       ["EmailSendCounter", "count", "Int"],
     ];
     for (const [model, field, type] of fields) {
@@ -226,5 +230,34 @@ describe("outreach migration", () => {
         `CREATE ${kind === "unique" ? "UNIQUE " : ""}INDEX "${table}_${suffix}" ON "outreach"."${table}"(${quoted});`,
       );
     }
+  });
+});
+
+describe("outreach unmatched status evidence columns", () => {
+  it("stores recipient, dispatch WABA, error code and quarantine in real columns", () => {
+    expect.hasAssertions();
+    const schema = readFileSync(join(schemaDir, "outreach.prisma"), "utf8").replace(/\r\n/g, "\n");
+    const sql = readFileSync(
+      join(schemaDir, "migrations", "20261119000000_outreach_channels", "migration.sql"),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    const model = /model UnmatchedStatusEvent \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    const create =
+      /CREATE TABLE "outreach"\."unmatched_status_events" \(([\s\S]*?)\n\);/.exec(sql)?.[1] ?? "";
+    const expected: Array<[string, string]> = [
+      ['recipient String? @map("recipient")', '"recipient" TEXT,'],
+      ['dispatchWabaId String? @map("dispatch_waba_id")', '"dispatch_waba_id" TEXT,'],
+      ['errorCode String? @map("error_code")', '"error_code" TEXT,'],
+      [
+        'quarantined Boolean @default(false) @map("quarantined")',
+        '"quarantined" BOOLEAN NOT NULL DEFAULT false,',
+      ],
+    ];
+    for (const [prismaLine, sqlLine] of expected) {
+      expect(model.split("\n").map((l) => l.trim())).toContain(prismaLine);
+      expect(create.split("\n").map((l) => l.trim())).toContain(sqlLine);
+    }
+    // `status` holds only the status value again.
+    expect(model.split("\n").map((l) => l.trim())).toContain("status String");
   });
 });

@@ -1007,7 +1007,11 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     providerEventId: "evt-1",
     providerMessageId: "wamid-1",
     correlationId: null,
-    status: "sent?r=201012345678&w=waba-1&e=&q=0",
+    status: "sent",
+    recipient: "201012345678",
+    dispatchWabaId: "waba-1",
+    errorCode: null,
+    quarantined: false,
     occurredAt: NOW,
     resolvedAt: null,
     createdAt: NOW,
@@ -1048,7 +1052,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     expect(taken[0]?.resolvedAt).toEqual(NOW);
   });
 
-  it("the trust evidence rides in the status column and round-trips; a plain status carries none (I1)", async () => {
+  it("the trust evidence is written to and read from its own columns; status holds only the status (I1)", async () => {
     expect.hasAssertions();
     const insert = recordingClient({ "unmatchedStatusEvent.createMany": [{ count: 1 }] });
     const record: UnmatchedStatusRecord = {
@@ -1067,10 +1071,38 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
       quarantined: true,
     };
     await repo.put(record, insert.tx);
-    const written = (insert.calls[0]?.args as { data: Array<{ status: string }> }).data[0]?.status;
-    expect(written).toBe("failed?r=201012345678&w=waba+1%26x&e=131026&q=1");
+    expect(insert.calls[0]?.args).toEqual({
+      data: [
+        {
+          id: "u-1",
+          tenantId: "t-1",
+          phoneNumberId: "phone-1",
+          providerEventId: "evt-1",
+          providerMessageId: "wamid-1",
+          correlationId: null,
+          status: "failed",
+          recipient: "201012345678",
+          dispatchWabaId: "waba 1&x",
+          errorCode: "131026",
+          quarantined: true,
+          occurredAt: NOW,
+          resolvedAt: null,
+        },
+      ],
+      skipDuplicates: true,
+    });
     const back = recordingClient({
-      "unmatchedStatusEvent.findMany": [[unmatchedRow({ status: written })]],
+      "unmatchedStatusEvent.findMany": [
+        [
+          unmatchedRow({
+            status: "failed",
+            recipient: "201012345678",
+            dispatchWabaId: "waba 1&x",
+            errorCode: "131026",
+            quarantined: true,
+          }),
+        ],
+      ],
       "unmatchedStatusEvent.updateMany": [{ count: 1 }],
     });
     const [taken] = await repo.takeFor("t-1", "phone-1", { providerMessageId: "wamid-1" }, back.tx);
@@ -1081,20 +1113,26 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
       errorCode: "131026",
       quarantined: true,
     });
-    const plain = recordingClient({
-      "unmatchedStatusEvent.findMany": [[unmatchedRow({ status: "delivered" })]],
+  });
+
+  it("null evidence columns map to null evidence (never to a matching value)", async () => {
+    expect.hasAssertions();
+    const nulls = recordingClient({
+      "unmatchedStatusEvent.findMany": [
+        [unmatchedRow({ status: "delivered", recipient: null, dispatchWabaId: null })],
+      ],
       "unmatchedStatusEvent.updateMany": [{ count: 1 }],
     });
-    const [legacy] = await repo.takeFor(
+    const [taken] = await repo.takeFor(
       "t-1",
       "phone-1",
       { providerMessageId: "wamid-1" },
-      plain.tx,
+      nulls.tx,
     );
-    expect(legacy).toMatchObject({
+    expect(taken).toMatchObject({
       status: "delivered",
-      recipientId: "",
-      wabaId: "",
+      recipientId: null,
+      wabaId: null,
       errorCode: null,
       quarantined: false,
     });

@@ -346,45 +346,6 @@ export function inboundInsertRow(r: InboundRecord): Prisma.InboundMessageCreateM
   };
 }
 
-/**
- * The unmatched-fact trust evidence has no column of its own (Part 1 ships without a schema change): it rides in the
- * `status` text column as `<status>?r=<recipient>&w=<waba>&e=<code>&q=<0|1>`. A plain status (no `?`) carries no
- * evidence, so it can never be verified and is never drained.
- */
-function packUnmatchedStatus(e: UnmatchedStatusRecord): string {
-  const evidence = new URLSearchParams({
-    r: e.recipientId,
-    w: e.wabaId,
-    e: e.errorCode ?? "",
-    q: e.quarantined ? "1" : "0",
-  });
-  return `${e.status}?${evidence.toString()}`;
-}
-
-function unpackUnmatchedStatus(raw: string): {
-  status: OutboundStatus;
-  recipientId: string;
-  wabaId: string;
-  errorCode: string | null;
-  quarantined: boolean;
-} {
-  const cut = raw.indexOf("?");
-  const status = oneOf<OutboundStatus>(
-    "unmatched_status_events.status",
-    cut < 0 ? raw : raw.slice(0, cut),
-    OUTBOUND_STATUS,
-  );
-  const evidence = new URLSearchParams(cut < 0 ? "" : raw.slice(cut + 1));
-  const errorCode = evidence.get("e");
-  return {
-    status,
-    recipientId: evidence.get("r") ?? "",
-    wabaId: evidence.get("w") ?? "",
-    errorCode: errorCode === null || errorCode === "" ? null : errorCode,
-    quarantined: evidence.get("q") === "1",
-  };
-}
-
 export function unmatchedFromRow(row: UnmatchedStatusEvent): UnmatchedStatusRecord {
   return {
     id: row.id,
@@ -395,7 +356,11 @@ export function unmatchedFromRow(row: UnmatchedStatusEvent): UnmatchedStatusReco
     correlationId: row.correlationId,
     occurredAt: row.occurredAt,
     resolvedAt: row.resolvedAt,
-    ...unpackUnmatchedStatus(row.status),
+    status: oneOf<OutboundStatus>("unmatched_status_events.status", row.status, OUTBOUND_STATUS),
+    recipientId: row.recipient,
+    wabaId: row.dispatchWabaId,
+    errorCode: row.errorCode,
+    quarantined: row.quarantined,
   };
 }
 
@@ -409,7 +374,11 @@ export function unmatchedInsertRow(
     providerEventId: e.providerEventId,
     providerMessageId: e.providerMessageId,
     correlationId: e.correlationId,
-    status: packUnmatchedStatus(e),
+    status: e.status,
+    recipient: e.recipientId,
+    dispatchWabaId: e.wabaId,
+    errorCode: e.errorCode,
+    quarantined: e.quarantined,
     occurredAt: e.occurredAt,
     resolvedAt: e.resolvedAt,
   };
