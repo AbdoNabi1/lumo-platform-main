@@ -27,6 +27,7 @@ import {
   PrismaRefundVerificationAdapter,
   type RuntimeCore,
 } from "./composition";
+import { assertProductionOutreachVaultConfigured } from "./outreach-readiness";
 import { startRuntimeTelemetry } from "./telemetry";
 
 /**
@@ -531,6 +532,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
         vault: runtime.carrierCredentialVault,
       }),
     ),
+    collectGuardFailure(() =>
+      assertProductionOutreachVaultConfigured(config, runtime.outreach.vault),
+    ),
     collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
@@ -575,6 +579,8 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     prisma: runtime.prisma,
     carrierRegistrations: runtime.carrierRegistrations,
     carrierCredentialVault: runtime.carrierCredentialVault,
+    // Outreach ports come from `outreachReadiness` (absent ⇒ not configured, webhook routes fail closed).
+    outreach: runtime.outreach,
     distributedLock: runtime.distributedLock,
     // Plan 1B-1: passwords in Postgres (scrypt, tenant-scoped, lockout) instead of process memory.
     passwordAuthProvider: new HashedPasswordAuthProvider({

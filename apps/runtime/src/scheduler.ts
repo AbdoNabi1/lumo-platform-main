@@ -166,10 +166,51 @@ function dueSubscriptionIds(
   return (response.body as { subscriptionIds: readonly string[] }).subscriptionIds;
 }
 
+/** Tenants per `ListTenants` page in the outreach recovery sweep. */
+const OUTREACH_RECOVERY_PAGE_SIZE = 100;
+
+/**
+ * Round 3/4 (R3-B04, R4-B02): settles every shop's abandoned outreach sends. It pages `core.listTenants` to the end
+ * and calls `core.outreachRecovery.reconcileUnresolved(tenantId)` for each shop — `core.*` only, so it never depends
+ * on the admin HTTP composition, and the recovery wiring owns no provider (a send is never retried). One shop failing
+ * is logged and does not stop the others; a failed tenant LISTING aborts the sweep (the next tick retries).
+ */
+async function reconcileUnresolvedOutreach(
+  core: RuntimeCore,
+  recovery: NonNullable<RuntimeCore["outreachRecovery"]>,
+): Promise<void> {
+  let after: string | undefined;
+  let settled = 0;
+  for (;;) {
+    const page = await core.listTenants.execute({
+      first: OUTREACH_RECOVERY_PAGE_SIZE,
+      ...(after === undefined ? {} : { after }),
+    });
+    if (!page.ok) throw page.error;
+    for (const tenant of page.value.items) {
+      const tenantId = tenant.id.toString();
+      try {
+        settled += await recovery.reconcileUnresolved(tenantId);
+      } catch (error) {
+        core.logger.error("outreach-reconcile-unresolved: tenant failed", {
+          tenantId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    const next = page.value.pageInfo.endCursor;
+    if (!page.value.pageInfo.hasNextPage || next === null || next === after) break;
+    after = next;
+  }
+  if (settled > 0) {
+    core.logger.info("outreach-reconcile-unresolved: settled abandoned sends", { settled });
+  }
+}
+
 export function buildJobs(core: RuntimeCore): readonly ScheduledJob[] {
   const cdcWatchdogState = createCdcWatchdogState();
 
-  return [
+  const jobs: ScheduledJob[] = [
     {
       name: "outbox-prune",
       intervalMs: 60 * 60 * 1000,
@@ -367,6 +408,16 @@ export function buildJobs(core: RuntimeCore): readonly ScheduledJob[] {
       },
     },
   ];
+
+  const outreachRecovery = core.outreachRecovery;
+  if (outreachRecovery !== undefined) {
+    jobs.push({
+      name: "outreach-reconcile-unresolved",
+      intervalMs: 60_000,
+      run: () => reconcileUnresolvedOutreach(core, outreachRecovery),
+    });
+  }
+  return jobs;
 }
 
 export function startJobLoop(

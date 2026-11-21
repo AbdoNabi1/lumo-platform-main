@@ -46,7 +46,14 @@ import {
   type PaymentCredentialVault,
   type ProviderRegistration,
 } from "@platform/payments";
-import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
+import {
+  LoggingSignupEmailAdapter,
+  type AdminOutreachDeps,
+  type SignupEmailPort,
+} from "@platform/admin";
+import { wireOutreachRecovery } from "@platform/outreach";
+import { wireTenantListing, type ListTenants } from "@platform/tenancy";
+import { buildOutreachWiring } from "./outreach-readiness";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
@@ -173,6 +180,20 @@ export interface RuntimeCore {
   readonly carrierRegistrations: readonly CarrierRegistration[];
   readonly carrierCredentialVault: CarrierCredentialVault | undefined;
   /**
+   * Outreach (WhatsApp via Meta + email via Resend), built ONLY from `outreachReadiness(config)` (outreach-readiness.ts):
+   * a channel that is not fully configured has no port (and WhatsApp then has no vault, signup values or webhook secrets),
+   * never a stub. `api.ts` forwards it into `createAdminHttpApi`.
+   */
+  readonly outreach: AdminOutreachDeps;
+  /**
+   * The scheduled recovery of unresolved outreach sends (round 4): its own wiring over the shared Prisma client, with
+   * no providers, vault or ports, so it never depends on the admin HTTP composition and needs no WhatsApp/email
+   * readiness. `undefined` only when the runtime has no Prisma.
+   */
+  readonly outreachRecovery: { reconcileUnresolved(tenantId: string): Promise<number> } | undefined;
+  /** Tenant enumeration (tenancy's `ListTenants`, cursor-paginated) for per-tenant scheduled jobs. */
+  readonly listTenants: ListTenants;
+  /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
    * (`buildPlatformBillingPayments`). `undefined` ⇒ not configured: Licensing then keeps its
@@ -221,7 +242,16 @@ export interface RuntimeCore {
   readonly signupEmail: SignupEmailPort;
 }
 
-export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
+/** Test seams of the composition root; production passes nothing. */
+export interface RuntimeCoreOptions {
+  /** The `fetch` Outreach's Meta and Resend clients use. Default: the global `fetch`. */
+  readonly outreachFetch?: typeof fetch;
+}
+
+export function buildRuntimeCore(
+  config: RuntimeConfig,
+  options: RuntimeCoreOptions = {},
+): RuntimeCore {
   // T10.4: TENANT_MODE=multi no longer fails here. What holds instead — and where it is enforced:
   //  - API: createAdminHttpApi resolves the tenant per request (verified claim, then header; an
   //    unresolved tenant is rejected, never defaulted) and, under multi, runs assertMultiTenantReady
@@ -433,6 +463,23 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     platformTenantId: config.TENANT_MODE === "multi" ? platformTenantId : undefined,
   });
 
+  // Outreach: ports from the ONE readiness function; recovery + tenant listing over the shared Prisma client.
+  const outreach = buildOutreachWiring(config, options.outreachFetch);
+  const outreachRecovery = wireOutreachRecovery({
+    prisma,
+    clock,
+    idGenerator,
+    serializer,
+    reconcileAfterMs: config.OUTREACH_UNRESOLVED_AFTER_MS,
+  });
+  const listTenants = wireTenantListing({
+    prisma,
+    tenantId: platformTenantId,
+    serializer,
+    clock,
+    idGenerator,
+  });
+
   return {
     config,
     logger,
@@ -456,6 +503,9 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentCredentialVault,
     carrierRegistrations,
     carrierCredentialVault,
+    outreach,
+    outreachRecovery,
+    listTenants,
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,

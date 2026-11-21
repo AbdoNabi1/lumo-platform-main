@@ -1,5 +1,5 @@
 export { wireAdmin } from "./composition";
-export type { AdminWiringDeps, WiredAdmin } from "./composition";
+export type { AdminOutreachDeps, AdminWiringDeps, WiredAdmin } from "./composition";
 export type { AdminResponse } from "./interfaces/admin-response";
 export { ProductsAdminController } from "./interfaces/products.admin-controller";
 export { InventoryAdminController } from "./interfaces/inventory.admin-controller";
