@@ -38,4 +38,30 @@ describe("@platform/outreach package entry", () => {
     expect(typeof root.wireOutreachRecovery).toBe("function");
     expect(typeof root.OutreachController).toBe("function");
   });
+
+  it("publishes the production adapters, the vault and the signature verifier (and not the test kits)", async () => {
+    expect.hasAssertions();
+    const root = (await import("./index")) as Record<string, unknown>;
+    for (const name of [
+      "MetaGraphClient",
+      "MetaApiError",
+      "ResendEmailClient",
+      "EnvelopeOutreachCredentialVault",
+      "InMemoryOutreachCredentialVault",
+      "verifyMetaSignature",
+    ]) {
+      expect(typeof root[name], name).toBe("function");
+    }
+    expect(root.OUTREACH_CREDENTIALS_KEY_ALIAS).toBe("outreach-credentials");
+    expect(root.DEFAULT_EMAIL_CAPS).toEqual({ perHour: 200, perDay: 2000 });
+    expect(root.DEFAULT_UNRESOLVED_AFTER_MS).toBe(300_000);
+    for (const name of [
+      "FakeWhatsAppPort",
+      "FakeClock",
+      "createOutreachKit",
+      "createMetaFetchHarness",
+    ]) {
+      expect(Object.keys(root), name).not.toContain(name);
+    }
+  });
 });

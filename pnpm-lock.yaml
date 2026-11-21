@@ -164,6 +164,9 @@ importers:
       '@platform/orders':
         specifier: workspace:*
         version: link:../../services/orders
+      '@platform/outreach':
+        specifier: workspace:*
+        version: link:../../services/outreach
       '@platform/pages':
         specifier: workspace:*
         version: link:../../services/pages
@@ -551,6 +554,9 @@ importers:
       '@platform/orders':
         specifier: workspace:*
         version: link:../../services/orders
+      '@platform/outreach':
+        specifier: workspace:*
+        version: link:../../services/outreach
       '@platform/pages':
         specifier: workspace:*
         version: link:../../services/pages
