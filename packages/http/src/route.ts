@@ -73,6 +73,17 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
    */
   readonly public?: boolean;
   /**
+   * Whose tenant a `public` route runs as. `"request"` (the default, and the only behaviour before this
+   * field existed) resolves the tenant from the request (header / claim / host) and applies the tenant
+   * lifecycle gate. `"platform"` is for an app-level ingress that has NO shop on the wire (Meta's one
+   * webhook URL for every merchant): the transport skips tenant resolution AND the lifecycle gate, ignores
+   * `x-tenant-id` entirely, and runs the handler with `context.tenantId` = `HttpServerDeps.platformTenantId`.
+   * The route must derive the real shop itself from a trusted source (a signed payload → a directory). It
+   * is only valid together with `public: true` (registering anything else throws), and is refused with 403
+   * when no platform tenant is configured.
+   */
+  readonly tenantScope?: "request" | "platform";
+  /**
    * T10.6: opt-in for a route a SUSPENDED tenant must still be able to call (paying an overdue
    * invoice). Absent ⇒ refused while suspended, unless it is an authenticated `GET` — see
    * `suspendedTenantMayCall`. A cancelled tenant is refused regardless.
