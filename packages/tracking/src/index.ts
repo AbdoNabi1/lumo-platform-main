@@ -224,7 +224,7 @@ export {
   stagePrecedes,
 } from "./pipeline/hashing";
 
-// --- Lead-site plan B — per-platform match keys ----------------------------
+// --- Lead-site plan B — match keys, event ids, lead decision ----------------------------
 export type { MatchPlatform, PlatformMatchKeys } from "./pipeline/platform-identity";
 export {
   splitFullName,
@@ -232,6 +232,23 @@ export {
   phoneForPlatform,
   platformMatchKeys,
 } from "./pipeline/platform-identity";
+export type { BusinessEventKind } from "./ids/event-id";
+export {
+  EVENT_ID_PREFIX,
+  isBusinessRef,
+  newBrowserEventId,
+  businessEventId,
+  isMorbehEventId,
+  checkProvidedDedupId,
+} from "./ids/event-id";
+export type { LeadEmissionLedgerPort } from "./leads/lead-emission";
+export {
+  LEAD_CLAIM_TTL_SECONDS,
+  leadEmissionKey,
+  decideLeadEmission,
+  extendLeadClaim,
+  InMemoryLeadEmissionLedger,
+} from "./leads/lead-emission";
 
 // --- Delivery: destination contracts + Registry ports ---------------------
 export type {

@@ -123,7 +123,7 @@ export type CollectorOutcome =
 
 /** A visitor id outlives sessions; a session id rolls after inactivity. Both first-party. */
 const VISITOR_TTL_SECONDS = 400 * 24 * 60 * 60; // 400d — the browser cap for a Set-Cookie lifetime
-const SESSION_TTL_SECONDS = 30 * 60;
+export const SESSION_TTL_SECONDS = 30 * 60;
 
 /** The shape the browser SDK posts. Every field is untrusted and optional until validated. */
 interface CollectorBody {
