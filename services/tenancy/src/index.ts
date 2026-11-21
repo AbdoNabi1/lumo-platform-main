@@ -1,4 +1,5 @@
-export { wireTenancy } from "./composition";
+export { wireTenancy, wireTenantListing } from "./composition";
+export { ListTenants } from "./application/list-tenants.use-case";
 export type { TenancyWiringDeps, TenantAvailability, WiredTenancy } from "./composition";
 export { TenancyController } from "./interfaces/tenancy.controller";
 export type { ControllerResponse } from "./interfaces/presenter";

@@ -16,7 +16,7 @@ import { logger } from "@platform/utils";
 import { AllowAllAccessControl } from "../infrastructure/allow-all-access-control";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
-import { wireAdmin, type AdminWiringDeps } from "../composition";
+import { outreachPlatformScope, wireAdmin, type AdminWiringDeps } from "../composition";
 import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
@@ -165,6 +165,9 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     guard,
     tenantResolvers,
     ...(tenantGate === undefined ? {} : { tenantGate }),
+    // Only a `public` + `tenantScope:"platform"` route reads this (Meta's webhook). Under multi a blank value stays
+    // blank, so that route refuses with 403 instead of running as no tenant at all.
+    platformTenantId: outreachPlatformScope({ platformTenantId, tenantId: deps.tenantId }),
     rateLimiter: deps.rateLimiter,
     rateLimit: { limit: 300, windowMs: 60_000 },
     idempotencyKeys: deps.idempotencyKeys,
