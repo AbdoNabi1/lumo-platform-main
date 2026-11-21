@@ -141,4 +141,40 @@ describe("RoleTableAccessControl", () => {
     // "Mark as paid" also needs the money permission, which stays admin-only.
     expect(await acl.authorize(who(["operator"]), "payments:confirm_cod_collection")).toBe(false);
   });
+
+  describe("outreach (Part 1)", () => {
+    const customer: Principal = { id: "c", kind: "customer", roles: ["admin"], tenantId: "t" };
+    const actors: ReadonlyArray<readonly [string, Principal]> = [
+      ["admin", who(["admin"])],
+      ["platform-admin", who(["platform-admin"])],
+      ["operator", who(["operator"])],
+      ["viewer", who(["viewer"])],
+      ["customer", customer],
+      ["unknown role", who(["superuser"])],
+      ["no role", who([])],
+    ];
+    const expected: Readonly<Record<string, readonly [boolean, boolean, boolean]>> = {
+      // [read, manage, send]
+      admin: [true, true, true],
+      "platform-admin": [true, true, true],
+      operator: [true, false, true],
+      viewer: [true, false, false],
+      customer: [false, false, false],
+      "unknown role": [false, false, false],
+      "no role": [false, false, false],
+    };
+    it.each(actors)("%s × outreach read / manage / send", async (name, principal) => {
+      expect.hasAssertions();
+      const want = expected[name] ?? [false, false, false];
+      expect(await acl.authorize(principal, "outreach:read")).toBe(want[0]);
+      expect(await acl.authorize(principal, "outreach:manage")).toBe(want[1]);
+      expect(await acl.authorize(principal, "outreach:send")).toBe(want[2]);
+    });
+
+    it("the webhook permission is not granted to any staff role but admin", async () => {
+      expect.hasAssertions();
+      expect(await acl.authorize(who(["operator"]), "outreach:record_webhook")).toBe(false);
+      expect(await acl.authorize(who(["viewer"]), "outreach:record_webhook")).toBe(false);
+    });
+  });
 });
