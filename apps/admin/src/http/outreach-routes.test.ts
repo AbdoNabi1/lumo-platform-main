@@ -687,6 +687,43 @@ describe("exact 409 envelopes (feature conflicts keep the CONFLICT code with the
     expect(status.json<{ status: string }>().status).toBe("connected");
   });
 
+  it("abandon on a connected shop is the 409 ONBOARDING_NOT_ACTIVE envelope (round 3 route)", async () => {
+    expect.hasAssertions();
+    const h = await fresh("single");
+    expect((await connect(h)).statusCode).toBe(200);
+    const res = await h.app.inject({
+      method: "POST",
+      url: "/api/v1/outreach/whatsapp/onboarding/abandon",
+      headers: { ...h.as("admin"), "idempotency-key": key() },
+      payload: { expectedVersion: 0 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual(conflict("ONBOARDING_NOT_ACTIVE"));
+  });
+
+  it("the templates list carries `supported` and `sendShape` (round 2 DTO)", async () => {
+    expect.hasAssertions();
+    const h = await fresh("single");
+    h.whatsapp.templates = [approvedTemplate];
+    expect((await connect(h)).statusCode).toBe(200);
+    await h.app.inject({
+      method: "POST",
+      url: "/api/v1/outreach/whatsapp/templates/sync",
+      headers: { ...h.as("admin"), "idempotency-key": key() },
+    });
+    const res = await h.app.inject({
+      method: "GET",
+      url: "/api/v1/outreach/whatsapp/templates",
+      headers: h.as("viewer"),
+    });
+    const [template] = res.json<Array<Record<string, unknown>>>();
+    expect(template).toMatchObject({
+      name: "order_shipped",
+      supported: true,
+      sendShape: { bodyVariableCount: 1, headerHasVariable: false, buttons: [] },
+    });
+  });
+
   it("template issues are 422 VALIDATION with fields:[{field, message:<issue code>}]", async () => {
     expect.hasAssertions();
     const h = await fresh("single");
@@ -901,12 +938,10 @@ describe("webhook route handler (unit): signature before the use case", () => {
   it("an infrastructure failure is thrown so Meta retries; a validation error is acknowledged", async () => {
     expect.hasAssertions();
     const text = "{}";
-    const failing = vi
-      .fn()
-      .mockResolvedValue({
-        ok: false,
-        error: Object.assign(new Error("db down"), { code: "UNEXPECTED" }),
-      });
+    const failing = vi.fn().mockResolvedValue({
+      ok: false,
+      error: Object.assign(new Error("db down"), { code: "UNEXPECTED" }),
+    });
     await expect(
       webhookRoutes(failing, APP_SECRET).handle({
         body: {},
@@ -915,12 +950,10 @@ describe("webhook route handler (unit): signature before the use case", () => {
         context: context(text, { "x-hub-signature-256": sign(text) }),
       }),
     ).rejects.toThrow("db down");
-    const invalid = vi
-      .fn()
-      .mockResolvedValue({
-        ok: false,
-        error: Object.assign(new Error("bad"), { code: "VALIDATION" }),
-      });
+    const invalid = vi.fn().mockResolvedValue({
+      ok: false,
+      error: Object.assign(new Error("bad"), { code: "VALIDATION" }),
+    });
     const res = await webhookRoutes(invalid, APP_SECRET).handle({
       body: {},
       params: undefined,
