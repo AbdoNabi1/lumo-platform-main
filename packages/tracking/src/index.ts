@@ -224,6 +224,15 @@ export {
   stagePrecedes,
 } from "./pipeline/hashing";
 
+// --- Lead-site plan B — per-platform match keys ----------------------------
+export type { MatchPlatform, PlatformMatchKeys } from "./pipeline/platform-identity";
+export {
+  splitFullName,
+  emailForPlatform,
+  phoneForPlatform,
+  platformMatchKeys,
+} from "./pipeline/platform-identity";
+
 // --- Delivery: destination contracts + Registry ports ---------------------
 export type {
   DestinationKey,
