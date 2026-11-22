@@ -4961,6 +4961,7 @@ export const en = {
     onboardingBody: "Your WhatsApp setup was started but not completed.",
     reconciliationCancelHint:
       "Started with a different number? Cancel this setup and start again with the number you want.",
+    connectionTitle: "Connection",
     statusConnected: "Connected",
     statusError: "Needs attention",
     statusOnboarding: "Setup in progress",

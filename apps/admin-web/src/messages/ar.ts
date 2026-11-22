@@ -4718,6 +4718,7 @@ export const ar: Dictionary = {
     onboardingTitle: "الإعداد لسه ماخلصش.",
     onboardingBody: "إعداد WhatsApp بدأ بس ماكملش.",
     reconciliationCancelHint: "بدأت برقم تاني؟ الغي الإعداد ده وابدأ من جديد بالرقم اللي عايزه.",
+    connectionTitle: "الربط",
     statusConnected: "مربوط",
     statusError: "محتاج انتباه",
     statusOnboarding: "الإعداد شغّال",
