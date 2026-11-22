@@ -331,6 +331,24 @@ export async function registerRoutes(
   };
 
   for (const route of routes) {
+    if (route.rawJsonBody === true) {
+      // An encapsulated JSON parser that only captures the bytes: ONLY this route skips `JSON.parse` (the handler
+      // authenticates the buffer, then decodes once). The server's body limit still applies (no `bodyLimit` override).
+      await app.register((scope, _options, done) => {
+        scope.removeContentTypeParser("application/json");
+        scope.addContentTypeParser(
+          "application/json",
+          { parseAs: "buffer" },
+          (request, body: Buffer, parsed) => {
+            request.rawBody = body;
+            parsed(null, undefined);
+          },
+        );
+        addRoute(scope, route);
+        done();
+      });
+      continue;
+    }
     const binary = route.binaryBody;
     if (binary === undefined) {
       addRoute(app, route);

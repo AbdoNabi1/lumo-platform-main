@@ -100,6 +100,14 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
     readonly maxBytes: number;
     readonly contentTypes: readonly string[];
   };
+  /**
+   * A signed JSON ingress (Meta's webhook): when `true` the transport does NOT parse the body. The exact wire bytes
+   * arrive as `context.rawBody` and `body` is `undefined`; the handler must authenticate the bytes FIRST and only then
+   * `JSON.parse` them (so malformed unsigned input is rejected as unauthenticated, never as a parser error). The route
+   * gets its own encapsulated `application/json` parser; every other route keeps the shared one, and the body limit
+   * is the server's. Leave `schema.body` unset.
+   */
+  readonly rawJsonBody?: boolean;
   readonly summary: string;
   readonly schema: {
     readonly body?: z.ZodType<TBody>;
