@@ -1,5 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { signUpMerchant, signupEnabled, type SignupCountry } from "@/lib/auth/merchant";
+import {
+  SITE_TYPE_VALUES,
+  signUpMerchant,
+  signupEnabled,
+  type SignupCountry,
+} from "@/lib/auth/merchant";
 import { isNativeAuth, nativeTenantId } from "@/lib/auth/native";
 import { setSessionCookie } from "@/lib/auth/session-cookie";
 import { requireProdEnv } from "@/lib/env";
@@ -32,6 +37,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const email = field(form, "email").trim();
   const password = field(form, "password");
   const country = COUNTRIES.find((code) => code === field(form, "country"));
+  const siteType = SITE_TYPE_VALUES.find((value) => value === field(form, "siteType"));
   if (
     storeName.length < 2 ||
     storeName.length > 60 ||
@@ -41,6 +47,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   ) {
     return back(origin, "invalid");
   }
+  if (siteType === undefined) return back(origin, "site-type");
   const result = await signUpMerchant({
     runtimeUrl: requireProdEnv("RUNTIME_API_URL", "http://localhost:3080"),
     tenantId: nativeTenantId(),
@@ -48,6 +55,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     email,
     password,
     country,
+    siteType,
   });
   if (!result.ok) return back(origin, result.reason);
   if ("signInRequired" in result) {

@@ -9,6 +9,10 @@ import type { ExchangeResult } from "./native";
 
 export type SignupCountry = "EG" | "SA" | "AE";
 
+/** What the merchant is building. Fixed for the life of the shop; mirrors the sign-up API's `siteType`. */
+export const SITE_TYPE_VALUES = ["store", "lead_site"] as const;
+export type SiteType = (typeof SITE_TYPE_VALUES)[number];
+
 export type SignupResult =
   | { readonly ok: true; readonly token: string; readonly expiresIn: number }
   | { readonly ok: true; readonly signInRequired: true }
@@ -92,6 +96,7 @@ export async function signUpMerchant(input: {
   readonly email: string;
   readonly password: string;
   readonly country: SignupCountry;
+  readonly siteType: SiteType;
   readonly fetchImpl?: typeof fetch;
 }): Promise<SignupResult> {
   const reply = await post(
@@ -102,6 +107,7 @@ export async function signUpMerchant(input: {
       email: input.email,
       password: input.password,
       country: input.country,
+      siteType: input.siteType,
     },
     input.fetchImpl,
   );
