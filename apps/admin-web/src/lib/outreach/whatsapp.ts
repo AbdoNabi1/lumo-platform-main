@@ -97,3 +97,15 @@ export const PHONE_PATTERN = /^\+?[0-9][0-9 ()-]{6,19}$/;
 
 /** A decimal Meta asset id, as the connect route accepts it. */
 export const META_ID_PATTERN = /^\d{1,64}$/;
+
+/**
+ * A fresh idempotency key for one test-send submission, made in the browser (it has to outlive a retry, so the server
+ * action cannot make it). 36 characters of `[0-9a-f-]`.
+ */
+export function newClientKey(): string {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi.randomUUID === "function") return cryptoApi.randomUUID();
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
