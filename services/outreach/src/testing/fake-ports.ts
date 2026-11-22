@@ -190,6 +190,8 @@ export class FakeVault implements OutreachCredentialVault {
   readonly backing = "stub" as const;
   failSeal = false;
   failOpen = false;
+  /** One-shot barrier: the NEXT `open` waits for it (to interleave another actor during the vault read). */
+  openGate: Promise<void> | undefined;
   readonly sealCalls: Array<Readonly<Record<string, string>>> = [];
 
   seal(
@@ -203,6 +205,18 @@ export class FakeVault implements OutreachCredentialVault {
   }
 
   open(
+    tenantId: string,
+    purpose: "whatsapp",
+    sealed: string,
+  ): Promise<Readonly<Record<string, string>>> {
+    const gate = this.openGate;
+    this.openGate = undefined;
+    // No gate: exactly the original (synchronous) promise, so the microtask timing other tests rely on is unchanged.
+    if (gate !== undefined) return gate.then(() => this.read(tenantId, purpose, sealed));
+    return this.read(tenantId, purpose, sealed);
+  }
+
+  private read(
     tenantId: string,
     _purpose: "whatsapp",
     sealed: string,

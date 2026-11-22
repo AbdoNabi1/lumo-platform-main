@@ -149,18 +149,23 @@ export class ConnectWhatsApp implements UseCase<
     // may be sealed for the first time.
     const needsSealedCredentials =
       kind === "reconnect" || (kind === "resume" && stageAtStart !== null);
-    const sealedSecrets =
+    const opensVault =
       (kind === "resume" || kind === "reconnect") &&
       prior !== null &&
-      prior.sealedCredentials !== ""
-        ? await openSecrets(deps, tenantId, prior.sealedCredentials)
-        : null;
+      prior.sealedCredentials !== "";
+    const sealedSecrets = opensVault
+      ? await openSecrets(deps, tenantId, prior.sealedCredentials)
+      : null;
     if (
       needsSealedCredentials &&
       (sealedSecrets === null || !PIN_PATTERN.test(sealedSecrets.pin))
     ) {
       return fail("CREDENTIALS_UNAVAILABLE");
     }
+
+    // The vault read was asynchronous: an abandon or a takeover meanwhile must stop this owner BEFORE it spends the
+    // one-time signup code (the check also renews the lease).
+    if (opensVault && (await this.write(lease, () => ({}))) === "lost") return stop();
 
     // 2. Exchange the fresh code. A resume may continue with its sealed token when the code is unusable.
     const exchanged = await meta(() => whatsapp.exchangeCode(input.code.trim()));
@@ -354,6 +359,10 @@ export class ConnectWhatsApp implements UseCase<
             ONBOARDING_LEASE_MS,
             tx,
           );
+          // A disconnected row retains the windows of ITS number. The moment its assets are overwritten with
+          // different ones (here, in the same transaction), the row forgets that number, so a retry could no longer
+          // tell it was a switch: this is the last place that can clear them. Same assets keep their windows.
+          if (row !== null && !same) await deps.contacts.clearSessionWindows(tenantId, tx);
         } else if (kind === "resume") {
           await deps.connections.acquireOnboardingLease(
             { ...row, ...leaseFields, onboardingAttemptId: attemptId },
