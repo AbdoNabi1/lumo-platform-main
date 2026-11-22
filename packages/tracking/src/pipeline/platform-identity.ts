@@ -56,6 +56,10 @@ export function splitFullName(full: string | undefined): {
 /**
  * Google Ads: gmail/googlemail lose every `.` and the first `+` with everything after it in the
  * local part. GA4: same domains, dots only. Everything else is returned unchanged.
+ *
+ * The result can have an empty local part (`+one@gmail.com` for Google Ads, `...@gmail.com` for
+ * either) and then reads `@gmail.com`. That string is returned as-is; `platformMatchKeys` guards
+ * it and never hashes it.
  */
 export function emailForPlatform(email: string, platform: MatchPlatform): string {
   if (platform !== "google_ads" && platform !== "ga4") return email;
@@ -119,7 +123,12 @@ export async function platformMatchKeys(
   const hash = (value: string): Promise<string> => hasher.sha256Hex(value);
   const keys: { -readonly [K in keyof PlatformMatchKeys]: PlatformMatchKeys[K] } = {};
 
-  if (email !== undefined) keys.em = await hash(emailForPlatform(email, platform));
+  if (email !== undefined) {
+    // `emailForPlatform` can leave a domain-only string (`@gmail.com`) that every such visitor
+    // would share; with no local part there is nothing to match on, so omit `em`.
+    const formatted = emailForPlatform(email, platform);
+    if (formatted.slice(0, formatted.lastIndexOf("@")) !== "") keys.em = await hash(formatted);
+  }
   if (phone !== undefined) keys.ph = await hash(phoneForPlatform(phone, platform));
 
   if (addressAllowed) {

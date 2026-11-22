@@ -121,6 +121,47 @@ describe("platform-identity", () => {
       expect(emailForPlatform("jane.doe+x@example.com", p)).toBe("jane.doe+x@example.com");
     },
   );
+  describe("an empty platform-formatted local part is never hashed", () => {
+    const spyHasher = (): { hasher: HashPort; seen: string[] } => {
+      const seen: string[] = [];
+      return {
+        seen,
+        hasher: {
+          sha256Hex: async (s) => {
+            seen.push(s);
+            return nodeSha256.sha256Hex(s);
+          },
+        },
+      };
+    };
+    const withEmail = (email: string) =>
+      normalizeIdentity({ email, phone: "01012345678" }, { defaultCountryCode: "20" });
+
+    it("google_ads: +one@gmail.com has no em, keeps ph, and @gmail.com is never hashed", async () => {
+      const { hasher, seen } = spyHasher();
+      const keys = await platformMatchKeys("google_ads", withEmail("+one@gmail.com"), hasher);
+      expect(Object.hasOwn(keys, "em")).toBe(false);
+      expect(keys.ph).toBe(await sha("+201012345678"));
+      expect(seen).not.toContain("@gmail.com");
+    });
+    it("ga4: a dots-only local part (...@gmail.com) has no em and no domain-only hash", async () => {
+      const { hasher, seen } = spyHasher();
+      const keys = await platformMatchKeys("ga4", withEmail("...@gmail.com"), hasher);
+      expect(Object.hasOwn(keys, "em")).toBe(false);
+      expect(keys.ph).toBeDefined();
+      expect(seen.every((value) => !value.startsWith("@"))).toBe(true);
+    });
+    it("meta keeps +one@gmail.com verbatim", async () => {
+      const keys = await platformMatchKeys("meta", withEmail("+one@gmail.com"), nodeSha256);
+      expect(keys.em).toBe(await sha("+one@gmail.com"));
+    });
+    it("google_ads: +one@gmail.com and +two@gmail.com cannot collide (neither gets em)", async () => {
+      const one = await platformMatchKeys("google_ads", withEmail("+one@gmail.com"), nodeSha256);
+      const two = await platformMatchKeys("google_ads", withEmail("+two@gmail.com"), nodeSha256);
+      expect(Object.hasOwn(one, "em")).toBe(false);
+      expect(Object.hasOwn(two, "em")).toBe(false);
+    });
+  });
   it("a blank external id is omitted, not hashed", async () => {
     const id = normalizeIdentity({ email: "a@b.com", externalId: "   " });
     expect((await platformMatchKeys("tiktok", id, nodeSha256)).externalId).toBeUndefined();
