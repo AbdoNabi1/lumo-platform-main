@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildSetupSteps, setupGuideVisible, setupProgress, type SetupFacts } from "./setup-guide";
 
 const NOTHING: SetupFacts = {
+  siteType: "store",
   productCount: 0,
   shippingZoneCount: 0,
   enabledPaymentMethods: 0,
@@ -10,6 +11,7 @@ const NOTHING: SetupFacts = {
 };
 
 const EVERYTHING: SetupFacts = {
+  siteType: "store",
   productCount: 1,
   shippingZoneCount: 2,
   enabledPaymentMethods: 1,
@@ -30,6 +32,45 @@ describe("buildSetupSteps", () => {
       ["domain", "/settings/domains"],
       ["order", "/orders"],
     ]);
+  });
+
+  it("lists the store steps for a store, in order", () => {
+    expect(buildSetupSteps({ ...NOTHING, siteType: "store" }).map((step) => step.id)).toEqual([
+      "product",
+      "shipping",
+      "payments",
+      "theme",
+      "domain",
+      "order",
+    ]);
+  });
+
+  it("lists only the theme and domain steps for a lead site", () => {
+    expect(buildSetupSteps({ ...NOTHING, siteType: "lead_site" }).map((step) => step.id)).toEqual([
+      "theme",
+      "domain",
+    ]);
+  });
+
+  it("lists only the theme and domain steps when the site type is unknown", () => {
+    expect(buildSetupSteps({ ...NOTHING, siteType: null }).map((step) => step.id)).toEqual([
+      "theme",
+      "domain",
+    ]);
+  });
+
+  it("counts one tracked task for a lead site and follows the visibility rules", () => {
+    const lead = buildSetupSteps({ ...NOTHING, siteType: "lead_site" });
+    expect(setupProgress(lead)).toEqual({ done: 0, total: 1 });
+    expect(setupGuideVisible(lead, null)).toBe(true);
+    expect(setupGuideVisible(lead, "2026-10-17T10:00:00.000Z")).toBe(false);
+    const done = buildSetupSteps({
+      ...NOTHING,
+      siteType: "lead_site",
+      hasVerifiedCustomDomain: true,
+    });
+    expect(setupProgress(done)).toEqual({ done: 1, total: 1 });
+    expect(setupGuideVisible(done, null)).toBe(false);
   });
 
   it("marks nothing done for a brand new store, and leaves the theme untracked", () => {
@@ -56,6 +97,7 @@ describe("buildSetupSteps", () => {
 
   it("treats a fact that could not be loaded as not done", () => {
     const unknown: SetupFacts = {
+      siteType: "store",
       productCount: null,
       shippingZoneCount: null,
       enabledPaymentMethods: null,
@@ -113,6 +155,7 @@ describe("setupGuideVisible", () => {
 
   it("does not hide because facts failed to load", () => {
     const unknown = buildSetupSteps({
+      siteType: "store",
       productCount: null,
       shippingZoneCount: null,
       enabledPaymentMethods: null,

@@ -31,6 +31,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const NOTHING: SetupFacts = {
+  siteType: "store",
   productCount: 0,
   shippingZoneCount: 0,
   enabledPaymentMethods: 0,

@@ -61,7 +61,9 @@ export async function SetupGuideSection({
     fact(async () => fetchStoreSettings()),
   ]);
 
+  const storeSettings = settings?.outcome === "ok" ? settings.settings : null;
   const facts: SetupFacts = {
+    siteType: storeSettings === null ? null : (storeSettings.siteType ?? "store"),
     productCount: products,
     shippingZoneCount: zones,
     enabledPaymentMethods: payments,
@@ -69,7 +71,6 @@ export async function SetupGuideSection({
     orderCount: orders,
   };
   const steps = buildSetupSteps(facts);
-  const storeSettings = settings?.outcome === "ok" ? settings.settings : null;
   const visible = setupGuideVisible(steps, storeSettings?.setupGuideDismissedAt);
   // A viewer/operator cannot read (so cannot write) store settings: keep the guide, drop Dismiss.
   const canDismiss = settings?.outcome !== "unauthorized";

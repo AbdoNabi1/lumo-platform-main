@@ -18,6 +18,8 @@ export interface SetupStep {
  * then reads as not done, so a failed request neither hides the guide nor breaks Home.
  */
 export interface SetupFacts {
+  /** `null` = the store settings could not be read. */
+  readonly siteType: "store" | "lead_site" | null;
   readonly productCount: number | null;
   readonly shippingZoneCount: number | null;
   readonly enabledPaymentMethods: number | null;
@@ -29,8 +31,14 @@ function atLeastOne(count: number | null): boolean {
   return count !== null && count > 0;
 }
 
-/** The steps in Shopify's order. */
+/** The steps in Shopify's order; only a store gets the commerce steps (lead site / unknown: theme, domain). */
 export function buildSetupSteps(facts: SetupFacts): SetupStep[] {
+  if (facts.siteType !== "store") {
+    return [
+      { id: "theme", done: null, href: "/theme" },
+      { id: "domain", done: facts.hasVerifiedCustomDomain === true, href: "/settings/domains" },
+    ];
+  }
   return [
     { id: "product", done: atLeastOne(facts.productCount), href: "/products/new" },
     { id: "shipping", done: atLeastOne(facts.shippingZoneCount), href: "/settings/shipping" },
