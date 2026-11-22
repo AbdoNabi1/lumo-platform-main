@@ -331,16 +331,24 @@ async function postItem<T>(
   }
 }
 
-/** What the storefront may know about the shop without signing in (Plan 3C): its name and currency. */
+/** What the storefront may know about the shop without signing in (Plan 3C): its name, currency and site type. */
 export interface PublicStore {
   readonly name: string;
   /** The store currency (ISO 4217): every price, cart and order of the shop is in it. */
   readonly currency: string;
+  /** Fixed at sign-up: an online store, or a lead website that takes enquiries instead of orders. */
+  readonly siteType: "store" | "lead_site";
 }
 
-/** The shop's name and currency (`GET /public/store`); `null` when the Runtime API cannot answer. */
+/**
+ * The shop's name, currency and site type (`GET /public/store`); `null` when the Runtime API cannot
+ * answer or names a site type this storefront does not know. A body without `siteType` (an older
+ * runtime) is a store.
+ */
 export async function getPublicStore(): Promise<PublicStore | null> {
-  const response = await fetchItem<PublicStore>("/api/v1/public/store");
+  const response = await fetchItem<Omit<PublicStore, "siteType"> & { siteType?: unknown }>(
+    "/api/v1/public/store",
+  );
   const body = response.body;
   if (
     response.status !== 200 ||
@@ -350,7 +358,9 @@ export async function getPublicStore(): Promise<PublicStore | null> {
   ) {
     return null;
   }
-  return { name: body.name, currency: body.currency };
+  const siteType = body.siteType === undefined ? "store" : body.siteType;
+  if (siteType !== "store" && siteType !== "lead_site") return null;
+  return { name: body.name, currency: body.currency, siteType };
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   ScryptPasswordHasher,
 } from "@platform/security";
 import { wireAdmin, type WiredAdmin } from "../composition";
+import type { SiteType } from "@platform/tenancy";
 import { MerchantOnboarding, type SignupInput } from "./merchant-onboarding";
 
 const PLATFORM = "platform";
@@ -122,6 +123,7 @@ const nour: SignupInput = {
   email: "Owner@Nour.test",
   password: "correct-horse-1",
   country: "SA",
+  siteType: "store",
 };
 
 describe("MerchantOnboarding.signUp", () => {
@@ -133,6 +135,7 @@ describe("MerchantOnboarding.signUp", () => {
     expect(outcome.kind).toBe("created");
     if (outcome.kind !== "created") return;
     expect(outcome.storeUrl).toBe("https://nour-store.morbeh.test");
+    expect(outcome.siteType).toBe("store");
     expect(outcome.session.status).toBe(200);
     expect(outcome.session.body).toHaveProperty("accessToken");
 
@@ -226,6 +229,171 @@ describe("MerchantOnboarding.signUp", () => {
     expect(second.session.status).toBe(200);
     expect(await tenantCount(admin)).toBe(count);
     expect((await real.findEntry("owner@nour.test"))?.status).toBe("active");
+  });
+
+  describe("site type", () => {
+    /** The real ports, with the steps around settlement recorded in the order they run. */
+    function recording(admin: WiredAdmin) {
+      const real = admin.merchantOnboarding.ports;
+      const calls: string[] = [];
+      const settled: [string, string][] = [];
+      const ports = {
+        ...real,
+        provision: async (tenantId: string, owner: string) => {
+          calls.push("provision");
+          return real.provision(tenantId, owner);
+        },
+        settleSiteType: async (tenantId: string, siteType: SiteType) => {
+          calls.push("settleSiteType");
+          settled.push([tenantId, siteType]);
+          return real.settleSiteType(tenantId, siteType);
+        },
+        setOwnerPassword: async (...args: Parameters<typeof real.setOwnerPassword>) => {
+          calls.push("setOwnerPassword");
+          return real.setOwnerPassword(...args);
+        },
+      };
+      return { real, calls, settled, ports };
+    }
+    const storedType = async (admin: WiredAdmin, tenantId: string) =>
+      (await admin.tenancy.getStoreSettings(operator, tenantId)).body as { siteType: SiteType };
+
+    it("settles the chosen type after provision and before the owner's password", async () => {
+      const { admin } = await setup();
+      const { calls, settled, ports } = recording(admin);
+      const warn = vi.spyOn(ports.logger, "warn");
+
+      const outcome = await new MerchantOnboarding(ports).signUp({
+        ...nour,
+        siteType: "lead_site",
+      });
+
+      expect(outcome.kind).toBe("created");
+      if (outcome.kind !== "created") return;
+      expect(calls).toEqual(["provision", "settleSiteType", "setOwnerPassword"]);
+      expect(settled).toEqual([[outcome.tenantId, "lead_site"]]);
+      expect(outcome.siteType).toBe("lead_site");
+      expect(await storedType(admin, outcome.tenantId)).toMatchObject({ siteType: "lead_site" });
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it("applies the retrier's choice when the first attempt stopped before settlement", async () => {
+      const { admin } = await setup();
+      const { real, settled, ports } = recording(admin);
+      let failures = 1;
+      const onboarding = new MerchantOnboarding({
+        ...ports,
+        provision: async (tenantId, owner) => {
+          if (failures > 0) {
+            failures -= 1;
+            return false;
+          }
+          return real.provision(tenantId, owner);
+        },
+      });
+
+      const first = await onboarding.signUp({ ...nour, siteType: "lead_site" });
+      expect(first).toEqual({ kind: "unavailable", reason: "provisioning-incomplete" });
+      expect(settled).toEqual([]);
+
+      const second = await onboarding.signUp({ ...nour, siteType: "store" });
+
+      expect(second.kind).toBe("created");
+      if (second.kind !== "created") return;
+      expect(settled).toEqual([[second.tenantId, "store"]]);
+      expect(second.siteType).toBe("store");
+      expect(await storedType(admin, second.tenantId)).toMatchObject({ siteType: "store" });
+    });
+
+    it("keeps the first type, and warns once, when the first attempt failed after settlement", async () => {
+      const { admin } = await setup();
+      const { real, ports } = recording(admin);
+      const warn = vi.spyOn(ports.logger, "warn");
+      let failures = 1;
+      const onboarding = new MerchantOnboarding({
+        ...ports,
+        startTrial: async (tenantRef, planVersionRef) => {
+          if (failures > 0) {
+            failures -= 1;
+            throw new Error("crashed after settling the site type");
+          }
+          return real.startTrial(tenantRef, planVersionRef);
+        },
+      });
+
+      await expect(onboarding.signUp({ ...nour, siteType: "lead_site" })).rejects.toThrow(
+        "crashed",
+      );
+      expect(warn).not.toHaveBeenCalled();
+      const second = await onboarding.signUp({ ...nour, siteType: "store" });
+
+      expect(second.kind).toBe("created");
+      if (second.kind !== "created") return;
+      expect(second.siteType).toBe("lead_site");
+      expect(await storedType(admin, second.tenantId)).toMatchObject({ siteType: "lead_site" });
+      const warned = warn.mock.calls.filter(([message]) =>
+        String(message).includes("site type already settled"),
+      );
+      expect(warned).toEqual([
+        ["merchant signup: site type already settled; keeping it", { tenantId: second.tenantId }],
+      ]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockRestore();
+    });
+
+    it("two overlapping resumes with opposite choices end on one persisted type", async () => {
+      // The e2e builds its ports inside `createAdminHttpApi`, so it cannot pause one: the overlap
+      // is driven here, on the real ports with the first resume's settle held back.
+      const { admin } = await setup();
+      const real = admin.merchantOnboarding.ports;
+      let failures = 1;
+      const seed = new MerchantOnboarding({
+        ...real,
+        provision: async (tenantId, owner) => {
+          if (failures > 0) {
+            failures -= 1;
+            return false;
+          }
+          return real.provision(tenantId, owner);
+        },
+      });
+      expect(await seed.signUp({ ...nour, siteType: "store" })).toEqual({
+        kind: "unavailable",
+        reason: "provisioning-incomplete",
+      });
+      const pending = await real.findEntry("owner@nour.test");
+      expect(pending?.status).toBe("pending");
+
+      let reachedSettle!: () => void;
+      const atSettle = new Promise<void>((resolve) => (reachedSettle = resolve));
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const first = new MerchantOnboarding({
+        ...real,
+        settleSiteType: async (tenantId, siteType) => {
+          reachedSettle();
+          await held;
+          return real.settleSiteType(tenantId, siteType);
+        },
+      });
+
+      const firstDone = first.signUp({ ...nour, siteType: "lead_site" });
+      await atSettle;
+      const second = await new MerchantOnboarding(real).signUp({ ...nour, siteType: "store" });
+      expect((await real.findEntry("owner@nour.test"))?.status).toBe("active");
+      release();
+      const firstOutcome = await firstDone;
+
+      expect(second.kind).toBe("created");
+      expect(firstOutcome.kind).toBe("created");
+      if (second.kind !== "created" || firstOutcome.kind !== "created") return;
+      expect(second.tenantId).toBe(pending?.shopId);
+      expect(firstOutcome.tenantId).toBe(pending?.shopId);
+      expect(second.siteType).toBe("store");
+      expect(firstOutcome.siteType).toBe("store");
+      expect(await storedType(admin, second.tenantId)).toMatchObject({ siteType: "store" });
+    });
   });
 
   it("resumes a trial that was created but never activated", async () => {

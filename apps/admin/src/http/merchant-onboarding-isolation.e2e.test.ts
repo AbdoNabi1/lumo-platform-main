@@ -202,8 +202,14 @@ describe("two self-serve stores stay apart (merchant onboarding)", () => {
       headers: { "content-type": "application/json", "x-tenant-id": PLATFORM },
       payload: payload as object,
     });
-  const signUp = (storeName: string, email: string) =>
-    publicPost("/public/merchant-signup", { storeName, email, password: PASSWORD, country: "EG" });
+  const signUp = (storeName: string, email: string, siteType: "store" | "lead_site" = "store") =>
+    publicPost("/public/merchant-signup", {
+      storeName,
+      email,
+      password: PASSWORD,
+      country: "EG",
+      siteType,
+    });
 
   async function signUpStore(storeName: string, email: string): Promise<Store> {
     const res = await signUp(storeName, email);
@@ -443,6 +449,7 @@ describe("a self-signed-up merchant under the real role table (native auth)", ()
         email: "owner@gamma.test",
         password: PASSWORD,
         country: "EG",
+        siteType: "store",
       },
     });
     expect(res.statusCode).toBe(201);
@@ -474,5 +481,63 @@ describe("a self-signed-up merchant under the real role table (native auth)", ()
   it("is refused the process-wide security telemetry reads (403)", async () => {
     expect((await as("GET", "/security/console/analytics")).statusCode).toBe(403);
     expect((await as("GET", "/security/console/risk-explorer")).statusCode).toBe(403);
+  });
+});
+
+/**
+ * The site type is chosen once, at sign-up, and nothing the owner can reach afterwards moves it: the
+ * settings form's body is stripped to its five fields, so a `siteType` smuggled into the save is ignored.
+ */
+describe("a lead website's type survives the owner's own settings save", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    let licensing: WiredLicensing;
+    ({ app, licensing } = await boot());
+    await seedBasicPlan(licensing);
+  });
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it("keeps lead_site when PUT /store/settings carries siteType store", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `${API}/public/merchant-signup`,
+      headers: { "content-type": "application/json", "x-tenant-id": PLATFORM },
+      payload: {
+        storeName: "Gamma Clinic",
+        email: "owner@gamma.test",
+        password: PASSWORD,
+        country: "EG",
+        siteType: "lead_site",
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { accessToken: string; siteType: string };
+    expect(body.siteType).toBe("lead_site");
+    const auth = {
+      authorization: `Bearer ${body.accessToken}`,
+      "content-type": "application/json",
+    };
+
+    const saved = await app.inject({
+      method: "PUT",
+      url: `${API}/store/settings`,
+      headers: auth,
+      payload: {
+        storeName: "Gamma Clinic Cairo",
+        contactEmail: "hello@gamma.test",
+        currency: "EGP",
+        timezone: "Africa/Cairo",
+        weightUnit: "kg",
+        siteType: "store",
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+
+    const read = await app.inject({ method: "GET", url: `${API}/store/settings`, headers: auth });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toMatchObject({ storeName: "Gamma Clinic Cairo", siteType: "lead_site" });
   });
 });

@@ -120,6 +120,7 @@ import { wireShipping } from "@platform/shipping";
 import {
   wireTenancy,
   type DnsVerifier,
+  type SiteType,
   type TenancyController,
   type TenantAvailability,
 } from "@platform/tenancy";
@@ -1625,6 +1626,11 @@ function buildMerchantOnboarding(wiring: MerchantOnboardingWiring): MerchantOnbo
         password,
         principalExternalId: ownerExternalId,
       });
+    },
+    settleSiteType: async (tenantId, siteType) => {
+      const r = await tenancy.settleSignupSiteType(tenantId, siteType);
+      expectSuccess(r, "settleSignupSiteType");
+      return (r.body as { siteType: SiteType }).siteType;
     },
     saveStoreSettings: async (tenantId, input) => {
       expectSuccess(await tenancy.updateStoreSettings(tenantId, input), "updateStoreSettings");

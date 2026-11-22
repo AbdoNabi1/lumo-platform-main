@@ -24,6 +24,7 @@ const signupBody = z
       .refine((value) => value.includes("@"), "must be an email address"),
     password: z.string().min(8).max(256),
     country: z.enum(["EG", "SA", "AE"]),
+    siteType: z.enum(["store", "lead_site"]),
   })
   .strict();
 const loginBody = z
@@ -162,11 +163,11 @@ export function publicMerchantRoutes(
             // The reason (missing plan, incomplete provisioning) is for the logs, not the wire.
             return SIGNUP_TEMPORARILY_UNAVAILABLE;
           case "created": {
-            const { tenantId, storeUrl, session } = outcome;
+            const { tenantId, storeUrl, siteType, session } = outcome;
             if (session.status !== 200) {
               // The store exists but the automatic sign-in failed: no token, the client sends the
               // merchant to the login page.
-              return { status: 201, body: { tenantId, storeUrl, signInRequired: true } };
+              return { status: 201, body: { tenantId, storeUrl, siteType, signInRequired: true } };
             }
             const token = session.body as {
               readonly accessToken: string;
@@ -178,6 +179,7 @@ export function publicMerchantRoutes(
               body: {
                 tenantId,
                 storeUrl,
+                siteType,
                 accessToken: token.accessToken,
                 tokenType: token.tokenType,
                 expiresIn: token.expiresIn,

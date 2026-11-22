@@ -178,11 +178,33 @@ describe("cursor-paged reads", () => {
 });
 
 describe("store facts", () => {
-  it("getPublicStore keeps only name and currency", async () => {
-    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP", secret: "x" }));
+  it("getPublicStore keeps only name, currency and siteType", async () => {
+    fetchMock.mockResolvedValue(
+      json({ name: "Shop", currency: "EGP", siteType: "lead_site", extra: 1 }),
+    );
 
-    expect(await api.getPublicStore()).toEqual({ name: "Shop", currency: "EGP" });
+    expect(await api.getPublicStore()).toEqual({
+      name: "Shop",
+      currency: "EGP",
+      siteType: "lead_site",
+    });
     expect(lastCall().url.pathname).toBe("/api/v1/public/store");
+  });
+
+  it("getPublicStore reads an absent siteType (an older runtime) as a store", async () => {
+    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP" }));
+
+    expect(await api.getPublicStore()).toEqual({
+      name: "Shop",
+      currency: "EGP",
+      siteType: "store",
+    });
+  });
+
+  it("getPublicStore returns null for a siteType it does not know", async () => {
+    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP", siteType: "x" }));
+
+    expect(await api.getPublicStore()).toBeNull();
   });
 
   it("getPublicStore returns null for a malformed body or a failure", async () => {
