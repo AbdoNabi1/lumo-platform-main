@@ -466,7 +466,8 @@ async function executeRoute(
   let tenantId: string;
   if (platformScoped) {
     const platformTenantId = deps.platformTenantId;
-    if (platformTenantId === undefined || platformTenantId.length === 0) {
+    // An empty or whitespace-only id is "no platform tenant" (fail closed): it must never be used as a real scope.
+    if (platformTenantId === undefined || platformTenantId.trim().length === 0) {
       throw new AuthorizationError("No platform tenant is configured for this route");
     }
     tenantId = platformTenantId;

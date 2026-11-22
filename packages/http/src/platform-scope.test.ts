@@ -218,17 +218,31 @@ describe("tenantScope: platform (public ingress with no shop on the wire)", () =
     expect(res.json()).toEqual({ tenant: "shop-a" });
   });
 
-  it("fails closed with 403 when no platform tenant is configured (or it is blank)", async () => {
+  it("fails closed with 403 when no platform tenant is configured, or it is empty or only whitespace", async () => {
     expect.hasAssertions();
-    for (const platformTenantId of [undefined, ""]) {
+    for (const platformTenantId of [undefined, "", " ", "   ", "\t\n", "\u00a0"]) {
       const { app, seen } = await boot({ platformTenantId });
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/public/ingress?hub.challenge=1",
+        // a request header never stands in for the missing scope
+        headers: { "x-tenant-id": "victim-shop" },
       });
-      expect(res.statusCode).toBe(403);
+      expect(res.statusCode, JSON.stringify(platformTenantId)).toBe(403);
       expect(seen.contexts).toEqual([]);
     }
+  });
+
+  it("a configured platform tenant is used as is (no trimming of a real id)", async () => {
+    expect.hasAssertions();
+    const { app, seen } = await boot({ platformTenantId: PLATFORM });
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/public/ingress?hub.challenge=1",
+      headers: { "x-tenant-id": "victim-shop" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(seen.contexts.map((c) => c.tenantId)).toEqual([PLATFORM]);
   });
 
   it("refuses to register tenantScope platform on a non-public route", async () => {

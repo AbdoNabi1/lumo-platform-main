@@ -129,7 +129,12 @@ const schema = z
     METRICS_TOKEN: z.string().min(16).optional(),
 
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
-    TENANT_DEFAULT_ID: z.string().default("tenant-local"),
+    // An OMITTED id keeps the default; an explicitly empty or whitespace-only one is a misconfiguration (it would be
+    // the platform scope of the webhook and the deployment tenant) and is refused here instead of being defaulted.
+    TENANT_DEFAULT_ID: z
+      .string()
+      .refine((value) => value.trim().length > 0, "TENANT_DEFAULT_ID must not be blank")
+      .default("tenant-local"),
 
     /** Plan 1A: the zone shops get subdomains under (`<slug>.<this>`). Unset ⇒ no automatic subdomain. */
     PLATFORM_STORE_DOMAIN: z.string().min(3).optional(),
