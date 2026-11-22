@@ -7,7 +7,7 @@
 (~reset 2026-11-21 21:05). Part B starts before Sol's round-3 verdict; Sol reviews round 3 and every finished Part B task
 when it returns, and any finding goes back as a fix round. Part A stays gated on Sol.
 
-**Status:** `OPUS: AGREED · Sol: PENDING (round 3 queued)` (revision 3 — answers plan reviews 1 and 2; see the "Opus triage" sections
+**Status:** `OPUS: AGREED · Sol: AGREED (plan review 3, 2026-11-22)` (revision 3 — answers plan reviews 1 and 2; see the "Opus triage" sections
 at the end of `2026-11-20-lead-site-plan-review-1.md` and `-review-2.md`)
 
 **Goal:** the pure building blocks every later tracking plan uses: correct phone and name normalization for Egyptian and
