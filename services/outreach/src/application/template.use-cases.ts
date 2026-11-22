@@ -233,9 +233,21 @@ export class CreateTemplate implements UseCase<CreateTemplateInput, TemplateDto,
           tx,
         );
         if (replaced !== "applied") {
-          // A sync that already adopted the very template we just created is a success, not a conflict.
-          return existing.metaTemplateId === created.value.id
-            ? ok(templateDto(existing))
+          // `existing` is the pre-CAS DELETED tombstone: it is NEVER an answer. A sync that adopted the very template we
+          // just created is a success only when the scoped key is re-read now and holds a LIVE row with the expected
+          // local id and the newly returned provider id (no event: the adopter emitted it).
+          const current = await deps.templates.findByNameLanguage(
+            tenantId,
+            snapshot.wabaId,
+            record.name,
+            record.language,
+            tx,
+          );
+          return current !== null &&
+            current.id === existing.id &&
+            current.status !== "DELETED" &&
+            current.metaTemplateId === created.value.id
+            ? ok(templateDto(current))
             : err(conflict("TEMPLATE_ALREADY_EXISTS"));
         }
         await emitTemplateChange(deps, tx, tenantId, snapshot.wabaId, {

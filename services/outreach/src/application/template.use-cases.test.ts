@@ -452,6 +452,74 @@ describe("CreateTemplate — replacing a DELETED tombstone (I7) and a stable agg
     expect(kit.events.calls).toHaveLength(0);
   });
 
+  it("provider id REUSED + a revision bump on the tombstone: TEMPLATE_ALREADY_EXISTS, never the stale tombstone as success, no event", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const tombstone = await seedTombstone(kit);
+    kit.whatsapp.set("createTemplate", () => {
+      kit.mem.store.templates.set(
+        tombstone.id,
+        { ...tombstone, revision: tombstone.revision + 1, version: tombstone.version + 1 },
+        undefined,
+      );
+      // Meta handed back the SAME provider id the tombstone carries
+      return { id: "meta-old", status: "PENDING", category: "UTILITY" };
+    });
+    expect(
+      errorOf(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft })).message,
+    ).toBe("TEMPLATE_ALREADY_EXISTS");
+    expect(kit.mem.store.templates.values()[0]).toMatchObject({
+      metaTemplateId: "meta-old",
+      status: "DELETED",
+    });
+    expect(kit.events.calls).toHaveLength(0);
+  });
+
+  it("a sync that adopted the very template just created (live row, same local and new provider id) is an idempotent success without a second event", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const tombstone = await seedTombstone(kit);
+    kit.whatsapp.set("createTemplate", () => ({
+      id: "meta-NEW",
+      status: "PENDING",
+      category: "UTILITY",
+    }));
+    // The adopting sync lands between the use case's read of the tombstone and its CAS (inside the transaction).
+    const real = kit.mem.templates;
+    kit.deps.templates = new Proxy(real, {
+      get(target, prop) {
+        if (prop === "replaceTombstone") {
+          return (...args: Parameters<typeof real.replaceTombstone>) => {
+            kit.mem.store.templates.set(
+              tombstone.id,
+              {
+                ...tombstone,
+                metaTemplateId: "meta-NEW",
+                status: "PENDING",
+                revision: tombstone.revision + 1,
+                version: tombstone.version + 1,
+              },
+              undefined,
+            );
+            return target.replaceTombstone(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const dto = okValue(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft }));
+    expect(dto).toMatchObject({ name: "order_update", status: "PENDING" });
+    expect(kit.mem.store.templates.values()[0]).toMatchObject({
+      id: "tpl-stable",
+      metaTemplateId: "meta-NEW",
+    });
+    expect(kit.mem.store.templates.values()).toHaveLength(1);
+    expect(kit.events.calls).toHaveLength(0);
+  });
+
   it("a row that came back live (not DELETED) during the remote create is never overwritten", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
