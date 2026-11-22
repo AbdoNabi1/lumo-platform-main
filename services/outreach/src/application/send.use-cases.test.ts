@@ -1770,3 +1770,107 @@ describe("unmatched status facts keep their trust evidence (I1)", () => {
     expect(allOutbound(kit)[0]).toMatchObject({ status: "sent", providerMessageId: "wamid.lost" });
   });
 });
+
+describe("overlapping transactions: lookup/put and bind/drain share one keyed lock (I1)", () => {
+  const webhook = (kit: OutreachKit, statuses: unknown[]) =>
+    new ProcessWhatsAppWebhook(kit.deps).execute({
+      payload: messagesPayload("phone-1", { statuses }),
+    });
+
+  /**
+   * Pauses the FIRST lookup that finds no row for `providerId` right after it answered: the transaction has read "no
+   * bound row" but has not yet stored its unbound fact. Returns the gate that lets it go on and a latch that fires
+   * once it is parked.
+   */
+  function parkFirstMiss(kit: OutreachKit, providerId: string) {
+    const real = kit.deps.outbound;
+    const release = deferred<void>();
+    const parked = deferred<void>();
+    let done = false;
+    kit.deps.outbound = Object.assign(Object.create(real) as typeof real, {
+      findByProviderId: async (...args: Parameters<typeof real.findByProviderId>) => {
+        const row = await real.findByProviderId(...args);
+        if (!done && row === null && args[1] === providerId) {
+          done = true;
+          parked.resolve();
+          await release.promise;
+        }
+        return row;
+      },
+    });
+    return { release, parked };
+  }
+
+  it("an uncorrelated callback overlapping the correlated one that installs the id still has its fact drained", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit({ overlap: true });
+    await seedSendScenario(kit);
+    kit.whatsapp.set("sendTemplate", () => ({ kind: "unknown", message: "timeout" }));
+    expect(okValue(await sendTemplate(kit)).status).toBe("unknown");
+    const row = allOutbound(kit)[0]!;
+    const ts = seconds(kit.clock.now());
+    const { release, parked } = parkFirstMiss(kit, "wamid.lost");
+
+    const early = webhook(kit, [
+      statusItem({
+        id: "wamid.lost",
+        status: "delivered",
+        timestamp: ts,
+        recipient: "201012345678",
+      }),
+    ]);
+    await parked.promise;
+    const correlated = webhook(kit, [
+      statusItem({
+        id: "wamid.lost",
+        status: "sent",
+        timestamp: ts - 1,
+        recipient: "201012345678",
+        correlation: row.correlationId,
+      }),
+    ]);
+    await flush();
+    release.resolve();
+    await Promise.all([early, correlated]);
+
+    expect(allOutbound(kit)[0]).toMatchObject({
+      status: "delivered",
+      providerMessageId: "wamid.lost",
+    });
+    expect(kit.mem.store.unmatched.values().every((f) => f.resolvedAt !== null)).toBe(true);
+  });
+
+  it("an accepted settlement overlapping an early uncorrelated callback for its id drains that fact", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit({ overlap: true });
+    await seedSendScenario(kit);
+    const gate = deferred<{ kind: "accepted"; providerMessageId: string }>();
+    kit.whatsapp.set("sendTemplate", () => gate.promise);
+    const sending = sendTemplate(kit);
+    await flush();
+    const ts = seconds(kit.clock.now()) + 5;
+    const { release, parked } = parkFirstMiss(kit, "wamid.real");
+
+    const early = webhook(kit, [
+      statusItem({
+        id: "wamid.real",
+        status: "delivered",
+        timestamp: ts,
+        recipient: "201012345678",
+      }),
+    ]);
+    await parked.promise;
+    gate.resolve({ kind: "accepted", providerMessageId: "wamid.real" });
+    await flush();
+    release.resolve();
+    const [dto] = await Promise.all([sending, early]);
+
+    // The settlement's own drain consumed the early fact, so the answer is already the drained state.
+    expect(okValue(dto).status).toBe("delivered");
+    expect(allOutbound(kit)[0]).toMatchObject({
+      status: "delivered",
+      providerMessageId: "wamid.real",
+    });
+    expect(kit.mem.store.unmatched.values().every((f) => f.resolvedAt !== null)).toBe(true);
+  });
+});

@@ -791,6 +791,15 @@ export class InMemoryUnmatchedStatusRepository implements UnmatchedStatusReposit
     private readonly clock: Clock,
   ) {}
 
+  lockMessage(
+    tenantId: string,
+    phoneNumberId: string,
+    providerMessageId: string,
+    tx: unknown,
+  ): Promise<void> {
+    return this.store.lockKey(tx, JSON.stringify([tenantId, phoneNumberId, providerMessageId]));
+  }
+
   put(e: UnmatchedStatusRecord, tx?: unknown): Promise<"inserted" | "duplicate"> {
     return this.store.access(tx, (t) => {
       const mine = this.store.unmatched.values().filter((x) => x.tenantId === e.tenantId);

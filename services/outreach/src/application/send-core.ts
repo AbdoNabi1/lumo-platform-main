@@ -186,6 +186,21 @@ async function settleOnce(
   reserved: OutboundRecord,
   outcome: Outcome,
 ): Promise<OutboundRecord> {
+  // The accepted settlement installs the provider id and drains earlier facts: it takes the same transaction-scoped
+  // key as a webhook's lookup/put (and bind/drain), BEFORE it reads anything, so neither can slip between the other's
+  // read and write.
+  if (
+    outcome.kind === "accepted" &&
+    reserved.channel === "whatsapp" &&
+    reserved.dispatchPhoneNumberId !== null
+  ) {
+    await deps.unmatched.lockMessage(
+      reserved.tenantId,
+      reserved.dispatchPhoneNumberId,
+      outcome.providerMessageId,
+      tx,
+    );
+  }
   const row = await deps.outbound.findById(reserved.tenantId, reserved.id, tx);
   if (row === null) throw new Error("outbound row vanished");
   const now = deps.clock.now();

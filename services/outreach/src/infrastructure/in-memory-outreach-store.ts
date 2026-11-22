@@ -18,7 +18,15 @@ import type {
  */
 export class InMemoryOutreachTransaction {
   readonly undo: Array<() => void> = [];
+  /** Keyed locks this transaction holds until it ends (the twin of Postgres transaction-scoped advisory locks). */
+  readonly heldKeys = new Map<string, () => void>();
   constructor(readonly tenantId: string | undefined) {}
+
+  /** Releases every keyed lock (commit or rollback). */
+  releaseKeys(): void {
+    for (const release of this.heldKeys.values()) release();
+    this.heldKeys.clear();
+  }
 
   /** Restores exactly what this transaction wrote, newest first, and forgets the steps. */
   rollback(): void {
@@ -107,28 +115,53 @@ export class InMemoryOutreachStore {
   readonly emailCounters = new MemoryTable<number>();
   /** Serialises every access of this store: a standalone call never sees (or races) an open transaction's writes. */
   private readonly lock = new Mutex();
-  /** The ONE live transaction handle (the lock admits one at a time); invalidated when its transaction ends. */
-  private active: InMemoryOutreachTransaction | undefined;
+  /** The live transaction handles: ONE when serialised (the gate admits one at a time), several when overlapping. */
+  private readonly live = new Set<InMemoryOutreachTransaction>();
   /** The handle of the unit of work whose async context the running code belongs to (if any). */
   private readonly context = new AsyncLocalStorage<InMemoryOutreachTransaction>();
+  private readonly keyLocks = new Map<string, Mutex>();
 
-  /** Runs `work` in ONE transaction at a time; an error undoes exactly this transaction's writes. */
+  /**
+   * `serialize: false` lets transactions OVERLAP (read-committed-like: each repository operation is atomic, nothing
+   * else is isolated), which is what Postgres allows. Only a transaction-scoped keyed lock ({@link lockKey}) orders
+   * them then. The default (`true`) runs one transaction at a time.
+   */
+  constructor(private readonly options: { serialize: boolean } = { serialize: true }) {}
+
+  /** Runs `work` in ONE transaction at a time (unless overlapping); an error undoes exactly this transaction's writes. */
   async transaction<T>(
     tenantId: string | undefined,
     work: (tx: InMemoryOutreachTransaction) => Promise<T>,
   ): Promise<T> {
-    const release = await this.lock.acquire();
+    const release = this.options.serialize ? await this.lock.acquire() : undefined;
     const tx = new InMemoryOutreachTransaction(tenantId);
-    this.active = tx;
+    this.live.add(tx);
     try {
       return await this.context.run(tx, () => work(tx));
     } catch (error) {
       tx.rollback();
       throw error;
     } finally {
-      this.active = undefined;
-      release();
+      this.live.delete(tx);
+      tx.releaseKeys();
+      release?.();
     }
+  }
+
+  /**
+   * A transaction-scoped keyed lock (twin of `pg_advisory_xact_lock`): waits for any other transaction holding `key`,
+   * then holds it until THIS transaction ends. Re-entrant for the holder. `tx` must be a live transaction.
+   */
+  async lockKey(tx: unknown, key: string): Promise<void> {
+    const joined = this.liveTransaction(tx);
+    if (joined === undefined) throw new Error("a keyed lock needs the caller's transaction");
+    if (joined.heldKeys.has(key)) return;
+    let mutex = this.keyLocks.get(key);
+    if (mutex === undefined) {
+      mutex = new Mutex();
+      this.keyLocks.set(key, mutex);
+    }
+    joined.heldKeys.set(key, await mutex.acquire());
   }
 
   /**
@@ -138,7 +171,7 @@ export class InMemoryOutreachStore {
    */
   liveTransaction(tx: unknown): InMemoryOutreachTransaction | undefined {
     if (!(tx instanceof InMemoryOutreachTransaction)) return undefined;
-    if (tx !== this.active) {
+    if (!this.live.has(tx)) {
       throw new Error("the transaction handle is not an open transaction of this store");
     }
     return tx;
@@ -189,7 +222,7 @@ export class InMemoryOutreachStore {
    */
   private standalone<T>(work: (t: InMemoryOutreachTransaction) => Promise<T>): Promise<T> {
     const inside = this.context.getStore();
-    if (inside !== undefined && inside === this.active) {
+    if (inside !== undefined && this.live.has(inside)) {
       return Promise.reject(
         new Error("Already inside this outreach unit of work; pass tx to the repository call"),
       );

@@ -182,3 +182,51 @@ describe("in-memory store: a missing tx inside a unit of work fails fast", () =>
     },
   );
 });
+
+describe("in-memory store: keyed transaction locks (overlapping mode)", () => {
+  const overlapping = () =>
+    createInMemoryOutreach({ clock, platformTenantId: "platform", overlap: true });
+  const lock = (mem: ReturnType<typeof open>, tx: unknown, key: string) =>
+    mem.unmatched.lockMessage("t", "p", key, tx);
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  it("a second overlapping transaction waits for the same key until the holder commits; other keys do not wait", async () => {
+    expect.hasAssertions();
+    const mem = overlapping();
+    const hold = barrier();
+    const order: string[] = [];
+    const first = mem.unitOfWork.run("t", async (tx) => {
+      await lock(mem, tx, "m1");
+      await lock(mem, tx, "m1"); // re-entrant for the holder
+      order.push("first-locked");
+      await hold.reached;
+      order.push("first-done");
+    });
+    await tick();
+    const other = mem.unitOfWork.run("t", async (tx) => {
+      await lock(mem, tx, "m2");
+      order.push("other-locked");
+    });
+    const second = mem.unitOfWork.run("t", async (tx) => {
+      await lock(mem, tx, "m1");
+      order.push("second-locked");
+    });
+    await tick();
+    expect(order).toEqual(["first-locked", "other-locked"]);
+    hold.open();
+    await Promise.all([first, other, second]);
+    expect(order).toEqual(["first-locked", "other-locked", "first-done", "second-locked"]);
+  });
+
+  it("the key is released when the holder aborts, and a lock without a live transaction is refused", async () => {
+    expect.hasAssertions();
+    const mem = overlapping();
+    const aborted = mem.unitOfWork.run("t", async (tx) => {
+      await lock(mem, tx, "m1");
+      throw new Boom("abort");
+    });
+    await expect(aborted).rejects.toBeInstanceOf(Boom);
+    await mem.unitOfWork.run("t", (tx) => lock(mem, tx, "m1"));
+    await expect(lock(mem, undefined, "m1")).rejects.toThrow(/needs the caller's transaction/);
+  });
+});

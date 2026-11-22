@@ -36,6 +36,8 @@ export interface OutreachKit {
 export function createOutreachKit(
   opts: {
     now?: Date;
+    /** Transactions overlap (read-committed-like) instead of running one at a time. */
+    overlap?: boolean;
     configured?: boolean;
     emailConfigured?: boolean;
     caps?: { perHour: number; perDay: number };
@@ -43,7 +45,11 @@ export function createOutreachKit(
   } = {},
 ): OutreachKit {
   const clock = new FakeClock(opts.now ?? new Date("2026-11-19T10:00:00.000Z"));
-  const mem = createInMemoryOutreach({ clock: clock, platformTenantId: PLATFORM_TENANT });
+  const mem = createInMemoryOutreach({
+    clock: clock,
+    platformTenantId: PLATFORM_TENANT,
+    overlap: opts.overlap === true,
+  });
   const whatsapp = new FakeWhatsAppPort();
   const email = new FakeEmailPort();
   const vault = new FakeVault();

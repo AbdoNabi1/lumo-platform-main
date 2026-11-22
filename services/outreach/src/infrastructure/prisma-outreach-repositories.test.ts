@@ -1138,6 +1138,27 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     });
   });
 
+  it("lockMessage takes a bound transaction-scoped advisory lock on the key, on the caller's transaction", async () => {
+    expect.hasAssertions();
+    const { tx, raw, calls } = recordingClient();
+    await repo.lockMessage("t-1", "phone-1", "wamid-1", tx);
+    expect(raw).toHaveLength(1);
+    expect(raw[0]?.kind).toBe("executeRaw");
+    expect(raw[0]?.sql).toContain("pg_advisory_xact_lock(hashtext(?), hashtext(?))");
+    expect(raw[0]?.values).toEqual([
+      "outreach.unmatched_status_events",
+      JSON.stringify(["t-1", "phone-1", "wamid-1"]),
+    ]);
+    expect(calls).toEqual([]);
+  });
+
+  it("lockMessage without the unit of work's transaction fails closed", async () => {
+    expect.hasAssertions();
+    await expect(repo.lockMessage("t-1", "phone-1", "wamid-1", undefined)).rejects.toThrow(
+      /requires the unit of work/,
+    );
+  });
+
   it("takeFor without a criterion touches nothing", async () => {
     expect.hasAssertions();
     const { tx, calls } = recordingClient();

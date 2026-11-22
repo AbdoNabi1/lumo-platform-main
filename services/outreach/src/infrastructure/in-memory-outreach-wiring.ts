@@ -21,8 +21,10 @@ export interface InMemoryOutreach extends OutreachRepositories {
 export function createInMemoryOutreach(deps: {
   clock: Clock;
   platformTenantId: string;
+  /** Let transactions overlap like Postgres does (only keyed locks order them); default: one at a time. */
+  overlap?: boolean;
 }): InMemoryOutreach {
-  const store = new InMemoryOutreachStore();
+  const store = new InMemoryOutreachStore({ serialize: deps.overlap !== true });
   return {
     store,
     unitOfWork: new InMemoryOutreachUnitOfWork(store),

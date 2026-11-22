@@ -156,6 +156,9 @@ export class ProcessWhatsAppWebhook implements UseCase<
       // The directory owner is revalidated (and fenced) inside this transaction: a hand-over since the batch was
       // routed means this item is not ours to consume.
       if (!(await this.stillOwned(tx, scope))) return false;
+      // Serialised with every bind/drain of this message id (and with the settlement that installs it), taken BEFORE
+      // the lookup: "no bound row yet" can no longer go stale before the unbound fact is stored.
+      await deps.unmatched.lockMessage(tenantId, phoneNumberId, id, tx);
       let row: OutboundRecord | null = await deps.outbound.findByProviderId(tenantId, id, tx);
       let viaCorrelation = false;
       if (row === null && correlation !== null) {

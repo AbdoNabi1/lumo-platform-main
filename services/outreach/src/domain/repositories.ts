@@ -525,6 +525,18 @@ export interface UnmatchedStatusRecord {
 }
 
 export interface UnmatchedStatusRepository {
+  /**
+   * Takes a TRANSACTION-SCOPED lock on (tenant, dispatch phone, provider message id) and holds it until `tx` ends
+   * (Postgres: `pg_advisory_xact_lock`). Every path that reads "is this message id bound yet?" and then stores an
+   * unbound fact, and every path that binds the id and drains the facts, takes it BEFORE its lookup, so the two can
+   * never interleave. Re-entrant for the holder. `tx` is required: a lock without a transaction would release at once.
+   */
+  lockMessage(
+    tenantId: string,
+    phoneNumberId: string,
+    providerMessageId: string,
+    tx: unknown,
+  ): Promise<void>;
   /** Replay key: tenant + providerEventId. */
   put(e: UnmatchedStatusRecord, tx?: unknown): Promise<"inserted" | "duplicate">;
   /**

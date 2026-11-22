@@ -711,6 +711,27 @@ export interface PrismaUnmatchedDeps extends PrismaOutreachDeps {
 export class PrismaUnmatchedStatusRepository implements UnmatchedStatusRepository {
   constructor(private readonly deps: PrismaUnmatchedDeps) {}
 
+  /**
+   * `pg_advisory_xact_lock(hashtext(namespace), hashtext(key))`: held until the caller's transaction ends, so an
+   * unbound-fact lookup/put and a bind/drain of the same (tenant, dispatch phone, provider message id) cannot overlap.
+   * A hash collision only serialises two unrelated messages. Every value is bound, never interpolated.
+   */
+  async lockMessage(
+    tenantId: string,
+    phoneNumberId: string,
+    providerMessageId: string,
+    tx: unknown,
+  ): Promise<void> {
+    if (tx === undefined || tx === null) {
+      throw new Error(
+        "UnmatchedStatusRepository.lockMessage requires the unit of work's transaction",
+      );
+    }
+    const key = JSON.stringify([tenantId, phoneNumberId, providerMessageId]);
+    await (tx as TransactionClient).$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${"outreach.unmatched_status_events"}), hashtext(${key}))`;
+  }
+
   async put(e: UnmatchedStatusRecord, tx?: unknown): Promise<"inserted" | "duplicate"> {
     return withClient(this.deps.prisma, e.tenantId, tx, async (c) => {
       const created = await c.unmatchedStatusEvent.createMany({
