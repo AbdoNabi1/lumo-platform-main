@@ -89,8 +89,8 @@ describe("wireOutreach — in-memory, end to end through the controller", () => 
 
     const connected = await o.connect(T1, {
       code: "c",
-      wabaId: "waba-1",
-      phoneNumberId: "phone-1",
+      wabaId: "200000000001",
+      phoneNumberId: "100000000001",
     });
     expect(connected).toMatchObject({
       status: 200,
@@ -123,7 +123,7 @@ describe("wireOutreach — in-memory, end to end through the controller", () => 
     });
 
     const hook = await wired.webhook.process(
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.1",
@@ -167,7 +167,7 @@ describe("wireOutreach — in-memory, end to end through the controller", () => 
     const whatsapp = new FakeWhatsAppPort();
     const wired = wireOutreach(base({ whatsapp, vault: new FakeVault() }));
     const o = wired.outreach;
-    await o.connect(T1, { code: "c", wabaId: "waba-1", phoneNumberId: "phone-1" });
+    await o.connect(T1, { code: "c", wabaId: "200000000001", phoneNumberId: "100000000001" });
     const invalid = await o.createTemplate(T1, {
       draft: {
         name: "Bad Name",
@@ -288,8 +288,8 @@ function fakePrisma(
         correlationId: "c",
         dispatchStartedAt: new Date(0),
         providerIdempotencyKey: null,
-        dispatchPhoneNumberId: "phone-1",
-        dispatchWabaId: "waba-1",
+        dispatchPhoneNumberId: "100000000001",
+        dispatchWabaId: "200000000001",
         version: 4,
       }),
     },

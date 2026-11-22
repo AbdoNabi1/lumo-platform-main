@@ -48,7 +48,7 @@ export function messagesPayload(
     messages?: unknown[];
     contacts?: unknown[];
   },
-  wabaId = "waba-1",
+  wabaId = "200000000001",
 ): Record<string, unknown> {
   return {
     object: "whatsapp_business_account",
@@ -84,7 +84,7 @@ export function templateStatusPayload(t: {
     object: "whatsapp_business_account",
     entry: [
       {
-        id: t.wabaId ?? "waba-1",
+        id: t.wabaId ?? "200000000001",
         time: t.time,
         changes: [
           {
@@ -115,7 +115,7 @@ export function templateCategoryPayload(t: {
     object: "whatsapp_business_account",
     entry: [
       {
-        id: t.wabaId ?? "waba-1",
+        id: t.wabaId ?? "200000000001",
         time: t.time,
         changes: [
           {

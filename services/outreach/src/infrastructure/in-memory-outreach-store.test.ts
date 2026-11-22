@@ -83,13 +83,13 @@ describe("in-memory store: transaction handles", () => {
     const opened = barrier();
     const abort = barrier();
     const aborted = mem.unitOfWork.run(tenant, async (tx) => {
-      expect(await mem.directory.claim("phone-1", "waba-1", tenant, tx)).toBe("claimed");
+      expect(await mem.directory.claim("100000000001", "200000000001", tenant, tx)).toBe("claimed");
       opened.open();
       await abort.reached;
       throw new Boom("abort");
     });
     await opened.reached;
-    const reader = mem.directory.find("phone-1");
+    const reader = mem.directory.find("100000000001");
     abort.open();
     await expect(aborted).rejects.toBeInstanceOf(Boom);
     expect(await reader).toBeNull();
@@ -108,12 +108,14 @@ describe("in-memory store: a missing tx inside a unit of work fails fast", () =>
       const mem = open();
       const tenant = `t-${randomUUID()}`;
       const failure = mem.unitOfWork.run(tenant, async (tx) => {
-        expect(await mem.directory.claim("phone-1", "waba-1", tenant, tx)).toBe("claimed");
+        expect(await mem.directory.claim("100000000001", "200000000001", tenant, tx)).toBe(
+          "claimed",
+        );
         await mem.connections.get(tenant); // no tx
       });
       await expect(failure).rejects.toThrow(MISSING_TX);
       // the write made with tx was rolled back, and a later standalone read completes
-      expect(await mem.directory.find("phone-1")).toBeNull();
+      expect(await mem.directory.find("100000000001")).toBeNull();
       expect(await mem.connections.get(tenant)).toBeNull();
     },
   );
@@ -128,10 +130,12 @@ describe("in-memory store: a missing tx inside a unit of work fails fast", () =>
       const opened = barrier();
       const proceed = barrier();
       const failure = mem.unitOfWork.run(tenant, async (tx) => {
-        expect(await mem.directory.claim("phone-2", "waba-2", tenant, tx)).toBe("claimed");
+        expect(await mem.directory.claim("100000000002", "200000000002", tenant, tx)).toBe(
+          "claimed",
+        );
         opened.open();
         await proceed.reached;
-        await mem.templates.applyStatusEvent(tenant, "waba-2", "meta-x", {
+        await mem.templates.applyStatusEvent(tenant, "200000000002", "meta-x", {
           status: "REJECTED",
           reason: null,
           eventAt: T0,
@@ -139,11 +143,11 @@ describe("in-memory store: a missing tx inside a unit of work fails fast", () =>
       });
       await opened.reached;
       // an independent caller (no async context of the unit of work) still queues behind it and then completes
-      const independent = mem.directory.find("phone-2");
+      const independent = mem.directory.find("100000000002");
       proceed.open();
       await expect(failure).rejects.toThrow(MISSING_TX);
       expect(await independent).toBeNull();
-      expect(await mem.directory.find("phone-2")).toBeNull();
+      expect(await mem.directory.find("100000000002")).toBeNull();
     },
   );
 

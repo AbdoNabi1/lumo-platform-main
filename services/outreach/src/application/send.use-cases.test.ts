@@ -110,7 +110,7 @@ describe("SendWhatsAppTemplate — happy path and replay", () => {
       string,
       Record<string, unknown>,
     ];
-    expect(phone).toBe("phone-1");
+    expect(phone).toBe("100000000001");
     expect(token).toBe("token-seed");
     expect(message).toMatchObject({
       to: "+201012345678",
@@ -121,8 +121,8 @@ describe("SendWhatsAppTemplate — happy path and replay", () => {
     const row = allOutbound(kit)[0];
     expect(row).toMatchObject({
       purpose: "utility",
-      dispatchPhoneNumberId: "phone-1",
-      dispatchWabaId: "waba-1",
+      dispatchPhoneNumberId: "100000000001",
+      dispatchWabaId: "200000000001",
       templateRevision: 2,
       correlationId: message.correlationId,
     });
@@ -338,10 +338,10 @@ describe("SendWhatsAppTemplate — interleavings", () => {
     const { conn } = await seedSendScenario(kit);
     kit.whatsapp.set("getTemplate", async () => {
       await kit.mem.connections.save(
-        { ...conn, wabaId: "waba-2", phoneNumberId: "phone-2" },
+        { ...conn, wabaId: "200000000002", phoneNumberId: "100000000002" },
         conn.version,
       );
-      return metaTemplate((await kit.mem.templates.list(T1, "waba-1"))[0]!);
+      return metaTemplate((await kit.mem.templates.list(T1, "200000000001"))[0]!);
     });
     expect(errorOf(await sendTemplate(kit)).message).toBe("CONNECTION_CHANGED");
     expect(kit.whatsapp.count("sendTemplate")).toBe(0);
@@ -369,7 +369,7 @@ describe("SendWhatsAppTemplate — interleavings", () => {
     const { tpl } = await seedSendScenario(kit);
     kit.whatsapp.set("getTemplate", async () => {
       kit.clock.advance(1000);
-      await kit.mem.templates.applyCategoryEvent(T1, "waba-1", tpl.metaTemplateId ?? "", {
+      await kit.mem.templates.applyCategoryEvent(T1, "200000000001", tpl.metaTemplateId ?? "", {
         category: "MARKETING",
         eventAt: new Date(kit.clock.now().getTime() + 5000),
       });
@@ -384,7 +384,7 @@ describe("SendWhatsAppTemplate — interleavings", () => {
     const kit = createOutreachKit();
     const { tpl } = await seedSendScenario(kit);
     afterReservation(kit, async () => {
-      await kit.mem.templates.applyCategoryEvent(T1, "waba-1", tpl.metaTemplateId ?? "", {
+      await kit.mem.templates.applyCategoryEvent(T1, "200000000001", tpl.metaTemplateId ?? "", {
         category: "MARKETING",
         eventAt: new Date(kit.clock.now().getTime() + 60_000),
       });
@@ -590,7 +590,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     const { gate, sending, correlationId } = await inFlight(kit);
     const ts = seconds(kit.clock.now());
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.early",
@@ -619,7 +619,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     const { gate, sending, correlationId } = await inFlight(kit);
     const ts = seconds(kit.clock.now()) - 30;
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.9",
@@ -645,7 +645,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     const { gate, sending } = await inFlight(kit);
     const result = okValue(
       await webhook(kit).execute({
-        payload: messagesPayload("phone-1", {
+        payload: messagesPayload("100000000001", {
           statuses: [
             statusItem({
               id: "wamid.7",
@@ -676,7 +676,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     const row = allOutbound(kit)[0]!;
     const ts = seconds(kit.clock.now()) + 0;
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.lost",
@@ -701,7 +701,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     await seedSendScenario(kit);
     const { gate, sending, correlationId } = await inFlight(kit);
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.forged",
@@ -727,7 +727,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     const row = allOutbound(kit)[0]!;
     kit.mem.store.outbound.set(row.id, { ...row, dispatchPhoneNumberId: "old-phone" }, undefined);
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: row.providerMessageId ?? "",
@@ -749,7 +749,7 @@ describe("SendWhatsAppTemplate — callbacks racing the response", () => {
     await seedSendScenario(kit);
     const { gate, sending, correlationId } = await inFlight(kit);
     await webhook(kit).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.f",
@@ -1112,8 +1112,8 @@ describe("ReconcileUnresolvedOutbound", () => {
     correlationId: "c-1",
     dispatchStartedAt: new Date(kit.clock.now().getTime() - 400_000),
     providerIdempotencyKey: null,
-    dispatchPhoneNumberId: "phone-1",
-    dispatchWabaId: "waba-1",
+    dispatchPhoneNumberId: "100000000001",
+    dispatchWabaId: "200000000001",
     version: 1,
     ...over,
   });
@@ -1199,7 +1199,7 @@ describe("SendWhatsAppTemplate — per-send freshness reconciles in ONE unit of 
     expect(events[0]).toMatchObject({
       aggregateId: tpl.id,
       payload: {
-        wabaId: "waba-1",
+        wabaId: "200000000001",
         metaTemplateId: tpl.metaTemplateId,
         from: "APPROVED",
         to: "PAUSED",
@@ -1365,7 +1365,7 @@ describe("SendWhatsAppSessionMessage — customer-initiated reply without a gran
   const inbound = async (kit: OutreachKit, id: string, body = "hello", ageSeconds = 60) =>
     okValue(
       await new ProcessWhatsAppWebhook(kit.deps).execute({
-        payload: messagesPayload("phone-1", {
+        payload: messagesPayload("100000000001", {
           messages: [
             textMessage({
               id,
@@ -1600,7 +1600,7 @@ describe("unmatched status facts keep their trust evidence (I1)", () => {
   }
   const webhook = (kit: OutreachKit, statuses: unknown[]) =>
     new ProcessWhatsAppWebhook(kit.deps).execute({
-      payload: messagesPayload("phone-1", { statuses }),
+      payload: messagesPayload("100000000001", { statuses }),
     });
   const statusEvents = (kit: OutreachKit) =>
     kit.events.ofType("outreach.message.status_changed").map((e) => e.payload.to);
@@ -1660,7 +1660,7 @@ describe("unmatched status facts keep their trust evidence (I1)", () => {
       quarantined: false,
       resolvedAt: null,
       recipientId: "201012345678",
-      wabaId: "waba-1",
+      wabaId: "200000000001",
     });
     second.gate.resolve({ kind: "accepted", providerMessageId: "wamid.unbound" });
     expect(okValue(await second.sending).status).toBe("sent");
@@ -1674,7 +1674,7 @@ describe("unmatched status facts keep their trust evidence (I1)", () => {
     await kit.mem.unmatched.put({
       id: "u-foreign-waba",
       tenantId: T1,
-      phoneNumberId: "phone-1",
+      phoneNumberId: "100000000001",
       providerEventId: "wamid.real:read:1",
       providerMessageId: "wamid.real",
       correlationId: null,
@@ -1774,7 +1774,7 @@ describe("unmatched status facts keep their trust evidence (I1)", () => {
 describe("overlapping transactions: lookup/put and bind/drain share one keyed lock (I1)", () => {
   const webhook = (kit: OutreachKit, statuses: unknown[]) =>
     new ProcessWhatsAppWebhook(kit.deps).execute({
-      payload: messagesPayload("phone-1", { statuses }),
+      payload: messagesPayload("100000000001", { statuses }),
     });
 
   /**

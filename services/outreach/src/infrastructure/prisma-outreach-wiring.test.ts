@@ -38,7 +38,7 @@ describe("createPrismaOutreach", () => {
         "unmatched",
       ].sort(),
     );
-    expect(await wired.directory.find("phone-1")).toBeNull();
-    expect(lookups).toEqual([{ where: { tenantId: "platform-1", phoneNumberId: "phone-1" } }]);
+    expect(await wired.directory.find("100000000001")).toBeNull();
+    expect(lookups).toEqual([{ where: { tenantId: "platform-1", phoneNumberId: "100000000001" } }]);
   });
 });

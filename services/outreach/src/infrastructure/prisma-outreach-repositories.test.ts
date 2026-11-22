@@ -110,8 +110,8 @@ const connectionRecord = (
 ): WhatsAppConnectionRecord => ({
   tenantId: "t-1",
   status: "onboarding",
-  wabaId: "waba-1",
-  phoneNumberId: "phone-1",
+  wabaId: "200000000001",
+  phoneNumberId: "100000000001",
   displayPhoneNumber: null,
   verifiedName: null,
   qualityRating: null,
@@ -167,8 +167,8 @@ const outboundRecord = (over: Partial<OutboundRecord> = {}): OutboundRecord => (
   correlationId: "00000000-0000-4000-8000-0000000000b1",
   dispatchStartedAt: NOW,
   providerIdempotencyKey: null,
-  dispatchPhoneNumberId: "phone-1",
-  dispatchWabaId: "waba-1",
+  dispatchPhoneNumberId: "100000000001",
+  dispatchWabaId: "200000000001",
   version: 4,
   ...over,
 });
@@ -176,7 +176,7 @@ const outboundRecord = (over: Partial<OutboundRecord> = {}): OutboundRecord => (
 const templateRecord = (over: Partial<TemplateRecord> = {}): TemplateRecord => ({
   id: "00000000-0000-4000-8000-0000000000d1",
   tenantId: "t-1",
-  wabaId: "waba-1",
+  wabaId: "200000000001",
   metaTemplateId: "meta-1",
   name: "promo",
   language: "en_US",
@@ -252,8 +252,8 @@ describe("PrismaWhatsAppConnectionRepository arguments", () => {
     version: 9,
     onboardingStage: "registering" as const,
     onboardingAttemptId: ATTEMPT,
-    phoneNumberId: "phone-1",
-    wabaId: "waba-1",
+    phoneNumberId: "100000000001",
+    wabaId: "200000000001",
     owner: OWNER,
   };
   const repo = new PrismaWhatsAppConnectionRepository(deps);
@@ -262,7 +262,7 @@ describe("PrismaWhatsAppConnectionRepository arguments", () => {
   /** The row-shape predicate every lease statement carries, with the tenant first. */
   const SHAPE =
     /WHERE w\."tenant_id" = \? AND w\."version" = \? AND w\."onboarding_stage" IS NOT DISTINCT FROM \? AND w\."onboarding_attempt_id" IS NOT DISTINCT FROM \?::uuid AND w\."phone_number_id" = \? AND w\."waba_id" = \?/;
-  const SHAPE_VALUES = ["t-1", 9, "registering", ATTEMPT, "phone-1", "waba-1"];
+  const SHAPE_VALUES = ["t-1", 9, "registering", ATTEMPT, "100000000001", "200000000001"];
 
   it("every lease statement first locks the scoped row, then runs ONE raw conditional write; no delegate call", async () => {
     expect.hasAssertions();
@@ -1073,13 +1073,13 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
   const unmatchedRow = (over: Record<string, unknown> = {}) => ({
     id: "u-1",
     tenantId: "t-1",
-    phoneNumberId: "phone-1",
+    phoneNumberId: "100000000001",
     providerEventId: "evt-1",
     providerMessageId: "wamid-1",
     correlationId: null,
     status: "sent",
     recipient: "201012345678",
-    dispatchWabaId: "waba-1",
+    dispatchWabaId: "200000000001",
     errorCode: null,
     quarantined: false,
     occurredAt: NOW,
@@ -1100,14 +1100,14 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     });
     const taken = await repo.takeFor(
       "t-1",
-      "phone-1",
+      "100000000001",
       { providerMessageId: "wamid-1", correlationId: "c-1" },
       tx,
     );
     expect(calls[0]?.args).toEqual({
       where: {
         tenantId: "t-1",
-        phoneNumberId: "phone-1",
+        phoneNumberId: "100000000001",
         resolvedAt: null,
         OR: [{ providerMessageId: "wamid-1" }, { correlationId: "c-1" }],
       },
@@ -1128,7 +1128,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     const record: UnmatchedStatusRecord = {
       id: "u-1",
       tenantId: "t-1",
-      phoneNumberId: "phone-1",
+      phoneNumberId: "100000000001",
       providerEventId: "evt-1",
       providerMessageId: "wamid-1",
       correlationId: null,
@@ -1146,7 +1146,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
         {
           id: "u-1",
           tenantId: "t-1",
-          phoneNumberId: "phone-1",
+          phoneNumberId: "100000000001",
           providerEventId: "evt-1",
           providerMessageId: "wamid-1",
           correlationId: null,
@@ -1175,7 +1175,12 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
       ],
       "unmatchedStatusEvent.updateMany": [{ count: 1 }],
     });
-    const [taken] = await repo.takeFor("t-1", "phone-1", { providerMessageId: "wamid-1" }, back.tx);
+    const [taken] = await repo.takeFor(
+      "t-1",
+      "100000000001",
+      { providerMessageId: "wamid-1" },
+      back.tx,
+    );
     expect(taken).toMatchObject({
       status: "failed",
       recipientId: "201012345678",
@@ -1195,7 +1200,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
     });
     const [taken] = await repo.takeFor(
       "t-1",
-      "phone-1",
+      "100000000001",
       { providerMessageId: "wamid-1" },
       nulls.tx,
     );
@@ -1211,20 +1216,20 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
   it("lockMessage takes a bound transaction-scoped advisory lock on the key, on the caller's transaction", async () => {
     expect.hasAssertions();
     const { tx, raw, calls } = recordingClient();
-    await repo.lockMessage("t-1", "phone-1", "wamid-1", tx);
+    await repo.lockMessage("t-1", "100000000001", "wamid-1", tx);
     expect(raw).toHaveLength(1);
     expect(raw[0]?.kind).toBe("executeRaw");
     expect(raw[0]?.sql).toContain("pg_advisory_xact_lock(hashtext(?), hashtext(?))");
     expect(raw[0]?.values).toEqual([
       "outreach.unmatched_status_events",
-      JSON.stringify(["t-1", "phone-1", "wamid-1"]),
+      JSON.stringify(["t-1", "100000000001", "wamid-1"]),
     ]);
     expect(calls).toEqual([]);
   });
 
   it("lockMessage without the unit of work's transaction fails closed", async () => {
     expect.hasAssertions();
-    await expect(repo.lockMessage("t-1", "phone-1", "wamid-1", undefined)).rejects.toThrow(
+    await expect(repo.lockMessage("t-1", "100000000001", "wamid-1", undefined)).rejects.toThrow(
       /requires the unit of work/,
     );
   });
@@ -1232,7 +1237,7 @@ describe("PrismaInboundMessageRepository and PrismaUnmatchedStatusRepository arg
   it("takeFor without a criterion touches nothing", async () => {
     expect.hasAssertions();
     const { tx, calls } = recordingClient();
-    expect(await repo.takeFor("t-1", "phone-1", {}, tx)).toEqual([]);
+    expect(await repo.takeFor("t-1", "100000000001", {}, tx)).toEqual([]);
     expect(calls).toEqual([]);
   });
 
@@ -1258,13 +1263,13 @@ describe("PrismaTemplateRepository arguments", () => {
   it("list/find scope by tenant AND WABA", async () => {
     expect.hasAssertions();
     const { tx, calls } = recordingClient();
-    await repo.list("t-1", "waba-1", tx);
-    await repo.findByNameLanguage("t-1", "waba-1", "promo", "en_US", tx);
-    await repo.findByProviderId("t-1", "waba-1", "meta-1", tx);
+    await repo.list("t-1", "200000000001", tx);
+    await repo.findByNameLanguage("t-1", "200000000001", "promo", "en_US", tx);
+    await repo.findByProviderId("t-1", "200000000001", "meta-1", tx);
     expect(calls.map((c) => (c.args as { where: Args }).where)).toEqual([
-      { tenantId: "t-1", wabaId: "waba-1" },
-      { tenantId: "t-1", wabaId: "waba-1", name: "promo", language: "en_US" },
-      { tenantId: "t-1", wabaId: "waba-1", metaTemplateId: "meta-1" },
+      { tenantId: "t-1", wabaId: "200000000001" },
+      { tenantId: "t-1", wabaId: "200000000001", name: "promo", language: "en_US" },
+      { tenantId: "t-1", wabaId: "200000000001", metaTemplateId: "meta-1" },
     ]);
   });
 
@@ -1278,7 +1283,7 @@ describe("PrismaTemplateRepository arguments", () => {
     const { tx, calls } = recordingClient({ "messageTemplate.findFirst": [row] });
     const outcome = await repo.applyStatusEvent(
       "t-1",
-      "waba-1",
+      "200000000001",
       "meta-1",
       { status: "APPROVED", reason: null, eventAt: NOW },
       tx,
@@ -1288,7 +1293,7 @@ describe("PrismaTemplateRepository arguments", () => {
     expect(outcome.change?.before).toMatchObject({ status: "PENDING", revision: 5 });
     expect(outcome.change?.after).toMatchObject({ status: "APPROVED", revision: 6 });
     expect(calls[1]?.args).toEqual({
-      where: { tenantId: "t-1", wabaId: "waba-1", id: row.id, revision: 5 },
+      where: { tenantId: "t-1", wabaId: "200000000001", id: row.id, revision: 5 },
       data: {
         status: "APPROVED",
         rejectedReason: null,
@@ -1309,7 +1314,7 @@ describe("PrismaTemplateRepository arguments", () => {
     await expect(
       repo.applyStatusEvent(
         "t-1",
-        "waba-1",
+        "200000000001",
         "meta-1",
         { status: "APPROVED", reason: null, eventAt: NOW },
         tx,
@@ -1324,7 +1329,7 @@ describe("PrismaTemplateRepository arguments", () => {
     expect(await repo.insert(templateRecord({ version: 0 }), created.tx)).toBe("inserted");
     expect(created.calls[0]?.args).toMatchObject({
       skipDuplicates: true,
-      data: [{ version: 1, revision: 5, wabaId: "waba-1" }],
+      data: [{ version: 1, revision: 5, wabaId: "200000000001" }],
     });
     const dup = recordingClient({
       "messageTemplate.createMany": [{ count: 0 }],
@@ -1332,7 +1337,7 @@ describe("PrismaTemplateRepository arguments", () => {
     });
     expect(await repo.insert(templateRecord(), dup.tx)).toBe("duplicate");
     expect(dup.calls[1]?.args).toEqual({
-      where: { tenantId: "t-1", wabaId: "waba-1", name: "promo", language: "en_US" },
+      where: { tenantId: "t-1", wabaId: "200000000001", name: "promo", language: "en_US" },
     });
     const other = recordingClient({ "messageTemplate.createMany": [{ count: 0 }] });
     await expect(repo.insert(templateRecord(), other.tx)).rejects.toThrow(
@@ -1343,9 +1348,9 @@ describe("PrismaTemplateRepository arguments", () => {
   it("markDeletedByName filters tenant + WABA + name and skips rows already deleted", async () => {
     expect.hasAssertions();
     const { tx, calls } = recordingClient();
-    await repo.markDeletedByName("t-1", "waba-1", "promo", tx);
+    await repo.markDeletedByName("t-1", "200000000001", "promo", tx);
     expect(calls[0]?.args).toEqual({
-      where: { tenantId: "t-1", wabaId: "waba-1", name: "promo", status: { not: "DELETED" } },
+      where: { tenantId: "t-1", wabaId: "200000000001", name: "promo", status: { not: "DELETED" } },
       data: { status: "DELETED", revision: { increment: 1 }, version: { increment: 1 } },
     });
   });
@@ -1356,7 +1361,7 @@ describe("PrismaTemplateRepository arguments", () => {
     const { tx, calls } = recordingClient({ "messageTemplate.findMany": [[row]] });
     const result = await repo.replaceSnapshot(
       "t-1",
-      "waba-1",
+      "200000000001",
       [],
       { revisionsAtFetchStart: new Map([["meta-1", 5]]), fetchStartedAt: NOW },
       tx,
@@ -1374,11 +1379,11 @@ describe("PrismaTemplateRepository arguments", () => {
     ]);
     expect((calls[0]?.args as { where: Args }).where).toEqual({
       tenantId: "t-1",
-      wabaId: "waba-1",
+      wabaId: "200000000001",
     });
     expect((calls[1]?.args as { where: Args }).where).toEqual({
       tenantId: "t-1",
-      wabaId: "waba-1",
+      wabaId: "200000000001",
       id: row.id,
       revision: 5,
     });

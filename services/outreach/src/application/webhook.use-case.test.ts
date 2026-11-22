@@ -28,7 +28,7 @@ const run = async (kit: OutreachKit, payload: unknown) =>
 const now = (kit: OutreachKit): number => seconds(kit.clock.now());
 const outbound = (kit: OutreachKit): OutboundRecord[] => kit.mem.store.outbound.values();
 
-/** A sent template to +201012345678 via phone-1 (provider id wamid.1). */
+/** A sent template to +201012345678 via 100000000001 (provider id wamid.1). */
 async function sentMessage(kit: OutreachKit): Promise<OutboundRecord> {
   await seedSendScenario(kit);
   okValue(
@@ -46,7 +46,7 @@ async function sentMessage(kit: OutreachKit): Promise<OutboundRecord> {
 }
 
 const status = (kit: OutreachKit, s: string, ts = now(kit), id = "wamid.1") =>
-  messagesPayload("phone-1", {
+  messagesPayload("100000000001", {
     statuses: [statusItem({ id, status: s, timestamp: ts, recipient: "201012345678" })],
   });
 
@@ -101,7 +101,7 @@ describe("ProcessWhatsAppWebhook — statuses", () => {
     await sentMessage(kit);
     await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: "wamid.1",
@@ -133,11 +133,15 @@ describe("ProcessWhatsAppWebhook — statuses", () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
     const row = await sentMessage(kit);
-    await seedConnection(kit, { tenantId: T2, phoneNumberId: "phone-2", wabaId: "waba-2" });
+    await seedConnection(kit, {
+      tenantId: T2,
+      phoneNumberId: "100000000002",
+      wabaId: "200000000002",
+    });
     await run(
       kit,
       messagesPayload(
-        "phone-2",
+        "100000000002",
         {
           statuses: [
             statusItem({
@@ -148,7 +152,7 @@ describe("ProcessWhatsAppWebhook — statuses", () => {
             }),
           ],
         },
-        "waba-2",
+        "200000000002",
       ),
     );
     expect(outbound(kit)[0]?.status).toBe("accepted");
@@ -161,7 +165,7 @@ describe("ProcessWhatsAppWebhook — statuses", () => {
     await sentMessage(kit);
     const result = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         statuses: [
           null,
           { id: "x" },
@@ -263,7 +267,7 @@ describe("ProcessWhatsAppWebhook — routing and malformed input", () => {
 
 describe("ProcessWhatsAppWebhook — inbound", () => {
   const inbound = (kit: OutreachKit, over: Record<string, unknown> = {}, name = "Sara") =>
-    messagesPayload("phone-1", {
+    messagesPayload("100000000001", {
       contacts: [{ wa_id: "201012345678", profile: { name } }],
       messages: [
         textMessage({
@@ -311,7 +315,7 @@ describe("ProcessWhatsAppWebhook — inbound", () => {
     const ts = now(kit);
     await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           {
             id: "m1",
@@ -430,7 +434,7 @@ describe("ProcessWhatsAppWebhook — inbound", () => {
     await seedConnection(kit);
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           null,
           { id: "a", from: "12", timestamp: String(now(kit)), type: "text", text: { body: "x" } },
@@ -494,7 +498,7 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     });
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           item("bad-huge", "201011111111", 1e20),
           item("bad-max", "201011111112", Number.MAX_SAFE_INTEGER),
@@ -561,7 +565,7 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     });
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           interactive("i-empty", "201055555551", {}),
           interactive("i-declared", "201055555552", { type: "button_reply" }),
@@ -602,7 +606,7 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     const ts = now(kit) - 30;
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           {
             id: "stop-bad-date",
@@ -643,7 +647,7 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     });
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         statuses: [
           bad(1e20),
           bad(Number.MAX_SAFE_INTEGER),
@@ -673,7 +677,7 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     const ts = now(kit) - 5;
     await expect(
       new ProcessWhatsAppWebhook(kit.deps).execute({
-        payload: messagesPayload("phone-1", {
+        payload: messagesPayload("100000000001", {
           messages: [
             { id: "bad", from: "201011111111", timestamp: 1e20, type: "text", text: { body: "x" } },
             textMessage({ id: "good", from: "201033333333", timestamp: ts, body: "hello" }),
@@ -699,10 +703,10 @@ describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's t
       },
     };
   }
-  /** phone-1 / waba-1 leaves T1 and is claimed by T2. */
+  /** 100000000001 / 200000000001 leaves T1 and is claimed by T2. */
   async function handOffToT2(kit: OutreachKit): Promise<void> {
-    await kit.mem.directory.release("phone-1", T1);
-    expect(await kit.mem.directory.claim("phone-1", "waba-1", T2)).toBe("claimed");
+    await kit.mem.directory.release("100000000001", T1);
+    expect(await kit.mem.directory.claim("100000000001", "200000000001", T2)).toBe("claimed");
   }
   const contactsOf = (kit: OutreachKit, tenantId: string) =>
     kit.mem.store.contacts.values().filter((c) => c.tenantId === tenantId);
@@ -720,7 +724,7 @@ describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's t
     beforeRun(kit, 2, () => handOffToT2(kit));
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         messages: [
           textMessage({ id: "first", from: "201012345678", timestamp: ts, body: "hello" }),
           textMessage({ id: "second", from: "201044444444", timestamp: ts, body: "STOP" }),
@@ -748,7 +752,7 @@ describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's t
     const ts = now(kit) - 30;
     const payload = (waba: string) =>
       messagesPayload(
-        "phone-1",
+        "100000000001",
         {
           messages: [
             textMessage({ id: `m-${waba}`, from: "201012345678", timestamp: ts, body: "hi" }),
@@ -756,20 +760,22 @@ describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's t
         },
         waba,
       );
-    // the phone moves to waba-2 (same shop) AFTER the owner was resolved, before the item's transaction
+    // the phone moves to 200000000002 (same shop) AFTER the owner was resolved, before the item's transaction
     beforeRun(kit, 1, async () => {
-      await kit.mem.directory.release("phone-1", T1);
-      expect(await kit.mem.directory.claim("phone-1", "waba-2", T1)).toBe("claimed");
+      await kit.mem.directory.release("100000000001", T1);
+      expect(await kit.mem.directory.claim("100000000001", "200000000002", T1)).toBe("claimed");
     });
-    expect(await run(kit, payload("waba-1"))).toEqual({ processed: 0, skipped: 1 });
+    expect(await run(kit, payload("200000000001"))).toEqual({ processed: 0, skipped: 1 });
     expect(kit.mem.store.contacts.values()).toHaveLength(0);
     expect(kit.mem.store.inbound.values()).toHaveLength(0);
     expect(kit.events.calls).toHaveLength(0);
     // already moved when the batch arrives: the stale WABA is skipped, the current one is processed
     kit.deps.unitOfWork = kit.mem.unitOfWork;
-    expect(await run(kit, payload("waba-1"))).toEqual({ processed: 0, skipped: 1 });
-    expect(await run(kit, payload("waba-2"))).toEqual({ processed: 1, skipped: 0 });
-    expect(kit.mem.store.inbound.values().map((i) => i.providerMessageId)).toEqual(["m-waba-2"]);
+    expect(await run(kit, payload("200000000001"))).toEqual({ processed: 0, skipped: 1 });
+    expect(await run(kit, payload("200000000002"))).toEqual({ processed: 1, skipped: 0 });
+    expect(kit.mem.store.inbound.values().map((i) => i.providerMessageId)).toEqual([
+      "m-200000000002",
+    ]);
   });
 
   it("a status for a phone handed over mid-batch is not applied and stored for nobody", async () => {
@@ -780,7 +786,7 @@ describe("ProcessWhatsAppWebhook — routing is revalidated inside each item's t
     beforeRun(kit, 2, () => handOffToT2(kit));
     const out = await run(
       kit,
-      messagesPayload("phone-1", {
+      messagesPayload("100000000001", {
         statuses: [
           statusItem({ id: "wamid.1", status: "sent", timestamp: ts, recipient: "201012345678" }),
           statusItem({
@@ -868,7 +874,7 @@ describe("ProcessWhatsAppWebhook — template events", () => {
     const e = kit.events.ofType("outreach.template.status_changed");
     expect(e).toHaveLength(1);
     expect(e[0]?.payload).toEqual({
-      wabaId: "waba-1",
+      wabaId: "200000000001",
       metaTemplateId: "meta-cod_confirmation_ar",
       name: "cod_confirmation_ar",
       language: "ar",

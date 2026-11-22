@@ -128,7 +128,7 @@ describe("error codes are an allowlist, not a shape (I9)", () => {
       okValue(await sendTemplate(kit));
       const row = kit.mem.store.outbound.values()[0];
       await new ProcessWhatsAppWebhook(kit.deps).execute({
-        payload: messagesPayload("phone-1", {
+        payload: messagesPayload("100000000001", {
           statuses: [
             {
               ...statusItem({
@@ -157,7 +157,7 @@ describe("error codes are an allowlist, not a shape (I9)", () => {
     okValue(await sendTemplate(kit));
     const row = kit.mem.store.outbound.values()[0];
     await new ProcessWhatsAppWebhook(kit.deps).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           statusItem({
             id: row?.providerMessageId ?? "",
@@ -239,8 +239,8 @@ describe("error codes are an allowlist, not a shape (I9)", () => {
       await new ConnectWhatsApp(connectKit.deps).execute({
         tenantId: T1,
         code: "c",
-        wabaId: "waba-1",
-        phoneNumberId: "phone-1",
+        wabaId: "200000000001",
+        phoneNumberId: "100000000001",
       }),
     );
     expect(failed.message).toBe("META_ERROR");
@@ -275,7 +275,7 @@ describe("Meta numeric codes are an explicit documented set, never a digit famil
     okValue(await sendTemplate(kit));
     const row = kit.mem.store.outbound.values()[0];
     await new ProcessWhatsAppWebhook(kit.deps).execute({
-      payload: messagesPayload("phone-1", {
+      payload: messagesPayload("100000000001", {
         statuses: [
           {
             ...statusItem({
@@ -374,8 +374,8 @@ describe("Meta numeric codes are an explicit documented set, never a digit famil
       await new ConnectWhatsApp(kit.deps).execute({
         tenantId: T1,
         code: "c",
-        wabaId: "waba-1",
-        phoneNumberId: "phone-1",
+        wabaId: "200000000001",
+        phoneNumberId: "100000000001",
       }),
     );
     expect(failed.message).toBe("ONBOARDING_PIN_INVALID");

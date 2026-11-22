@@ -98,8 +98,8 @@ export async function seedConnection(
   opts: SeedConnectionOptions = {},
 ): Promise<WhatsAppConnectionRecord> {
   const tenantId = opts.tenantId ?? T1;
-  const phoneNumberId = opts.phoneNumberId ?? "phone-1";
-  const wabaId = opts.wabaId ?? "waba-1";
+  const phoneNumberId = opts.phoneNumberId ?? "100000000001";
+  const wabaId = opts.wabaId ?? "200000000001";
   const status = opts.status ?? "connected";
   const sealed = await kit.vault.seal(tenantId, "whatsapp", {
     accessToken: opts.token ?? "token-seed",
@@ -153,7 +153,7 @@ export async function seedTemplate(
   const record: TemplateRecord = {
     id: opts.id ?? `tpl-${name}-${opts.language ?? "ar"}`,
     tenantId: opts.tenantId ?? T1,
-    wabaId: opts.wabaId ?? "waba-1",
+    wabaId: opts.wabaId ?? "200000000001",
     metaTemplateId: opts.metaTemplateId === undefined ? `meta-${name}` : opts.metaTemplateId,
     name,
     language: opts.language ?? "ar",

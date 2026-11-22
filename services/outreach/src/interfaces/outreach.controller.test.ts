@@ -34,7 +34,11 @@ describe("OutreachController", () => {
     const { wired } = wiredOutreach();
     const o = wired.outreach;
     const t = "tenant-1";
-    const connected = await o.connect(t, { code: "c", wabaId: "waba-1", phoneNumberId: "phone-1" });
+    const connected = await o.connect(t, {
+      code: "c",
+      wabaId: "200000000001",
+      phoneNumberId: "100000000001",
+    });
     const version = (connected.body as { version: number }).version;
     expect((await o.getConnection(t)).status).toBe(200);
     expect((await o.refresh(t)).status).toBe(200);

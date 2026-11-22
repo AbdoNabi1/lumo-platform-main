@@ -127,7 +127,7 @@ describe("withPlatformScope / directory scope switching (no database)", () => {
     const { prisma, statements } = fakeDatabase();
     const uow = new PrismaOutreachUnitOfWork(prisma);
     const directory = new PrismaPhoneDirectory({ prisma, platformTenantId: "platform" });
-    await uow.run("shop-1", (tx) => directory.find("phone-1", tx));
+    await uow.run("shop-1", (tx) => directory.find("100000000001", tx));
     expect(statements.map((s) => (s.sql === SET_CONFIG ? s.values[0] : s.sql))).toEqual([
       "shop-1",
       "platform",
@@ -140,7 +140,7 @@ describe("withPlatformScope / directory scope switching (no database)", () => {
     expect.hasAssertions();
     const { prisma, statements, clients } = fakeDatabase();
     const directory = new PrismaPhoneDirectory({ prisma, platformTenantId: "platform" });
-    await directory.find("phone-1");
+    await directory.find("100000000001");
     expect(clients).toHaveLength(1);
     expect(statements.map((s) => (s.sql === SET_CONFIG ? s.values[0] : s.sql))).toEqual([
       "platform",

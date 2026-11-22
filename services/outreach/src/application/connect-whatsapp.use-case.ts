@@ -21,6 +21,10 @@ import {
 } from "./support";
 import { openSecrets } from "./template-support";
 
+/** The Embedded Signup contract: an authorization code of 1..8192 characters and two numeric asset ids of 1..64 digits. */
+export const MAX_SIGNUP_CODE_LENGTH = 8192;
+export const ASSET_ID_PATTERN = /^\d{1,64}$/;
+
 export interface ConnectWhatsAppInput {
   tenantId: string;
   code: string;
@@ -105,11 +109,15 @@ export class ConnectWhatsApp implements UseCase<
     const { whatsapp, vault } = deps;
     if (whatsapp === undefined || vault === undefined)
       return conflictErr("WHATSAPP_NOT_CONFIGURED");
-    const issues = (["code", "wabaId", "phoneNumberId"] as const)
-      .filter(
-        (f) => typeof input[f] !== "string" || input[f].trim() === "" || input[f].length > 256,
-      )
-      .map((field) => ({ field, message: "required" }));
+    const { code } = input;
+    const issues = [
+      ...(typeof code !== "string" || code.trim() === "" || code.length > MAX_SIGNUP_CODE_LENGTH
+        ? [{ field: "code", message: "required" }]
+        : []),
+      ...(["wabaId", "phoneNumberId"] as const)
+        .filter((f) => typeof input[f] !== "string" || !ASSET_ID_PATTERN.test(input[f]))
+        .map((field) => ({ field, message: "required" })),
+    ];
     if (issues.length > 0) return err(new ValidationError("Invalid connection input", issues));
 
     const { tenantId } = input;

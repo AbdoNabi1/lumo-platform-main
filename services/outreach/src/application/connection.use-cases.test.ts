@@ -27,8 +27,8 @@ import { messagesPayload, seconds, textMessage } from "../testing/webhook-fixtur
 const input = (over: Record<string, unknown> = {}) => ({
   tenantId: T1,
   code: "code-1",
-  wabaId: "waba-1",
-  phoneNumberId: "phone-1",
+  wabaId: "200000000001",
+  phoneNumberId: "100000000001",
   ...over,
 });
 const connect = (kit: OutreachKit, over: Record<string, unknown> = {}) =>
@@ -119,12 +119,15 @@ describe("ConnectWhatsApp — new connection", () => {
       accessToken: "token-code-1",
       pin: "123456",
     });
-    expect(await kit.mem.directory.find("phone-1")).toEqual({ shopTenantId: T1, wabaId: "waba-1" });
+    expect(await kit.mem.directory.find("100000000001")).toEqual({
+      shopTenantId: T1,
+      wabaId: "200000000001",
+    });
     const events = kit.events.ofType("outreach.whatsapp.connected");
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toEqual({
-      phoneNumberId: "phone-1",
-      wabaId: "waba-1",
+      phoneNumberId: "100000000001",
+      wabaId: "200000000001",
       displayPhoneNumber: "+20 101 234 5678",
     });
     expect(JSON.stringify(events)).not.toContain("token-code-1");
@@ -142,6 +145,51 @@ describe("ConnectWhatsApp — new connection", () => {
     expect(kit.whatsapp.total).toBe(0);
   });
 
+  describe("the Embedded Signup contract: code 1..8192 characters, ids 1..64 digits", () => {
+    const ids = { wabaId: "100200300", phoneNumberId: "400500600" };
+
+    it("a 1024-character code (and one of exactly 8192) reaches the exchange untouched", async () => {
+      expect.hasAssertions();
+      for (const length of [1024, 8192]) {
+        const kit = createOutreachKit();
+        kit.whatsapp.phoneIds = [ids.phoneNumberId];
+        const code = "c".repeat(length);
+        okValue(await connect(kit, { ...ids, code }));
+        expect(kit.whatsapp.callsOf("exchangeCode")).toHaveLength(1);
+        expect(kit.whatsapp.callsOf("exchangeCode")[0]?.[0]).toBe(code);
+      }
+    });
+
+    it("64-digit ids are accepted", async () => {
+      expect.hasAssertions();
+      const kit = createOutreachKit();
+      const wabaId = "7".repeat(64);
+      const phoneNumberId = "8".repeat(64);
+      kit.whatsapp.phoneIds = [phoneNumberId];
+      expect(okValue(await connect(kit, { wabaId, phoneNumberId })).status).toBe("connected");
+    });
+
+    it.each([
+      ["an over-long code", { code: "c".repeat(8193) }, "code"],
+      ["an empty code", { code: "" }, "code"],
+      ["a non-numeric waba id", { wabaId: "waba_one" }, "wabaId"],
+      ["a non-numeric phone id", { phoneNumberId: "12a" }, "phoneNumberId"],
+      ["a 65-digit waba id", { wabaId: "1".repeat(65) }, "wabaId"],
+      ["a 65-digit phone id", { phoneNumberId: "1".repeat(65) }, "phoneNumberId"],
+      ["an empty id", { wabaId: "" }, "wabaId"],
+      ["a signed id", { phoneNumberId: "-123" }, "phoneNumberId"],
+      ["an id with spaces", { phoneNumberId: "12 34" }, "phoneNumberId"],
+    ])("%s is a field issue before any provider call", async (_name, over, field) => {
+      expect.hasAssertions();
+      const kit = createOutreachKit();
+      const error = errorOf(await connect(kit, { ...ids, ...over }));
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(JSON.stringify(error)).toContain(field);
+      expect(kit.whatsapp.total).toBe(0);
+      expect(await kit.mem.connections.get(T1)).toBeNull();
+    });
+  });
+
   it("an onboarding row with null identity fields is persisted before getPhone", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
@@ -149,7 +197,7 @@ describe("ConnectWhatsApp — new connection", () => {
     kit.whatsapp.set("getPhone", async () => {
       seen = await kit.mem.connections.get(T1);
       return {
-        phoneNumberId: "phone-1",
+        phoneNumberId: "100000000001",
         displayPhoneNumber: "+20 1",
         verifiedName: "Shop",
         qualityRating: null,
@@ -169,11 +217,13 @@ describe("ConnectWhatsApp — new connection", () => {
   it("PHONE_IN_USE / WABA_IN_USE from the directory precheck cost zero Meta calls", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
-    await kit.mem.directory.claim("phone-1", "waba-1", T2);
+    await kit.mem.directory.claim("100000000001", "200000000001", T2);
     expect(errorOf(await connect(kit)).message).toBe("PHONE_IN_USE");
-    expect(errorOf(await connect(kit, { phoneNumberId: "phone-9" })).message).toBe("WABA_IN_USE");
+    expect(errorOf(await connect(kit, { phoneNumberId: "100000000009" })).message).toBe(
+      "WABA_IN_USE",
+    );
     // the same phone with a changed WABA is still another shop's phone
-    expect(errorOf(await connect(kit, { wabaId: "waba-9" })).message).toBe("PHONE_IN_USE");
+    expect(errorOf(await connect(kit, { wabaId: "200000000009" })).message).toBe("PHONE_IN_USE");
     expect(kit.whatsapp.total).toBe(0);
     expect(await kit.mem.connections.get(T1)).toBeNull();
   });
@@ -184,7 +234,7 @@ describe("ConnectWhatsApp — new connection", () => {
     kit.whatsapp.phoneIds = ["other-phone"];
     expect(errorOf(await connect(kit)).message).toBe("META_ASSET_MISMATCH");
     expect(kit.whatsapp.mutations).toBe(0);
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
     expect(await row(kit)).toMatchObject({
       status: "onboarding",
       onboardingFailure: "META_ASSET_MISMATCH",
@@ -209,7 +259,7 @@ describe("ConnectWhatsApp — new connection", () => {
     });
     expect(errorOf(await connect(kit)).message).toBe("META_190");
     expect(kit.whatsapp.mutations).toBe(0);
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
     expect((await row(kit)).onboardingFailure).toBe("META_190");
   });
 
@@ -431,27 +481,28 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
       onboardingFailure: "META_100",
       onboardingLeaseOwner: null,
     });
-    expect(await kit.mem.directory.find("phone-1")).not.toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).not.toBeNull();
   });
 
   it("connected A → onboarding B → remote failure: no directory row for A or B, and sends are refused", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
     await seedSendScenario(kit);
-    kit.whatsapp.phoneIds = ["phone-1", "phone-2"];
+    kit.whatsapp.phoneIds = ["100000000001", "100000000002"];
     kit.whatsapp.set("subscribeApp", () => {
       throw metaError("100");
     });
     expect(
-      errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" })).message,
+      errorOf(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }))
+        .message,
     ).toBe("META_100");
     expect(await row(kit)).toMatchObject({
       status: "onboarding",
-      phoneNumberId: "phone-2",
-      wabaId: "waba-2",
+      phoneNumberId: "100000000002",
+      wabaId: "200000000002",
     });
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
-    expect(await kit.mem.directory.find("phone-2")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
+    expect(await kit.mem.directory.find("100000000002")).toBeNull();
     const send = await new SendWhatsAppTemplate(kit.deps).execute({
       tenantId: T1,
       to: "01012345678",
@@ -470,23 +521,26 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
     kit.whatsapp.set("exchangeCode", () => {
       throw metaError("190", 401);
     });
-    errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
-    expect(await row(kit)).toMatchObject({ status: "connected", phoneNumberId: "phone-1" });
-    expect(await kit.mem.directory.find("phone-1")).not.toBeNull();
+    errorOf(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
+    expect(await row(kit)).toMatchObject({ status: "connected", phoneNumberId: "100000000001" });
+    expect(await kit.mem.directory.find("100000000001")).not.toBeNull();
   });
 
   it("A → B succeeds: the directory moves to B and A is released", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
     await seedConnection(kit);
-    kit.whatsapp.phoneIds = ["phone-2"];
-    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
-    expect(await kit.mem.directory.find("phone-2")).toEqual({ shopTenantId: T1, wabaId: "waba-2" });
+    kit.whatsapp.phoneIds = ["100000000002"];
+    okValue(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
+    expect(await kit.mem.directory.find("100000000002")).toEqual({
+      shopTenantId: T1,
+      wabaId: "200000000002",
+    });
     expect(await row(kit)).toMatchObject({
       status: "connected",
-      phoneNumberId: "phone-2",
-      wabaId: "waba-2",
+      phoneNumberId: "100000000002",
+      wabaId: "200000000002",
     });
     expect(registerPins(kit)).toHaveLength(1);
     expect(kit.pins[0]).toBe("654321");
@@ -497,9 +551,9 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
     const kit = createOutreachKit();
     await kit.mem.directory.claim("phone-old", "waba-old", T1);
     kit.whatsapp.set("getPhone", async () => {
-      await kit.mem.directory.claim("phone-1", "waba-x", T2);
+      await kit.mem.directory.claim("100000000001", "waba-x", T2);
       return {
-        phoneNumberId: "phone-1",
+        phoneNumberId: "100000000001",
         displayPhoneNumber: "+20 1",
         verifiedName: "Shop",
         qualityRating: null,
@@ -511,7 +565,10 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
       shopTenantId: T1,
       wabaId: "waba-old",
     });
-    expect(await kit.mem.directory.find("phone-1")).toEqual({ shopTenantId: T2, wabaId: "waba-x" });
+    expect(await kit.mem.directory.find("100000000001")).toEqual({
+      shopTenantId: T2,
+      wabaId: "waba-x",
+    });
     expect(await row(kit)).toMatchObject({
       status: "onboarding",
       onboardingFailure: "PHONE_IN_USE",
@@ -524,13 +581,13 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
     const [a, b] = await Promise.all([
-      connect(kit, { tenantId: T1, wabaId: "waba-a" }),
-      connect(kit, { tenantId: T2, wabaId: "waba-b" }),
+      connect(kit, { tenantId: T1, wabaId: "200000000003" }),
+      connect(kit, { tenantId: T2, wabaId: "200000000004" }),
     ]);
     expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
     const loser = a.ok ? b : a;
     expect(errorOf(loser).message).toBe("PHONE_IN_USE");
-    const owner = await kit.mem.directory.find("phone-1");
+    const owner = await kit.mem.directory.find("100000000001");
     expect(owner?.shopTenantId).toBe(a.ok ? T1 : T2);
     expect(kit.events.ofType("outreach.whatsapp.connected")).toHaveLength(1);
   });
@@ -541,15 +598,16 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
       const kit = createOutreachKit();
       const seeded = await seedConnection(kit, {
         status: "onboarding",
-        phoneNumberId: "phone-1",
-        wabaId: "waba-1",
+        phoneNumberId: "100000000001",
+        wabaId: "200000000001",
       });
       await kit.mem.connections.save(
         { ...seeded, onboardingStage: stage, onboardingAttemptId: "att-1" },
         seeded.version,
       );
       expect(
-        errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" })).message,
+        errorOf(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }))
+          .message,
       ).toBe("ONBOARDING_RECONCILIATION_REQUIRED");
       expect(kit.whatsapp.total).toBe(0);
     }
@@ -562,7 +620,7 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
       throw metaError("133005");
     });
     errorOf(await connect(kit));
-    const blocked = await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" });
+    const blocked = await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" });
     expect(errorOf(blocked).message).toBe("ONBOARDING_RECONCILIATION_REQUIRED");
     const abandoned = okValue(
       await new AbandonWhatsAppOnboarding(kit.deps).execute({
@@ -577,8 +635,8 @@ describe("ConnectWhatsApp — reconnect, switch and blocked", () => {
       onboardingStage: null,
       onboardingLeaseOwner: null,
     });
-    kit.whatsapp.phoneIds = ["phone-2"];
-    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    kit.whatsapp.phoneIds = ["100000000002"];
+    okValue(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
     expect(registerPins(kit)).toEqual(["123456", "654321"]);
   });
 });
@@ -662,7 +720,7 @@ describe("ConnectWhatsApp — exclusive ownership (lease)", () => {
     gate.resolve();
     expect(errorOf(await a).message).toBe("CONNECTION_CHANGED");
     expect((await row(kit)).status).toBe("disconnected");
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
   });
 });
 
@@ -672,7 +730,7 @@ describe("RefreshWhatsAppStatus", () => {
     const kit = createOutreachKit();
     await seedConnection(kit);
     kit.whatsapp.set("getPhone", () => ({
-      phoneNumberId: "phone-1",
+      phoneNumberId: "100000000001",
       displayPhoneNumber: "+20 101 234 5678",
       verifiedName: "Shop",
       qualityRating: "YELLOW",
@@ -713,7 +771,7 @@ describe("RefreshWhatsAppStatus", () => {
         conn.version,
       );
       return {
-        phoneNumberId: "phone-1",
+        phoneNumberId: "100000000001",
         displayPhoneNumber: "x",
         verifiedName: "y",
         qualityRating: "RED",
@@ -771,10 +829,10 @@ describe("DisconnectWhatsApp and AbandonWhatsAppOnboarding", () => {
     expect(dto.status).toBe("disconnected");
     expect(await row(kit)).toMatchObject({ sealedCredentials: "", status: "disconnected" });
     expect((await row(kit)).disconnectedAt).not.toBeNull();
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
     expect(kit.events.ofType("outreach.whatsapp.disconnected")[0]?.payload).toEqual({
-      phoneNumberId: "phone-1",
-      wabaId: "waba-1",
+      phoneNumberId: "100000000001",
+      wabaId: "200000000001",
     });
   });
 
@@ -806,7 +864,7 @@ describe("DisconnectWhatsApp and AbandonWhatsAppOnboarding", () => {
     );
     expect(error).toBeInstanceOf(ConcurrencyError);
     expect((await row(kit)).status).toBe("connected");
-    expect(await kit.mem.directory.find("phone-1")).not.toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).not.toBeNull();
     expect(kit.events.calls).toHaveLength(0);
   });
 
@@ -903,7 +961,7 @@ describe("RefreshWhatsAppStatus — one checked row, CAS on the captured version
     const kit = createOutreachKit();
     await seedConnection(kit);
     kit.whatsapp.set("getPhone", () => ({
-      phoneNumberId: "phone-1",
+      phoneNumberId: "100000000001",
       displayPhoneNumber: "+20 101 234 5678",
       verifiedName: "Shop",
       qualityRating: "RED",
@@ -941,14 +999,14 @@ describe("RefreshWhatsAppStatus — one checked row, CAS on the captured version
     afterFirstTransactionalRead(kit, (r) =>
       kit.mem.store.connections.set(
         T1,
-        { ...r, phoneNumberId: "phone-9", wabaId: "waba-9", version: r.version + 1 },
+        { ...r, phoneNumberId: "100000000009", wabaId: "200000000009", version: r.version + 1 },
         undefined,
       ),
     );
     expect(
       errorOf(await new RefreshWhatsAppStatus(kit.deps).execute({ tenantId: T1 })).message,
     ).toBe("CONNECTION_CHANGED");
-    expect(await row(kit)).toMatchObject({ phoneNumberId: "phone-9", qualityRating: "GREEN" });
+    expect(await row(kit)).toMatchObject({ phoneNumberId: "100000000009", qualityRating: "GREEN" });
   });
 });
 
@@ -1058,7 +1116,7 @@ describe("ConnectWhatsApp — ownership is revalidated after every async gap (I3
         expectedVersion: (await row(kit)).version,
       }),
     );
-    gate.resolve(["phone-1"]);
+    gate.resolve(["100000000001"]);
     expect(errorOf(await b).message).toBe("CONNECTION_CHANGED");
     expect(kit.whatsapp.count("getPhone")).toBe(1);
   });
@@ -1081,7 +1139,7 @@ describe("ConnectWhatsApp — ownership is revalidated after every async gap (I3
     });
     expect(errorOf(await connect(kit)).message).toBe("CONNECTION_CHANGED");
     expect(await row(kit)).toMatchObject({ status: "onboarding", onboardingStage: "registered" });
-    expect(await kit.mem.directory.find("phone-1")).toBeNull();
+    expect(await kit.mem.directory.find("100000000001")).toBeNull();
     expect(kit.events.ofType("outreach.whatsapp.connected")).toHaveLength(0);
   });
 
@@ -1107,8 +1165,8 @@ describe("ConnectWhatsApp — a persisted stage with unusable credentials fails 
       {
         tenantId: T1,
         status: "onboarding",
-        wabaId: "waba-1",
-        phoneNumberId: "phone-1",
+        wabaId: "200000000001",
+        phoneNumberId: "100000000001",
         displayPhoneNumber: null,
         verifiedName: null,
         qualityRating: null,
@@ -1210,15 +1268,15 @@ describe("ConnectWhatsApp — switching assets clears the session windows (I4)",
     const kit = createOutreachKit();
     await seedConnection(kit);
     await seedContact(kit, { phone: "+201012345678", transactional: "allowed" });
-    await inbound(kit, "phone-1", "waba-1", "wamid.inA");
+    await inbound(kit, "100000000001", "200000000001", "wamid.inA");
     expect(okValue(await reply(kit, "k-a")).status).toBe("accepted");
 
-    kit.whatsapp.phoneIds = ["phone-2"];
-    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    kit.whatsapp.phoneIds = ["100000000002"];
+    okValue(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
     expect(errorOf(await reply(kit, "k-b1")).message).toBe("SESSION_WINDOW_CLOSED");
     expect((await kit.mem.contacts.findByPhone(T1, "+201012345678"))?.lastInboundAt).toBeNull();
 
-    await inbound(kit, "phone-2", "waba-2", "wamid.inB");
+    await inbound(kit, "100000000002", "200000000002", "wamid.inB");
     expect(okValue(await reply(kit, "k-b2")).status).toBe("accepted");
   });
 
@@ -1230,8 +1288,8 @@ describe("ConnectWhatsApp — switching assets clears the session windows (I4)",
     await seedContact(kit, { phone: "+201012345678", lastInboundAt: at });
     await seedContact(kit, { phone: "+201112345678", lastInboundAt: at });
     await seedContact(kit, { tenantId: T2, phone: "+201212345678", lastInboundAt: at });
-    kit.whatsapp.phoneIds = ["phone-2"];
-    okValue(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    kit.whatsapp.phoneIds = ["100000000002"];
+    okValue(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
     const windows = kit.mem.store.contacts
       .values()
       .map((c) => `${c.tenantId}:${c.lastInboundAt === null}`);
@@ -1253,7 +1311,7 @@ describe("ConnectWhatsApp — switching assets clears the session windows (I4)",
     const kit = createOutreachKit();
     await seedConnection(kit);
     await seedContact(kit, { phone: BUYER, transactional: "allowed" });
-    await inbound(kit, "phone-1", "waba-1", "wamid.inA");
+    await inbound(kit, "100000000001", "200000000001", "wamid.inA");
     expect(okValue(await reply(kit, "k-a")).status).toBe("accepted");
     okValue(
       await new DisconnectWhatsApp(kit.deps).execute({
@@ -1262,18 +1320,20 @@ describe("ConnectWhatsApp — switching assets clears the session windows (I4)",
       }),
     );
 
-    kit.whatsapp.phoneIds = ["phone-2"];
+    kit.whatsapp.phoneIds = ["100000000002"];
     kit.whatsapp.once("exchangeCode", () => {
       throw metaError("100");
     });
-    errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    errorOf(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
     // The failed attempt already persisted the B tuple: A's window is gone before anything can forget A.
-    expect(await row(kit)).toMatchObject({ phoneNumberId: "phone-2", status: "onboarding" });
+    expect(await row(kit)).toMatchObject({ phoneNumberId: "100000000002", status: "onboarding" });
     expect((await kit.mem.contacts.findByPhone(T1, BUYER))?.lastInboundAt).toBeNull();
 
-    okValue(await connect(kit, { code: "c2", wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    okValue(
+      await connect(kit, { code: "c2", wabaId: "200000000002", phoneNumberId: "100000000002" }),
+    );
     expect(errorOf(await reply(kit, "k-b1")).message).toBe("SESSION_WINDOW_CLOSED");
-    await inbound(kit, "phone-2", "waba-2", "wamid.inB");
+    await inbound(kit, "100000000002", "200000000002", "wamid.inB");
     expect(okValue(await reply(kit, "k-b2")).status).toBe("accepted");
   });
 
@@ -1303,12 +1363,14 @@ describe("ConnectWhatsApp — switching assets clears the session windows (I4)",
     await seedConnection(kit);
     const at = new Date(kit.clock.now().getTime() - 3_600_000);
     await seedContact(kit, { phone: "+201012345678", lastInboundAt: at });
-    kit.whatsapp.phoneIds = ["phone-2"];
+    kit.whatsapp.phoneIds = ["100000000002"];
     kit.whatsapp.once("registerPhone", () => {
       throw metaError("100");
     });
-    errorOf(await connect(kit, { wabaId: "waba-2", phoneNumberId: "phone-2" }));
-    okValue(await connect(kit, { code: "c2", wabaId: "waba-2", phoneNumberId: "phone-2" }));
+    errorOf(await connect(kit, { wabaId: "200000000002", phoneNumberId: "100000000002" }));
+    okValue(
+      await connect(kit, { code: "c2", wabaId: "200000000002", phoneNumberId: "100000000002" }),
+    );
     expect((await kit.mem.contacts.findByPhone(T1, "+201012345678"))?.lastInboundAt).toBeNull();
   });
 });

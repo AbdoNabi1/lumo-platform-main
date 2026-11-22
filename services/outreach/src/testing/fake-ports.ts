@@ -50,7 +50,7 @@ type Handler = (...args: never[]) => unknown;
 /** A recording WhatsApp port. Defaults succeed; `once`/`set` script one-shot / permanent behaviour per method. */
 export class FakeWhatsAppPort implements WhatsAppCloudApiPort {
   readonly calls: Array<{ method: PortMethod; args: unknown[] }> = [];
-  phoneIds: string[] = ["phone-1"];
+  phoneIds: string[] = ["100000000001"];
   templates: MetaTemplateRecord[] = [];
   private readonly permanent = new Map<PortMethod, Handler>();
   private readonly oneShot = new Map<PortMethod, Handler[]>();

@@ -39,11 +39,11 @@ describe("SyncTemplates", () => {
     const list = okValue(await new SyncTemplates(kit.deps).execute({ tenantId: T1 }));
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ name: "t_one", language: "en_US", status: "APPROVED" });
-    expect(kit.whatsapp.callsOf("listTemplates")[0]?.[0]).toBe("waba-1");
+    expect(kit.whatsapp.callsOf("listTemplates")[0]?.[0]).toBe("200000000001");
     const events = kit.events.ofType("outreach.template.status_changed");
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({
-      wabaId: "waba-1",
+      wabaId: "200000000001",
       metaTemplateId: "m1",
       from: null,
       to: "APPROVED",
@@ -183,7 +183,7 @@ describe("CreateTemplate", () => {
       variableCount: 1,
     });
     const call = kit.whatsapp.callsOf("createTemplate")[0];
-    expect(call?.[0]).toBe("waba-1");
+    expect(call?.[0]).toBe("200000000001");
     expect(kit.events.ofType("outreach.template.status_changed")[0]?.payload).toMatchObject({
       from: null,
       to: "PENDING",
@@ -222,7 +222,7 @@ describe("CreateTemplate", () => {
       errorOf(await new CreateTemplate(kit.deps).execute({ tenantId: T1, draft: fresh })).message,
     ).toBe("META_100");
     expect(
-      await kit.mem.templates.findByNameLanguage(T1, "waba-1", "fresh_one", "en_US"),
+      await kit.mem.templates.findByNameLanguage(T1, "200000000001", "fresh_one", "en_US"),
     ).toBeNull();
   });
 
@@ -417,10 +417,10 @@ describe("CreateTemplate — replacing a DELETED tombstone (I7) and a stable agg
       revision: 2,
     });
     // both lookup directions: the new provider id finds the row, the old one no longer does
-    expect((await kit.mem.templates.findByProviderId(T1, "waba-1", "meta-NEW"))?.id).toBe(
+    expect((await kit.mem.templates.findByProviderId(T1, "200000000001", "meta-NEW"))?.id).toBe(
       "tpl-stable",
     );
-    expect(await kit.mem.templates.findByProviderId(T1, "waba-1", "meta-old")).toBeNull();
+    expect(await kit.mem.templates.findByProviderId(T1, "200000000001", "meta-old")).toBeNull();
     const events = kit.events.ofType("outreach.template.status_changed");
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({

@@ -196,8 +196,8 @@ function outbound(tenantId: string, over: Partial<OutboundRecord> = {}): Outboun
     correlationId: randomUUID(),
     dispatchStartedAt: T0,
     providerIdempotencyKey: null,
-    dispatchPhoneNumberId: "phone-1",
-    dispatchWabaId: "waba-1",
+    dispatchPhoneNumberId: "100000000001",
+    dispatchWabaId: "200000000001",
     version: 0,
     ...over,
   };
@@ -247,7 +247,7 @@ function unmatched(
   return {
     id: randomUUID(),
     tenantId,
-    phoneNumberId: "phone-1",
+    phoneNumberId: "100000000001",
     providerEventId: uid("evt"),
     providerMessageId: uid("wamid"),
     correlationId: null,
@@ -255,7 +255,7 @@ function unmatched(
     occurredAt: T0,
     resolvedAt: null,
     recipientId: "201012345678",
-    wabaId: "waba-1",
+    wabaId: "200000000001",
     errorCode: null,
     quarantined: false,
     ...over,
@@ -2362,29 +2362,40 @@ export function runOutreachRepositoryContract(
           providerMessageId: uid("wamid"),
           correlationId: corr,
         });
-        const wrongPhone = unmatched(a, { providerMessageId: wamid, phoneNumberId: "phone-2" });
+        const wrongPhone = unmatched(a, {
+          providerMessageId: wamid,
+          phoneNumberId: "100000000002",
+        });
         const otherTenant = unmatched(b, { providerMessageId: wamid });
         const unrelated = unmatched(a);
         for (const row of [mine1, mine0, byCorrelation, wrongPhone, otherTenant, unrelated])
           await r.unmatched.put(row);
 
         clock.set(at(1000));
-        const taken = await r.unmatched.takeFor(a, "phone-1", { providerMessageId: wamid });
+        const taken = await r.unmatched.takeFor(a, "100000000001", { providerMessageId: wamid });
         expect(taken.map((x) => x.id)).toEqual([mine0.id, mine1.id]);
         expect(taken.every((x) => x.resolvedAt !== null)).toBe(true);
-        expect(await r.unmatched.takeFor(a, "phone-1", { providerMessageId: wamid })).toEqual([]);
+        expect(await r.unmatched.takeFor(a, "100000000001", { providerMessageId: wamid })).toEqual(
+          [],
+        );
 
-        const viaCorrelation = await r.unmatched.takeFor(a, "phone-1", { correlationId: corr });
+        const viaCorrelation = await r.unmatched.takeFor(a, "100000000001", {
+          correlationId: corr,
+        });
         expect(viaCorrelation.map((x) => x.id)).toEqual([byCorrelation.id]);
 
         // the other phone's and the other tenant's rows are untouched and still takeable by their owners
         expect(
-          (await r.unmatched.takeFor(a, "phone-2", { providerMessageId: wamid })).map((x) => x.id),
+          (await r.unmatched.takeFor(a, "100000000002", { providerMessageId: wamid })).map(
+            (x) => x.id,
+          ),
         ).toEqual([wrongPhone.id]);
         expect(
-          (await r.unmatched.takeFor(b, "phone-1", { providerMessageId: wamid })).map((x) => x.id),
+          (await r.unmatched.takeFor(b, "100000000001", { providerMessageId: wamid })).map(
+            (x) => x.id,
+          ),
         ).toEqual([otherTenant.id]);
-        expect(await r.unmatched.takeFor(a, "phone-1", {})).toEqual([]);
+        expect(await r.unmatched.takeFor(a, "100000000001", {})).toEqual([]);
         await close();
       });
 
@@ -2411,7 +2422,9 @@ export function runOutreachRepositoryContract(
         await r.unmatched.put(unbound);
         await r.unmatched.put(quarantined);
         clock.set(at(1000));
-        const taken = await r.unmatched.takeFor(tenant, "phone-1", { providerMessageId: wamid });
+        const taken = await r.unmatched.takeFor(tenant, "100000000001", {
+          providerMessageId: wamid,
+        });
         expect(taken).toHaveLength(1);
         expect(taken[0]).toMatchObject({
           id: unbound.id,
@@ -2433,11 +2446,11 @@ export function runOutreachRepositoryContract(
         await r.unmatched.put(unmatched(tenant, { providerMessageId: wamid }));
         await rollsBack(r.unitOfWork, tenant, async (tx) => {
           expect(
-            await r.unmatched.takeFor(tenant, "phone-1", { providerMessageId: wamid }, tx),
+            await r.unmatched.takeFor(tenant, "100000000001", { providerMessageId: wamid }, tx),
           ).toHaveLength(1);
         });
         expect(
-          await r.unmatched.takeFor(tenant, "phone-1", { providerMessageId: wamid }),
+          await r.unmatched.takeFor(tenant, "100000000001", { providerMessageId: wamid }),
         ).toHaveLength(1);
         await close();
       });

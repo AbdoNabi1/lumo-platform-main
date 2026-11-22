@@ -58,8 +58,8 @@ const pendingOutbound = (tenantId: string): OutboundRecord => ({
   correlationId: randomUUID(),
   dispatchStartedAt: T0,
   providerIdempotencyKey: null,
-  dispatchPhoneNumberId: "phone-1",
-  dispatchWabaId: "waba-1",
+  dispatchPhoneNumberId: "100000000001",
+  dispatchWabaId: "200000000001",
   version: 0,
 });
 
