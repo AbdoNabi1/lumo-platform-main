@@ -524,6 +524,38 @@ export class PrismaContactRepository implements ContactRepository {
     });
   }
 
+  async appendConsentOnce(
+    e: ConsentEventRecord,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<"appended" | "duplicate"> {
+    return withClient(this.deps.prisma, e.tenantId, tx, async (c) => {
+      // ON CONFLICT DO NOTHING on the unique (tenant_id, operation_key): a concurrent first use of the key waits for
+      // the other transaction, then reports a duplicate (no aborted transaction, no second event).
+      const created = await c.consentEvent.createMany({
+        data: [consentEventInsertRow({ ...e, operationKey })],
+        skipDuplicates: true,
+      });
+      if (created.count > 0) return "appended";
+      const holder = await c.consentEvent.findFirst({
+        where: { tenantId: e.tenantId, operationKey },
+      });
+      if (holder !== null) return "duplicate";
+      throw unexpectedConflict();
+    });
+  }
+
+  async findConsentByOperation(
+    tenantId: string,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<ConsentEventRecord | null> {
+    const row = await withClient(this.deps.prisma, tenantId, tx, (c) =>
+      c.consentEvent.findFirst({ where: { tenantId, operationKey } }),
+    );
+    return row === null ? null : consentEventFromRow(row);
+  }
+
   async clearSessionWindows(tenantId: string, tx?: unknown): Promise<number> {
     const cleared = await withClient(this.deps.prisma, tenantId, tx, (c) =>
       c.contact.updateMany({

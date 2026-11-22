@@ -357,6 +357,11 @@ export interface ConsentEventRecord {
   action: "grant" | "revoke";
   source: "admin" | "import" | "inbound_keyword" | "checkout" | "api";
   evidence: string | null;
+  /**
+   * The durable once-only receipt of an operator attestation (tenant + submission key): unique per tenant, absent
+   * (undefined or null) on ordinary events. A repeat of the same key never records a second event.
+   */
+  operationKey?: string | null;
   occurredAt: Date;
 }
 
@@ -373,6 +378,22 @@ export interface ContactRepository {
   /** Writes ONLY the three consent columns (use with a record produced by `applyConsent`). The row must exist. */
   saveConsent(r: ContactRecord, expectedVersion: number, tx?: unknown): Promise<void>;
   appendConsent(e: ConsentEventRecord, tx?: unknown): Promise<void>;
+  /**
+   * Appends `e` carrying `operationKey` unless the tenant already has an event with that key (a repeat of the same
+   * submission): then nothing is written and "duplicate" is returned, whichever contact, purpose or id the repeat
+   * names. Atomic (a concurrent first use of the key waits for the other transaction); a rollback frees the key.
+   */
+  appendConsentOnce(
+    e: ConsentEventRecord,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<"appended" | "duplicate">;
+  /** The event recorded under `operationKey` for this tenant, or `null`. */
+  findConsentByOperation(
+    tenantId: string,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<ConsentEventRecord | null>;
   /**
    * Sets `lastInboundAt = NULL` on every contact of the tenant that has one (the customer-service window opened on a
    * business number never applies to a different number). Tenant-scoped, bumps each touched row's version (so a

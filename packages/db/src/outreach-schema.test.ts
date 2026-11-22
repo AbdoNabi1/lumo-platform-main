@@ -79,6 +79,7 @@ describe("outreach migration", () => {
       ["UnmatchedStatusEvent", "dispatchWabaId", "String?"],
       ["UnmatchedStatusEvent", "errorCode", "String?"],
       ["UnmatchedStatusEvent", "quarantined", "Boolean @default(false)"],
+      ["ConsentEvent", "operationKey", "String?"],
       ["EmailSendCounter", "count", "Int"],
     ];
     for (const [model, field, type] of fields) {
@@ -145,6 +146,15 @@ describe("outreach migration", () => {
         "tenantId, contactId, occurredAt",
         "tenant_id, contact_id, occurred_at",
         "0_idx",
+      ],
+      // the durable once-only receipt of an operator attestation (NULLs are distinct: ordinary events carry none)
+      [
+        "ConsentEvent",
+        "consent_events",
+        "unique",
+        "tenantId, operationKey",
+        "tenant_id, operation_key",
+        "1_key",
       ],
       [
         "OutboundMessage",

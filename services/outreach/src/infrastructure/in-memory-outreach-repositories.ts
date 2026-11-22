@@ -578,6 +578,40 @@ export class InMemoryContactRepository implements ContactRepository {
     });
   }
 
+  async appendConsentOnce(
+    e: ConsentEventRecord,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<"appended" | "duplicate"> {
+    // The twin of the unique index: a concurrent first use of the key waits until the other transaction ends.
+    if (this.store.isLive(tx)) {
+      await this.store.lockKey(tx, JSON.stringify(["consent-operation", e.tenantId, operationKey]));
+    }
+    return this.store.access(tx, (t) => {
+      const taken = this.store.consentEvents
+        .values()
+        .some((x) => x.tenantId === e.tenantId && x.operationKey === operationKey);
+      if (taken) return "duplicate";
+      if (this.store.consentEvents.get(e.id) !== undefined) throw unexpectedConflict();
+      this.store.consentEvents.set(e.id, { ...e, operationKey }, t);
+      return "appended";
+    });
+  }
+
+  findConsentByOperation(
+    tenantId: string,
+    operationKey: string,
+    tx?: unknown,
+  ): Promise<ConsentEventRecord | null> {
+    return this.store.access(
+      tx,
+      () =>
+        this.store.consentEvents
+          .values()
+          .find((x) => x.tenantId === tenantId && x.operationKey === operationKey) ?? null,
+    );
+  }
+
   clearSessionWindows(tenantId: string, tx?: unknown): Promise<number> {
     return this.store.access(tx, (t) => {
       let cleared = 0;

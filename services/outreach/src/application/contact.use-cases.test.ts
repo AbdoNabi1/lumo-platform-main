@@ -278,3 +278,110 @@ describe("RecordConsent", () => {
     expect(recorder.calls).toHaveLength(0);
   });
 });
+
+describe("RecordConsent — a durable once-only operation key (Task 6: attestation receipt)", () => {
+  const grant = (kit: ReturnType<typeof createOutreachKit>, contactId: string, over = {}) =>
+    new RecordConsent(kit.deps).execute({
+      tenantId: T1,
+      contactId,
+      channel: "whatsapp",
+      purpose: "transactional",
+      action: "grant",
+      source: "admin",
+      evidence: "test send attestation by operator-1",
+      operationKey: "attest:k-1",
+      ...over,
+    });
+  const revoke = (kit: ReturnType<typeof createOutreachKit>, contactId: string) =>
+    new RecordConsent(kit.deps).execute({
+      tenantId: T1,
+      contactId,
+      channel: "whatsapp",
+      purpose: "transactional",
+      action: "revoke",
+      source: "inbound_keyword",
+    });
+  async function contact(kit: ReturnType<typeof createOutreachKit>) {
+    return okValue(
+      await new UpsertContact(kit.deps).execute({ tenantId: T1, phone: "01012345678" }),
+    );
+  }
+
+  it("a retry after an intervening STOP reuses the first attestation: still revoked, one grant, no second event", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const c = await contact(kit);
+    expect(okValue(await grant(kit, c.id)).whatsappTransactional).toBe("allowed");
+    expect(okValue(await revoke(kit, c.id)).whatsappTransactional).toBe("revoked");
+    const emitted = kit.events.calls.length;
+    const again = okValue(await grant(kit, c.id));
+    expect(again.whatsappTransactional).toBe("revoked");
+    const events = await kit.deps.contacts.listConsentEvents(T1, c.id);
+    expect(events.map((e) => e.action)).toEqual(["grant", "revoke"]);
+    expect(events[0]).toMatchObject({
+      source: "admin",
+      evidence: "test send attestation by operator-1",
+      operationKey: "attest:k-1",
+    });
+    expect(kit.events.calls).toHaveLength(emitted);
+  });
+
+  it("a new key is a new submission and may grant again; the same key in another tenant is independent", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const c = await contact(kit);
+    okValue(await grant(kit, c.id));
+    okValue(await revoke(kit, c.id));
+    expect(
+      okValue(await grant(kit, c.id, { operationKey: "attest:k-2" })).whatsappTransactional,
+    ).toBe("allowed");
+    const other = okValue(
+      await new UpsertContact(kit.deps).execute({ tenantId: T2, phone: "01012345678" }),
+    );
+    const granted = okValue(
+      await new RecordConsent(kit.deps).execute({
+        tenantId: T2,
+        contactId: other.id,
+        channel: "whatsapp",
+        purpose: "transactional",
+        action: "grant",
+        source: "admin",
+        operationKey: "attest:k-1",
+      }),
+    );
+    expect(granted.whatsappTransactional).toBe("allowed");
+  });
+
+  it("two concurrent submissions of the same key (overlapping transactions) record exactly one grant", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit({ overlap: true });
+    const c = await contact(kit);
+    const [a, b] = await Promise.all([grant(kit, c.id), grant(kit, c.id)]);
+    expect(okValue(a).whatsappTransactional).toBe("allowed");
+    expect(okValue(b).whatsappTransactional).toBe("allowed");
+    const events = await kit.deps.contacts.listConsentEvents(T1, c.id);
+    expect(events).toHaveLength(1);
+    expect(kit.events.ofType("outreach.contact.consent_changed")).toHaveLength(1);
+  });
+
+  it("a blank or over-long key is a field issue, nothing is written", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const c = await contact(kit);
+    for (const operationKey of ["", "   ", "k".repeat(256)]) {
+      const error = errorOf(await grant(kit, c.id, { operationKey }));
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(JSON.stringify(error)).toContain("operationKey");
+    }
+    expect(await kit.deps.contacts.listConsentEvents(T1, c.id)).toEqual([]);
+  });
+
+  it("without a key every call still appends its own event (unchanged)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    const c = await contact(kit);
+    okValue(await grant(kit, c.id, { operationKey: undefined }));
+    okValue(await grant(kit, c.id, { operationKey: undefined }));
+    expect(await kit.deps.contacts.listConsentEvents(T1, c.id)).toHaveLength(2);
+  });
+});

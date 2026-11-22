@@ -229,6 +229,7 @@ export function consentEventFromRow(row: ConsentEvent): ConsentEventRecord {
     action: oneOf<"grant" | "revoke">("consent_events.action", row.action, ACTION),
     source: oneOf<ConsentEventRecord["source"]>("consent_events.source", row.source, SOURCE),
     evidence: row.evidence,
+    ...(row.operationKey === null ? {} : { operationKey: row.operationKey }),
     occurredAt: row.occurredAt,
   };
 }
@@ -394,6 +395,9 @@ export function consentEventInsertRow(e: ConsentEventRecord): Prisma.ConsentEven
     action: e.action,
     source: e.source,
     evidence: e.evidence,
+    ...(e.operationKey === undefined || e.operationKey === null
+      ? {}
+      : { operationKey: e.operationKey }),
     occurredAt: e.occurredAt,
   };
 }

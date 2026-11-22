@@ -123,12 +123,16 @@ CREATE TABLE "outreach"."consent_events" (
   "action" TEXT NOT NULL,
   "source" TEXT NOT NULL,
   "evidence" TEXT,
+  "operation_key" TEXT,
   "occurred_at" TIMESTAMP(3) NOT NULL,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT "consent_events_pkey" PRIMARY KEY ("id")
 );
 
 CREATE INDEX "consent_events_0_idx" ON "outreach"."consent_events"("tenant_id", "contact_id", "occurred_at");
+-- Once-only receipt of an operator attestation (tenant + submission key). NULLs are distinct, so ordinary events
+-- (no key) never collide; the table keeps its FORCE ROW LEVEL SECURITY below.
+CREATE UNIQUE INDEX "consent_events_1_key" ON "outreach"."consent_events"("tenant_id", "operation_key");
 
 ALTER TABLE "outreach"."consent_events" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "outreach"."consent_events" FORCE ROW LEVEL SECURITY;

@@ -848,6 +848,76 @@ describe("PrismaContactRepository arguments", () => {
     await repo.listConsentEvents("t-1", "c-1", tx);
     expect(calls[1]?.args).toMatchObject({ where: { tenantId: "t-1", contactId: "c-1" } });
   });
+
+  describe("the once-only operation key", () => {
+    const event = {
+      id: "e-2",
+      tenantId: "t-1",
+      contactId: "c-1",
+      channel: "whatsapp" as const,
+      purpose: "transactional" as const,
+      action: "grant" as const,
+      source: "admin" as const,
+      evidence: "test send attestation by operator-1",
+      occurredAt: NOW,
+    };
+
+    it("appendConsentOnce inserts with ON CONFLICT DO NOTHING carrying the key; a lost insert is a duplicate only when the key holder is readable", async () => {
+      expect.hasAssertions();
+      const first = recordingClient({ "consentEvent.createMany": [{ count: 1 }] });
+      expect(await repo.appendConsentOnce(event, "attest:k", first.tx)).toBe("appended");
+      expect(first.calls).toHaveLength(1);
+      expect(first.calls[0]?.args).toEqual({
+        data: [expect.objectContaining({ id: "e-2", tenantId: "t-1", operationKey: "attest:k" })],
+        skipDuplicates: true,
+      });
+
+      const repeat = recordingClient({
+        "consentEvent.createMany": [{ count: 0 }],
+        "consentEvent.findFirst": [{ id: "e-1" }],
+      });
+      expect(await repo.appendConsentOnce(event, "attest:k", repeat.tx)).toBe("duplicate");
+      expect(repeat.calls[1]?.args).toEqual({
+        where: { tenantId: "t-1", operationKey: "attest:k" },
+      });
+
+      const unexplained = recordingClient({ "consentEvent.createMany": [{ count: 0 }] });
+      await expect(repo.appendConsentOnce(event, "attest:k", unexplained.tx)).rejects.toThrow(
+        /unexpected unique conflict/,
+      );
+    });
+
+    it("findConsentByOperation is tenant + key scoped and maps the stored key back", async () => {
+      expect.hasAssertions();
+      const { tx, calls } = recordingClient({
+        "consentEvent.findFirst": [
+          {
+            id: "e-2",
+            tenantId: "t-1",
+            contactId: "c-1",
+            channel: "whatsapp",
+            purpose: "transactional",
+            action: "grant",
+            source: "admin",
+            evidence: "x",
+            operationKey: "attest:k",
+            occurredAt: NOW,
+            createdAt: NOW,
+          },
+          null,
+        ],
+      });
+      expect(await repo.findConsentByOperation("t-1", "attest:k", tx)).toMatchObject({
+        id: "e-2",
+        operationKey: "attest:k",
+      });
+      expect(await repo.findConsentByOperation("t-1", "other", tx)).toBeNull();
+      expect(calls.map((c) => c.args)).toEqual([
+        { where: { tenantId: "t-1", operationKey: "attest:k" } },
+        { where: { tenantId: "t-1", operationKey: "other" } },
+      ]);
+    });
+  });
 });
 
 describe("PrismaOutboundMessageRepository arguments", () => {

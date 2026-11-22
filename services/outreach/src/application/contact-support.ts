@@ -66,6 +66,9 @@ export async function findOrCreateContact(
  * Applies one consent event inside `tx`: the state (CAS on the contact version), the audit event and one
  * `consent_changed` event per purpose that really changed. Returns the contact as stored afterwards.
  */
+/** Thrown inside the unit of work when a once-only operation key was already used: the transaction rolls back. */
+export class ConsentOperationReplayed extends Error {}
+
 export async function applyConsentInTx(
   deps: OutreachDeps,
   tx: unknown,
@@ -76,6 +79,8 @@ export async function applyConsentInTx(
     action: "grant" | "revoke";
     source: ConsentSource;
     evidence: string | null;
+    /** A durable once-only receipt: when this key was already used the whole transaction is rolled back. */
+    operationKey?: string;
   },
 ): Promise<ContactRecord> {
   const applied = applyConsent(consentStateOf(contact), {
@@ -89,20 +94,23 @@ export async function applyConsentInTx(
     await deps.contacts.saveConsent(next, contact.version, tx);
     next = { ...next, version: contact.version + 1 };
   }
-  await deps.contacts.appendConsent(
-    {
-      id: deps.idGenerator.generate(),
-      tenantId: contact.tenantId,
-      contactId: contact.id,
-      channel: e.channel,
-      purpose: e.purpose,
-      action: e.action,
-      source: e.source,
-      evidence: e.evidence,
-      occurredAt: deps.clock.now(),
-    },
-    tx,
-  );
+  const event = {
+    id: deps.idGenerator.generate(),
+    tenantId: contact.tenantId,
+    contactId: contact.id,
+    channel: e.channel,
+    purpose: e.purpose,
+    action: e.action,
+    source: e.source,
+    evidence: e.evidence,
+    occurredAt: deps.clock.now(),
+  };
+  if (e.operationKey === undefined) {
+    await deps.contacts.appendConsent(event, tx);
+  } else if ((await deps.contacts.appendConsentOnce(event, e.operationKey, tx)) === "duplicate") {
+    // A concurrent submission of the same key won: undo this transaction's state change as well.
+    throw new ConsentOperationReplayed();
+  }
   for (const change of applied.changed) {
     await emit(deps, tx, contact.tenantId, "outreach.contact.consent_changed", contact.id, {
       contactId: contact.id,

@@ -164,6 +164,11 @@ export class InMemoryOutreachStore {
     joined.heldKeys.set(key, await mutex.acquire());
   }
 
+  /** Whether `tx` is a live transaction handle of THIS store (never throws). */
+  isLive(tx: unknown): boolean {
+    return tx instanceof InMemoryOutreachTransaction && this.live.has(tx);
+  }
+
   /**
    * The live transaction `tx` denotes: `undefined` when no transaction was given (a standalone call), the handle
    * itself when it is this store's open one. A handle that is closed, or that belongs to another store, is an error:

@@ -91,9 +91,11 @@ model ConsentEvent {
   action String
   source String
   evidence String?
+  operationKey String? @map("operation_key")
   occurredAt DateTime @map("occurred_at")
   createdAt DateTime @default(now()) @map("created_at")
   @@index([tenantId, contactId, occurredAt], map: "consent_events_0_idx")
+  @@unique([tenantId, operationKey], map: "consent_events_1_key")
   @@map("consent_events")
   @@schema("outreach")
 }

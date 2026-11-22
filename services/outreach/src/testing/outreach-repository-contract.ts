@@ -1914,6 +1914,56 @@ export function runOutreachRepositoryContract(
         await close();
       });
 
+      it("appendConsentOnce records one event per (tenant, operation key); a repeat is a duplicate and appends nothing", async () => {
+        expect.hasAssertions();
+        const { r, close } = await open();
+        const [a, b] = [uid("t"), uid("t")];
+        const c = contact(a);
+        const other = contact(b);
+        await r.contacts.save(c, 0);
+        await r.contacts.save(other, 0);
+        const key = `attest:${uid("k")}`;
+        const ev = (
+          tenantId: string,
+          contactId: string,
+          over: Partial<ConsentEventRecord> = {},
+        ): ConsentEventRecord => ({
+          id: randomUUID(),
+          tenantId,
+          contactId,
+          channel: "whatsapp",
+          purpose: "transactional",
+          action: "grant",
+          source: "admin",
+          evidence: "first",
+          occurredAt: at(1),
+          ...over,
+        });
+        expect(await r.contacts.findConsentByOperation(a, key)).toBeNull();
+        expect(await r.contacts.appendConsentOnce(ev(a, c.id), key)).toBe("appended");
+        // the same key again — even for another purpose/contact/id — is a duplicate and writes nothing
+        expect(
+          await r.contacts.appendConsentOnce(
+            ev(a, c.id, { purpose: "marketing", evidence: "second" }),
+            key,
+          ),
+        ).toBe("duplicate");
+        expect(await r.contacts.listConsentEvents(a, c.id)).toHaveLength(1);
+        const found = await r.contacts.findConsentByOperation(a, key);
+        expect(found).toMatchObject({ contactId: c.id, evidence: "first", operationKey: key });
+        // another tenant's identical key is independent and invisible
+        expect(await r.contacts.findConsentByOperation(b, key)).toBeNull();
+        expect(await r.contacts.appendConsentOnce(ev(b, other.id), key)).toBe("appended");
+        // a rolled-back once-only append leaves no receipt: the key can still be used
+        const fresh = `attest:${uid("k")}`;
+        await rollsBack(r.unitOfWork, a, (tx) =>
+          r.contacts.appendConsentOnce(ev(a, c.id), fresh, tx),
+        );
+        expect(await r.contacts.findConsentByOperation(a, fresh)).toBeNull();
+        expect(await r.contacts.appendConsentOnce(ev(a, c.id), fresh)).toBe("appended");
+        await close();
+      });
+
       it("a rolled-back save leaves nothing", async () => {
         expect.hasAssertions();
         const { r, close } = await open();
