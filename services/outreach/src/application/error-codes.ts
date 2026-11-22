@@ -16,6 +16,7 @@ const LOCAL_CODES: ReadonlySet<string> = new Set([
   "EMAIL_MARKETING_NOT_AVAILABLE",
   "EMAIL_NOT_CONFIGURED",
   "ONBOARDING_IN_PROGRESS",
+  "ONBOARDING_PIN_INVALID",
   "ONBOARDING_NOT_ACTIVE",
   "ONBOARDING_RECONCILIATION_REQUIRED",
   "PHONE_IN_USE",
@@ -71,24 +72,115 @@ const TEMPLATE_REASONS: ReadonlySet<string> = new Set([
   "INVALID_FORMAT",
   "SCAM",
   "TAG_CONTENT_MISMATCH",
+  // also listed by Meta's `message_template_status_update` reference (`NONE` is not a rejection)
+  "PROMOTIONAL",
+  "CATEGORY_NOT_AVAILABLE",
 ]);
 
 /**
- * Meta's documented numeric error code families: the legacy Graph API codes (below 1000), the app/API rate limits
- * (80xxx), the WhatsApp Cloud API codes (13xxxx) and the template-management codes (2388xxx / 2494xxx / 2593xxx).
- * Any other number is NOT accepted as a provider code, even though it is made of digits.
+ * The numeric `code` values of Meta's "WhatsApp error codes" reference
+ * (https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes/, read 2026-11-22):
+ * authorization, integrity, template creation / send, phone migration, template insights, WABA, synchronization,
+ * throttling, "other" and Marketing Messages API tables. This is an EXPLICIT list, not a digit family: a six-digit PIN
+ * or any other number that merely looks like a provider code is not one unless Meta lists it.
  */
+const META_ERROR_CODES: ReadonlySet<string> = new Set([
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "10",
+  "33",
+  "100",
+  "190",
+  "200",
+  "368",
+  "80007",
+  "130403",
+  "130429",
+  "130472",
+  "130497",
+  "131000",
+  "131005",
+  "131008",
+  "131009",
+  "131016",
+  "131021",
+  "131026",
+  "131031",
+  "131037",
+  "131042",
+  "131045",
+  "131047",
+  "131048",
+  "131049",
+  "131050",
+  "131051",
+  "131052",
+  "131053",
+  "131055",
+  "131056",
+  "131057",
+  "131063",
+  "131064",
+  "131066",
+  "132000",
+  "132001",
+  "132005",
+  "132007",
+  "132012",
+  "132015",
+  "132016",
+  "132018",
+  "132068",
+  "132069",
+  "133000",
+  "133004",
+  "133005",
+  "133006",
+  "133008",
+  "133009",
+  "133010",
+  "133015",
+  "133016",
+  "134011",
+  "134100",
+  "134101",
+  "134102",
+  "135000",
+  "200005",
+  "200006",
+  "200007",
+  "1752041",
+  "2388012",
+  "2388019",
+  "2388039",
+  "2388040",
+  "2388047",
+  "2388072",
+  "2388073",
+  "2388091",
+  "2388093",
+  "2388103",
+  "2388293",
+  "2388299",
+  "2494100",
+  "2593079",
+  "2593085",
+  "2593107",
+  "2593108",
+]);
+
+/** The only numeric interval Meta documents as a range: permission errors `200-299`. */
+const META_ERROR_INTERVALS: ReadonlyArray<readonly [number, number]> = [[200, 299]];
+
+/** Canonical decimal digits (no sign, leading zero, separator) of a documented code or a code inside a documented interval. */
 function isMetaNumeric(code: string): boolean {
-  if (!/^[0-9]{1,7}$/.test(code) || String(Number(code)) !== code) return false;
+  if (!/^(0|[1-9][0-9]{0,6})$/.test(code)) return false;
+  if (META_ERROR_CODES.has(code)) return true;
   const n = Number(code);
-  return (
-    n < 1000 ||
-    (n >= 80000 && n <= 80999) ||
-    (n >= 130000 && n <= 139999) ||
-    (n >= 2388000 && n <= 2388999) ||
-    (n >= 2494000 && n <= 2494999) ||
-    (n >= 2593000 && n <= 2593999)
-  );
+  return META_ERROR_INTERVALS.some(([low, high]) => n >= low && n <= high);
 }
 
 /** A Meta-side code: a documented numeric code, `HTTP_<status>`, or an adapter transport code. `null` otherwise. */

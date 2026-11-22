@@ -262,9 +262,10 @@ describe("ConnectWhatsApp — resume", () => {
     expect.hasAssertions();
     const kit = createOutreachKit();
     kit.whatsapp.once("getPhone", () => {
-      throw metaError("500", 500);
+      // 500 is an HTTP status, not a documented Meta code (that would be META_ERROR); 131016 is a listed code
+      throw metaError("131016", 500);
     });
-    expect(errorOf(await connect(kit)).message).toBe("META_500");
+    expect(errorOf(await connect(kit)).message).toBe("META_131016");
     expect(await row(kit)).toMatchObject({ status: "onboarding", onboardingStage: "registered" });
     okValue(await connect(kit, { code: "code-2" }));
     expect(kit.whatsapp.count("registerPhone")).toBe(1);

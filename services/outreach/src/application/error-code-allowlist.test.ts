@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import {
+  knownCode,
+  metaConflictCodeOf,
+  safeCode,
+  templateReason,
+  webhookErrorCode,
+} from "./error-codes";
 import { MetaApiError } from "../infrastructure/meta-graph-client";
 import {
   createOutreachKit,
@@ -238,5 +245,163 @@ describe("error codes are an allowlist, not a shape (I9)", () => {
     );
     expect(failed.message).toBe("META_ERROR");
     expect(everything(connectKit)).not.toContain(PIN);
+  });
+});
+
+describe("Meta numeric codes are an explicit documented set, never a digit family (I9)", () => {
+  /** In the 13xxxx family Meta uses, six digits, and NOT in Meta's WhatsApp error-codes table. */
+  const UNLISTED_IN_FAMILY = ["136123", "130999", "131100", "139999", "134000", "132999"];
+
+  it("an unlisted in-family canary becomes generic on a rejected send, a failed callback and every DTO", async () => {
+    expect.hasAssertions();
+    for (const canary of UNLISTED_IN_FAMILY) {
+      const kit = createOutreachKit();
+      await seedSendScenario(kit);
+      kit.whatsapp.set("sendTemplate", () => ({
+        kind: "rejected",
+        code: canary,
+        message: "x",
+        retryable: false,
+      }));
+      const dto = okValue(await sendTemplate(kit));
+      expect(dto).toMatchObject({ status: "failed", errorCode: "PROVIDER_ERROR" });
+      expect(everything(kit)).not.toContain(canary);
+      expect(
+        sendResultDto({ ...kit.mem.store.outbound.values()[0]!, errorCode: canary }).errorCode,
+      ).toBe("PROVIDER_ERROR");
+    }
+    const kit = createOutreachKit();
+    await seedSendScenario(kit);
+    okValue(await sendTemplate(kit));
+    const row = kit.mem.store.outbound.values()[0];
+    await new ProcessWhatsAppWebhook(kit.deps).execute({
+      payload: messagesPayload("phone-1", {
+        statuses: [
+          {
+            ...statusItem({
+              id: row?.providerMessageId ?? "",
+              status: "failed",
+              timestamp: seconds(kit.clock.now()),
+              recipient: "201012345678",
+            }),
+            errors: [{ code: 136123, title: "canary" }],
+          },
+        ],
+      }),
+    });
+    expect(kit.mem.store.outbound.values()[0]).toMatchObject({ errorCode: "PROVIDER_ERROR" });
+    expect(everything(kit)).not.toContain("136123");
+  });
+
+  it("an unlisted in-family value is also generic as a META_ envelope and as a stored string", () => {
+    expect.hasAssertions();
+    for (const canary of UNLISTED_IN_FAMILY) {
+      expect(metaConflictCodeOf(canary)).toBe("META_ERROR");
+      expect(knownCode(canary)).toBeNull();
+      expect(knownCode(`META_${canary}`)).toBeNull();
+      expect(safeCode(canary)).toBe("PROVIDER_ERROR");
+      expect(webhookErrorCode(canary)).toBe("PROVIDER_ERROR");
+      expect(webhookErrorCode(Number(canary))).toBe("PROVIDER_ERROR");
+    }
+  });
+
+  it("real listed codes pass, including ones outside the old family and the documented 200-299 interval", () => {
+    expect.hasAssertions();
+    for (const code of [
+      "0",
+      "190",
+      "200",
+      "250",
+      "299",
+      "368",
+      "80007",
+      "131026",
+      "131047",
+      "132015",
+      "133005",
+      "135000",
+      "200005",
+      "1752041",
+      "2388040",
+      "2593108",
+    ]) {
+      expect(knownCode(code)).toBe(code);
+      expect(metaConflictCodeOf(code)).toBe(`META_${code}`);
+      expect(webhookErrorCode(Number(code))).toBe(code);
+    }
+    expect(knownCode("META_131026")).toBe("META_131026");
+  });
+
+  it("numbers near, but outside, the documented ones are generic: no broad ranges, no non-canonical digits", () => {
+    expect.hasAssertions();
+    for (const code of [
+      "5",
+      "99",
+      "300",
+      "400",
+      "999",
+      "1000",
+      "80008",
+      "80999",
+      "2388000",
+      "2388023",
+      "2494055",
+      "2593000",
+      "0131026",
+      "131026.0",
+      "1752042",
+    ]) {
+      expect(knownCode(code)).toBeNull();
+      expect(safeCode(code)).toBe("PROVIDER_ERROR");
+    }
+  });
+
+  it("HTTP_<status> and the adapter constants still pass; anything else HTTP-shaped does not", () => {
+    expect.hasAssertions();
+    for (const code of ["HTTP_400", "HTTP_503", "TIMEOUT", "NETWORK_ERROR", "INVALID_RESPONSE"]) {
+      expect(knownCode(code)).toBe(code);
+    }
+    for (const code of ["HTTP_99", "HTTP_600", "HTTP_4000", "HTTP_4xx", "http_400"]) {
+      expect(knownCode(code)).toBeNull();
+    }
+  });
+
+  it("the local onboarding PIN code survives storage and the DTO, carrying no PIN", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit({});
+    kit.pins.unshift("12");
+    const failed = errorOf(
+      await new ConnectWhatsApp(kit.deps).execute({
+        tenantId: T1,
+        code: "c",
+        wabaId: "waba-1",
+        phoneNumberId: "phone-1",
+      }),
+    );
+    expect(failed.message).toBe("ONBOARDING_PIN_INVALID");
+    const stored = kit.mem.store.connections.values()[0];
+    expect(stored?.onboardingFailure).toBe("ONBOARDING_PIN_INVALID");
+    if (stored === undefined) throw new Error("no row");
+    const dto = connectionDto(stored, true);
+    expect(dto.onboardingFailure).toBe("ONBOARDING_PIN_INVALID");
+    expect(JSON.stringify(dto)).not.toContain('"12"');
+  });
+
+  it("all documented template rejection reasons are kept; NONE, null and unknown strings are not", () => {
+    expect.hasAssertions();
+    for (const reason of [
+      "ABUSIVE_CONTENT",
+      "INCORRECT_CATEGORY",
+      "INVALID_FORMAT",
+      "SCAM",
+      "TAG_CONTENT_MISMATCH",
+      "PROMOTIONAL",
+      "CATEGORY_NOT_AVAILABLE",
+    ]) {
+      expect(templateReason(reason)).toBe(reason);
+    }
+    for (const reason of ["NONE", null, undefined, "SOMETHING_ELSE", "scam", 5]) {
+      expect(templateReason(reason)).toBeNull();
+    }
   });
 });
