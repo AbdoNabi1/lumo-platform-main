@@ -37,16 +37,23 @@ const hydraOrigin = authOrigin("HYDRA_PUBLIC_URL", "http://localhost:4444");
 const mediaOrigin = authOrigin("MEDIA_PUBLIC_BASE_URL", "");
 const storefrontOrigin = authOrigin("STOREFRONT_URL", "");
 
+// Outreach Part 1 — WhatsApp Embedded Signup. The Facebook SDK is a script from `connect.facebook.net`; its login popup
+// and the session messages it posts come from facebook.com. Exact origins only, never a wildcard.
+const FACEBOOK_SDK_ORIGIN = "https://connect.facebook.net";
+const FACEBOOK_LOGIN_ORIGINS = ["https://www.facebook.com", "https://web.facebook.com"];
+
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' ${FACEBOOK_SDK_ORIGIN}`,
   "style-src 'self' 'unsafe-inline'",
   ["img-src 'self' data:", mediaOrigin].filter((part) => part.length > 0).join(" "),
   "font-src 'self' data:",
-  "connect-src 'self'",
+  `connect-src 'self' ${FACEBOOK_LOGIN_ORIGINS.join(" ")}`,
   // Ruling 18: the customize editor frames the storefront preview, which runs on the shop's primary
   // hostname (any verified custom domain). The framed page's own frame-ancestors is the control.
-  ["frame-src 'self' https:", storefrontOrigin].filter((part) => part.length > 0).join(" "),
+  ["frame-src 'self' https:", storefrontOrigin, ...FACEBOOK_LOGIN_ORIGINS]
+    .filter((part) => part.length > 0)
+    .join(" "),
   `form-action 'self' ${kratosOrigin} ${hydraOrigin}`,
   "frame-ancestors 'none'",
   "base-uri 'self'",
