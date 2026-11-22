@@ -547,6 +547,53 @@ describe("ProcessWhatsAppWebhook — strict item validation before the unit of w
     expect(kit.events.ofType("outreach.whatsapp.inbound_received")).toHaveLength(1);
   });
 
+  it("an empty interactive object and a declared button_reply without its reply are rejected, not kept as other (I5)", async () => {
+    expect.hasAssertions();
+    const kit = createOutreachKit();
+    await seedConnection(kit);
+    const ts = now(kit) - 30;
+    const interactive = (id: string, from: string, body: unknown) => ({
+      id,
+      from,
+      timestamp: String(ts),
+      type: "interactive",
+      interactive: body,
+    });
+    const out = await run(
+      kit,
+      messagesPayload("phone-1", {
+        messages: [
+          interactive("i-empty", "201055555551", {}),
+          interactive("i-declared", "201055555552", { type: "button_reply" }),
+          interactive("i-string-reply", "201055555553", {
+            type: "button_reply",
+            button_reply: "yes",
+          }),
+          interactive("i-untyped-reply", "201055555554", { button_reply: [] }),
+          interactive("i-bad-subtype", "201055555555", { type: 5 }),
+          interactive("good-reply", "201055555556", {
+            type: "button_reply",
+            button_reply: { id: "yes", title: "Yes" },
+          }),
+          // a genuine subtype this service does not interpret is still kept as `other`
+          interactive("list", "201055555557", {
+            type: "list_reply",
+            list_reply: { id: "r1", title: "Row" },
+          }),
+        ],
+      }),
+    );
+    expect(out).toEqual({ processed: 2, skipped: 5 });
+    const stored = kit.mem.store.inbound.values().map((i) => [i.providerMessageId, i.type]);
+    expect(stored).toEqual([
+      ["good-reply", "interactive"],
+      ["list", "other"],
+    ]);
+    // no contact, window or event for any of the five rejected items
+    expect(kit.mem.store.contacts.values()).toHaveLength(2);
+    expect(kit.events.ofType("outreach.whatsapp.inbound_received")).toHaveLength(2);
+  });
+
   it("an invalid STOP-shaped item changes no consent; legitimate unsupported types are still kept as other", async () => {
     expect.hasAssertions();
     const kit = createOutreachKit();

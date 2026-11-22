@@ -437,14 +437,21 @@ function mapInbound(raw: Rec): {
   }
   if (type === "interactive") {
     if (!isRec(raw.interactive)) return null;
-    if (isRec(raw.interactive.button_reply)) {
+    const subtype = raw.interactive.type;
+    // A button reply is known: declared as one, or carrying a `button_reply` member, it must be a well-formed reply.
+    // It is rejected BEFORE the `other` fallback (an empty `interactive`, `{type:"button_reply"}` without its reply
+    // object, or a non-object reply would otherwise open a window and emit an inbound event).
+    if (subtype === "button_reply" || raw.interactive.button_reply !== undefined) {
       const reply = raw.interactive.button_reply;
+      if (!isRec(reply)) return null;
       const title = str(reply.title);
       const id = str(reply.id);
       return title === null || id === null
         ? null
         : { type: "interactive", text: clip(title), buttonPayload: id };
     }
+    // Anything else must at least declare a genuine subtype (list_reply, nfm_reply, …); that stays `other`.
+    if (typeof subtype !== "string" || !/^[a-z][a-z_]{0,31}$/.test(subtype)) return null;
   }
   return { type: "other", text: null, buttonPayload: null };
 }
