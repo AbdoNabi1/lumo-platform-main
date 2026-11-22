@@ -5,6 +5,14 @@ import { ValidationError } from "@platform/utils";
 export const WEIGHT_UNITS = ["kg", "g", "lb", "oz"] as const;
 export type WeightUnit = (typeof WEIGHT_UNITS)[number];
 
+/** What the shop is for: an online store, or a lead website (no cart/checkout). Fixed at sign-up. */
+export const SITE_TYPES = ["store", "lead_site"] as const;
+export type SiteType = (typeof SITE_TYPES)[number];
+
+export function isSiteType(value: unknown): value is SiteType {
+  return typeof value === "string" && (SITE_TYPES as readonly string[]).includes(value);
+}
+
 export const MAX_STORE_NAME_LENGTH = 120;
 
 export interface StoreSettingsInput {
@@ -39,6 +47,8 @@ export class StoreSettings {
   readonly weightUnit: WeightUnit;
   /** When the merchant dismissed Home's setup guide; `null` while it is still showing. */
   readonly setupGuideDismissedAt: Date | null;
+  /** Chosen at sign-up and never changed afterwards; persistence only writes it when settling. */
+  readonly siteType: SiteType;
 
   private constructor(props: {
     storeName: string;
@@ -47,6 +57,7 @@ export class StoreSettings {
     timezone: string;
     weightUnit: WeightUnit;
     setupGuideDismissedAt: Date | null;
+    siteType: SiteType;
   }) {
     this.storeName = props.storeName;
     this.contactEmail = props.contactEmail;
@@ -54,6 +65,7 @@ export class StoreSettings {
     this.timezone = props.timezone;
     this.weightUnit = props.weightUnit;
     this.setupGuideDismissedAt = props.setupGuideDismissedAt;
+    this.siteType = props.siteType;
   }
 
   static defaults(): StoreSettings {
@@ -64,6 +76,23 @@ export class StoreSettings {
       timezone: "Africa/Cairo",
       weightUnit: "kg",
       setupGuideDismissedAt: null,
+      siteType: "store",
+    });
+  }
+
+  /**
+   * A copy with another site type, for restoring a stored row only. Persistence ignores the field
+   * except in `settleSignupSiteType`, so this can never change a shop's type.
+   */
+  withSiteType(siteType: SiteType): StoreSettings {
+    return new StoreSettings({
+      storeName: this.storeName,
+      contactEmail: this.contactEmail,
+      currency: this.currency,
+      timezone: this.timezone,
+      weightUnit: this.weightUnit,
+      setupGuideDismissedAt: this.setupGuideDismissedAt,
+      siteType,
     });
   }
 
@@ -82,6 +111,7 @@ export class StoreSettings {
       timezone: this.timezone,
       weightUnit: this.weightUnit,
       setupGuideDismissedAt: at,
+      siteType: this.siteType,
     });
   }
 
@@ -116,6 +146,7 @@ export class StoreSettings {
         timezone: input.timezone,
         weightUnit: input.weightUnit as WeightUnit,
         setupGuideDismissedAt: null,
+        siteType: "store",
       }),
     );
   }

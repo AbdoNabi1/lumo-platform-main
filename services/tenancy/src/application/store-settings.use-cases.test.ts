@@ -1,21 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ValidationError } from "@platform/utils";
 import { InMemoryStoreSettingsRepository } from "../infrastructure/in-memory-repositories";
-import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
+import { StoreSettings } from "../domain/store-settings";
 import {
   DismissSetupGuide,
   GetPublicStore,
   GetStoreSettings,
+  SettleSignupSiteType,
   UpdateStoreSettings,
 } from "./store-settings.use-cases";
 
+const AT = new Date("2026-11-20T10:00:00.000Z");
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
 function harness() {
   const settings = new InMemoryStoreSettingsRepository();
-  const unitOfWork = new InMemoryUnitOfWork();
   return {
     settings,
     get: new GetStoreSettings({ settings }),
-    update: new UpdateStoreSettings({ settings, unitOfWork }),
+    update: new UpdateStoreSettings({ settings }),
+    dismiss: new DismissSetupGuide({ settings, clock: { now: () => AT } }),
+    settle: new SettleSignupSiteType({ settings, clock: { now: () => AT } }),
     publicStore: new GetPublicStore({ settings }),
   };
 }
@@ -42,6 +50,7 @@ describe("GetStoreSettings", () => {
         timezone: "Africa/Cairo",
         weightUnit: "kg",
         setupGuideDismissedAt: null,
+        siteType: "store",
       },
     });
   });
@@ -78,20 +87,22 @@ describe("GetPublicStore", () => {
     const h = harness();
     await h.update.execute(input);
     const result = await h.publicStore.execute({ tenantId: TENANT });
-    expect(result).toEqual({ ok: true, value: { name: "Lumo", currency: "SAR" } });
+    expect(result).toEqual({
+      ok: true,
+      value: { name: "Lumo", currency: "SAR", siteType: "store" },
+    });
   });
 
   it("answers with the defaults before anything is saved", async () => {
     const result = await harness().publicStore.execute({ tenantId: TENANT });
-    expect(result).toEqual({ ok: true, value: { name: "", currency: "EGP" } });
+    expect(result).toEqual({ ok: true, value: { name: "", currency: "EGP", siteType: "store" } });
   });
 });
 
 describe("per-store isolation", () => {
   it("keeps each store's settings apart", async () => {
     const settings = new InMemoryStoreSettingsRepository();
-    const unitOfWork = new InMemoryUnitOfWork();
-    const update = new UpdateStoreSettings({ settings, unitOfWork });
+    const update = new UpdateStoreSettings({ settings });
     const get = new GetStoreSettings({ settings });
     const base = { contactEmail: null, timezone: "Africa/Cairo", weightUnit: "kg" };
     await update.execute({ tenantId: "shop-a", storeName: "A", currency: "EGP", ...base });
@@ -108,10 +119,9 @@ describe("per-store isolation", () => {
 describe("DismissSetupGuide", () => {
   it("a settings save keeps the setup guide dismissed", async () => {
     const settings = new InMemoryStoreSettingsRepository();
-    const unitOfWork = new InMemoryUnitOfWork();
     const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
-    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock });
-    const update = new UpdateStoreSettings({ settings, unitOfWork });
+    const dismiss = new DismissSetupGuide({ settings, clock });
+    const update = new UpdateStoreSettings({ settings });
     const dismissed = await dismiss.execute({ tenantId: "shop-a" });
     expect(dismissed.ok && dismissed.value.setupGuideDismissedAt).toBe("2026-10-16T10:00:00.000Z");
     const saved = await update.execute({
@@ -127,9 +137,8 @@ describe("DismissSetupGuide", () => {
 
   it("keeps the first timestamp when dismissed again", async () => {
     const settings = new InMemoryStoreSettingsRepository();
-    const unitOfWork = new InMemoryUnitOfWork();
     let now = new Date("2026-10-16T10:00:00.000Z");
-    const dismiss = new DismissSetupGuide({ settings, unitOfWork, clock: { now: () => now } });
+    const dismiss = new DismissSetupGuide({ settings, clock: { now: () => now } });
     await dismiss.execute({ tenantId: "shop-a" });
     now = new Date("2026-10-17T10:00:00.000Z");
     const again = await dismiss.execute({ tenantId: "shop-a" });
@@ -138,10 +147,67 @@ describe("DismissSetupGuide", () => {
 
   it("dismisses per shop", async () => {
     const settings = new InMemoryStoreSettingsRepository();
-    const unitOfWork = new InMemoryUnitOfWork();
     const clock = { now: () => new Date("2026-10-16T10:00:00.000Z") };
-    await new DismissSetupGuide({ settings, unitOfWork, clock }).execute({ tenantId: "shop-a" });
+    await new DismissSetupGuide({ settings, clock }).execute({ tenantId: "shop-a" });
     const other = await new GetStoreSettings({ settings }).execute({ tenantId: "shop-b" });
     expect(other.ok && other.value.setupGuideDismissedAt).toBeNull();
+  });
+});
+
+describe("site type", () => {
+  it("settles the sign-up site type and reports it", async () => {
+    const h = harness();
+    expect(await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" })).toEqual({
+      ok: true,
+      value: { siteType: "lead_site" },
+    });
+    const view = await h.get.execute({ tenantId: TENANT });
+    expect(view.ok && view.value.siteType).toBe("lead_site");
+  });
+  it("a settled type never changes: a later settle reports the first", async () => {
+    const h = harness();
+    await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" });
+    expect(await h.settle.execute({ tenantId: TENANT, siteType: "store" })).toEqual({
+      ok: true,
+      value: { siteType: "lead_site" },
+    });
+  });
+  it("two concurrent settles with opposite choices agree on one type", async () => {
+    const h = harness();
+    const [x, y] = await Promise.all([
+      h.settle.execute({ tenantId: TENANT, siteType: "lead_site" }),
+      h.settle.execute({ tenantId: TENANT, siteType: "store" }),
+    ]);
+    const persisted = (await h.settings.get(TENANT))?.siteType;
+    expect(x.ok && x.value.siteType).toBe(persisted);
+    expect(y.ok && y.value.siteType).toBe(persisted);
+  });
+  it("a settings save keeps the site type", async () => {
+    const h = harness();
+    await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" });
+    const saved = await h.update.execute(input);
+    expect(saved.ok && saved.value.siteType).toBe("lead_site");
+  });
+  it("dismissing the guide keeps the site type", async () => {
+    const h = harness();
+    await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" });
+    const r = await h.dismiss.execute({ tenantId: TENANT });
+    expect(r.ok && r.value.siteType).toBe("lead_site");
+    expect(r.ok && r.value.setupGuideDismissedAt).toBe(AT.toISOString());
+  });
+  it("a stale snapshot saved after settlement cannot restore the old type", async () => {
+    const h = harness();
+    const stale = StoreSettings.defaults(); // siteType "store"
+    await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" });
+    await h.settings.save(TENANT, stale);
+    expect((await h.settings.get(TENANT))?.siteType).toBe("lead_site");
+  });
+  it("public store exposes exactly name, currency, siteType", async () => {
+    const h = harness();
+    await h.settle.execute({ tenantId: TENANT, siteType: "lead_site" });
+    expect(await h.publicStore.execute({ tenantId: TENANT })).toEqual({
+      ok: true,
+      value: { name: "", currency: "EGP", siteType: "lead_site" },
+    });
   });
 });

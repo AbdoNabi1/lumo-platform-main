@@ -1,7 +1,7 @@
 import type { CursorPage, Paginated } from "@platform/types";
 import type { ShopDomain } from "./shop-domain";
 import type { StaffDirectoryEntry } from "./staff-directory";
-import type { StoreSettings } from "./store-settings";
+import type { SiteType, StoreSettings } from "./store-settings";
 import type { Tenant } from "./tenant";
 import type { Workspace } from "./workspace";
 
@@ -42,7 +42,15 @@ export interface ShopDomainRepository {
 export interface StoreSettingsRepository {
   /** `null` until the merchant has saved once; callers fall back to {@link StoreSettings.defaults}. */
   get(tenantId: string, tx?: unknown): Promise<StoreSettings | null>;
+  /** Writes the settings columns only; neither site-type column is ever part of a save. */
   save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void>;
+  /** Read-modify-write in one tenant-scoped transaction; `change` gets the row or defaults; returns the row as persisted. */
+  modify(
+    tenantId: string,
+    change: (current: StoreSettings) => StoreSettings,
+  ): Promise<StoreSettings>;
+  /** The only writer of the site type. Sets it (with settled time `at`) unless already settled; returns the persisted type. */
+  settleSignupSiteType(tenantId: string, requested: SiteType, at: Date): Promise<SiteType>;
 }
 
 /** Which store a staff email signs in to. Keyed by the normalised email (one store per email). */

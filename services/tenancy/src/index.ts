@@ -23,8 +23,8 @@ export { NodeDnsVerifier } from "./infrastructure/node-dns-verifier";
 export type { ResolvedHost, ShopDomainView } from "./application/shop-domains.use-cases";
 export { normaliseEmail } from "./domain/staff-directory";
 export type { StaffDirectoryEntryView, StaffDirectoryStatus } from "./domain/staff-directory";
-export { StoreSettings, WEIGHT_UNITS } from "./domain/store-settings";
-export type { StoreSettingsInput, WeightUnit } from "./domain/store-settings";
+export { SITE_TYPES, StoreSettings, WEIGHT_UNITS, isSiteType } from "./domain/store-settings";
+export type { SiteType, StoreSettingsInput, WeightUnit } from "./domain/store-settings";
 export type { PublicStoreView, StoreSettingsView } from "./application/store-settings.use-cases";
 export {
   PrismaTenantRepository,

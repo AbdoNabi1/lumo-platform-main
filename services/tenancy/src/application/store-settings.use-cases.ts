@@ -1,10 +1,9 @@
 import type { UseCase } from "@platform/application";
 import type { Clock } from "@platform/contracts";
-import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
 import type { StoreSettingsRepository } from "../domain/repositories";
-import { StoreSettings, type StoreSettingsInput } from "../domain/store-settings";
+import { StoreSettings, type SiteType, type StoreSettingsInput } from "../domain/store-settings";
 
 /** The wire shape of the shop's settings — never the value object itself. */
 export interface StoreSettingsView {
@@ -15,6 +14,8 @@ export interface StoreSettingsView {
   readonly weightUnit: string;
   /** ISO-8601 instant the merchant dismissed Home's setup guide, or `null` while it still shows. */
   readonly setupGuideDismissedAt: string | null;
+  /** Chosen at sign-up and fixed from then on. */
+  readonly siteType: SiteType;
 }
 
 export function toStoreSettingsView(settings: StoreSettings): StoreSettingsView {
@@ -25,12 +26,12 @@ export function toStoreSettingsView(settings: StoreSettings): StoreSettingsView 
     timezone: settings.timezone,
     weightUnit: settings.weightUnit,
     setupGuideDismissedAt: settings.setupGuideDismissedAt?.toISOString() ?? null,
+    siteType: settings.siteType,
   };
 }
 
 export interface StoreSettingsDeps {
   readonly settings: StoreSettingsRepository;
-  readonly unitOfWork: TransactionalUnitOfWork<unknown>;
 }
 
 export class GetStoreSettings implements UseCase<
@@ -70,13 +71,12 @@ export class UpdateStoreSettings implements UseCase<
     const { tenantId, ...rest } = input;
     const created = StoreSettings.create(rest);
     if (!created.ok) return err(created.error);
-    // The merchant never sends the dismissal, so a save carries the stored one over.
-    const next = await this.deps.unitOfWork.run(async (tx) => {
-      const current = await this.deps.settings.get(tenantId, tx);
-      const value = created.value.withSetupGuideDismissedAt(current?.setupGuideDismissedAt ?? null);
-      await this.deps.settings.save(tenantId, value, tx);
-      return value;
-    });
+    // The merchant never sends the dismissal or the site type, so a save carries the stored ones over.
+    const next = await this.deps.settings.modify(tenantId, (current) =>
+      created.value
+        .withSetupGuideDismissedAt(current.setupGuideDismissedAt)
+        .withSiteType(current.siteType),
+    );
     return ok(toStoreSettingsView(next));
   }
 }
@@ -97,20 +97,46 @@ export class DismissSetupGuide implements UseCase<
     readonly tenantId: string;
   }): Promise<Result<StoreSettingsView, DomainError>> {
     const { tenantId } = input;
-    const next = await this.deps.unitOfWork.run(async (tx) => {
-      const current = (await this.deps.settings.get(tenantId, tx)) ?? StoreSettings.defaults();
-      const value = current.withSetupGuideDismissed(this.deps.clock.now());
-      await this.deps.settings.save(tenantId, value, tx);
-      return value;
-    });
+    const next = await this.deps.settings.modify(tenantId, (current) =>
+      current.withSetupGuideDismissed(this.deps.clock.now()),
+    );
     return ok(toStoreSettingsView(next));
   }
 }
 
-/** What the storefront may know about a shop without signing in: its name and its currency. */
+/**
+ * Sets the shop's site type, once, at sign-up (before any credential exists). The repository does
+ * the conditional write; whatever it reports is what is persisted, never the request's choice.
+ */
+export class SettleSignupSiteType implements UseCase<
+  { readonly tenantId: string; readonly siteType: SiteType },
+  { readonly siteType: SiteType },
+  DomainError
+> {
+  private readonly deps: Pick<StoreSettingsDeps, "settings"> & { readonly clock: Clock };
+
+  constructor(deps: Pick<StoreSettingsDeps, "settings"> & { readonly clock: Clock }) {
+    this.deps = deps;
+  }
+
+  async execute(input: {
+    readonly tenantId: string;
+    readonly siteType: SiteType;
+  }): Promise<Result<{ siteType: SiteType }, DomainError>> {
+    const siteType = await this.deps.settings.settleSignupSiteType(
+      input.tenantId,
+      input.siteType,
+      this.deps.clock.now(),
+    );
+    return ok({ siteType });
+  }
+}
+
+/** What the storefront may know about a shop without signing in: its name, currency and site type. */
 export interface PublicStoreView {
   readonly name: string;
   readonly currency: string;
+  readonly siteType: SiteType;
 }
 
 export class GetPublicStore implements UseCase<
@@ -128,6 +154,10 @@ export class GetPublicStore implements UseCase<
     readonly tenantId: string;
   }): Promise<Result<PublicStoreView, DomainError>> {
     const settings = (await this.deps.settings.get(input.tenantId)) ?? StoreSettings.defaults();
-    return ok({ name: settings.storeName, currency: settings.currency });
+    return ok({
+      name: settings.storeName,
+      currency: settings.currency,
+      siteType: settings.siteType,
+    });
   }
 }

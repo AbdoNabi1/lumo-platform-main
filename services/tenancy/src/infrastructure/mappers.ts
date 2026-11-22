@@ -1,6 +1,6 @@
 import { UniqueEntityId } from "@platform/domain";
 import { ShopDomain, type ShopDomainKind, type ShopDomainStatus } from "../domain/shop-domain";
-import { StoreSettings } from "../domain/store-settings";
+import { StoreSettings, isSiteType, type SiteType } from "../domain/store-settings";
 import { Tenant, type TenantIsolationTier, type TenantStatus } from "../domain/tenant";
 import { Hostname } from "../domain/value-objects/hostname";
 import { TenantSlug } from "../domain/value-objects/tenant-slug";
@@ -130,7 +130,8 @@ export class ShopDomainMapper {
   }
 }
 
-export interface StoreSettingsRow {
+/** The columns a save writes. The two site-type columns are deliberately not part of it. */
+export interface StoreSettingsColumns {
   readonly storeName: string;
   readonly contactEmail: string | null;
   readonly currency: string;
@@ -139,14 +140,29 @@ export interface StoreSettingsRow {
   readonly setupGuideDismissedAt: Date | null;
 }
 
+/** A stored row: the settings columns plus the site type (written only by settling). */
+export interface StoreSettingsRow extends StoreSettingsColumns {
+  readonly siteType: string;
+}
+
 export class StoreSettingsMapper {
   static toDomain(row: StoreSettingsRow): StoreSettings {
     const result = StoreSettings.create(row);
     if (!result.ok) throw new Error(`Corrupt store_settings row: ${result.error.message}`);
-    return result.value.withSetupGuideDismissedAt(row.setupGuideDismissedAt);
+    return result.value
+      .withSetupGuideDismissedAt(row.setupGuideDismissedAt)
+      .withSiteType(StoreSettingsMapper.toSiteType(row.siteType));
   }
 
-  static toRow(settings: StoreSettings): StoreSettingsRow {
+  /** A stored `site_type` that is not a site type is corrupt data: fail loudly, never coerce. */
+  static toSiteType(value: unknown): SiteType {
+    if (!isSiteType(value)) {
+      throw new Error(`store_settings.site_type is not a site type: ${String(value)}`);
+    }
+    return value;
+  }
+
+  static toRow(settings: StoreSettings): StoreSettingsColumns {
     return {
       storeName: settings.storeName,
       contactEmail: settings.contactEmail,

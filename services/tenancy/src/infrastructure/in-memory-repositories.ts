@@ -11,7 +11,7 @@ import type {
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
 import type { StaffDirectoryEntry } from "../domain/staff-directory";
-import type { StoreSettings } from "../domain/store-settings";
+import { StoreSettings, type SiteType } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
 
@@ -156,15 +156,63 @@ export class InMemoryStaffDirectoryRepository implements StaffDirectoryRepositor
   }
 }
 
+interface StoreSettingsRecord {
+  readonly settings: StoreSettings;
+  readonly siteTypeSettledAt: Date | null;
+}
+
+/**
+ * Mirrors the Prisma adapter: a save keeps the stored site type (a new row gets "store"), and the
+ * type changes only in `settleSignupSiteType`. Every operation is synchronous up to its return, so
+ * check-and-set is atomic exactly like the single-row SQL writes.
+ */
 export class InMemoryStoreSettingsRepository implements StoreSettingsRepository {
-  private readonly rows = new Map<string, StoreSettings>();
+  private readonly rows = new Map<string, StoreSettingsRecord>();
 
   get(tenantId: string): Promise<StoreSettings | null> {
-    return Promise.resolve(this.rows.get(tenantId) ?? null);
+    return Promise.resolve(this.rows.get(tenantId)?.settings ?? null);
   }
 
   save(tenantId: string, settings: StoreSettings): Promise<void> {
-    this.rows.set(tenantId, settings);
+    this.write(tenantId, settings);
     return Promise.resolve();
+  }
+
+  modify(
+    tenantId: string,
+    change: (current: StoreSettings) => StoreSettings,
+  ): Promise<StoreSettings> {
+    const current = this.rows.get(tenantId)?.settings ?? StoreSettings.defaults();
+    return Promise.resolve(this.write(tenantId, change(current)));
+  }
+
+  settleSignupSiteType(tenantId: string, requested: SiteType, at: Date): Promise<SiteType> {
+    const row = this.rows.get(tenantId);
+    if (row === undefined) {
+      this.rows.set(tenantId, {
+        settings: StoreSettings.defaults().withSiteType(requested),
+        siteTypeSettledAt: at,
+      });
+      return Promise.resolve(requested);
+    }
+    if (row.siteTypeSettledAt === null) {
+      this.rows.set(tenantId, {
+        settings: row.settings.withSiteType(requested),
+        siteTypeSettledAt: at,
+      });
+      return Promise.resolve(requested);
+    }
+    return Promise.resolve(row.settings.siteType);
+  }
+
+  /** Stores `settings` with the type already persisted (never the incoming one); returns the row. */
+  private write(tenantId: string, settings: StoreSettings): StoreSettings {
+    const existing = this.rows.get(tenantId);
+    const persisted = settings.withSiteType(existing?.settings.siteType ?? "store");
+    this.rows.set(tenantId, {
+      settings: persisted,
+      siteTypeSettledAt: existing?.siteTypeSettledAt ?? null,
+    });
+    return persisted;
   }
 }
