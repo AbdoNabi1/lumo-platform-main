@@ -24,7 +24,9 @@ import {
 } from "./template-support";
 
 const EXPIRED: FinalCheck = { ok: false, code: "AUTHORIZATION_EXPIRED" };
-const KEY_MAX = 200;
+/** The longest Idempotency-Key a send accepts (the HTTP boundary shares this limit). */
+export const IDEMPOTENCY_KEY_MAX = 200;
+const KEY_MAX = IDEMPOTENCY_KEY_MAX;
 
 function invalid(field: string, message: string): Result<never, DomainError> {
   return err(new ValidationError("Invalid input", [{ field, message }]));

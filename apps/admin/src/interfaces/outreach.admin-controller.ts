@@ -2,7 +2,6 @@ import type { Principal } from "@platform/contracts";
 import type {
   ContactDto,
   OutreachController,
-  TemplateDto,
   TemplateDraft,
   TemplateSendValues,
 } from "@platform/outreach";
@@ -145,9 +144,9 @@ export class OutreachAdminController {
   }
 
   /**
-   * A test template send. With `attestConsent` the number is upserted as a contact and an `admin` consent grant (for the
-   * purpose the stored template's category implies) is recorded with the acting principal as evidence, then the template
-   * is sent through the ordinary use case. Without it the use case's own consent check decides (and suppresses).
+   * A test template send. With `attestConsent` the number is upserted as a contact and an `admin` TRANSACTIONAL consent
+   * grant is recorded (once per submission key) with the acting principal as evidence, then the template is sent
+   * through the ordinary use case. Without it the use case's own consent check decides (and suppresses).
    */
   async testSendWhatsApp(
     principal: Principal,
@@ -208,31 +207,31 @@ export class OutreachAdminController {
     });
   }
 
-  /** Returns a failure response, or `null` when the attestation was recorded (or there was nothing to record). */
+  /**
+   * Returns a failure response, or `null` when the attestation was recorded (or this submission already recorded it).
+   *
+   * The operator's checkbox grants TRANSACTIONAL consent only: what the send requires (the template's category) is
+   * the send's own business, and an existing independent marketing consent is never touched. The grant carries the
+   * submission's Idempotency-Key as a durable once-only operation key, so a retry after the HTTP snapshot expired (or
+   * after an intervening STOP) neither grants again nor undoes the opt-out; the send then replays or re-checks the
+   * CURRENT consent.
+   */
   private async attestConsent(
     principal: Principal,
     input: OutreachTestSendInput,
   ): Promise<AdminResponse | null> {
     const { tenantId } = input;
-    // The consent purpose follows the template's stored category. An unknown template records nothing: the send
-    // below answers with the template error.
-    const listed = await this.outreach.listTemplates(tenantId);
-    if (listed.status !== 200 || !Array.isArray(listed.body)) return null;
-    const template = (listed.body as TemplateDto[]).find(
-      (candidate) => candidate.name === input.templateName && candidate.language === input.language,
-    );
-    if (template === undefined) return null;
-
     const contact = await this.outreach.upsertContact(tenantId, { phone: input.to });
     if (contact.status !== 200) return contact;
     const contactId = (contact.body as ContactDto).id;
     const recorded = await this.outreach.recordConsent(tenantId, {
       contactId,
       channel: "whatsapp",
-      purpose: template.category === "MARKETING" ? "marketing" : "transactional",
+      purpose: "transactional",
       action: "grant",
       source: "admin",
       evidence: `test send attestation by ${principal.id}`,
+      operationKey: `test-send:${input.idempotencyKey}`,
     });
     return recorded.status === 200 ? null : recorded;
   }

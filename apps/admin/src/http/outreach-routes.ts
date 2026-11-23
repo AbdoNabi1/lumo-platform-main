@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
-import { verifyMetaSignature } from "@platform/outreach";
+import { IDEMPOTENCY_KEY_MAX, verifyMetaSignature } from "@platform/outreach";
 import { ValidationError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 
@@ -12,10 +12,11 @@ export const OUTREACH_UNAUTHORIZED_BODY = {
 } as const;
 const FORBIDDEN_BODY = { code: "FORBIDDEN", message: "Forbidden" } as const;
 
-const shortString = z.string().min(1).max(256);
 const versionBody = z.object({ expectedVersion: z.number().int().min(0) }).strict();
+// Embedded Signup hands back an authorization code (up to 8192 characters) and two numeric Meta asset ids.
+const assetId = z.string().regex(/^\d{1,64}$/);
 const connectBody = z
-  .object({ code: shortString, wabaId: shortString, phoneNumberId: shortString })
+  .object({ code: z.string().min(1).max(8192), wabaId: assetId, phoneNumberId: assetId })
   .strict();
 
 // A mirror of `TemplateDraft`. The caps only bound abuse; the domain owns the rules and reports an issue code per field
@@ -31,8 +32,10 @@ const buttonSchema = z
   .strict();
 const draftBody = z
   .object({
-    name: z.string().min(1).max(512),
-    language: z.string().min(1).max(16),
+    // The bounds carry the domain's own issue codes (the message becomes the field message), so an empty or overlong
+    // name/language answers `name_format` / `language_unsupported`, not Zod prose.
+    name: z.string().min(1, "name_format").max(512, "name_format"),
+    language: z.string().min(1, "language_unsupported").max(16, "language_unsupported"),
     category: z.enum(["UTILITY", "MARKETING", "AUTHENTICATION"]),
     header: z
       .object({
@@ -72,13 +75,14 @@ const testSendBody = z
   .strict();
 const emailTestBody = z.object({ to: z.string().email().max(320) }).strict();
 
-const verifyQuery = z
-  .object({
-    "hub.mode": z.string().max(64).optional(),
-    "hub.verify_token": z.string().max(512).optional(),
-    "hub.challenge": z.string().max(256).optional(),
-  })
-  .passthrough();
+// Verification is answered uniformly: whatever the query holds (repeated, oversized, bracketed), the handler decides
+// between the challenge and 403, so the schema accepts any shape and never produces a 422 on this public route.
+const verifyQuery = z.record(z.string(), z.unknown());
+
+/** A scalar query value only (a repeated or bracketed parameter is not one). */
+const scalar = (value: unknown): string | undefined =>
+  typeof value === "string" ? value : undefined;
+const CHALLENGE_MAX = 256;
 
 function firstHeader(value: string | readonly string[] | undefined): string | undefined {
   if (typeof value === "string") return value;
@@ -98,12 +102,29 @@ function requiredIdempotencyKey(
   headers: Readonly<Record<string, string | string[] | undefined>> | undefined,
 ): string {
   const key = firstHeader(headers?.["idempotency-key"])?.trim();
-  if (key === undefined || key.length === 0 || key.length > 255) {
+  if (key === undefined || key.length === 0) {
     throw new ValidationError("An Idempotency-Key header is required", [
       { field: "idempotency-key", message: "required" },
     ]);
   }
+  // The same limit the send use case enforces: a key it would always reject never reaches a controller.
+  if (key.length > IDEMPOTENCY_KEY_MAX) {
+    throw new ValidationError("The Idempotency-Key header is invalid", [
+      { field: "idempotency-key", message: "invalid" },
+    ]);
+  }
   return key;
+}
+
+/** Decodes the authenticated bytes once; anything that is not UTF-8 JSON is a 422 (after authentication). */
+function decodeJson(raw: Uint8Array): unknown {
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw)) as unknown;
+  } catch {
+    throw new ValidationError("The webhook body is not valid JSON", [
+      { field: "body", message: "invalid_json" },
+    ]);
+  }
 }
 
 /**
@@ -270,12 +291,13 @@ export function outreachRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       summary: "Meta webhook verification challenge (answers the plain-text hub.challenge)",
       schema: { querystring: verifyQuery },
       handle: ({ query }) => {
-        const challenge = query["hub.challenge"];
+        const challenge = scalar(query["hub.challenge"]);
         const verified =
-          query["hub.mode"] === "subscribe" &&
-          secretMatches(query["hub.verify_token"], outreachWebhook.verifyToken) &&
+          scalar(query["hub.mode"]) === "subscribe" &&
+          secretMatches(scalar(query["hub.verify_token"]), outreachWebhook.verifyToken) &&
           challenge !== undefined &&
-          challenge.length > 0;
+          challenge.length > 0 &&
+          challenge.length <= CHALLENGE_MAX;
         if (!verified) return Promise.resolve({ status: 403, body: FORBIDDEN_BODY });
         return Promise.resolve({
           status: 200,
@@ -292,9 +314,11 @@ export function outreachRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
       public: true,
       tenantScope: "platform",
       idempotent: false,
+      // The transport does not parse this body: it is authenticated as bytes first, then decoded exactly once.
+      rawJsonBody: true,
       summary: "Meta webhook delivery (authenticated by X-Hub-Signature-256 over the raw body)",
-      schema: { body: z.unknown() },
-      handle: async ({ body, context }) => {
+      schema: {},
+      handle: async ({ context }) => {
         const secret = outreachWebhook.appSecret;
         const raw = context.rawBody;
         if (
@@ -305,7 +329,7 @@ export function outreachRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         ) {
           return { status: 401, body: OUTREACH_UNAUTHORIZED_BODY };
         }
-        const result = await outreachWebhook.process(body);
+        const result = await outreachWebhook.process(decodeJson(raw));
         if (!result.ok && result.error.code !== "VALIDATION") throw result.error;
         return { status: 200, body: { received: true } };
       },

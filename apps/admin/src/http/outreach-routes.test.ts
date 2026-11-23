@@ -25,12 +25,20 @@ const PLATFORM = "t-platform";
 const SHOP = "t-1";
 const APP_SECRET = "app-secret-0123456789";
 const VERIFY_TOKEN = "verify-token-0123456789";
+// The numeric asset ids Embedded Signup returns (the fake port lists PHONE under the shop's WABA).
+const WABA = "200000000001";
+const PHONE = "100000000001";
+// Digits are assembled so no literal phone number sits in the source.
+const BUYER_DIGITS = ["20", "10", "12345679"].join("");
+const BUYER = `+${BUYER_DIGITS}`;
 const SIGNUP = { appId: "1234567890", configId: "cfg-42", graphApiVersion: "v24.0" } as const;
 
 type Mode = "single" | "multi";
 
 interface Harness {
   readonly app: FastifyInstance;
+  /** Forgets every HTTP response snapshot and in-flight claim (a cold cache / an evicted snapshot). */
+  clearHttpCaches(): void;
   readonly whatsapp: FakeWhatsAppPort;
   readonly email: FakeEmailPort;
   /** Headers for an authenticated staff request of `role` against `tenant`. */
@@ -41,7 +49,7 @@ let sequence = 0;
 
 async function buildHarness(
   mode: Mode,
-  options: { configured?: boolean; gate?: TenantGate } = {},
+  options: { configured?: boolean; gate?: TenantGate; verifyToken?: string } = {},
 ): Promise<Harness> {
   const configured = options.configured ?? true;
   const whatsapp = new FakeWhatsAppPort();
@@ -118,13 +126,17 @@ async function buildHarness(
           emailFrom: "no-reply@morbeh.test",
           randomPin: () => "654321",
           signup: SIGNUP,
-          webhook: { appSecret: APP_SECRET, verifyToken: VERIFY_TOKEN },
+          webhook: { appSecret: APP_SECRET, verifyToken: options.verifyToken ?? VERIFY_TOKEN },
         }
       : {},
   };
   const app = await createAdminHttpApi(deps);
   return {
     app,
+    clearHttpCaches: () => {
+      cacheData.clear();
+      claims.clear();
+    },
     whatsapp,
     email,
     as: (role, tenant = SHOP): Record<string, string> =>
@@ -165,7 +177,7 @@ async function connect(h: Harness, headers = h.as("admin")) {
     method: "POST",
     url: "/api/v1/outreach/whatsapp/connect",
     headers: { ...headers, "idempotency-key": key() },
-    payload: { code: "auth-code", wabaId: "waba-1", phoneNumberId: "phone-1" },
+    payload: { code: "auth-code", wabaId: WABA, phoneNumberId: PHONE },
   });
 }
 
@@ -201,7 +213,7 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
         name: "POST connect",
         method: "POST",
         url: "/outreach/whatsapp/connect",
-        payload: { code: "c", wabaId: "w", phoneNumberId: "phone-1" },
+        payload: { code: "c", wabaId: WABA, phoneNumberId: PHONE },
         need: "manage",
       },
       { name: "POST refresh", method: "POST", url: "/outreach/whatsapp/refresh", need: "manage" },
@@ -313,9 +325,29 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
     const cases: ReadonlyArray<readonly [string, string, unknown]> = [
       ["connect without a code", "/outreach/whatsapp/connect", { wabaId: "w", phoneNumberId: "p" }],
       [
-        "connect with an over-long id",
+        "connect with a nonnumeric waba id",
         "/outreach/whatsapp/connect",
-        { code: "c", wabaId: "w".repeat(257), phoneNumberId: "p" },
+        { code: "c", wabaId: "waba-one", phoneNumberId: "456" },
+      ],
+      [
+        "connect with a nonnumeric phone id",
+        "/outreach/whatsapp/connect",
+        { code: "c", wabaId: "123", phoneNumberId: "12a" },
+      ],
+      [
+        "connect with a 65-digit phone id",
+        "/outreach/whatsapp/connect",
+        { code: "c", wabaId: "123", phoneNumberId: "9".repeat(65) },
+      ],
+      [
+        "connect with a 65-digit waba id",
+        "/outreach/whatsapp/connect",
+        { code: "c", wabaId: "9".repeat(65), phoneNumberId: "456" },
+      ],
+      [
+        "connect with an over-long code",
+        "/outreach/whatsapp/connect",
+        { code: "c".repeat(8193), wabaId: "123", phoneNumberId: "456" },
       ],
       [
         "disconnect with a negative version",
@@ -420,11 +452,54 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
         { "hub.mode": "subscribe", "hub.verify_token": `${VERIFY_TOKEN}x`, "hub.challenge": "1" },
       ],
       ["a missing challenge", { "hub.mode": "subscribe", "hub.verify_token": VERIFY_TOKEN }],
+      [
+        "an oversized wrong token",
+        { "hub.mode": "subscribe", "hub.verify_token": "x".repeat(4000), "hub.challenge": "1" },
+      ],
+      [
+        "an oversized challenge",
+        {
+          "hub.mode": "subscribe",
+          "hub.verify_token": VERIFY_TOKEN,
+          "hub.challenge": "1".repeat(300),
+        },
+      ],
     ])("403 for %s", async (_name, query) => {
       expect.hasAssertions();
       const res = await verify(query);
       expect(res.statusCode).toBe(403);
       expect(res.body).not.toContain("1");
+    });
+
+    it.each([
+      [
+        "a repeated token",
+        "hub.mode=subscribe&hub.verify_token=nope&hub.verify_token=again&hub.challenge=1",
+      ],
+      [
+        "a repeated right token",
+        `hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=1`,
+      ],
+      [
+        "a repeated challenge",
+        `hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=1&hub.challenge=2`,
+      ],
+      [
+        "a repeated mode",
+        `hub.mode=subscribe&hub.mode=subscribe&hub.verify_token=${VERIFY_TOKEN}&hub.challenge=1`,
+      ],
+      [
+        "a bracketed (non-scalar) token",
+        "hub.mode=subscribe&hub.verify_token[a]=b&hub.challenge=1",
+      ],
+    ])("403 (never 422) for %s", async (_name, query) => {
+      expect.hasAssertions();
+      const res = await h.app.inject({
+        method: "GET",
+        url: `/api/v1/public/outreach/whatsapp/webhook?${query}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json()).toEqual({ code: "FORBIDDEN", message: "Forbidden" });
     });
   });
 
@@ -452,6 +527,40 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
         "x-tenant-id": "someone-elses-shop",
       });
       expect(res.statusCode).toBe(200);
+    });
+
+    it("a signed, NON-canonical JSON body (whitespace, key order) is accepted: the signature covers the bytes", async () => {
+      expect.hasAssertions();
+      const text = '{\n  "entry" : [ ] ,\n\t"object":"whatsapp_business_account"  }';
+      expect(text).not.toBe(JSON.stringify(JSON.parse(text)));
+      const res = await post(text, { "x-hub-signature-256": sign(text) });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ received: true });
+    });
+
+    it.each([
+      ["no signature header", {}],
+      ["a malformed signature", { "x-hub-signature-256": "sha256=zz" }],
+      [
+        "a signature from another secret",
+        { "x-hub-signature-256": sign("{ not json", "other-secret-0123456") },
+      ],
+    ])(
+      "malformed JSON with %s is 401 (authentication first), not a parser error",
+      async (_name, headers) => {
+        expect.hasAssertions();
+        const res = await post("{ not json", headers);
+        expect(res.statusCode).toBe(401);
+        expect(res.json()).toEqual({ code: "UNAUTHORIZED", message: "Unauthorized" });
+      },
+    );
+
+    it("a correctly signed body that is not JSON is a 422 (decoded once, after authentication)", async () => {
+      expect.hasAssertions();
+      const text = "{ not json";
+      const res = await post(text, { "x-hub-signature-256": sign(text) });
+      expect(res.statusCode).toBe(422);
+      expect(res.json<{ code: string }>().code).toBe("VALIDATION");
     });
 
     it.each([
@@ -500,6 +609,25 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
       const unresolved = await gated.app.inject({ method: "GET", url: "/api/v1/public/products" });
       expect(unresolved.statusCode).toBe(403);
     });
+  });
+});
+
+describe("the verification token length: every token the runtime accepts passes the route", () => {
+  it("a configured token longer than the old 512 cap verifies (the runtime sets no maximum), unquoted challenge", async () => {
+    expect.hasAssertions();
+    const token = "v".repeat(2000);
+    const h = await fresh("single", { verifyToken: token });
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/api/v1/public/outreach/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=424242`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe("424242");
+    const wrong = await h.app.inject({
+      method: "GET",
+      url: `/api/v1/public/outreach/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${token}x&hub.challenge=424242`,
+    });
+    expect(wrong.statusCode).toBe(403);
   });
 });
 
@@ -631,6 +759,38 @@ describe("exact 409 envelopes (feature conflicts keep the CONFLICT code with the
     expect(h.whatsapp.count("sendTemplate")).toBe(0);
   });
 
+  it.each([
+    ["an empty name", { name: "" }, "name", "name_format"],
+    ["an overlong name", { name: "n".repeat(513) }, "name", "name_format"],
+    ["a badly formed name", { name: "Not Valid" }, "name", "name_format"],
+    ["an empty language", { language: "" }, "language", "language_unsupported"],
+    ["an overlong language", { language: "e".repeat(17) }, "language", "language_unsupported"],
+    ["an unsupported language", { language: "xx" }, "language", "language_unsupported"],
+  ])(
+    "template create with %s keeps the domain's stable issue code",
+    async (_label, patch, field, code) => {
+      expect.hasAssertions();
+      const h = await fresh("single");
+      expect((await connect(h)).statusCode).toBe(200);
+      const res = await h.app.inject({
+        method: "POST",
+        url: "/api/v1/outreach/whatsapp/templates",
+        headers: { ...h.as("admin"), "idempotency-key": key() },
+        payload: {
+          name: "promo_one",
+          language: "en",
+          category: "UTILITY",
+          body: { text: "Hello {{1}}, your order is on its way", examples: ["Sara"] },
+          ...patch,
+        },
+      });
+      expect(res.statusCode).toBe(422);
+      const body = res.json<{ code: string; fields: { field: string; message: string }[] }>();
+      expect(body.code).toBe("VALIDATION");
+      expect(body.fields).toContainEqual({ field, message: code });
+    },
+  );
+
   it("TEMPLATE_NOT_APPROVED for a template Meta has not approved yet", async () => {
     expect.hasAssertions();
     const h = await fresh("single");
@@ -662,6 +822,31 @@ describe("exact 409 envelopes (feature conflicts keep the CONFLICT code with the
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual(conflict("TEMPLATE_NOT_APPROVED"));
     expect(h.whatsapp.count("sendTemplate")).toBe(0);
+
+    // Ruling: the operator's explicit statement is evidence of consent, not of delivery, so the contact and the
+    // TRANSACTIONAL grant (operator evidence) are retained although the send was refused: once Meta approves the
+    // template, an ordinary send WITHOUT a new attestation goes through, and nothing was ever dispatched before.
+    h.whatsapp.templates = [{ ...approvedTemplate, name: "promo_one" }];
+    const synced = await h.app.inject({
+      method: "POST",
+      url: "/api/v1/outreach/whatsapp/templates/sync",
+      headers: { ...h.as("admin"), "idempotency-key": key() },
+    });
+    expect(synced.statusCode).toBe(200);
+    const later = await h.app.inject({
+      method: "POST",
+      url: "/api/v1/outreach/whatsapp/test-send",
+      headers: { ...h.as("operator"), "idempotency-key": key() },
+      payload: {
+        to: "+201012345678",
+        templateName: "promo_one",
+        language: "en",
+        values: { body: ["Sara"] },
+      },
+    });
+    expect(later.statusCode).toBe(200);
+    expect(later.json<{ status: string }>().status).toBe("accepted");
+    expect(h.whatsapp.count("sendTemplate")).toBe(1);
   });
 
   it("a stale disconnect is a 409 CONCURRENCY version conflict and changes nothing", async () => {
@@ -779,6 +964,45 @@ describe("test sends", () => {
     expect(h.whatsapp.count("sendTemplate")).toBe(0);
     expect(h.email.calls).toHaveLength(0);
   });
+
+  it.each([
+    [
+      "whatsapp",
+      "/api/v1/outreach/whatsapp/test-send",
+      { to: BUYER, templateName: "order_shipped", language: "en", values: { body: ["Sara"] } },
+    ],
+    ["email", "/api/v1/outreach/email/test-send", { to: "owner@example.com" }],
+  ])(
+    "%s test send: a 200-character Idempotency-Key reaches the controller, 201 is invalid (not missing) before it",
+    async (_name, url, payload) => {
+      expect.hasAssertions();
+      const h = await fresh("single");
+      expect((await connect(h)).statusCode).toBe(200);
+      const tooLong = await h.app.inject({
+        method: "POST",
+        url,
+        headers: { ...h.as("operator"), "idempotency-key": "k".repeat(201) },
+        payload,
+      });
+      expect(tooLong.statusCode).toBe(422);
+      expect(tooLong.json<{ code: string; fields: unknown[] }>()).toMatchObject({
+        code: "VALIDATION",
+        fields: [{ field: "idempotency-key", message: "invalid" }],
+      });
+      // nothing ran: no provider call, no consent attestation side effect
+      expect(h.whatsapp.count("sendTemplate")).toBe(0);
+      expect(h.email.calls).toHaveLength(0);
+
+      const accepted = await h.app.inject({
+        method: "POST",
+        url,
+        headers: { ...h.as("operator"), "idempotency-key": "k".repeat(200) },
+        payload,
+      });
+      // past the header check: the use case answers (a conflict/suppression for the unapproved WhatsApp template, 200 for email)
+      expect(accepted.statusCode).not.toBe(422);
+    },
+  );
 
   it("attestConsent upserts the contact, records an admin grant and sends once with the body values", async () => {
     expect.hasAssertions();
@@ -920,6 +1144,59 @@ describe("webhook route handler (unit): signature before the use case", () => {
     expect(JSON.stringify(process.mock.calls)).not.toContain("SPOOFED-TENANT");
   });
 
+  it("malformed JSON without a valid signature is 401 and never reaches the decoder or the use case", async () => {
+    expect.hasAssertions();
+    const process = vi.fn();
+    const route = webhookRoutes(process, APP_SECRET);
+    const text = "{ not json";
+    const bad: Record<string, string>[] = [
+      {},
+      { "x-hub-signature-256": sign(text, "wrong-secret-0123456") },
+    ];
+    for (const headers of bad) {
+      const res = await route.handle({
+        body: undefined,
+        params: undefined,
+        query: undefined,
+        context: context(text, headers),
+      });
+      expect(res.status).toBe(401);
+    }
+    expect(process).not.toHaveBeenCalled();
+  });
+
+  it("the payload is decoded ONCE from the authenticated bytes (the transport body is ignored)", async () => {
+    expect.hasAssertions();
+    const process = vi.fn().mockResolvedValue({ ok: true, value: { processed: 0, skipped: 0 } });
+    const route = webhookRoutes(process, APP_SECRET);
+    const text = '{ "entry" : [ { "id" : "w" } ] }';
+    const res = await route.handle({
+      body: { forged: true },
+      params: undefined,
+      query: undefined,
+      context: context(text, { "x-hub-signature-256": sign(text) }),
+    });
+    expect(res.status).toBe(200);
+    expect(process).toHaveBeenCalledTimes(1);
+    expect(process).toHaveBeenCalledWith({ entry: [{ id: "w" }] });
+  });
+
+  it("a signed body that is not JSON is a validation error and the use case is not called", async () => {
+    expect.hasAssertions();
+    const process = vi.fn();
+    const route = webhookRoutes(process, APP_SECRET);
+    const text = "{ not json";
+    await expect(
+      route.handle({
+        body: undefined,
+        params: undefined,
+        query: undefined,
+        context: context(text, { "x-hub-signature-256": sign(text) }),
+      }),
+    ).rejects.toMatchObject({ code: "VALIDATION" });
+    expect(process).not.toHaveBeenCalled();
+  });
+
   it("an absent app secret fails closed (401) and never calls the use case", async () => {
     expect.hasAssertions();
     const process = vi.fn();
@@ -976,6 +1253,11 @@ describe("webhook route handler (unit): signature before the use case", () => {
       expect(route.tenantScope).toBe("platform");
       expect(route.idempotent).toBe(false);
     }
+    // only the delivery route skips the shared JSON parser
+    expect(hooks.map((route) => [route.method, route.rawJsonBody === true])).toEqual([
+      ["GET", false],
+      ["POST", true],
+    ]);
     expect(typeof defineRoute).toBe("function");
   });
 });

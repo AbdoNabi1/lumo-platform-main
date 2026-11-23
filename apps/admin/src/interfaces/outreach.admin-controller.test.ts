@@ -225,13 +225,10 @@ describe("OutreachAdminController: test sends", () => {
     idempotencyKey: "k-1",
   };
 
-  it("attestConsent = upsertContact, then an admin recordConsent for the template's purpose, then sendTemplate", async () => {
+  it("attestConsent = upsertContact, then an admin transactional recordConsent (once-only key), then sendTemplate", async () => {
     expect.hasAssertions();
     const { stub, admin: controller } = build();
     const order: string[] = [];
-    stub.listTemplates.mockResolvedValue(
-      ok([{ name: "order_shipped", language: "en", category: "UTILITY" }]),
-    );
     stub.upsertContact.mockImplementation(async () => {
       order.push("upsert");
       return ok({ id: "contact-9" });
@@ -255,6 +252,7 @@ describe("OutreachAdminController: test sends", () => {
       action: "grant",
       source: "admin",
       evidence: "test send attestation by operator-1",
+      operationKey: "test-send:k-1",
     });
     expect(stub.sendTemplate).toHaveBeenCalledWith("t-1", {
       to: "+201012345678",
@@ -266,14 +264,20 @@ describe("OutreachAdminController: test sends", () => {
     });
   });
 
-  it("a MARKETING template records a marketing grant", async () => {
+  it("the grant is transactional whatever the template's category: a marketing template gets no marketing grant", async () => {
     expect.hasAssertions();
     const { stub, admin: controller } = build();
-    stub.listTemplates.mockResolvedValue(
-      ok([{ name: "order_shipped", language: "en", category: "MARKETING" }]),
-    );
-    await controller.testSendWhatsApp(operator, { ...send, attestConsent: true });
-    expect(stub.recordConsent.mock.calls[0]?.[1]).toMatchObject({ purpose: "marketing" });
+    stub.sendTemplate.mockResolvedValue({ status: 409, body: { code: "CONFLICT" } });
+    const res = await controller.testSendWhatsApp(operator, { ...send, attestConsent: true });
+    expect(res.status).toBe(409);
+    expect(stub.recordConsent).toHaveBeenCalledTimes(1);
+    expect(stub.recordConsent.mock.calls[0]?.[1]).toMatchObject({
+      purpose: "transactional",
+      action: "grant",
+      source: "admin",
+    });
+    // no template lookup decides the purpose any more
+    expect(stub.listTemplates).not.toHaveBeenCalled();
   });
 
   it("without attestConsent no contact is upserted and no consent is recorded", async () => {
@@ -285,23 +289,38 @@ describe("OutreachAdminController: test sends", () => {
     expect(stub.sendTemplate).toHaveBeenCalledTimes(1);
   });
 
-  it("attestConsent for an unknown template records nothing and lets the send answer", async () => {
+  it("the grant is retained when the send is then refused (explicit operator evidence, not delivery) and nothing else is granted", async () => {
     expect.hasAssertions();
     const { stub, admin: controller } = build();
-    stub.listTemplates.mockResolvedValue(ok([]));
     stub.sendTemplate.mockResolvedValue({ status: 409, body: { code: "CONFLICT" } });
     const res = await controller.testSendWhatsApp(operator, { ...send, attestConsent: true });
     expect(res.status).toBe(409);
-    expect(stub.upsertContact).not.toHaveBeenCalled();
-    expect(stub.recordConsent).not.toHaveBeenCalled();
+    expect(stub.upsertContact).toHaveBeenCalledTimes(1);
+    expect(stub.recordConsent).toHaveBeenCalledTimes(1);
+    expect(stub.recordConsent.mock.calls[0]?.[1]).toMatchObject({
+      evidence: "test send attestation by operator-1",
+    });
+  });
+
+  it("the once-only operation key is the submission key: a new submission key is a new operation", async () => {
+    expect.hasAssertions();
+    const { stub, admin: controller } = build();
+    await controller.testSendWhatsApp(operator, { ...send, attestConsent: true });
+    await controller.testSendWhatsApp(operator, {
+      ...send,
+      attestConsent: true,
+      idempotencyKey: "k-2",
+    });
+    expect(
+      stub.recordConsent.mock.calls.map(
+        (call) => (call[1] as { operationKey: string }).operationKey,
+      ),
+    ).toEqual(["test-send:k-1", "test-send:k-2"]);
   });
 
   it("a failed contact upsert or consent write stops before the send and is returned as is", async () => {
     expect.hasAssertions();
     const failedUpsert = build();
-    failedUpsert.stub.listTemplates.mockResolvedValue(
-      ok([{ name: "order_shipped", language: "en", category: "UTILITY" }]),
-    );
     failedUpsert.stub.upsertContact.mockResolvedValue({
       status: 422,
       body: { code: "VALIDATION" },
@@ -313,9 +332,6 @@ describe("OutreachAdminController: test sends", () => {
     expect(failedUpsert.stub.sendTemplate).not.toHaveBeenCalled();
 
     const failedConsent = build();
-    failedConsent.stub.listTemplates.mockResolvedValue(
-      ok([{ name: "order_shipped", language: "en", category: "UTILITY" }]),
-    );
     failedConsent.stub.recordConsent.mockResolvedValue({
       status: 404,
       body: { code: "NOT_FOUND" },

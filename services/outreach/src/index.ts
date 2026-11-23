@@ -1,4 +1,5 @@
 export const OUTREACH_PUBLISHED_EVENTS = [] as const;
+export { IDEMPOTENCY_KEY_MAX } from "./application/send.use-cases";
 export { validateTemplateDraft } from "./domain/message-template";
 export type { TemplateDraft, TemplateIssue } from "./domain/message-template";
 export { wireOutreach, wireOutreachRecovery } from "./composition";
