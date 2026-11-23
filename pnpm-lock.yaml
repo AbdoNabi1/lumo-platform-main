@@ -140,6 +140,9 @@ importers:
       '@platform/inventory':
         specifier: workspace:*
         version: link:../../services/inventory
+      '@platform/leads':
+        specifier: workspace:*
+        version: link:../../services/leads
       '@platform/licensing':
         specifier: workspace:*
         version: link:../../services/licensing
@@ -212,6 +215,9 @@ importers:
       '@platform/theme':
         specifier: workspace:*
         version: link:../../services/theme
+      '@platform/tracking':
+        specifier: workspace:*
+        version: link:../../packages/tracking
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types

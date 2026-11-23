@@ -69,6 +69,7 @@ import type {
 } from "@platform/returns";
 import {
   createRedis,
+  RedisClaimLedger,
   RedisDistributedLock,
   RedisIdempotencyKeyStore,
   RedisRateLimiter,
@@ -122,6 +123,8 @@ export interface RuntimeCore {
   /** Plan 1B-2: the platform's own staff token issuer. Present only when AUTH_MODE=native. */
   readonly staffTokenIssuer?: NativeTokenIssuer;
   readonly rateLimiter: RedisRateLimiter;
+  /** Lead Site Part C: the once-per-session lead claim store (`SET NX EX`), handed to the admin API. */
+  readonly leadEmissionLedger: RedisClaimLedger;
   readonly idempotencyKeys: RedisIdempotencyKeyStore;
   readonly distributedLock: RedisDistributedLock;
   readonly health: HealthRegistry;
@@ -417,6 +420,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     accessControl,
     ...(staffTokenIssuer === undefined ? {} : { staffTokenIssuer }),
     rateLimiter: new RedisRateLimiter(redis.client),
+    leadEmissionLedger: new RedisClaimLedger(redis.client),
     idempotencyKeys: new RedisIdempotencyKeyStore(redis.client),
     distributedLock: new RedisDistributedLock(redis.client),
     health,

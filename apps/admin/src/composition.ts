@@ -47,6 +47,7 @@ import type { PostingAccounts } from "@platform/finance";
 import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
+import { wireLeads, type LeadsController, type ShopFactsPort } from "@platform/leads";
 import {
   wireLicensing,
   type FinanceLedgerPort,
@@ -129,6 +130,7 @@ import type { ShopDomainLike } from "./http/shop-link-url";
 import { TenantProvisioner } from "./tenant-provisioning";
 import { MerchantOnboarding } from "./merchant-onboarding/merchant-onboarding";
 import { wireTheme } from "@platform/theme";
+import type { LeadEmissionLedgerPort } from "@platform/tracking";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
 import {
@@ -143,6 +145,7 @@ import {
   tenancyStoreIdentity,
 } from "./infrastructure/cross-context/online-store.adapters";
 import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-store-link-targets.adapter";
+import { tenancyShopFacts } from "./infrastructure/cross-context/leads-shop-facts.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
@@ -228,6 +231,7 @@ import { ShippingAdminController } from "./interfaces/shipping.admin-controller"
 import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
+import { LeadsAdminController } from "./interfaces/leads.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
 
 /**
@@ -510,6 +514,16 @@ export interface AdminWiringDeps {
    * pass a fast fake so 21 unlock attempts do not cost 21 scrypt runs.
    */
   readonly onlineStorePasswordHasher?: StorefrontPasswordHasher;
+  /**
+   * Lead Site Part C: the once-per-session claim store behind the lead form. Production passes the
+   * Redis-backed ledger (`apps/runtime`); absent ⇒ Leads composes an in-memory ledger (tests/dev).
+   */
+  readonly leadEmissionLedger?: LeadEmissionLedgerPort;
+  /**
+   * TEST SEAM (Lead Site Part C): the shop facts (site type, currency) Leads reads. Absent ⇒ the
+   * tenancy-backed adapter. Route tests inject one that rejects or answers a fixed site type.
+   */
+  readonly leadsShopFacts?: ShopFactsPort;
 }
 
 export interface WiredAdmin {
@@ -664,6 +678,8 @@ export interface WiredAdmin {
   readonly platformConsole: PlatformConsoleAdminController;
   /** Wishlist screen → Wishlist (Sprint S1 — Wishlist's first admin-transport wiring). */
   readonly wishlist: WishlistAdminController;
+  /** Leads inbox screens → Leads (Lead Site Part C). */
+  readonly leads: LeadsAdminController;
   /**
    * The storefront's customer authentication surface (T5.17) → Security + Identity. Deliberately
    * NOT a `*AdminController`: it is gated by {@link CustomerGuard} (valid customer session) rather
@@ -783,6 +799,13 @@ export interface WiredAdmin {
      * request's tenant (spec "Composition"); `public-online-store-routes.ts` is their only caller.
      */
     readonly onlineStore: OnlineStorePublicReads;
+    /**
+     * Lead Site Part C: Leads' raw controller for the lead form's anonymous submit. Same reasoning as
+     * `reviews`/`wishlist` above: the guarded `LeadsAdminController` needs a staff `Principal`, and a
+     * visitor has none. `public-leads-routes.ts` calls only `.submit()`, with the request's tenant, a
+     * `.strict()` body that carries none, and its own rate limits.
+     */
+    readonly leads: LeadsController;
     /**
      * Online Store Part 2: the storefront's published `/pages/<handle>` pages, one by handle and
      * the list (at most 500). Closures taking the request's tenant, never the Pages controller
@@ -1281,6 +1304,17 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
   });
 
+  // Lead Site Part C. The shop facts are a closure over tenancy's public store view (ADR-0014 8f).
+  const leads = wireLeads({
+    clock: deps.clock,
+    idGenerator: deps.idGenerator,
+    shop:
+      deps.leadsShopFacts ??
+      tenancyShopFacts((tenantId) => tenancy.tenancy.getPublicStore(tenantId)),
+    ...(deps.leadEmissionLedger === undefined ? {} : { ledger: deps.leadEmissionLedger }),
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+  });
+
   const contexts: readonly DrainableContext[] = [
     catalog,
     inventory,
@@ -1319,6 +1353,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy,
     licensing,
     wishlist,
+    leads,
   ];
 
   const tenantProvisioner = new TenantProvisioner({
@@ -1487,6 +1522,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     wishlist: new WishlistAdminController({ wishlist: wishlist.wishlist, guard }),
+    leads: new LeadsAdminController({ leads: leads.controller, guard }),
     customerAuth: new CustomerAuthAdminController({
       security: security.security,
       customers: identity.customers,
@@ -1524,6 +1560,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
       onlineStore: onlineStore.publicReads,
+      leads: leads.controller,
       pages: {
         byHandle: (tenantId, handle) =>
           pages.pages.publishedPageByPath({ routePath: `/pages/${handle}`, tenantId }),

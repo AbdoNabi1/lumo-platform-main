@@ -1,28 +1,18 @@
-import { generateKeyPairSync } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
-import {
-  JwtVerifier,
-  NativeTokenIssuer,
-  RoleTableAccessControl,
-  localKeyResolver,
-} from "@platform/auth";
-import type {
-  AccessControl,
-  Cache,
-  Clock,
-  IdempotencyClaim,
-  IdempotencyKeyStore,
-  RateLimiter,
-} from "@platform/contracts";
+import { RoleTableAccessControl } from "@platform/auth";
+import type { AccessControl } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
-import { wireLicensing, type WiredLicensing } from "@platform/licensing";
+import type { WiredLicensing } from "@platform/licensing";
 import {
-  HashedPasswordAuthProvider,
-  InMemoryPasswordCredentialStore,
-  ScryptPasswordHasher,
-} from "@platform/security";
-import { createAdminHttpApi } from "./server";
+  API,
+  PASSWORD,
+  PLATFORM,
+  bootMultiTenant,
+  seedBasicPlan,
+  signUpStoreOf,
+  type Store,
+} from "./testing/multi-tenant-signup";
 
 /**
  * Project 1 — two stores that signed themselves up stay apart. Driven through the REAL admin pipeline
@@ -38,140 +28,12 @@ import { createAdminHttpApi } from "./server";
  * Layer under test: application (transport + composition). No RLS, no Postgres.
  */
 
-const PLATFORM = "platform";
-const API = "/api/v1";
-const clock: Clock = { now: () => new Date("2026-10-16T00:00:00.000Z") };
-
-function infra() {
-  const kv = new Map<string, unknown>();
-  const cache: Cache = {
-    get: async <T>(k: string) => (kv.get(`cache:${k}`) as T | undefined) ?? null,
-    set: async (k, v) => void kv.set(`cache:${k}`, JSON.parse(JSON.stringify(v))),
-    delete: async (k) => void kv.delete(`cache:${k}`),
-    has: async (k) => kv.has(`cache:${k}`),
-  };
-  const idempotencyKeys: IdempotencyKeyStore = {
-    claim: async (key): Promise<IdempotencyClaim | null> => {
-      if (kv.has(`idem:${key}`)) return null;
-      kv.set(`idem:${key}`, true);
-      return { key, token: "t", release: async () => kv.delete(`idem:${key}`) };
-    },
-  };
-  // A real fixed-window counter: the route's own limits (5/IP/hour, 3/email/hour) apply as configured.
-  const rateLimiter: RateLimiter = {
-    consume: async (key, limit) => {
-      const used = ((kv.get(`rl:${key}`) as number | undefined) ?? 0) + 1;
-      kv.set(`rl:${key}`, used);
-      return { allowed: used <= limit, remaining: Math.max(0, limit - used), retryAfterMs: 1_000 };
-    },
-  };
-  return { cache, idempotencyKeys, rateLimiter };
-}
-
-/** The "basic" plan, published, in the SAME licensing instance the app composes with. */
-async function seedBasicPlan(licensing: WiredLicensing): Promise<void> {
-  const plan = await licensing.licensing.createPlan({
-    key: "basic",
-    name: "Basic",
-    tier: "starter",
-    tenantId: PLATFORM,
-  });
-  const planId = (plan.body as { id: string }).id;
-  const draft = await licensing.licensing.createPlanDraft({
-    planId,
-    spec: {
-      limits: { maxProducts: 100 },
-      featureEntitlements: ["basic_reports"],
-      pricing: {
-        basePriceMinor: 49_900,
-        currency: "EGP",
-        billingCycle: "monthly",
-        trialDays: 14,
-        creditAllowances: {},
-      },
-    },
-    tenantId: PLATFORM,
-  });
-  const planVersionId = (draft.body as { planVersionId: string }).planVersionId;
-  const published = await licensing.licensing.publishPlanVersion({
-    planId,
-    planVersionId,
-    tenantId: PLATFORM,
-  });
-  expect(published.status).toBe(200);
-}
-
-interface Store {
-  readonly tenantId: string;
-  readonly storeUrl: string;
-  readonly token: string;
-  readonly email: string;
-}
-
-const PASSWORD = "correct horse battery staple";
-const silent = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
-
-/**
- * The real multi-mode admin pipeline over its own licensing instance. `accessControl` stays the server
- * default (permissive) unless a case needs the real role table.
- */
-async function boot(
-  accessControl?: AccessControl,
-): Promise<{ app: FastifyInstance; licensing: WiredLicensing }> {
-  let n = 0;
-  const idGenerator = {
-    generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
-  };
-  const serializer = new InMemoryEventSerializer();
-  // The app is built over THIS licensing instance, so the plan seeded afterwards is the plan sign-up
-  // finds. (`createAdminHttpApi` forwards `licensing` to `wireAdmin`; no HTTP seeding needed.)
-  const licensing = wireLicensing({ serializer, idGenerator, clock, platformTenantId: PLATFORM });
-
-  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const tokenIssuer = new NativeTokenIssuer({
-    privateKey,
-    issuer: "https://api.test/",
-    audience: "morbeh-admin",
-    ttlSeconds: 7200,
-  });
-  const resolver = localKeyResolver(tokenIssuer);
-  // `JwtVerifier` is the Authenticator and the ClaimsAuthenticator in one: it already returns
-  // `{ principal, claims }` with the token's `tenant_id` claim.
-  const authenticator = new JwtVerifier({
-    issuer: "https://api.test/",
-    audience: "morbeh-admin",
-    getKey: (header, token) => resolver.then((getKey) => getKey(header, token)),
-    logger: silent,
-  });
-
-  const fx = infra();
-  const app = await createAdminHttpApi({
-    tenantMode: "multi",
-    tenantId: PLATFORM,
-    serializer,
-    idGenerator,
-    clock,
-    licensing,
-    authenticator,
+/** The shared multi-mode pipeline with this suite's serializer; `accessControl` stays permissive unless given. */
+const boot = (accessControl?: AccessControl) =>
+  bootMultiTenant({
+    serializer: new InMemoryEventSerializer(),
     ...(accessControl === undefined ? {} : { accessControl }),
-    rateLimiter: fx.rateLimiter,
-    idempotencyKeys: fx.idempotencyKeys,
-    responseCache: fx.cache,
-    passwordAuthProvider: new HashedPasswordAuthProvider({
-      store: new InMemoryPasswordCredentialStore(),
-      hasher: new ScryptPasswordHasher({ log2N: 10 }),
-      clock,
-    }),
-    staffTokenIssuer: tokenIssuer,
-    adminPublicUrl: "https://admin.test",
-    platformStoreDomain: "morbeh.test",
-    // Without a verifier `verify` answers 409 "not configured" before it looks at ownership, which
-    // would hide the 404 this suite is after. No domain here points at the platform.
-    dnsVerifier: { pointsToPlatform: async () => false },
-    defaultPlanKey: "basic",
   });
-  return { app, licensing };
-}
 
 describe("two self-serve stores stay apart (merchant onboarding)", () => {
   let app: FastifyInstance;
@@ -211,18 +73,8 @@ describe("two self-serve stores stay apart (merchant onboarding)", () => {
       siteType,
     });
 
-  async function signUpStore(storeName: string, email: string): Promise<Store> {
-    const res = await signUp(storeName, email);
-    expect(res.statusCode).toBe(201);
-    const body = res.json() as {
-      tenantId: string;
-      storeUrl: string;
-      accessToken?: string;
-      signInRequired?: boolean;
-    };
-    expect(body.signInRequired).toBeUndefined();
-    return { tenantId: body.tenantId, storeUrl: body.storeUrl, token: body.accessToken!, email };
-  }
+  const signUpStore = (storeName: string, email: string): Promise<Store> =>
+    signUpStoreOf(app, storeName, email);
 
   /** An issued, unpaid invoice on the shop's subscription, created through the licensing seam. */
   async function invoiceFor(shop: string, label: string): Promise<string> {

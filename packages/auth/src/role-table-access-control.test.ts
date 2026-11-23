@@ -89,6 +89,20 @@ describe("RoleTableAccessControl", () => {
     }
   });
 
+  it("leads inbox: viewers read only; operators read, change status and export; admins everything (Lead Site Part C)", async () => {
+    const viewer = who(["viewer"]);
+    const op = who(["operator"]);
+    const admin = who(["admin"]);
+    expect(await acl.authorize(viewer, "leads:read")).toBe(true);
+    expect(await acl.authorize(viewer, "leads:update")).toBe(false);
+    expect(await acl.authorize(viewer, "leads:export")).toBe(false);
+    expect(await acl.authorize(op, "leads:read")).toBe(true);
+    expect(await acl.authorize(op, "leads:update")).toBe(true);
+    expect(await acl.authorize(op, "leads:export")).toBe(true);
+    expect(await acl.authorize(admin, "leads:update")).toBe(true);
+    expect(await acl.authorize(admin, "leads:export")).toBe(true);
+  });
+
   it("operators archive and export orders; viewers do neither; cash stays admin-only (orders Part 1)", async () => {
     const op = who(["operator"]);
     const viewer = who(["viewer"]);

@@ -516,6 +516,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     accessControl: runtime.accessControl,
     authenticator: runtime.authenticator,
     rateLimiter: runtime.rateLimiter,
+    leadEmissionLedger: runtime.leadEmissionLedger,
     idempotencyKeys: runtime.idempotencyKeys,
     responseCache: runtime.redis.cache,
     health: runtime.health,

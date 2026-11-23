@@ -28,6 +28,7 @@ import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platfo
 import type { PaymentProvider } from "@platform/contracts";
 import type { PaymentCredentialVault, ProviderRegistration } from "@platform/payments";
 import type { Logger } from "@platform/utils";
+import { RedisClaimLedger } from "@platform/redis";
 
 const validEnv = {
   APP_ENV: "local",
@@ -102,6 +103,11 @@ describe("composition root (lazy clients — graph builds without any Docker run
     expect(core.rateLimiter).toBeDefined();
     expect(core.idempotencyKeys).toBeDefined();
     expect(core.distributedLock).toBeDefined();
+  });
+
+  it("composes the production lead claim ledger on the Redis client (Lead Site Part C)", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.leadEmissionLedger).toBeInstanceOf(RedisClaimLedger);
   });
 
   it("REQUIRES a JWKS issuer — no fake identity provider exists (D-048)", () => {
