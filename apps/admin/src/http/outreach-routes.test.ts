@@ -612,6 +612,24 @@ describe.each<Mode>(["single", "multi"])("outreach routes (%s mode)", (mode) => 
   });
 });
 
+describe("connect: the Embedded Signup code contract through HTTP", () => {
+  it("a 1024-character code (and one of exactly 8192) is accepted and reaches the fake exchange untouched", async () => {
+    expect.hasAssertions();
+    for (const length of [1024, 8192]) {
+      const h = await fresh("single");
+      const code = "c".repeat(length);
+      const res = await h.app.inject({
+        method: "POST",
+        url: "/api/v1/outreach/whatsapp/connect",
+        headers: { ...h.as("admin"), "idempotency-key": key() },
+        payload: { code, wabaId: WABA, phoneNumberId: PHONE },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(h.whatsapp.callsOf("exchangeCode")).toEqual([[code]]);
+    }
+  });
+});
+
 describe("the verification token length: every token the runtime accepts passes the route", () => {
   it("a configured token longer than the old 512 cap verifies (the runtime sets no maximum), unquoted challenge", async () => {
     expect.hasAssertions();
