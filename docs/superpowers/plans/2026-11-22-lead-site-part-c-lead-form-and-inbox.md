@@ -7,7 +7,7 @@
 starts before Sol's round-1 plan review, on impl-sonnet. Sol reviews the plan and every finished task when it returns;
 accepted findings go back as fix rounds (amendment blocks). Merge/push still need the owner's go-ahead.
 
-**Status:** `OPUS: AGREED · Sol: PENDING (round 1 queued)`
+**Status:** `OPUS: AGREED · Sol: CHANGES REQUIRED (review 1) → amendments round 1 written, round 2 pending`
 
 **Goal:** a lead website can place a lead form on its homepage; every valid submission is saved for the merchant and
 reaches an admin "Leads" inbox (search, status, CSV); each saved lead records whether it must be sent to the ad
@@ -57,6 +57,27 @@ Code facts used here: `C:/Users/Abdo/AppData/Local/hermes/cache/scratch/lead-sit
   platforms are a later phase (spec).
 - Out of scope (later plan; owner may reprioritise): hiding cart/product routes and the header cart on lead sites;
   click-id capture into first-party cookies (Plan D); sending to platforms (Plan D); the pending-owner staff sign-in gap.
+
+## Amendments round 1 — precedence and shared rules (binding)
+
+Precedence: **Amendments round 1 > original task text.** Every item is tagged `Plan review 1, finding N`
+(review file `2026-11-22-lead-site-part-c-plan-review-1.md`). Task 1 is already committed (`5eefc1f9`); its amendment
+block is a fix round on that code.
+
+- **Shared rule — public idempotency is a lead column, not the transport cache (finding 6).** `POST /public/leads` is
+  **not** `idempotent: true` (the transport snapshots every handler response for 24 h, including transient 429/503).
+  Instead the request must carry header `Idempotency-Key` matching `^[A-Za-z0-9-]{8,128}$`; it is stored on the lead as
+  `submissionKey` with a unique index `(tenant_id, submission_key)`. A repeat with the same key returns the stored
+  lead's result (201, same body) without a new claim or row; rate-limit refusals and 503s are never stored, so the
+  same key succeeds once the limiter recovers. The storefront form mints the key once per attempt (Task 6), so a
+  double click or a retry reuses it.
+- **Shared rule — commerce section list lives in the shared content package (finding 10).**
+  `packages/storefront-content/src/sections.ts` exports
+  `export const COMMERCE_SECTION_TYPES = ["featured_collection", "featured_products", "collection_list"] as const satisfies readonly SectionType[];`
+  (Task 4 adds it; admin-web and storefront both import it from `@platform/storefront-content`).
+- **Shared rule — known local failure.** `packages/db/src/prisma-tenant-where.guard.test.ts` fails on Windows because of
+  the space in the path (Vite dynamic import of a file URL). Do not change it; report it as "known Windows path failure"
+  and use the exported scanner command instead (finding 13).
 
 ## Implementers
 
@@ -330,6 +351,31 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** (stage `services/leads/**` and `pnpm-lock.yaml`) `feat(leads): lead service core with once-per-session decision`.
 
+**Amendments round 1 (binding) — fix round on `5eefc1f9`:**
+
+- (finding 7) Keep the implemented local pure `toLatinDigits` in `services/leads/src/domain/lead-search.ts` and the
+  `@platform/db` type-only dependency; both are now the plan. `src/index.ts` must export at least: `wireLeads`,
+  `LeadsWiringDeps`, `WiredLeads`, `LeadsController`, `ControllerResponse`, `LEAD_STATUSES`, `LeadStatus`,
+  `LEAD_TRACKING_STATUSES`, `LeadTrackingStatus`, `LeadAttribution`, `ShopFactsPort`, `SiteType`, `LeadView`,
+  `SubmitLeadInput`, `SubmitLeadOutput`, `LeadRepository`, `LeadListQuery` (already true — keep).
+- (finding 6) `LeadProps.submissionKey: string`; `SubmitLeadInput.submissionKey: string` (validated
+  `^[A-Za-z0-9-]{8,128}$`, field `submissionKey`). `LeadRepository` gains
+  `findBySubmissionKey(tenantId: string, submissionKey: string): Promise<Lead | null>` and `insert` now returns
+  `Promise<"inserted" | "duplicate">` (`"duplicate"` = a row with the same `(tenantId, submissionKey)` exists).
+  `SubmitLead.execute` order becomes: 1 validate → 2 site type → **2b `findBySubmissionKey`: found → return
+  `ok({ leadId, eventId, emission })` from the stored row, where emission = `pending|sent|failed → "emit"`,
+  `suppressed → "suppressed"`, `skipped_spam → "spam"` (no claim, no insert)** → 3 id → 4/5 spam/decision → 6 insert;
+  `"duplicate"` → re-read with `findBySubmissionKey` and return that row's result. In-memory repo enforces the unique
+  pair.
+- (finding 11) D5 wording: without a calling code for the shop currency, only explicit international input (`+…` or
+  `00…`) is accepted. Add tests: currency `USD` + `00201012345678` → ok, `phoneE164 "+201012345678"`.
+- (finding 14) D4 regression test: a repository whose first `insert` rejects; submit with session `s-1` rejects; a
+  second submit with `s-1` (new submission key) is saved with `trackingStatus "suppressed"`. Do not reorder save before
+  decide.
+- Tests for the submission key: same key twice → one row, identical outputs, ledger called once; same key after a
+  spam submit → `"spam"` again, one row; two concurrent submits with one key → one row, both outputs equal.
+- Commands: as Task 1 Step 4 (leads test, typecheck, lint, arch). Commit `fix(leads): idempotent lead submission by key`.
+
 ---
 
 ### Task 2: leads persistence (Prisma, RLS migration) and the Redis claim ledger
@@ -438,6 +484,32 @@ Expected: all pass; no tenant-where finding under `services/leads`.
 
 - [ ] **Step 5: Commit** `feat(leads): persist leads with row level security and a redis claim ledger`.
 
+**Amendments round 1 (binding):**
+
+- (finding 6) Prisma model and migration gain `submissionKey String @map("submission_key")` /
+  `"submission_key" TEXT NOT NULL`, unique index `leads_tenant_id_submission_key_key` on `(tenant_id, submission_key)`
+  (`@@unique([tenantId, submissionKey])`). `insert` maps Prisma `P2002` on that index (use `isUniqueViolation` as in
+  `services/online-store/src/infrastructure/rows.ts`) to `"duplicate"`; `findBySubmissionKey` = `runReadScoped` +
+  `findFirst({ where: { tenantId, submissionKey } })`.
+- (finding 1) Do **not** use `createFakePrisma()` for list/search semantics (it rejects `OR`, has no `contains`/`mode`
+  and ignores `orderBy`). Instead:
+  1. `prisma-lead-repository.test.ts` uses a **recording client** defined in that file:
+     `function recordingPrisma(results: Partial<Record<string, unknown[]>>)` returning
+     `{ prisma, calls }` where `calls: { model: string; method: string; args: unknown }[]` records every delegate call
+     and every `$executeRaw` as `{ model: "$raw", method: "executeRaw", args: <the tenant id value> }`, and
+     `prisma.$transaction(fn)` calls `fn` with the same client; each delegate method returns the next queued value from
+     `results["<model>.<method>"]` (default `null` / `{ count: 0 }` / `[]` by method kind). Tests assert the exact `args`
+     of each query (the `where` with `tenantId`, the `OR` search clause, `orderBy: { id: "desc" }`, `take: first + 1`,
+     the `lt` cursor, the date range, the `version` guard) and that the `$raw` set_config call precedes each query.
+  2. `prisma-lead-repository.integration.test.ts`, skipped unless `DATABASE_URL_TEST` is set (pattern of the existing
+     `*.integration.test.ts` files), runs the Task 1 use-case suite (`describe.each` over in-memory and Prisma) against a
+     real database. Semantics are proven by the in-memory suite locally and by this suite in CI.
+- (finding 13) Add a leads block to `packages/db/src/schema-migration-consistency.test.ts` following its existing
+  per-schema blocks (~580–598): every model column exists in the migration, `FORCE ROW LEVEL SECURITY`, and the exact
+  `tenant_isolation` predicate. Report the guard-test Windows failure as known (preamble).
+- (finding 13) Install command timeout: `timeout 1700` (not 600) for `install --offline --no-frozen-lockfile`.
+- Commit unchanged.
+
 ---
 
 ### Task 3: admin wiring — public submit route, inbox routes, permissions, runtime ledger
@@ -539,6 +611,40 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** `feat(admin): lead submission and inbox api`.
 
+**Amendments round 1 (binding):**
+
+- (finding 2) The `ShopFactsPort` adapter in `apps/admin/src/composition.ts` throws
+  `new AppError("shop facts unavailable", { code: "UNAVAILABLE" })` (`AppError` from `@platform/utils`) when the tenancy
+  call rejects **or** answers non-200 or a body without a known `siteType`/string `currency`; the transport maps it to
+  503 with no details. Tests: tenancy read rejects → 503, no insert and no claim; non-200 → 503, same.
+- (finding 5) Inside the handler: `const tenantId = context.tenantId; const visitorIp = body.context.ip;` Keys
+  `` `rl:${tenantId}:leads` `` (60 / 600 000 ms) and, only when `visitorIp !== null`,
+  `` `rl:${tenantId}:leads:ip:${visitorIp}` `` (5 / 600 000 ms). Never use the transport `context.ip`. The limiter is
+  **required**: `rateLimiter` undefined → 503 (`limiterUnavailable`), limiter throws → 503, denied → 429 with
+  `retry-after` (copy `rateLimited` from `rate-limited-response.ts`). Tests: two visitor IPs behind one transport IP have
+  separate 5-buckets; `ip: null` uses only the shop key; buckets are tenant-separated; the 61st shop submission with
+  distinct IPs → 429; missing limiter → 503; throwing limiter → 503.
+- (finding 6) The route is **not** `idempotent: true`. The handler reads `Idempotency-Key` from `context.headers`
+  (case-insensitive); missing/invalid → 422 `VALIDATION` with field `Idempotency-Key`; passes it as `submissionKey`.
+  Tests: same key twice → identical 201 bodies and **one** stored row (count via `GET /leads`); after a throwing limiter
+  (503) the same key succeeds once the limiter recovers; concurrent same-key requests → one row.
+- (finding 8) Harnesses:
+  1. **New** `apps/admin/src/http/testing/leads-harness.ts`, modelled on `testing/online-store-harness.ts` (role
+     tokens `admin|operator|viewer`, `RoleTableAccessControl`, persistent `responseCache`/claims, `countingLimiter()`),
+     exporting `buildLeadsApp(options: { siteType?: "store" | "lead_site"; currency?: string; rateLimiter?: RateLimiter | null; shopFactsFail?: "reject" | "non-200" })`.
+     It injects a `ShopFactsPort` through a new optional `AdminHttpDeps.leadsShopFacts?: ShopFactsPort` (passed to
+     `wireAdmin`; when absent the tenancy-backed adapter is used). Used for: RBAC (viewer 403 on status/export-rows),
+     limiter, idempotency, 503 paths.
+  2. **Real path** in a new `apps/admin/src/http/leads-isolation.e2e.test.ts` reusing the multi-tenant `boot()` and
+     sign-up helpers of `merchant-onboarding-isolation.e2e.test.ts` (extract them into
+     `apps/admin/src/http/testing/multi-tenant-signup.ts` and import from both files): sign up shop A as `lead_site`
+     and shop B as `store` through `/public/merchant-signup`; A takes a lead (201), B → 409 `BUSINESS_RULE`; A's owner
+     token lists A's lead, B's token sees none and gets 404 for A's lead id; a request with B's token and a forged
+     `x-tenant-id: <A>` never reads A's leads. No public site-type mutation is added.
+- (finding 13) Add the runtime test command:
+  `cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter @platform/runtime exec vitest run src/composition.test.ts`
+  and assert there that the composed `leadEmissionLedger` is a `RedisClaimLedger`.
+
 ---
 
 ### Task 4: the `lead_form` section type and editor gating by site type
@@ -627,6 +733,16 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 ```
 
 - [ ] **Step 5: Commit** `feat(online-store): lead form section offered to lead sites only`.
+
+**Amendments round 1 (binding):**
+
+- (finding 10) `COMMERCE_SECTION_TYPES` is exported from `packages/storefront-content/src/sections.ts` (preamble), not
+  from admin-web; `section-availability.ts` imports it. Prop contracts: `CustomizeEditor`, `SectionTreePanel`,
+  `AddSectionDialog` each gain `readonly siteType: "store" | "lead_site" | null`. `customize/page.tsx` normalises the
+  store-settings read: outcome ok → `settings.siteType ?? "store"`, any other outcome → `null`. Update the existing
+  fixtures `components/online-store/customize-editor.test.tsx` (~83, ~522) and
+  `components/online-store/sections/section-tree-panel.test.tsx` (~48–53) with `siteType: "store"`.
+- (finding 14) Add-dialog tests query `screen`/`document.body` (the dialog is portalled), never `container`.
 
 ---
 
@@ -730,6 +846,21 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** `feat(storefront): visitor session cookie and lead submission action`.
 
+**Amendments round 1 (binding):**
+
+- (finding 3) `createLead(body, idempotencyKey)` returns `Promise<{ readonly status: number; readonly body: unknown }>`.
+  The same module exports guards `isCreateLeadResult(value: unknown): value is CreateLeadResult` and
+  `validationFieldsOf(value: unknown): readonly string[]` (reads `fields[].field` strings from an error envelope, else
+  `[]`). `submitLead`: 201 with a body failing `isCreateLeadResult` → `network` and no cookie. Tests cover a real 422
+  envelope and a malformed 201 body.
+- (finding 4) The sent marker slides with the session: `withVisitorSession` also re-issues `morbeh_lead_sent` with the
+  same value and `Max-Age=1800` (HttpOnly, lax, secure in production) **when its value equals the current sid**, and
+  deletes it (`maxAge: 0`) when it names a different sid or the sid was just minted. `submitLead` sets it with
+  `maxAge: 1800` (not 86 400). Tests with a cookie jar and clock: activity every 25 min for 25 h keeps the marker →
+  `sessionAlreadyEmitted: true`; 31 idle minutes (new sid) → marker removed → `false`.
+- (finding 6) `LeadFormInput` gains `submissionKey: string`; `submitLead` passes it as the `Idempotency-Key` (no
+  `crypto.randomUUID()` in the action).
+
 ---
 
 ### Task 6: storefront lead form UI and site-type rendering (UI)
@@ -777,6 +908,17 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 ```
 
 - [ ] **Step 5: Commit** `feat(storefront): lead form section`.
+
+**Amendments round 1 (binding):**
+
+- (finding 10) `Sections` prop: `readonly siteType: "store" | "lead_site"`. Import `COMMERCE_SECTION_TYPES` from
+  `@platform/storefront-content`. Update `components/sections/commerce-sections.test.tsx` (~47) and every other existing
+  `<Sections …>` fixture with `siteType: "store"`.
+- (finding 6) The client form keeps `submissionKey` in state, minted with `crypto.randomUUID()` on mount and after
+  each **successful** submit; a failed submit keeps the same key for the retry.
+- (finding 14) The honeypot input itself carries `tabIndex={-1}`, `autoComplete="off"` and a `<label>` ("Website"),
+  inside the `sr-only` + `aria-hidden="true"` wrapper. After success, focus moves to the `role="status"` message
+  (`tabIndex={-1}` + `focus()`), so focus never stays on the removed button.
 
 ---
 
@@ -834,3 +976,17 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 Do not run `next build`.
 
 - [ ] **Step 5: Commit** `feat(admin-web): leads inbox with search, status and csv export`.
+
+**Amendments round 1 (binding):**
+
+- (finding 9) Exact client/action contracts in `lib/api/leads.ts`:
+  `changeLeadStatus(leadId: string, status: LeadStatus, idempotencyKey: string): Promise<MutationResult<LeadDto>>`
+  sending body `{ status }` to `POST /api/v1/leads/{id}/status` via `mutateAdminApi`;
+  `changeLeadStatusAction(_prev: FormState, formData: FormData): Promise<FormState>` in `app/leads/actions.ts`.
+  Revalidate `/leads` and `/leads/{id}` **after every call that reached the API, whatever the outcome** (track an
+  `attempted` flag; revalidate in `finally` when set), then map with `toFormState`. Local validation failures (missing
+  id, unknown status) return without calling the API and without revalidating. Tests: ok, 409, 422, 403 and a
+  network/unknown outcome each revalidate both paths; a local validation failure revalidates nothing.
+- (finding 12) CSV oracle, byte-exact: a lead named `=HYPERLINK("x")` becomes the cell `"'=HYPERLINK(""x"")"`. All eight
+  columns go through `csvCell`. Add cases for a message starting with `@`, a tab, a CR, `+1+2` (guarded) and the phone
+  `+201012345678` (kept as is). BOM first, CRLF line ends.
