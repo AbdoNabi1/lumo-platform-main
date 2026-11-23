@@ -11,6 +11,7 @@ import {
 import type { ShopFactsPort } from "./application/ports";
 import type { LeadRepository } from "./domain/lead-repository";
 import { InMemoryLeadRepository } from "./infrastructure/in-memory-lead-repository";
+import { PrismaLeadRepository } from "./infrastructure/prisma-lead-repository";
 import { LeadsController } from "./interfaces/leads.controller";
 
 export interface LeadsWiringDeps {
@@ -20,8 +21,7 @@ export interface LeadsWiringDeps {
   /** The once-per-session claim store. Absent ⇒ an in-memory ledger on the injected clock (tests/dev). */
   readonly ledger?: LeadEmissionLedgerPort;
   /**
-   * Production persistence. Present ⇒ the Prisma repository (added in Task 2 of Part C); absent ⇒
-   * in-memory. ADR-0014: the repository built here is a tenant-agnostic singleton.
+   * Production persistence. Present ⇒ the Prisma repository; absent ⇒ in-memory. ADR-0014: the repository built here is a tenant-agnostic singleton.
    */
   readonly prisma?: Database;
 }
@@ -50,14 +50,14 @@ function buildController(leads: LeadRepository, deps: LeadsWiringDeps): LeadsCon
   });
 }
 
-/** Composition root for the Leads context. In-memory only for now; leads publish no events. */
+/** Composition root for the Leads context. Leads publish no events, so there is no outbox to drain. */
 export function wireLeads(deps: LeadsWiringDeps): WiredLeads {
-  if (deps.prisma !== undefined) {
-    // Fail loud: silently falling back to memory in production would drop every lead on restart.
-    throw new Error("leads: Prisma persistence is not wired yet (Part C, Task 2)");
-  }
+  const leads: LeadRepository =
+    deps.prisma !== undefined
+      ? new PrismaLeadRepository({ prisma: deps.prisma })
+      : new InMemoryLeadRepository();
   return {
-    controller: buildController(new InMemoryLeadRepository(), deps),
+    controller: buildController(leads, deps),
     drainOutbox: () => Promise.resolve(0),
     deliveredEventTypes: [],
   };

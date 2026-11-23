@@ -1,0 +1,36 @@
+// `leads` schema — lead-site form submissions (services/leads, Lead Site Part C). One row per saved
+// submission, tenant-scoped with RLS. Append-mostly: only `status` (and Plan D's `tracking_status`)
+// change after insert. Bare-id refs only: `tenant_id` is the shop id, `form_id` a section id in the
+// theme document, `session_id` the visitor's morbeh_sid. `submission_key` is the client-minted
+// idempotency key (unique per tenant): a repeated submit finds the stored lead instead of adding one.
+
+model Lead {
+  id             String   @id @db.Uuid
+  tenantId       String   @map("tenant_id")
+  formId         String   @map("form_id")
+  name           String
+  /// The phone as the visitor typed it (trimmed).
+  phone          String
+  phoneE164      String   @map("phone_e164")
+  email          String?
+  message        String?
+  /// new | contacted | qualified | converted | rejected | spam (CHECK + domain)
+  status         String
+  /// pending | suppressed | skipped_spam | sent | failed (CHECK + domain)
+  trackingStatus String   @map("tracking_status")
+  eventId        String   @map("event_id")
+  sessionId      String   @map("session_id")
+  submissionKey  String   @map("submission_key")
+  /// honeypot | too_fast, set only on spam (CHECK + domain)
+  spamReason     String?  @map("spam_reason")
+  attribution    Json     @default("{}")
+  version        Int      @default(0)
+  createdAt      DateTime @map("created_at")
+  updatedAt      DateTime @map("updated_at")
+
+  @@unique([tenantId, submissionKey])
+  @@index([tenantId, id(sort: Desc)])
+  @@index([tenantId, status, id(sort: Desc)])
+  @@map("leads")
+  @@schema("leads")
+}

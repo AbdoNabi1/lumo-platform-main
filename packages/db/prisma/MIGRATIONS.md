@@ -118,7 +118,11 @@ Hand-written and additive (expand-only); the agent never applies them. Deploy wi
   `NOT NULL DEFAULT 'store'`, with a CHECK) and the nullable `site_type_settled_at` (when the
   type was fixed at sign-up). The table keeps its existing RLS policy. Deploy before the release
   that reads it (lead site, branch `morbeh/lead-site`).
+- `20261122000000_leads` — creates the `leads` schema and `leads.leads` (one row per saved lead-form
+  submission, with the client idempotency key `submission_key` unique per tenant) with RLS enabled and
+  forced and its own `tenant_isolation` policy. Deploy before the release that reads it (lead site,
+  branch `morbeh/lead-site`).
 
-The first two do not touch existing rows; the third gives them `store` through the column default. Self-serve sign-up stays off (503) until the owner also sets
+The first two do not touch existing rows; the third gives them `store` through the column default; the fourth only adds a new table. Self-serve sign-up stays off (503) until the owner also sets
 `TENANT_MODE=multi`, `DEFAULT_PLAN_KEY` and `AUTH_MODE=native` (native staff sign-in: the API's own
 token issuer over the hashed password store; without it a new store could never be signed in to).

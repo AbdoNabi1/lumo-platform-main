@@ -31,14 +31,30 @@ describe("wireLeads", () => {
     expect(claim).toHaveBeenCalledWith("lead-emit:t-1:s-1", 1800);
   });
 
-  it("refuses a Prisma database until persistence is wired (fails loud, never silently in-memory)", () => {
-    expect(() =>
-      wireLeads({
-        clock: fixedClock(),
-        idGenerator: sequentialIds(),
-        shop: fakeShop(),
-        prisma: {} as never,
-      }),
-    ).toThrow(/not wired/);
+  it("persists through the Prisma repository when a database is given (tenant set before the insert)", async () => {
+    const calls: string[] = [];
+    const prisma = {
+      $executeRaw: (_strings: TemplateStringsArray, tenant: unknown) => {
+        calls.push(`set_config:${String(tenant)}`);
+        return Promise.resolve(1);
+      },
+      $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+      lead: {
+        findFirst: () => Promise.resolve(null),
+        create: () => {
+          calls.push("lead.create");
+          return Promise.resolve({});
+        },
+      },
+    };
+    const wired = wireLeads({
+      clock: fixedClock(),
+      idGenerator: sequentialIds(),
+      shop: fakeShop(),
+      prisma: prisma as never,
+    });
+    const response = await wired.controller.submit(validInput());
+    expect(response.status).toBe(201);
+    expect(calls).toEqual(["set_config:t-1", "set_config:t-1", "lead.create"]);
   });
 });

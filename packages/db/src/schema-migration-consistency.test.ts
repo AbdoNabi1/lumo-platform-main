@@ -715,3 +715,77 @@ describe("online_store content — column types, defaults and keys (Project 4 Pa
     });
   }
 });
+
+describe("leads.leads — migration history matches the Prisma model (Lead Site Part C)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n")
+    .replace(/\r\n/g, "\n");
+  const model = /model Lead \{([\s\S]*?)\n\}/.exec(
+    readFileSync(join(migrationsDir, "..", "leads.prisma"), "utf-8").replace(/\r\n/g, "\n"),
+  )?.[1];
+
+  // The columns come from the model itself (`@map` or the field name), so adding a field to the
+  // model without a migration column fails here.
+  const modelColumns = (model ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("//") && !line.startsWith("@@"))
+    .map((line) => /@map\("(\w+)"\)/.exec(line)?.[1] ?? /^(\w+)\s/.exec(line)?.[1] ?? "");
+
+  it("reads the model's columns", () => {
+    expect(modelColumns).toHaveLength(18);
+    expect(modelColumns).toContain("submission_key");
+    expect(modelColumns).not.toContain("");
+  });
+
+  it("creates the schema before its table", () => {
+    expect(allSql).toContain('CREATE SCHEMA IF NOT EXISTS "leads";');
+  });
+
+  it("leads has exactly the model's columns", () => {
+    expect([...columnsEverAddedTo("leads", "leads", allSql)].sort()).toEqual(
+      [...modelColumns].sort(),
+    );
+  });
+
+  it("leads is RLS-forced with the exact tenant_isolation predicate", () => {
+    expect(allSql).toContain('ALTER TABLE "leads"."leads" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "leads"."leads" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('DROP POLICY IF EXISTS tenant_isolation ON "leads"."leads";');
+    expect(allSql).toContain(
+      `CREATE POLICY tenant_isolation ON "leads"."leads" FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+
+  it("has the checks, the unique submission key and the two list indexes", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_status_check" CHECK ("status" IN ('new', 'contacted', 'qualified', 'converted', 'rejected', 'spam'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_tracking_status_check" CHECK ("tracking_status" IN ('pending', 'suppressed', 'skipped_spam', 'sent', 'failed'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_spam_reason_check" CHECK ("spam_reason" IS NULL OR "spam_reason" IN ('honeypot', 'too_fast'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "leads_tenant_id_submission_key_key" ON "leads"."leads" ("tenant_id", "submission_key");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "leads_tenant_id_id_idx" ON "leads"."leads" ("tenant_id", "id" DESC);',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "leads_tenant_id_status_id_idx" ON "leads"."leads" ("tenant_id", "status", "id" DESC);',
+    );
+  });
+
+  it("is registered in the datasource schemas list", () => {
+    const main = readFileSync(join(migrationsDir, "..", "main.prisma"), "utf-8");
+    expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"leads"/);
+  });
+});
