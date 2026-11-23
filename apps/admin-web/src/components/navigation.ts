@@ -10,6 +10,7 @@ import {
   FolderTreeIcon,
   GiftIcon,
   HouseIcon,
+  InboxIcon,
   LandmarkIcon,
   LanguagesIcon,
   LayoutTemplateIcon,
@@ -106,6 +107,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     sectionIds: ["pricing"],
   },
   { id: "customers", label: (t) => t.nav.customers, href: "/customers", Icon: UserIcon },
+  { id: "leads", label: (t) => t.nav.leads, href: "/leads", Icon: InboxIcon },
   {
     id: "marketing",
     label: (t) => t.nav.marketing,

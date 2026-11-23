@@ -113,6 +113,9 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/components-library", "viewer"],
   ["/marketing", "operator"],
   ["/customers", "viewer"],
+  // Lead Site Part C: every role reads the inbox; changing a status and the CSV export are
+  // operator permissions the API (and the screen / export route) enforce themselves.
+  ["/leads", "viewer"],
   ["/reviews/new", "operator"],
   ["/reviews", "viewer"],
   ["/notifications/new", "operator"],

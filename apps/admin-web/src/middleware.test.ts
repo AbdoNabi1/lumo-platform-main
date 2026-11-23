@@ -220,6 +220,14 @@ describe("middleware role table for the orders screens", () => {
     }
   });
 
+  it("lets a viewer open the leads inbox, a lead and the export route (the export route refuses viewers itself)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/leads", "/leads/lead-1", "/leads/export"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
   it("lets a viewer read every orders page", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     for (const path of [
