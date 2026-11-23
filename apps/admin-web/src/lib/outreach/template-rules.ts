@@ -20,9 +20,9 @@ export interface TemplateDraftInput {
   language: string;
   category: TemplateCategory | "AUTHENTICATION";
   header?: { format: "TEXT"; text: string; example?: string };
-  body: { text: string; examples: string[] };
+  body: { text: string; examples: readonly string[] };
   footer?: { text: string };
-  buttons?: TemplateButtonDraft[];
+  buttons?: readonly TemplateButtonDraft[];
 }
 
 export interface TemplateIssueCode {
@@ -132,7 +132,10 @@ export function nextVariableToken(text: string): string {
   return `{{${highest + 1}}}`;
 }
 
-function validateButtons(buttons: TemplateButtonDraft[], issues: TemplateIssueCode[]): void {
+function validateButtons(
+  buttons: readonly TemplateButtonDraft[],
+  issues: TemplateIssueCode[],
+): void {
   if (buttons.length > BUTTONS_MAX) issues.push({ field: "buttons", code: "buttons_count" });
 
   buttons.forEach((b, i) => {

@@ -37,6 +37,13 @@ export default async function WhatsAppSettingsPage() {
           <p className="text-muted-foreground mt-1 text-sm">
             <BrandText text={t.whatsappSettings.subtitle} />
           </p>
+          {result.outcome === "ok" && result.data.available && (
+            <p className="mt-2 text-sm">
+              <Link href="/settings/whatsapp/templates" className="text-primary hover:underline">
+                {t.whatsappSettings.templatesLink}
+              </Link>
+            </p>
+          )}
         </header>
 
         {result.outcome === "ok" ? (

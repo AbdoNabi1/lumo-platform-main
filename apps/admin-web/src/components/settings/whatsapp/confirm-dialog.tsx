@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition, type RefObject } from "react";
+import { useRef, useState, useTransition, type ReactNode, type RefObject } from "react";
 import {
   Button,
   Dialog,
@@ -20,6 +20,7 @@ import { BrandText } from "./brand-text";
  */
 export function ConfirmDialog({
   triggerLabel,
+  triggerAriaLabel,
   title,
   description,
   cancelLabel,
@@ -32,8 +33,11 @@ export function ConfirmDialog({
   triggerVariant = "outline",
 }: {
   readonly triggerLabel: string;
+  /** A longer accessible name for the trigger when several rows share one visible label. */
+  readonly triggerAriaLabel?: string;
   readonly title: string;
-  readonly description: string;
+  /** Plain copy, or a node when part of it (a template name) needs its own direction. */
+  readonly description: ReactNode;
   readonly cancelLabel: string;
   readonly confirmLabel: string;
   readonly onConfirm: () => Promise<WhatsAppActionState>;
@@ -87,6 +91,7 @@ export function ConfirmDialog({
           ref={triggerRef}
           type="button"
           variant={triggerVariant}
+          aria-label={triggerAriaLabel}
           onBlur={() => {
             if (restoredRef.current && !openRef.current && !runningRef.current) onRelease?.();
           }}
@@ -112,7 +117,7 @@ export function ConfirmDialog({
             <BrandText text={title} />
           </DialogTitle>
           <DialogDescription>
-            <BrandText text={description} />
+            {typeof description === "string" ? <BrandText text={description} /> : description}
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap justify-end gap-2">

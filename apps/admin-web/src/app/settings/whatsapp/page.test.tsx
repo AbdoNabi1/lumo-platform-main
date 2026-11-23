@@ -85,6 +85,22 @@ describe("Settings → WhatsApp page", () => {
     expect(mocks.fetchTemplates).toHaveBeenCalledTimes(1);
   });
 
+  it("links to the message templates when WhatsApp is available, and not when it is not set up", async () => {
+    expect.hasAssertions();
+    render(await WhatsAppSettingsPage());
+    expect(screen.getByRole("link", { name: en.whatsappSettings.templatesLink })).toHaveAttribute(
+      "href",
+      "/settings/whatsapp/templates",
+    );
+    cleanup();
+    mocks.fetchConnection.mockResolvedValue({
+      outcome: "ok",
+      data: { ...connection, available: false, status: "not_connected" },
+    });
+    render(await WhatsAppSettingsPage());
+    expect(screen.queryByRole("link", { name: en.whatsappSettings.templatesLink })).toBeNull();
+  });
+
   it("brands are isolated in the page title", async () => {
     expect.hasAssertions();
     render(await WhatsAppSettingsPage());
