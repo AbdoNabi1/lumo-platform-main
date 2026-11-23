@@ -911,4 +911,94 @@ describe("outreach-reconcile-unresolved job (R3-B04, R4-B02)", () => {
     );
     expect(withRecovery.map((j) => j.name)).toContain("outreach-reconcile-unresolved");
   });
+
+  describe("single-mode deployment tenant", () => {
+    const single = (core: RuntimeCore, id = "shop-1"): RuntimeCore =>
+      ({
+        ...core,
+        config: { ...core.config, TENANT_MODE: "single", TENANT_DEFAULT_ID: id },
+      }) as unknown as RuntimeCore;
+    const run = (core: RuntimeCore) =>
+      buildJobs(core)
+        .find((j) => j.name === "outreach-reconcile-unresolved")!
+        .run();
+
+    it("sweeps the deployment tenant with an EMPTY directory and a pending row (no lifecycle row needed)", async () => {
+      expect.hasAssertions();
+      const rows: Row[] = [{ tenantId: "shop-1", id: "o-1", version: 3, status: "pending" }];
+      const { prisma, outbox } = statefulPrisma(rows);
+      const recovery = wireOutreachRecovery({
+        prisma,
+        clock,
+        idGenerator: { generate: () => crypto.randomUUID() },
+        serializer: new JsonEventSerializer(),
+        reconcileAfterMs: 300_000,
+      });
+      const listTenants = pagedTenants([{ ids: [], next: null }]);
+      await run(single(coreWith(recovery, listTenants)));
+      expect(rows.map((r) => `${r.tenantId}:${r.status}`)).toEqual(["shop-1:unknown"]);
+      expect(outbox.map((o) => o.tenantId)).toEqual(["shop-1"]);
+    });
+
+    it("an already-listed deployment tenant is swept exactly once, wherever it appears in the pages", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = pagedTenants([
+        { ids: ["other-1"], next: "page-1" },
+        { ids: ["shop-1", "other-2"], next: null },
+      ]);
+      await run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants)));
+      const swept = reconcile.mock.calls.map((c) => c[0] as string);
+      expect(swept.filter((id) => id === "shop-1")).toHaveLength(1);
+      expect([...swept].sort()).toEqual(["other-1", "other-2", "shop-1"]);
+    });
+
+    it("still pages the directory (cursor to the end) alongside the deployment tenant", async () => {
+      expect.hasAssertions();
+      const listTenants = pagedTenants([
+        { ids: ["a"], next: "page-1" },
+        { ids: ["b"], next: null },
+      ]);
+      await run(
+        single(coreWith({ reconcileUnresolved: vi.fn().mockResolvedValue(0) }, listTenants)),
+      );
+      expect(listTenants.asked).toEqual([{ first: 100 }, { first: 100, after: "page-1" }]);
+    });
+
+    it("the deployment tenant is swept even when the directory listing fails (the failure still surfaces)", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = {
+        execute: vi.fn().mockResolvedValue({ ok: false, error: new Error("tenants unreadable") }),
+      };
+      await expect(
+        run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants))),
+      ).rejects.toThrow("tenants unreadable");
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["shop-1"]);
+    });
+
+    it("a failing deployment tenant is logged and the directory is still swept", async () => {
+      expect.hasAssertions();
+      const errors: unknown[] = [];
+      const reconcile = vi.fn((tenantId: string) =>
+        tenantId === "shop-1" ? Promise.reject(new Error("db unavailable")) : Promise.resolve(0),
+      );
+      const listTenants = pagedTenants([{ ids: ["a"], next: null }]);
+      await run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants, errors)));
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["shop-1", "a"]);
+      expect(JSON.stringify(errors)).toContain("shop-1");
+    });
+
+    it("multi mode sweeps only the listed tenants (no configured default is invented)", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = pagedTenants([{ ids: ["a", "b"], next: null }]);
+      const core = coreWith({ reconcileUnresolved: reconcile }, listTenants);
+      await run({
+        ...core,
+        config: { ...core.config, TENANT_MODE: "multi", TENANT_DEFAULT_ID: "tenant-local" },
+      } as unknown as RuntimeCore);
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
+    });
+  });
 });
