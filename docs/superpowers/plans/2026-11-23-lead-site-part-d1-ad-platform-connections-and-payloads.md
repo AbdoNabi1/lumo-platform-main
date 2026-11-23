@@ -804,9 +804,11 @@ destination: <destination key>, fields: [] }` (check `delivery/mapping.ts:79–8
   `loadTrackingRegistry` (finding 19).
 - (finding 8) Add to `apps/runtime/src/tracking/tracking-registry.ts` (and its tests):
   `withTenantRegistryTransaction<T>(tenantId: string, fn: (writer: TenantRegistryWriter) => Promise<T>): Promise<T>` on
-  `PrismaTrackingRegistryStore`, implemented with `runInTenantTransaction(this.prisma, tenantId, async (tx) => { await
-tx.$executeRaw\`SELECT pg_advisory_xact_lock(hashtext(${'tracking-registry:' + tenantId}))\`; return fn(writerOver(tx, tenantId)); })`where`TenantRegistryWriter = { loadAll(): Promise<readonly TrackingRegistryRow[]>; append(row): Promise<void> }`runs
-every query on`tx`and names`tenantId`. `AdPlatformDeliverySync.sync` reads the live connections **inside** that
+  `PrismaTrackingRegistryStore`, implemented as `runInTenantTransaction(this.prisma, tenantId, async (tx) => …)`; the
+  first statement inside is the tagged-template raw query `SELECT pg_advisory_xact_lock(hashtext(<'tracking-registry:' + tenantId>))`
+  (key as a bound parameter), then `return fn(writerOver(tx, tenantId))`, where
+  `TenantRegistryWriter = { loadAll(): Promise<readonly TrackingRegistryRow[]>; append(row): Promise<void> }` runs
+  every query on `tx` and names `tenantId`. `AdPlatformDeliverySync.sync` reads the live connections **inside** that
   transaction (after the lock) and does all appends there. No process-local lock, no casting a root client. Tests: a
   failing middle append rolls back the earlier ones; two concurrent syncs (meta saved, tiktok saved) end with a
   loadable registry whose versions are contiguous and which contains both destinations (in-memory store test simulates
