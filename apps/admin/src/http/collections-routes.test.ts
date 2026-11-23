@@ -137,6 +137,7 @@ describe("collections admin routes", () => {
       expect.objectContaining({ productId: b, status: "draft", position: 0, missing: false }),
     ]);
     expect(first.json().pageInfo.hasNextPage).toBe(true);
+    expect(first.json().pageInfo.endCursor).toBe("0");
     const second = await get(
       `/collections/${id}/products?first=1&after=${first.json().pageInfo.endCursor}`,
     );
@@ -144,6 +145,7 @@ describe("collections admin routes", () => {
       expect.objectContaining({ productId: a, status: "published", position: 1, missing: false }),
     ]);
     expect(second.json().pageInfo.hasNextPage).toBe(false);
+    expect(second.json().pageInfo.endCursor).toBe("1");
     expect((await post(`/products/${b}/delete`)).statusCode).toBe(200);
     const missing = await get(`/collections/${id}/products`);
     expect(missing.json().items[0]).toEqual({
@@ -162,6 +164,28 @@ describe("collections admin routes", () => {
       ids.push(productId);
       expect((await post(`/collections/${id}/products`, { productId })).statusCode).toBe(200);
     }
+    const defaultPage = await get(`/collections/${id}/products`);
+    expect(defaultPage.statusCode).toBe(200);
+    expect(defaultPage.json().items).toHaveLength(50);
+    expect(defaultPage.json().items[0].position).toBe(0);
+    expect(defaultPage.json().pageInfo.endCursor).toBe("49");
+    expect(defaultPage.json().pageInfo.hasNextPage).toBe(true);
+
+    const nextPage = await get(`/collections/${id}/products?after=49&first=50`);
+    expect(nextPage.statusCode).toBe(200);
+    expect(nextPage.json().items[0].position).toBe(50);
+
+    const maxPage = await get(`/collections/${id}/products?first=100`);
+    expect(maxPage.statusCode).toBe(200);
+    expect(maxPage.json().items).toHaveLength(100);
+    expect(maxPage.json().pageInfo.endCursor).toBe("99");
+
+    for (const first of [101, 0]) {
+      const res = await get(`/collections/${id}/products?first=${first}`);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe("VALIDATION");
+    }
+
     expect(
       (await post(`/collections/${id}/reorder`, { productIds: [...ids].reverse() })).statusCode,
     ).toBe(200);
