@@ -326,6 +326,49 @@ describe("PrismaLeadRepository.updateStatus", () => {
   });
 });
 
+describe("PrismaLeadRepository.markPendingIfSuppressed", () => {
+  it("conditionally flips suppressed to pending for the tenant, key and session; count 1 is true", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 1 }] });
+    expect(
+      await new PrismaLeadRepository({ prisma }).markPendingIfSuppressed(
+        "t-1",
+        "key-mark-0001",
+        "s-1",
+      ),
+    ).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    const update = calls[1] as Call;
+    expect(update.model).toBe("lead");
+    expect(update.method).toBe("updateMany");
+    const args = update.args as {
+      where: unknown;
+      data: { trackingStatus: string; version: { increment: number }; updatedAt: unknown };
+    };
+    expect(args.where).toEqual({
+      tenantId: "t-1",
+      submissionKey: "key-mark-0001",
+      sessionId: "s-1",
+      trackingStatus: "suppressed",
+    });
+    expect(args.data.trackingStatus).toBe("pending");
+    expect(args.data.version).toEqual({ increment: 1 });
+    expect(args.data.updatedAt).toBeInstanceOf(Date);
+    expectTenantScoped(calls, "t-1");
+  });
+
+  it("is false when no suppressed row matched (count 0)", async () => {
+    const { prisma } = recordingPrisma({ "lead.updateMany": [{ count: 0 }] });
+    expect(
+      await new PrismaLeadRepository({ prisma }).markPendingIfSuppressed(
+        "t-1",
+        "key-mark-0002",
+        "s-1",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("PrismaLeadRepository.list", () => {
   const listCall = (calls: Call[]): Call => {
     const call = calls.find((c) => c.model === "lead");

@@ -21,6 +21,10 @@ const databaseUrl = process.env["DATABASE_URL_TEST"];
 /** Tenants the shared suite uses; their rows are wiped around every case (ids and keys repeat per case). */
 const SUITE_TENANTS = ["t-1", "t-2"] as const;
 
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
 let prisma: Database | undefined;
 
 function database(): Database {
@@ -60,9 +64,6 @@ describe.each(targets)(
           prisma = undefined;
         });
       }
-      beforeEach(() => {
-        expect.hasAssertions();
-      });
       describeLeadUseCases(makeRepo);
     });
   },
@@ -125,5 +126,26 @@ describe.runIf(Boolean(databaseUrl))("PrismaLeadRepository against a real databa
     expect(await repo.insert(b, leadOf({ id: crypto.randomUUID(), submissionKey: key }))).toBe(
       "inserted",
     );
+  });
+
+  it("markPendingIfSuppressed upgrades only a suppressed row of that tenant, key and session", async () => {
+    const repo = new PrismaLeadRepository({ prisma: database() });
+    const a = tenantOf();
+    const b = tenantOf();
+    const key = `it-${crypto.randomUUID()}`;
+    const lead = leadOf({
+      id: crypto.randomUUID(),
+      submissionKey: key,
+      sessionId: "s-mark",
+      trackingStatus: "suppressed",
+    });
+    expect(await repo.insert(a, lead)).toBe("inserted");
+    expect(await repo.markPendingIfSuppressed(b, key, "s-mark")).toBe(false);
+    expect(await repo.markPendingIfSuppressed(a, key, "s-other")).toBe(false);
+    expect(await repo.markPendingIfSuppressed(a, key, "s-mark")).toBe(true);
+    expect(await repo.markPendingIfSuppressed(a, key, "s-mark")).toBe(false);
+    const stored = await repo.get(a, lead.props.id);
+    expect(stored?.props.trackingStatus).toBe("pending");
+    expect(stored?.props.version).toBe(1);
   });
 });

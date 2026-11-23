@@ -48,6 +48,26 @@ describe("InMemoryLeadRepository", () => {
     expect(await repo.findBySubmissionKey("t-1", "key-missing-1")).toBeNull();
   });
 
+  it("markPendingIfSuppressed flips only a matching suppressed row, once, bumping version", async () => {
+    const repo = new InMemoryLeadRepository();
+    await repo.insert(
+      "t-1",
+      leadOf({
+        id: id(1),
+        submissionKey: "key-mark-0001",
+        sessionId: "s-1",
+        trackingStatus: "suppressed",
+      }),
+    );
+    expect(await repo.markPendingIfSuppressed("t-2", "key-mark-0001", "s-1")).toBe(false);
+    expect(await repo.markPendingIfSuppressed("t-1", "key-mark-0001", "s-other")).toBe(false);
+    expect(await repo.markPendingIfSuppressed("t-1", "key-mark-0001", "s-1")).toBe(true);
+    expect(await repo.markPendingIfSuppressed("t-1", "key-mark-0001", "s-1")).toBe(false);
+    const stored = await repo.get("t-1", id(1));
+    expect(stored?.props.trackingStatus).toBe("pending");
+    expect(stored?.props.version).toBe(1);
+  });
+
   it("rejects a duplicate id for the same tenant", async () => {
     const repo = new InMemoryLeadRepository();
     await repo.insert("t-1", leadOf({ id: id(1) }));

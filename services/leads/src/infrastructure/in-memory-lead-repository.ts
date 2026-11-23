@@ -1,4 +1,4 @@
-import type { Lead } from "../domain/lead";
+import { Lead } from "../domain/lead";
 import { leadMatchesSearch } from "../domain/lead-search";
 import type { LeadListQuery, LeadRepository } from "../domain/lead-repository";
 
@@ -32,6 +32,35 @@ export class InMemoryLeadRepository implements LeadRepository {
     return Promise.resolve(
       id === undefined ? null : (this.store.get(InMemoryLeadRepository.key(tenantId, id)) ?? null),
     );
+  }
+
+  markPendingIfSuppressed(
+    tenantId: string,
+    submissionKey: string,
+    sessionId: string,
+  ): Promise<boolean> {
+    // synchronous check-and-set: concurrent callers cannot both flip the row
+    const id = this.submissionKeys.get(InMemoryLeadRepository.key(tenantId, submissionKey));
+    if (id === undefined) return Promise.resolve(false);
+    const key = InMemoryLeadRepository.key(tenantId, id);
+    const stored = this.store.get(key);
+    if (
+      stored === undefined ||
+      stored.props.sessionId !== sessionId ||
+      stored.props.trackingStatus !== "suppressed"
+    ) {
+      return Promise.resolve(false);
+    }
+    this.store.set(
+      key,
+      Lead.restore({
+        ...stored.props,
+        trackingStatus: "pending",
+        version: stored.props.version + 1,
+        updatedAt: new Date(),
+      }),
+    );
+    return Promise.resolve(true);
   }
 
   get(tenantId: string, id: string): Promise<Lead | null> {

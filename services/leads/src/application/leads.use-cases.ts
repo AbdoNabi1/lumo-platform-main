@@ -201,7 +201,16 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
       }),
     );
     if (inserted === "duplicate") {
-      // a concurrent attempt with the same key won the race: answer from its row
+      // a concurrent attempt with the same key won the race. If THIS attempt won the session claim
+      // but the loser inserted first (row stored as suppressed), upgrade it to pending so the
+      // session's only emission is not lost. The ledger is never called again.
+      if (emission === "emit") {
+        await this.deps.leads.markPendingIfSuppressed(
+          tenantId,
+          input.submissionKey,
+          input.sessionId,
+        );
+      }
       const winner = await this.deps.leads.findBySubmissionKey(tenantId, input.submissionKey);
       if (winner === null)
         throw new Error("lead insert reported a duplicate key but no row exists");

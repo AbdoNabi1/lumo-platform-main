@@ -384,6 +384,69 @@ export function describeLeadUseCases(makeRepo: () => LeadRepository): void {
       }
     });
 
+    it("same-key race: the attempt that won the session claim keeps the pending lead", async () => {
+      const repo = makeRepo();
+      // test-only barrier: pauses the first pending insert (attempt A) until released
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let paused: () => void = () => undefined;
+      const pausedAtInsert = new Promise<void>((resolve) => {
+        paused = resolve;
+      });
+      let armed = true;
+      const barrier: LeadRepository = {
+        insert: async (tenantId, lead) => {
+          if (armed && lead.props.trackingStatus === "pending") {
+            armed = false;
+            paused();
+            await gate;
+          }
+          return repo.insert(tenantId, lead);
+        },
+        findBySubmissionKey: (tenantId, key) => repo.findBySubmissionKey(tenantId, key),
+        get: (tenantId, id) => repo.get(tenantId, id),
+        updateStatus: (tenantId, lead) => repo.updateStatus(tenantId, lead),
+        list: (tenantId, query) => repo.list(tenantId, query),
+        markPendingIfSuppressed: (tenantId, key, sessionId) =>
+          repo.markPendingIfSuppressed(tenantId, key, sessionId),
+      };
+      const clock = fixedClock();
+      const ledger = new InMemoryLeadEmissionLedger({ now: () => clock.now().getTime() });
+      const claimSpy = vi.spyOn(ledger, "claimOnce");
+      const submit = new SubmitLead({
+        leads: barrier,
+        ledger,
+        shop: fakeShop(),
+        clock,
+        idGenerator: sequentialIds(),
+      });
+      const input = validInput({ submissionKey: "attempt-race-pending", sessionId: "s-race" });
+
+      const first = submit.execute(input); // A: claims emit, paused before its insert
+      await pausedAtInsert;
+      const second = await submit.execute(input); // B: suppressed, inserts first
+      expect(second.ok && second.value.emission).toBe("suppressed");
+      release();
+      const firstResult = await first;
+
+      expect(firstResult.ok && firstResult.value.emission).toBe("emit");
+      const rows = await repo.list("t-1", { first: 50 });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.props.trackingStatus).toBe("pending");
+      expect(rows[0]?.props.version).toBe(1);
+      const claims = await Promise.all(
+        claimSpy.mock.results.map((r) => r.value as Promise<boolean>),
+      );
+      expect(claims.filter(Boolean)).toHaveLength(1);
+      // a later repeat of the same key answers emit from the stored pending row, no new claim
+      const callsBefore = claimSpy.mock.calls.length;
+      const repeat = await submit.execute(input);
+      expect(repeat.ok && repeat.value.emission).toBe("emit");
+      expect(claimSpy.mock.calls).toHaveLength(callsBefore);
+    });
+
     it("uses the Saudi and Emirati calling codes", async () => {
       const sar = setup(fakeShop({ currency: "SAR" }));
       const r = await sar.submit.execute(validInput({ phone: "0501234567" }));

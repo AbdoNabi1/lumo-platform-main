@@ -50,6 +50,20 @@ export class PrismaLeadRepository implements LeadRepository {
     return row === null ? null : rowToLead(row);
   }
 
+  async markPendingIfSuppressed(
+    tenantId: string,
+    submissionKey: string,
+    sessionId: string,
+  ): Promise<boolean> {
+    const result = await runInTenantTransaction(this.deps.prisma, tenantId, (tx) =>
+      tx.lead.updateMany({
+        where: { tenantId, submissionKey, sessionId, trackingStatus: "suppressed" },
+        data: { trackingStatus: "pending", version: { increment: 1 }, updatedAt: new Date() },
+      }),
+    );
+    return result.count === 1;
+  }
+
   async get(tenantId: string, id: string): Promise<Lead | null> {
     if (!isUuid(id)) return null;
     const row = await runReadScoped(this.deps.prisma, tenantId, (tx) =>

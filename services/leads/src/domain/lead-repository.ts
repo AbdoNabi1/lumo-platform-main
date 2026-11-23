@@ -14,6 +14,16 @@ export interface LeadRepository {
   /** `"duplicate"` = a row with the same `(tenantId, submissionKey)` already exists (nothing is written). */
   insert(tenantId: string, lead: Lead): Promise<"inserted" | "duplicate">;
   findBySubmissionKey(tenantId: string, submissionKey: string): Promise<Lead | null>;
+  /**
+   * Atomic conditional upgrade `suppressed` -> `pending` of the row with this tenant, submission key
+   * and session (bumps `version` and `updatedAt`); true only if a row changed. Lets the attempt that
+   * won the session claim repair a same-key race where the losing attempt inserted first.
+   */
+  markPendingIfSuppressed(
+    tenantId: string,
+    submissionKey: string,
+    sessionId: string,
+  ): Promise<boolean>;
   get(tenantId: string, id: string): Promise<Lead | null>;
   /** Optimistic: updates only if the stored version equals lead.version - 1; false otherwise. */
   updateStatus(tenantId: string, lead: Lead): Promise<boolean>;
