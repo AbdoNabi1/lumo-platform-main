@@ -55,6 +55,23 @@ describe("Settings index", () => {
     expect(ar.settingsPage.whatsappTitle).not.toBe(en.settingsPage.whatsappTitle);
   });
 
+  it("lists Email right after WhatsApp, linking to /settings/email, in both languages", async () => {
+    expect.hasAssertions();
+    render(await SettingsPage());
+    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
+    expect(hrefs.indexOf("/settings/email")).toBe(hrefs.indexOf("/settings/whatsapp") + 1);
+    const link = screen.getByRole("link", { name: new RegExp(en.settingsPage.emailTitle) });
+    expect(link).toHaveTextContent(en.settingsPage.emailBody);
+    expect(link.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
+    cleanup();
+    mocks.locale = "ar";
+    render(await SettingsPage());
+    const arabic = screen.getByRole("link", { name: new RegExp(ar.settingsPage.emailTitle) });
+    expect(arabic).toHaveAttribute("href", "/settings/email");
+    expect(arabic).toHaveTextContent(ar.settingsPage.emailBody);
+    expect(ar.settingsPage.emailTitle).not.toBe(en.settingsPage.emailTitle);
+  });
+
   it("leaves the other sections' copy as plain text", async () => {
     expect.hasAssertions();
     render(await SettingsPage());

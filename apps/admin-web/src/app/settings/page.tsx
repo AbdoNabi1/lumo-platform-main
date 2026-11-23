@@ -8,6 +8,7 @@ import {
   GlobeIcon,
   LanguagesIcon,
   LockIcon,
+  MailIcon,
   MapPinIcon,
   MessageCircleIcon,
   ReceiptIcon,
@@ -70,6 +71,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: MessageCircleIcon,
     title: (t) => t.settingsPage.whatsappTitle,
     body: (t) => t.settingsPage.whatsappBody,
+  },
+  {
+    href: "/settings/email",
+    Icon: MailIcon,
+    title: (t) => t.settingsPage.emailTitle,
+    body: (t) => t.settingsPage.emailBody,
   },
   {
     href: "/settings/shipping",
