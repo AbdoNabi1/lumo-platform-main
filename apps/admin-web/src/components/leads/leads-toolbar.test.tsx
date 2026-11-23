@@ -7,10 +7,18 @@ const navigation = vi.hoisted(() => ({
   push: vi.fn(),
   search: "",
 }));
+// like Next, the same object until the URL changes (a fresh one per render would reset the input)
+const cache = vi.hoisted(() => ({ key: "", params: undefined as URLSearchParams | undefined }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: navigation.push }),
   usePathname: () => "/leads",
-  useSearchParams: () => new URLSearchParams(navigation.search),
+  useSearchParams: () => {
+    if (cache.params === undefined || cache.key !== navigation.search) {
+      cache.key = navigation.search;
+      cache.params = new URLSearchParams(navigation.search);
+    }
+    return cache.params;
+  },
 }));
 
 beforeEach(() => {
@@ -91,6 +99,38 @@ describe("LeadsToolbar", () => {
       vi.advanceTimersByTime(350);
     });
     expect(navigation.push).toHaveBeenCalledWith("/leads?status=new");
+  });
+
+  it("selecting a status before the debounce fires pushes the typed search with it, once", () => {
+    navigation.search = "";
+    render(<LeadsToolbar t={en} />);
+    const input = screen.getByLabelText(en.leadsPage.searchLabel);
+    fireEvent.change(input, { target: { value: "Mona" } });
+    act(() => {
+      vi.advanceTimersByTime(100);
+    });
+    fireEvent.change(screen.getByLabelText(en.leadsPage.statusFilterLabel), {
+      target: { value: "qualified" },
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(navigation.push).toHaveBeenCalledTimes(1);
+    expect(navigation.push).toHaveBeenLastCalledWith("/leads?q=Mona&status=qualified");
+    expect(input).toHaveValue("Mona");
+  });
+
+  it("a search typed after a status change keeps that status even before the URL catches up", () => {
+    navigation.search = "";
+    render(<LeadsToolbar t={en} />);
+    fireEvent.change(screen.getByLabelText(en.leadsPage.statusFilterLabel), {
+      target: { value: "spam" },
+    });
+    fireEvent.change(screen.getByLabelText(en.leadsPage.searchLabel), { target: { value: "Ali" } });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+    expect(navigation.push).toHaveBeenLastCalledWith("/leads?q=Ali&status=spam");
   });
 
   it("caps the search at the API's 100 characters", () => {

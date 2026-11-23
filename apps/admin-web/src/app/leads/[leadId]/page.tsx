@@ -53,6 +53,7 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
     return (
       <AppShell t={t} locale={locale} activeNavId="leads" user={user}>
         <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-12">
+          <h1 className="text-2xl font-semibold tracking-tight">{t.leadDetail.heading}</h1>
           <Card>
             <CardContent className="text-muted-foreground flex flex-col items-center gap-4 px-4 py-12 text-center sm:px-5">
               {panel.icon}
@@ -72,6 +73,8 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
 
   const lead = result.lead;
   const none = t.leadDetail.notProvided;
+  const trackingText =
+    (t.leadTrackingStatus as Record<string, string>)[lead.trackingStatus] ?? lead.trackingStatus;
 
   return (
     <AppShell t={t} locale={locale} activeNavId="leads" user={user}>
@@ -129,7 +132,22 @@ export default async function LeadDetailPage({ params }: LeadDetailPageProps) {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t.leadDetail.statusTitle}</CardTitle>
+            <CardTitle as="h2">{t.leadDetail.adPlatformsTitle}</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <Field label={t.leadDetail.phoneE164}>
+              <bdi dir="ltr">{lead.phoneE164}</bdi>
+            </Field>
+            <Field label={t.leadDetail.trackingStatus}>{trackingText}</Field>
+            <Field label={t.leadDetail.eventId} wide>
+              <bdi dir="ltr">{lead.eventId}</bdi>
+            </Field>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle as="h2">{t.leadDetail.statusTitle}</CardTitle>
           </CardHeader>
           <CardContent>
             <LeadStatusForm leadId={lead.id} status={lead.status} canEdit={canEdit} t={t} />
