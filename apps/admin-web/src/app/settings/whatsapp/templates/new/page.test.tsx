@@ -40,6 +40,19 @@ const connected: WhatsAppConnectionDto = {
   version: 3,
 };
 
+/** Every text node that names a brand without being the content of a `<bdi dir="auto">` (A6). */
+function bareBrandText(): string[] {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const bare: string[] = [];
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const text = node.textContent ?? "";
+    if (!/\b(WhatsApp|Meta)\b/.test(text)) continue;
+    const parent = node.parentElement;
+    if (!(parent?.tagName === "BDI" && parent.getAttribute("dir") === "auto")) bare.push(text);
+  }
+  return bare;
+}
+
 beforeEach(() => {
   cleanup();
   mocks.locale = "en";
@@ -90,5 +103,20 @@ describe("Settings → WhatsApp → Templates → New page", () => {
       ar.whatsappTemplates.form.title,
     );
     expect(screen.getByLabelText(ar.whatsappTemplates.form.language)).toHaveValue("ar");
+  });
+
+  it("brand names are isolated on the form page and on the not-connected explanation (A6)", async () => {
+    expect.hasAssertions();
+    render(await NewTemplatePage());
+    expect(document.body.textContent).toContain("Meta");
+    expect(bareBrandText()).toEqual([]);
+    cleanup();
+    mocks.fetchConnection.mockResolvedValue({
+      outcome: "ok",
+      data: { ...connected, status: "disconnected" },
+    });
+    render(await NewTemplatePage());
+    expect(document.body.textContent).toContain("WhatsApp");
+    expect(bareBrandText()).toEqual([]);
   });
 });

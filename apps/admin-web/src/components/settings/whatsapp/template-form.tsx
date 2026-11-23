@@ -339,24 +339,22 @@ export function TemplateForm({ t, locale }: { readonly t: Dictionary; readonly l
                   <label
                     key={value}
                     htmlFor={`template-category-${value}`}
-                    className="border-border flex cursor-pointer items-start gap-3 rounded-xl border p-3"
+                    className="border-border grid cursor-pointer grid-cols-[auto_1fr] items-start gap-x-3 rounded-xl border p-3"
                   >
                     <input
                       id={`template-category-${value}`}
                       type="radio"
                       name="template-category"
                       value={value}
-                      className="accent-primary mt-1 size-4"
+                      className="accent-primary row-span-2 mt-1 size-4"
                       checked={category === value}
                       onChange={() => {
                         setCategory(value);
                         touch("category");
                       }}
                     />
-                    <span className="flex flex-col">
-                      <span className="text-sm font-medium">{title}</span>
-                      <span className="text-muted-foreground text-sm">{hint}</span>
-                    </span>
+                    <span className="text-sm font-medium">{title}</span>
+                    <span className="text-muted-foreground text-sm">{hint}</span>
                   </label>
                 ))}
               </fieldset>
@@ -646,7 +644,9 @@ export function TemplateForm({ t, locale }: { readonly t: Dictionary; readonly l
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={pending || done} loading={pending}>
-              {pending ? copy.submitting : unresolved !== null ? copy.retry : copy.submit}
+              <BrandText
+                text={pending ? copy.submitting : unresolved !== null ? copy.retry : copy.submit}
+              />
             </Button>
             <Link
               href="/settings/whatsapp/templates"
@@ -662,7 +662,7 @@ export function TemplateForm({ t, locale }: { readonly t: Dictionary; readonly l
           )}
           {outcome?.status === "error" && (
             <p role="alert" className="text-destructive text-sm">
-              {copy.lostResponse}
+              <BrandText text={copy.lostResponse} />
             </p>
           )}
           {outcome?.status === "refused" && (
