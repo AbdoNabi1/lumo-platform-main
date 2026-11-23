@@ -52,6 +52,36 @@ describe("isInSection", () => {
   });
 });
 
+describe("Collections in the sidebar (Shopify parity Wave 1a)", () => {
+  it("lists Collections first under Products, before Categories and Inventory", () => {
+    expect.hasAssertions();
+    const products = PRIMARY_NAV.find((item) => item.id === "products")!;
+    expect((products.children ?? []).map((child) => child.id).slice(0, 3)).toEqual([
+      "collections",
+      "categories",
+      "inventory",
+    ]);
+    expect(isInSection(products, "collections")).toBe(true);
+    const collections = products.children?.find((child) => child.id === "collections");
+    expect(collections?.href).toBe("/collections");
+    expect(collections?.label(en)).toBe(en.nav.collections);
+  });
+
+  it("shows the Collections link, current, while a collections page is open", () => {
+    expect.hasAssertions();
+    renderNav("collections");
+    expect(screen.getByRole("link", { name: en.nav.collections })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: en.nav.collections })).toHaveAttribute(
+      "href",
+      "/collections",
+    );
+    expect(screen.getByRole("link", { name: en.nav.products })).not.toHaveAttribute("aria-current");
+  });
+});
+
 describe("SidebarNav (Shopify layout)", () => {
   it("lists the merchant's sections in Shopify's order", () => {
     renderNav("dashboard");

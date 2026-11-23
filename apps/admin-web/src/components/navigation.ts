@@ -12,6 +12,7 @@ import {
   HouseIcon,
   LandmarkIcon,
   LanguagesIcon,
+  LayersIcon,
   LayoutTemplateIcon,
   MegaphoneIcon,
   MenuIcon,
@@ -87,6 +88,12 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     href: "/products",
     Icon: TagIcon,
     children: [
+      {
+        id: "collections",
+        label: (t) => t.nav.collections,
+        href: "/collections",
+        Icon: LayersIcon,
+      },
       {
         id: "categories",
         label: (t) => t.nav.categories,

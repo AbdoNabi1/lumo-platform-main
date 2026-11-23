@@ -192,6 +192,33 @@ describe("middleware", () => {
   });
 });
 
+describe("middleware role table for collections (Shopify parity Wave 1a)", () => {
+  const COLLECTION_ID = "2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11";
+
+  it("lets a viewer open the collections list and a collection", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/collections", `/collections/${COLLECTION_ID}`]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("redirects a viewer from /collections/new to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    const response = await middleware(requestFor("/collections/new", "good.token"));
+    expect(response.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an operator open /collections/new", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const response = await middleware(requestFor("/collections/new", "good.token"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+});
+
 describe("middleware role table for the orders screens", () => {
   it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });

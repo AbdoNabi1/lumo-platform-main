@@ -132,6 +132,9 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/draft-orders", "viewer"],
   ["/products/new", "operator"],
   ["/products", "viewer"],
+  // Shopify parity Wave 1a: collections read for viewers; creating one is operator work.
+  ["/collections/new", "operator"],
+  ["/collections", "viewer"],
   ["/categories", "viewer"],
   ["/brands", "viewer"],
   ["/inventory", "operator"],
