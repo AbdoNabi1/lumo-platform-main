@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./testing": "./src/testing/meta-fetch-harness.ts",
-    "./testing/fake-ports": "./src/testing/fake-ports.ts"
+    "./testing/fake-ports": "./src/testing/fake-ports.ts",
+    "./testing/outbox-store": "./src/testing/transactional-in-memory-outbox-store.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

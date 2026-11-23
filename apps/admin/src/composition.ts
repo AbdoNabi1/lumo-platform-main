@@ -42,6 +42,7 @@ import {
   wireOutreach,
   type EmailSendPort,
   type OutreachCredentialVault,
+  type OutreachEventSink,
   type WhatsAppCloudApiPort,
   type WiredOutreach,
 } from "@platform/outreach";
@@ -292,6 +293,11 @@ export interface AdminOutreachDeps {
   readonly emailFrom?: string;
   readonly emailCaps?: { readonly perHour: number; readonly perDay: number };
   readonly unresolvedAfterMs?: number;
+  /**
+   * Test seam: where Outreach events go when there is no database. Absent + no `prisma` ⇒ the recording sink; with
+   * `prisma` the outbox sink is always used and this is ignored.
+   */
+  readonly events?: OutreachEventSink;
   /** Test seam: the 6-digit PIN the onboarding registers the number with. */
   readonly randomPin?: () => string;
   /** Non-secret Embedded Signup values, present only when WhatsApp is ready. */
@@ -1302,6 +1308,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     ...(outreachDeps?.vault === undefined ? {} : { vault: outreachDeps.vault }),
     ...(outreachDeps?.email === undefined ? {} : { email: outreachDeps.email }),
     ...(outreachDeps?.emailFrom === undefined ? {} : { emailFrom: outreachDeps.emailFrom }),
+    ...(outreachDeps?.events === undefined || deps.prisma !== undefined
+      ? {}
+      : { events: outreachDeps.events }),
     emailCaps: outreachDeps?.emailCaps ?? DEFAULT_EMAIL_CAPS,
     ...(outreachDeps?.unresolvedAfterMs === undefined
       ? {}
