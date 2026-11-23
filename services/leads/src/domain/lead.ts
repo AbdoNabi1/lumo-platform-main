@@ -48,6 +48,8 @@ export interface LeadProps {
   readonly trackingStatus: LeadTrackingStatus;
   readonly eventId: string;
   readonly sessionId: string;
+  /** Client-minted idempotency key; unique per tenant. */
+  readonly submissionKey: string;
   readonly spamReason: "honeypot" | "too_fast" | null;
   readonly attribution: LeadAttribution;
   readonly version: number;

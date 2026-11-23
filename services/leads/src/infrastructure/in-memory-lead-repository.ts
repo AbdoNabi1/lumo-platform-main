@@ -8,18 +8,30 @@ import type { LeadListQuery, LeadRepository } from "../domain/lead-repository";
  */
 export class InMemoryLeadRepository implements LeadRepository {
   private readonly store = new Map<string, Lead>();
+  private readonly submissionKeys = new Map<string, string>(); // (tenantId, submissionKey) -> lead id
 
   private static key(tenantId: string, id: string): string {
     return `${tenantId}\u0000${id}`;
   }
 
-  insert(tenantId: string, lead: Lead): Promise<void> {
+  insert(tenantId: string, lead: Lead): Promise<"inserted" | "duplicate"> {
     const key = InMemoryLeadRepository.key(tenantId, lead.props.id);
     if (this.store.has(key)) {
       return Promise.reject(new Error(`lead ${lead.props.id} already exists`));
     }
+    // unique (tenantId, submissionKey); check-and-set is synchronous, so concurrent callers cannot both win
+    const submissionKey = InMemoryLeadRepository.key(tenantId, lead.props.submissionKey);
+    if (this.submissionKeys.has(submissionKey)) return Promise.resolve("duplicate");
+    this.submissionKeys.set(submissionKey, lead.props.id);
     this.store.set(key, lead);
-    return Promise.resolve();
+    return Promise.resolve("inserted");
+  }
+
+  findBySubmissionKey(tenantId: string, submissionKey: string): Promise<Lead | null> {
+    const id = this.submissionKeys.get(InMemoryLeadRepository.key(tenantId, submissionKey));
+    return Promise.resolve(
+      id === undefined ? null : (this.store.get(InMemoryLeadRepository.key(tenantId, id)) ?? null),
+    );
   }
 
   get(tenantId: string, id: string): Promise<Lead | null> {

@@ -11,7 +11,9 @@ export interface LeadListQuery {
 
 /** Every call takes the caller's verified `tenantId` (ADR-0014); the repository is a tenant-agnostic singleton. */
 export interface LeadRepository {
-  insert(tenantId: string, lead: Lead): Promise<void>;
+  /** `"duplicate"` = a row with the same `(tenantId, submissionKey)` already exists (nothing is written). */
+  insert(tenantId: string, lead: Lead): Promise<"inserted" | "duplicate">;
+  findBySubmissionKey(tenantId: string, submissionKey: string): Promise<Lead | null>;
   get(tenantId: string, id: string): Promise<Lead | null>;
   /** Optimistic: updates only if the stored version equals lead.version - 1; false otherwise. */
   updateStatus(tenantId: string, lead: Lead): Promise<boolean>;

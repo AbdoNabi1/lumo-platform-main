@@ -27,9 +27,18 @@ export function fakeShop(over: { siteType?: SiteType; currency?: string } = {}):
   };
 }
 
+let submissionCounter = 0;
+
+/** A fresh, valid submission key per call, so repeated `validInput()` calls are distinct attempts. */
+export function nextSubmissionKey(): string {
+  submissionCounter += 1;
+  return `attempt-${String(submissionCounter).padStart(6, "0")}`;
+}
+
 export function validInput(over: Partial<SubmitLeadInput> = {}): SubmitLeadInput {
   return {
     tenantId: "t-1",
+    submissionKey: nextSubmissionKey(),
     formId: "home-form",
     name: "أحمد علي",
     phone: "٠١٠١٢٣٤٥٦٧٨",
@@ -62,6 +71,7 @@ export function leadProps(over: Partial<LeadProps> = {}): LeadProps {
     trackingStatus: "pending",
     eventId: "lead_01930000-0000-7000-8000-000000000001",
     sessionId: "s-1",
+    submissionKey: `key-${over.id ?? "01930000-0000-7000-8000-000000000001"}`,
     spamReason: null,
     attribution: { pageUrl: null, referrer: null, ip: null, userAgent: null, cookies: {} },
     version: 0,

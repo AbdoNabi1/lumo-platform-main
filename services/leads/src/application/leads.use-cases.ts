@@ -40,6 +40,7 @@ const EXPORT_PAGE_SIZE = 250;
 const MAX_SEARCH_LENGTH = 100;
 const FORM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const SESSION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+const SUBMISSION_KEY_PATTERN = /^[A-Za-z0-9-]{8,128}$/;
 
 export interface LeadView {
   // explicit primitives, never the aggregate
@@ -98,6 +99,8 @@ export interface SubmitLeadInput {
   readonly email?: string;
   readonly message?: string;
   readonly sessionId: string;
+  /** Idempotency key minted once per form attempt; a repeat returns the stored result. */
+  readonly submissionKey: string;
   readonly sessionAlreadyEmitted: boolean;
   readonly spamSignals: { readonly honeypot: boolean; readonly elapsedMs: number };
   readonly context: Omit<LeadAttribution, never>;
@@ -149,6 +152,10 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
       return err(new BusinessRuleError("This shop does not take leads"));
     }
 
+    // 2b. a repeat of an earlier attempt answers from the stored row: no claim, no insert
+    const existing = await this.deps.leads.findBySubmissionKey(tenantId, input.submissionKey);
+    if (existing !== null) return ok(resultOf(existing));
+
     // 3. identity
     const id = this.deps.idGenerator.generate();
     const eventId = businessEventId("lead", id);
@@ -175,7 +182,7 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
 
     // 6. one write
     const at = this.deps.clock.now();
-    await this.deps.leads.insert(
+    const inserted = await this.deps.leads.insert(
       tenantId,
       Lead.restore({
         id,
@@ -185,6 +192,7 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
         trackingStatus,
         eventId,
         sessionId: input.sessionId,
+        submissionKey: input.submissionKey,
         spamReason,
         attribution: input.context,
         version: 0,
@@ -192,8 +200,26 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
         updatedAt: at,
       }),
     );
+    if (inserted === "duplicate") {
+      // a concurrent attempt with the same key won the race: answer from its row
+      const winner = await this.deps.leads.findBySubmissionKey(tenantId, input.submissionKey);
+      if (winner === null)
+        throw new Error("lead insert reported a duplicate key but no row exists");
+      return ok(resultOf(winner));
+    }
     return ok({ leadId: id, eventId, emission });
   }
+}
+
+function resultOf(lead: Lead): SubmitLeadOutput {
+  const { id, eventId, trackingStatus } = lead.props;
+  const emission =
+    trackingStatus === "skipped_spam"
+      ? "spam"
+      : trackingStatus === "suppressed"
+        ? "suppressed"
+        : "emit"; // pending | sent | failed
+  return { leadId: id, eventId, emission };
 }
 
 function spamReasonOf(signals: SubmitLeadInput["spamSignals"]): "honeypot" | "too_fast" | null {
@@ -242,6 +268,10 @@ function validate(
 
   if (!SESSION_ID_PATTERN.test(input.sessionId)) {
     bad("sessionId", "must be 1-64 letters, digits or hyphens");
+  }
+
+  if (!SUBMISSION_KEY_PATTERN.test(input.submissionKey)) {
+    bad("submissionKey", "must be 8-128 letters, digits or hyphens");
   }
 
   const elapsed = input.spamSignals.elapsedMs;

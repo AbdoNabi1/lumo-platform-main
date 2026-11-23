@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InMemoryLeadEmissionLedger } from "@platform/tracking";
 import type { DomainError, ValidationError } from "@platform/utils";
 import { InMemoryLeadRepository } from "../infrastructure/in-memory-lead-repository";
-import { fakeShop, fixedClock, NOW, sequentialIds, validInput } from "../testing/fixtures";
+import { fakeShop, fixedClock, leadOf, NOW, sequentialIds, validInput } from "../testing/fixtures";
 import {
   ChangeLeadStatus,
   CURRENCY_CALLING_CODE,
@@ -241,6 +241,136 @@ describe("SubmitLead", () => {
       expect((await usd.leads.get("t-1", okResult.value.leadId))?.props.phoneE164).toBe(
         "+201012345678",
       );
+    }
+  });
+
+  it("USD accepts explicit 00 international input and stores the + form", async () => {
+    const usd = setup(fakeShop({ currency: "USD" }));
+    const result = await usd.submit.execute(validInput({ phone: "00201012345678" }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const stored = await usd.leads.get("t-1", result.value.leadId);
+      expect(stored?.props.phoneE164).toBe("+" + "201012345678");
+    }
+  });
+
+  it("validates the submission key (8-128 letters, digits, hyphens)", async () => {
+    const s = setup();
+    for (const submissionKey of ["short", "has space 123", "x".repeat(129), "", "ключ-12345678"]) {
+      const error = failure(await s.submit.execute(validInput({ submissionKey })));
+      expect(fieldsOf(error)).toEqual(["submissionKey"]);
+    }
+    for (const submissionKey of ["abcdefgh", "A1-b2-C3-d4", "k".repeat(128)]) {
+      expect((await s.submit.execute(validInput({ submissionKey }))).ok).toBe(true);
+    }
+  });
+
+  it("the same key twice saves one row, returns identical outputs and claims once", async () => {
+    const s = setup();
+    const first = await submitOk(s, { submissionKey: "attempt-same-key" });
+    const second = await submitOk(s, { submissionKey: "attempt-same-key" });
+    expect(second).toEqual(first);
+    expect(first.emission).toBe("emit");
+    expect(s.claimSpy).toHaveBeenCalledTimes(1);
+    expect(await s.leads.list("t-1", { first: 50 })).toHaveLength(1);
+  });
+
+  it("a repeat key answers from the stored row even when the repeat looks suppressed", async () => {
+    const s = setup();
+    const first = await submitOk(s, { submissionKey: "attempt-repeat-1", sessionId: "s-5" });
+    const repeat = await submitOk(s, {
+      submissionKey: "attempt-repeat-1",
+      sessionId: "s-5",
+      sessionAlreadyEmitted: true,
+    });
+    expect(repeat).toEqual(first);
+    expect(repeat.emission).toBe("emit");
+  });
+
+  it("the same key after a spam submit is spam again, still one row", async () => {
+    const s = setup();
+    const spam = { honeypot: true, elapsedMs: 8000 };
+    const first = await submitOk(s, { submissionKey: "attempt-spam-key", spamSignals: spam });
+    const second = await submitOk(s, { submissionKey: "attempt-spam-key" });
+    expect(first.emission).toBe("spam");
+    expect(second).toEqual(first);
+    expect(await s.leads.list("t-1", { first: 50 })).toHaveLength(1);
+  });
+
+  it("two concurrent submits with one key save one row and return equal outputs", async () => {
+    const s = setup();
+    const [a, b] = await Promise.all([
+      submitOk(s, { submissionKey: "attempt-race-key" }),
+      submitOk(s, { submissionKey: "attempt-race-key" }),
+    ]);
+    expect(b).toEqual(a);
+    expect(await s.leads.list("t-1", { first: 50 })).toHaveLength(1);
+  });
+
+  it("a duplicate insert answers from the winning row (stale pre-check)", async () => {
+    const s = setup();
+    const winner = await submitOk(s, { submissionKey: "attempt-stale-key" });
+    // the pre-check misses once (as a concurrent winner would), the insert then reports duplicate
+    const find = vi.spyOn(s.leads, "findBySubmissionKey");
+    find.mockResolvedValueOnce(null);
+    const loser = await submitOk(s, { submissionKey: "attempt-stale-key" });
+    expect(loser).toEqual(winner);
+    expect(await s.leads.list("t-1", { first: 50 })).toHaveLength(1);
+  });
+
+  it("maps a stored tracking status to the emission (sent/failed -> emit, suppressed)", async () => {
+    const s = setup();
+    const cases = [
+      ["sent", "emit"],
+      ["failed", "emit"],
+      ["suppressed", "suppressed"],
+    ] as const;
+    for (const [index, [trackingStatus, emission]] of cases.entries()) {
+      const key = `attempt-map-${trackingStatus}`;
+      await s.leads.insert(
+        "t-1",
+        leadOf({
+          id: `01930000-0000-7000-8000-00000000009${String(index)}`,
+          submissionKey: key,
+          trackingStatus,
+        }),
+      );
+      const out = await submitOk(s, { submissionKey: key });
+      expect(out.emission).toBe(emission);
+      expect(s.claimSpy).not.toHaveBeenCalled();
+    }
+  });
+
+  it("the same key under another tenant is a separate lead", async () => {
+    const s = setup();
+    const a = await submitOk(s, { submissionKey: "attempt-tenant-k", tenantId: "t-1" });
+    const b = await submitOk(s, { submissionKey: "attempt-tenant-k", tenantId: "t-2" });
+    expect(b.leadId).not.toBe(a.leadId);
+  });
+
+  it("D4: a failed first insert does not burn the session; the next submit is suppressed", async () => {
+    const repo = new InMemoryLeadRepository();
+    const clock = fixedClock();
+    const ledger = new InMemoryLeadEmissionLedger({ now: () => clock.now().getTime() });
+    const submit = new SubmitLead({
+      leads: repo,
+      ledger,
+      shop: fakeShop(),
+      clock,
+      idGenerator: sequentialIds(),
+    });
+    vi.spyOn(repo, "insert").mockRejectedValueOnce(new Error("db down"));
+    await expect(
+      submit.execute(validInput({ sessionId: "s-1", submissionKey: "attempt-d4-first" })),
+    ).rejects.toThrow("db down");
+    const second = await submit.execute(
+      validInput({ sessionId: "s-1", submissionKey: "attempt-d4-second" }),
+    );
+    expect(second.ok).toBe(true);
+    if (second.ok) {
+      expect(second.value.emission).toBe("suppressed");
+      const stored = await repo.get("t-1", second.value.leadId);
+      expect(stored?.props.trackingStatus).toBe("suppressed");
     }
   });
 

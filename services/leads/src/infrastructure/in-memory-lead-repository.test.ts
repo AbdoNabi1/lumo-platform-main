@@ -17,6 +17,37 @@ describe("InMemoryLeadRepository", () => {
     expect(await repo.get("t-1", id(9))).toBeNull();
   });
 
+  it("insert reports duplicate for a repeated (tenant, submissionKey) and writes nothing", async () => {
+    const repo = new InMemoryLeadRepository();
+    expect(await repo.insert("t-1", leadOf({ id: id(1), submissionKey: "key-shared-1" }))).toBe(
+      "inserted",
+    );
+    expect(await repo.insert("t-1", leadOf({ id: id(2), submissionKey: "key-shared-1" }))).toBe(
+      "duplicate",
+    );
+    expect(await repo.get("t-1", id(2))).toBeNull();
+    expect(await repo.insert("t-2", leadOf({ id: id(3), submissionKey: "key-shared-1" }))).toBe(
+      "inserted",
+    );
+  });
+
+  it("decides concurrent inserts with one key synchronously: one inserted, one duplicate", async () => {
+    const repo = new InMemoryLeadRepository();
+    const results = await Promise.all([
+      repo.insert("t-1", leadOf({ id: id(1), submissionKey: "key-race-0001" })),
+      repo.insert("t-1", leadOf({ id: id(2), submissionKey: "key-race-0001" })),
+    ]);
+    expect([...results].sort()).toEqual(["duplicate", "inserted"]);
+  });
+
+  it("finds a lead by submission key within the tenant only", async () => {
+    const repo = new InMemoryLeadRepository();
+    await repo.insert("t-1", leadOf({ id: id(1), submissionKey: "key-find-0001" }));
+    expect((await repo.findBySubmissionKey("t-1", "key-find-0001"))?.props.id).toBe(id(1));
+    expect(await repo.findBySubmissionKey("t-2", "key-find-0001")).toBeNull();
+    expect(await repo.findBySubmissionKey("t-1", "key-missing-1")).toBeNull();
+  });
+
   it("rejects a duplicate id for the same tenant", async () => {
     const repo = new InMemoryLeadRepository();
     await repo.insert("t-1", leadOf({ id: id(1) }));
