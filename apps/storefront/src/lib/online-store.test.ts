@@ -380,7 +380,7 @@ describe("sanitizeShell (defence in depth, spec 1.12)", () => {
     );
     expect(shell.defaultLocale).toBe("ar");
     expect(shell.brand.logo).toEqual({ image: null, widthPx: 140 });
-    expect(shell.brand.style.colors.background).toBe("#f8fafc");
+    expect(shell.brand.style.colors.background).toBe("#fcf8f3");
     expect(shell.brand.social).toEqual({});
     expect(sanitizeShell("garbage", "live")).toEqual({ ...FALLBACK_SHELL });
   });

@@ -1,0 +1,18 @@
+# Brand lock (Nusuj, 2026-11-19): changes to these files need the owner's review.
+# This only *requests* review unless branch protection requires code-owner approval.
+# See docs/ui/BRAND_LOCK.md.
+/packages/design/ @AbdoNabi1
+/packages/ui/src/components/ui/button.tsx @AbdoNabi1
+/packages/ui/src/components/ui/primitives.test.tsx @AbdoNabi1
+/apps/admin-web/src/components/brand-mark.tsx @AbdoNabi1
+/apps/admin-web/src/components/brand-mark.test.tsx @AbdoNabi1
+/apps/admin-web/src/app/icon.svg @AbdoNabi1
+/apps/admin-web/src/app/icon.test.ts @AbdoNabi1
+/apps/admin-web/src/app/brand-fonts.test.ts @AbdoNabi1
+/apps/admin-web/src/app/globals.css @AbdoNabi1
+/apps/admin-web/src/app/layout.tsx @AbdoNabi1
+/apps/storefront/src/app/globals.css @AbdoNabi1
+/apps/storefront/src/app/button-corners.test.ts @AbdoNabi1
+/docs/ui/BRAND_LOCK.md @AbdoNabi1
+/AGENTS.md @AbdoNabi1
+/.github/CODEOWNERS @AbdoNabi1
