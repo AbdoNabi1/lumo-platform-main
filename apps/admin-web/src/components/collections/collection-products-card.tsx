@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useActionState, useState } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
@@ -67,6 +67,7 @@ export function CollectionProductsCard({
   const k = t.collections.products;
   const [state, dispatch, busy] = useActionState(runIntent, INITIAL_STATE);
   const [picking, setPicking] = useState(false);
+  const browseButton = useRef<HTMLButtonElement>(null);
   const statusLabels: Readonly<Record<string, string>> = t.productStatus;
   const last = productIds.length - 1;
 
@@ -86,7 +87,13 @@ export function CollectionProductsCard({
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <CardTitle>{k.title}</CardTitle>
-        <Button type="button" variant="outline" size="sm" onClick={() => setPicking(true)}>
+        <Button
+          ref={browseButton}
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setPicking(true)}
+        >
           {k.browse}
         </Button>
       </CardHeader>
@@ -203,6 +210,7 @@ export function CollectionProductsCard({
           excludeIds={productIds}
           onPick={(productId) => submit("add", { productId })}
           onClose={() => setPicking(false)}
+          returnFocusRef={browseButton}
           t={t}
         />
       )}

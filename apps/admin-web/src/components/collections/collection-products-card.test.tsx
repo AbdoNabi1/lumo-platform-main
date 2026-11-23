@@ -295,6 +295,59 @@ describe("CollectionProductsCard — Browse", () => {
   });
 });
 
+describe("CollectionProductsCard — focus return from the picker", () => {
+  const found = {
+    outcome: "ok",
+    items: [{ id: "n-1", name: "New draft", status: "draft" }],
+    pageInfo: { hasNextPage: false, endCursor: null },
+  };
+
+  async function openPicker() {
+    api.fetchProductsPage.mockResolvedValue(found);
+    renderCard();
+    const browse = screen.getByRole("button", { name: k.browse });
+    browse.focus();
+    expect(browse).toHaveFocus();
+    fireEvent.click(browse);
+    const dialog = await body().findByRole("dialog", { name: en.collections.picker.title });
+    await waitFor(() => expect(within(dialog).getByRole("searchbox")).toHaveFocus());
+    return { browse, dialog };
+  }
+
+  it("returns focus to Browse after Escape", async () => {
+    const { browse, dialog } = await openPicker();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(browse).toHaveFocus());
+    expect(document.activeElement).toBe(browse);
+  });
+
+  it("returns focus to Browse after the dialog's close button", async () => {
+    const { browse, dialog } = await openPicker();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
+
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(browse).toHaveFocus());
+    expect(document.activeElement).toBe(browse);
+  });
+
+  it("returns focus to the still-mounted Browse once a pick has been added", async () => {
+    const { browse, dialog } = await openPicker();
+
+    fireEvent.click(await within(dialog).findByRole("button", { name: /New draft/ }));
+
+    await waitFor(() => expect(api.addCollectionProduct).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(revalidatePath).toHaveBeenCalledWith(`/collections/${COLLECTION}`));
+    await waitFor(() => expect(browse).toHaveFocus());
+    expect(browse).toBeInTheDocument();
+    expect(document.activeElement).toBe(browse);
+  });
+});
+
 describe("CollectionProductsCard — i18n and direction", () => {
   it("renders from ar.collections with Arabic status labels and no English fallback", () => {
     renderCard({

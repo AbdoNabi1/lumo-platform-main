@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import {
   Dialog,
   DialogContent,
@@ -28,12 +28,15 @@ export function CollectionProductPicker({
   excludeIds = [],
   onPick,
   onClose,
+  returnFocusRef,
   t,
 }: {
   /** Ids already in the collection: listed, but not pickable again. */
   readonly excludeIds?: readonly string[];
   readonly onPick: (productId: string) => void;
   readonly onClose: () => void;
+  /** Where focus goes when the dialog closes: the control that opened it (the card unmounts this component on close, so Radix has no trigger to return to). */
+  readonly returnFocusRef?: RefObject<HTMLElement | null>;
   readonly t: Dictionary;
 }) {
   const k = t.collections.picker;
@@ -65,6 +68,11 @@ export function CollectionProductPicker({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           searchField.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          if (!returnFocusRef?.current) return;
+          event.preventDefault();
+          returnFocusRef.current.focus();
         }}
       >
         <DialogHeader>
