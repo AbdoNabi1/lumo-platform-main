@@ -313,6 +313,9 @@ importers:
       '@platform/eslint-config':
         specifier: workspace:*
         version: link:../../packages/eslint-config
+      '@platform/outreach':
+        specifier: workspace:*
+        version: link:../../services/outreach
       '@platform/tsconfig':
         specifier: workspace:*
         version: link:../../packages/tsconfig

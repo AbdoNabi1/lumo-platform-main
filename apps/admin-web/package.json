@@ -34,6 +34,7 @@
   },
   "devDependencies": {
     "@platform/eslint-config": "workspace:*",
+    "@platform/outreach": "workspace:*",
     "@platform/tsconfig": "workspace:*",
     "@tailwindcss/postcss": "^4.0.0",
     "@testing-library/jest-dom": "^6.6.3",
