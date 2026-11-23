@@ -332,7 +332,7 @@ describe("createTemplateAction: an ambiguous 409 is not a zero-dispatch refusal 
     expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status).toBe("error");
   });
 
-  it("an unknown code or provider prose is unresolved (generic copy), but a Meta refusal and every known code stay definitive", async () => {
+  it("an unknown code or provider prose is unresolved (generic copy), but every known code stays definitive", async () => {
     expect.hasAssertions();
     for (const text of ["SOMETHING_NEW", "generic", "Meta said: (#100) Invalid parameter"]) {
       fetchMock.mockImplementation(async () => conflict(text));
@@ -344,8 +344,6 @@ describe("createTemplateAction: an ambiguous 409 is not a zero-dispatch refusal 
       expect(JSON.stringify(result)).not.toMatch(/Invalid parameter/);
     }
     for (const code of [
-      "META_131056",
-      "META_ERROR",
       "TEMPLATE_ALREADY_EXISTS",
       "WHATSAPP_NOT_CONFIGURED",
       "WHATSAPP_NOT_CONNECTED",
@@ -362,6 +360,104 @@ describe("createTemplateAction: an ambiguous 409 is not a zero-dispatch refusal 
       json(409, { code: "CONCURRENCY", message: "version conflict", retryable: false, fields: [] }),
     );
     expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status).toBe("refused");
+  });
+});
+
+describe("createTemplateAction: a META_* prefix is not proof Meta refused the create (I1)", () => {
+  /** The exact envelopes the real adapter + `metaConflictCodeOf` produce for a lost / unusable / gateway / unknown outcome. */
+  const AMBIGUOUS = [
+    "META_TIMEOUT",
+    "META_NETWORK_ERROR",
+    "META_INVALID_RESPONSE",
+    "META_HTTP_502",
+    "META_ERROR",
+  ] as const;
+  /** Each entry is a refusal Meta itself returned with a 4xx status (see `DEFINITIVE_META_REFUSALS`). */
+  const DEFINITIVE = [
+    "META_HTTP_400",
+    "META_HTTP_401",
+    "META_HTTP_403",
+    "META_HTTP_429",
+    "META_100",
+    "META_190",
+  ] as const;
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "the five ambiguous codes are unresolved with generic copy in %s, even with retryable: false",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      for (const code of AMBIGUOUS) {
+        fetchMock.mockImplementation(async () => conflict(code));
+        const result = await createTemplateAction({ draft, idempotencyKey: KEY });
+        expect(result, code).toEqual({
+          status: "error",
+          message: t.whatsappTemplates.errors.generic,
+        });
+        expect(JSON.stringify(result), code).not.toMatch(/META|TIMEOUT|NETWORK|INVALID_RESPONSE/);
+      }
+    },
+  );
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "any other META_* (5xx, unlisted numeric, malformed) is unresolved in %s",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      for (const code of [
+        "META_HTTP_500",
+        "META_HTTP_503",
+        "META_HTTP_408",
+        "META_HTTP_409",
+        "META_1",
+        "META_2",
+        "META_131056",
+        "META_2388023",
+        "META_",
+        "META_SOMETHING_NEW",
+        "META_100 ",
+      ]) {
+        fetchMock.mockImplementation(async () => conflict(code));
+        expect(await createTemplateAction({ draft, idempotencyKey: KEY }), code).toEqual({
+          status: "error",
+          message: t.whatsappTemplates.errors.generic,
+        });
+      }
+    },
+  );
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "each enumerated Meta refusal stays definitive (refused, generic copy) in %s",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      for (const code of DEFINITIVE) {
+        fetchMock.mockImplementation(async () => conflict(code));
+        const result = await createTemplateAction({ draft, idempotencyKey: KEY });
+        expect(result, code).toEqual({
+          status: "refused",
+          message: t.whatsappTemplates.errors.generic,
+        });
+        expect(JSON.stringify(result), code).not.toMatch(/META/);
+      }
+    },
+  );
+
+  it("the retryable: true override still wins over a definitive Meta refusal", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementation(async () =>
+      json(409, { code: "CONFLICT", message: "META_100", retryable: true, fields: [] }),
+    );
+    expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status).toBe("error");
   });
 });
 

@@ -67,9 +67,39 @@ function conflictMessage(code: unknown, t: Dictionary): string {
 }
 
 /**
+ * The ONLY `META_*` conflict codes that prove Meta REFUSED a template create (the request was rejected, nothing was
+ * created). A local mirror of what `services/outreach` emits (the server package is never imported into the browser
+ * bundle); every other `META_*` is unresolved. The `META_` prefix alone proves nothing: `META_TIMEOUT` and
+ * `META_NETWORK_ERROR` (a lost response), `META_INVALID_RESPONSE` (an HTTP 200 whose body failed the shape check, so
+ * Meta may already have created the template), `META_HTTP_5xx`, `META_ERROR` (the fallback for an unrecognised code)
+ * and any other `META_*` could all follow a create Meta accepted.
+ *
+ * Evidence (services/outreach/src; the adapter's `call()` rethrows a non-2xx as `errorCode(...)`):
+ * - `HTTP_400`/`HTTP_401`/`HTTP_403`/`HTTP_429`: `infrastructure/meta-graph-client.ts:45-46` (the code is
+ *   `HTTP_<status>` when the error body has no usable `error.code`), thrown at `:164-169` for a non-2xx response; a
+ *   4xx status is a refusal of the request (fixtures `meta-graph-client.test.ts:686,1032,1035`).
+ * - `100` (invalid parameter) and `190` (invalid/expired token): listed codes (`application/error-codes.ts:95-96`)
+ *   that the adapter fixtures return only with a 4xx status (`meta-graph-client.test.ts:82,591`: 400/404 for `100`;
+ *   `:214,1068`: 401 for `190`).
+ * Wire format: `application/error-codes.ts:216-218` (`META_<code>`) via `application/template.use-cases.ts:45-51`.
+ * Deliberately NOT here: `1` and `2` (the fixtures return them with HTTP 500/503: `meta-graph-client.test.ts:386,
+ * 1045,1070`), `2388023` (not on the server allowlist, so it reaches the envelope as `META_ERROR`), and every other
+ * numeric code, because the envelope drops the HTTP status.
+ */
+const DEFINITIVE_META_REFUSALS: ReadonlySet<string> = new Set([
+  "META_HTTP_400",
+  "META_HTTP_401",
+  "META_HTTP_403",
+  "META_HTTP_429",
+  "META_100",
+  "META_190",
+]);
+
+/**
  * A create's 409 is only a definitive refusal when it is a known pre-dispatch / Meta-side refusal and not the
- * transport's in-flight answer for the same key (`retryable: true`): a known dictionary code, a stale version, or a
- * Meta refusal (`META_<code>`). An arbitrary 409 is not proof that nothing was submitted.
+ * transport's in-flight answer for the same key (`retryable: true`): a known dictionary code, a stale version, or one
+ * of the explicitly enumerated Meta refusals. Any other `META_*` and any arbitrary 409 is not proof that nothing was
+ * submitted.
  */
 function isDefinitiveConflict(
   result: Extract<MutationResult<unknown>, { outcome: "conflict" }>,
@@ -79,7 +109,7 @@ function isDefinitiveConflict(
   if (result.code === "CONCURRENCY") return true;
   const code: unknown = result.message;
   if (typeof code !== "string") return false;
-  if (code.startsWith("META_")) return true;
+  if (code.startsWith("META_")) return DEFINITIVE_META_REFUSALS.has(code);
   const own: Readonly<Record<string, string>> = t.whatsappTemplates.errors;
   return (code !== "generic" && Object.hasOwn(own, code)) || isKnownWhatsAppCode(code, t);
 }

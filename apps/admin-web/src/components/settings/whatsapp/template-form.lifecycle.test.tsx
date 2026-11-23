@@ -139,6 +139,38 @@ describe("create template: definitive refusals still release the submission", ()
     expect(calls[1]?.key).not.toBe(calls[0]?.key);
   });
 
+  it("META_INVALID_RESPONSE (an HTTP 200 Meta may have processed) is unresolved: locked, no key rotation, identical retry", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementationOnce(async () => conflict("META_INVALID_RESPONSE"));
+    fetchMock.mockImplementation(async () => json(200, row));
+    render(<TemplateForm t={en} locale="en" />);
+    fillValidDraft();
+    await submit(1);
+    expect((await screen.findByRole("alert")).textContent).toBe(copy.form.lostResponse);
+    expect(document.body).not.toHaveTextContent(/META_|INVALID_RESPONSE/);
+    expect(screen.getByLabelText(copy.form.name)).toBeDisabled();
+    expect(screen.getByLabelText(copy.form.body)).toBeDisabled();
+    await submit(2);
+    const calls = wire();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[0]?.key).toMatch(/^[A-Za-z0-9_-]{8,128}$/);
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/settings/whatsapp/templates"));
+  });
+
+  it("a Meta 4xx refusal (META_100) is definitive: it unlocks and the next submit gets a NEW key", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementation(async () => conflict("META_100"));
+    render(<TemplateForm t={en} locale="en" />);
+    fillValidDraft();
+    await submit(1);
+    await waitFor(() => expect(screen.getByLabelText(copy.form.name)).toBeEnabled());
+    await submit(2);
+    const calls = wire();
+    expect(calls[1]?.body).toBe(calls[0]?.body);
+    expect(calls[1]?.key).not.toBe(calls[0]?.key);
+  });
+
   it("an unknown 409 is NOT proof of zero dispatch: it stays unresolved with the same key", async () => {
     expect.hasAssertions();
     fetchMock.mockImplementationOnce(async () => conflict("SOMETHING_NEW"));
