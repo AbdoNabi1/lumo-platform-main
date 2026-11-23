@@ -7,7 +7,7 @@
 starts before Sol's round-1 plan review, on impl-sonnet. Sol reviews the plan and every finished task when it returns;
 accepted findings go back as fix rounds (amendment blocks). Merge/push still need the owner's go-ahead.
 
-**Status:** `OPUS: AGREED · Sol: CHANGES REQUIRED (review 1) → amendments round 1 written, round 2 pending`
+**Status:** `OPUS: AGREED · Sol: AGREED (plan review 2, 2026-11-23)`
 
 **Goal:** a lead website can place a lead form on its homepage; every valid submission is saved for the merchant and
 reaches an admin "Leads" inbox (search, status, CSV); each saved lead records whether it must be sent to the ad
