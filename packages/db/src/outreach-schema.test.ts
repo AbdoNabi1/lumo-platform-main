@@ -14,7 +14,7 @@ describe("outreach migration", () => {
     ).replace(/\r\n/g, "\n");
     const models = [...schema.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)];
     expect(models).toHaveLength(10);
-    for (const [, , body] of models) {
+    for (const [, , body = ""] of models) {
       const table = /@@map\("([^"]+)"\)/.exec(body)?.[1];
       expect(table).toBeDefined();
       const create = new RegExp(`CREATE TABLE "outreach"\\."${table}" \\(([\\s\\S]*?)\\n\\);`).exec(
@@ -35,7 +35,7 @@ describe("outreach migration", () => {
                   string,
                   string
                 >
-              )[field[2]];
+              )[field[2] ?? ""];
         const sqlLine = create
           ?.split("\n")
           .find((entry) => entry.trimStart().startsWith(`"${column}" `));
