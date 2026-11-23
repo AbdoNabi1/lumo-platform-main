@@ -348,6 +348,37 @@ describe("version-bound actions", () => {
   );
 });
 
+describe("testSendAction: ambiguous 409s are audited for I1 (Task 7 needs no change)", () => {
+  // `TestSendActionState` has no `refused` status: every non-ok answer is `error`, which the form treats as UNRESOLVED
+  // (same payload, same key, locked). So an unrecorded or in-flight 409 can never release the key.
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "409 SEND_OUTCOME_UNRECORDED and the transport's in-flight 409 stay unresolved with generic copy in %s",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      for (const answer of [
+        conflict("SEND_OUTCOME_UNRECORDED"),
+        json(409, {
+          code: "CONFLICT",
+          message: "A request with this Idempotency-Key is already in flight",
+          retryable: true,
+          fields: [],
+        }),
+      ]) {
+        fetchMock.mockImplementation(async () => answer.clone());
+        const result = await testSendAction(testInput);
+        expect(result.status).toBe("error");
+        expect(result.status).not.toBe("result");
+        expect(JSON.stringify(result)).not.toMatch(/Idempotency|in flight/i);
+        expect(result.message).toBe(t.whatsappSettings.errors.generic);
+      }
+    },
+  );
+});
+
 describe("testSendAction", () => {
   it("forwards the form's key and the full values, and not the key in the body", async () => {
     expect.hasAssertions();

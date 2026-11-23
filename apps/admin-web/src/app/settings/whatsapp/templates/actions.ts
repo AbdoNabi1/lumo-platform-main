@@ -66,6 +66,24 @@ function conflictMessage(code: unknown, t: Dictionary): string {
     : t.whatsappTemplates.errors.generic;
 }
 
+/**
+ * A create's 409 is only a definitive refusal when it is a known pre-dispatch / Meta-side refusal and not the
+ * transport's in-flight answer for the same key (`retryable: true`): a known dictionary code, a stale version, or a
+ * Meta refusal (`META_<code>`). An arbitrary 409 is not proof that nothing was submitted.
+ */
+function isDefinitiveConflict(
+  result: Extract<MutationResult<unknown>, { outcome: "conflict" }>,
+  t: Dictionary,
+): boolean {
+  if (result.retryable === true) return false;
+  if (result.code === "CONCURRENCY") return true;
+  const code: unknown = result.message;
+  if (typeof code !== "string") return false;
+  if (code.startsWith("META_")) return true;
+  const own: Readonly<Record<string, string>> = t.whatsappTemplates.errors;
+  return (code !== "generic" && Object.hasOwn(own, code)) || isKnownWhatsAppCode(code, t);
+}
+
 /** The copy for a refused write (everything but a 5xx / network failure, which is `generic`). */
 function failureMessage(
   result: Exclude<MutationResult<unknown>, { outcome: "ok" }>,
@@ -139,6 +157,9 @@ export async function createTemplateAction(input: {
     const result = await createWhatsAppTemplate(body, input.idempotencyKey);
     if (result.outcome === "ok") return { status: "success" };
     if (result.outcome === "error") return error(failureMessage(result, t));
+    if (result.outcome === "conflict" && !isDefinitiveConflict(result, t)) {
+      return error(t.whatsappTemplates.errors.generic);
+    }
     if (result.outcome === "invalid") {
       const fieldErrors: Record<string, string> = {};
       for (const issue of result.fields) {

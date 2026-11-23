@@ -21,9 +21,11 @@ const PAGE = "/settings/email";
 const IDEMPOTENCY_KEY = /^[A-Za-z0-9_-]{8,200}$/;
 
 /**
- * `result`: the API answered with a delivery status (definitive). `refused`: the API refused before any dispatch
- * (a 409/403/422/404 — definitive, nothing was sent). `error`: a network failure, a 5xx or an unreadable answer — the
- * submission is UNRESOLVED, so the form keeps its payload and key.
+ * `result`: the API answered with a delivery status (definitive) — or, for an unrecorded outcome, `unknown`, which the
+ * form treats as "possibly sent": it keeps the key and blocks the same recipient. `refused`: the API refused with a
+ * KNOWN pre-dispatch reason (cap, configuration, validation, auth — definitive, nothing was sent). `error`: a network
+ * failure, a 5xx, an unreadable answer, the transport's in-flight 409 or any 409 that is not a known refusal — the
+ * submission is UNRESOLVED, so the form keeps its payload and key (a retry is the same request).
  */
 export type EmailTestState =
   | { readonly status: "result"; readonly outcome: TestSendOutcome; readonly message: string }
@@ -53,6 +55,20 @@ function refusal(
   }
 }
 
+/** The one 409 that is raised AFTER the provider call: the email may have gone out but its outcome wasn't recorded. */
+const OUTCOME_UNRECORDED = "SEND_OUTCOME_UNRECORDED";
+
+/**
+ * A 409 is only a zero-dispatch refusal when it carries a code from the allowlist (cap / configuration / marketing) and
+ * is not the transport's in-flight answer for the same key (`retryable: true`). Anything else may have dispatched.
+ */
+function isDefinitiveConflict(
+  result: Extract<MutationResult<unknown>, { outcome: "conflict" }>,
+  t: Dictionary,
+): boolean {
+  return result.retryable !== true && isKnownEmailCode(result.message, t);
+}
+
 /**
  * Sends the fixed bilingual test email. `idempotencyKey` is the form's per-submission key (≤200 characters; it must
  * survive a retry of the same request, so the browser makes it).
@@ -76,6 +92,19 @@ export async function sendTestEmailAction(input: {
     const result = await sendTestEmail(input.to, input.idempotencyKey);
     if (result.outcome === "error") {
       return { status: "error", message: t.emailSettings.errors.generic };
+    }
+    if (result.outcome === "conflict") {
+      if (result.retryable !== true && result.message === OUTCOME_UNRECORDED) {
+        // Sent, but the outcome could not be recorded: never a refusal, never a second send.
+        return {
+          status: "result",
+          outcome: "unknown",
+          message: t.emailSettings.test.resultUnknown,
+        };
+      }
+      if (!isDefinitiveConflict(result, t)) {
+        return { status: "error", message: t.emailSettings.errors.generic };
+      }
     }
     if (result.outcome !== "ok") return { status: "refused", message: refusal(result, t) };
     const outcome = testSendOutcome(result.data.status);

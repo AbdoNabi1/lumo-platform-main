@@ -44,7 +44,7 @@ export default async function WhatsAppTemplatesPage() {
         ) : (
           <AlertTriangleIcon aria-hidden="true" className="size-4" />
         )}
-        {failure.outcome === "unauthorized" ? copy.unauthorized : copy.loadError}
+        <BrandText text={failure.outcome === "unauthorized" ? copy.unauthorized : copy.loadError} />
       </div>
     );
   } else if (!active || rows === null || rows.outcome !== "ok") {

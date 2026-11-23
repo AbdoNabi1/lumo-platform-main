@@ -4,15 +4,19 @@ import { Badge, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import type { EmailSettingsDto } from "@/lib/api/outreach";
 import { parseSender } from "@/lib/outreach/email";
 import type { Dictionary } from "@/messages/en";
+import { BrandText } from "../whatsapp/brand-text";
 
-/** The sender line with the store name isolated (`<bdi dir="auto">`) inside the sentence ("{store} via Morbeh"). */
+/**
+ * The sender line with the store name isolated (`<bdi dir="auto">`) inside the sentence ("{store} via Morbeh"); the
+ * platform name in the suffix is its own brand island.
+ */
 function SenderLine({ store, t }: { readonly store: string; readonly t: Dictionary }) {
   const [before = "", after = ""] = t.emailSettings.senderLine.split("{store}");
   return (
     <>
-      {before}
+      <BrandText text={before} />
       <bdi dir="auto">{store}</bdi>
-      {after}
+      <BrandText text={after} />
     </>
   );
 }
@@ -42,7 +46,9 @@ export function EmailSenderCard({
         <CardContent className="flex flex-col gap-4">
           <p role="note" className="text-muted-foreground flex items-start gap-2 text-sm">
             <InfoIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-            <span>{copy.unavailableBody}</span>
+            <span>
+              <BrandText text={copy.unavailableBody} />
+            </span>
           </p>
           <p className="text-muted-foreground text-sm">{copy.transactionalNote}</p>
         </CardContent>

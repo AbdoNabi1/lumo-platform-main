@@ -32,7 +32,9 @@ export default async function NewWhatsAppTemplatePage() {
         ) : (
           <AlertTriangleIcon aria-hidden="true" className="size-4" />
         )}
-        {connection.outcome === "unauthorized" ? copy.unauthorized : copy.loadError}
+        <BrandText
+          text={connection.outcome === "unauthorized" ? copy.unauthorized : copy.loadError}
+        />
       </div>
     );
   } else if (!active) {

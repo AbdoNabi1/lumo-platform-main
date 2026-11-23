@@ -1,7 +1,11 @@
 import { Fragment } from "react";
 
-/** The brand names the admin copy may contain. Each sits in its own `<bdi dir="auto">` so neither direction mangles it. */
-const BRANDS = /\b(WhatsApp|Meta)\b/;
+/**
+ * The brand names the admin copy may contain: the channels (WhatsApp, Meta) and the platform's own name (Morbeh, in the
+ * email copy). Each sits in its own `<bdi dir="auto">` so neither direction mangles it. A merchant's store name is a
+ * separate island, not a brand here.
+ */
+const BRANDS = /\b(WhatsApp|Meta|Morbeh)\b/;
 
 /**
  * Renders dictionary copy with every brand name isolated (`<bdi dir="auto">`). Copy without a brand name renders as

@@ -188,7 +188,7 @@ describe("client error mapping (R2-O04): the exact 409 envelope through mutateAd
     }
   });
 
-  it("shows generic copy for a provider code, an unknown code and provider prose — never the text", async () => {
+  it("an unknown code, a provider code and provider prose are NOT proof of zero dispatch: unresolved (status error), generic copy, never the text", async () => {
     expect.hasAssertions();
     for (const text of [
       "invalid_api_key",
@@ -199,7 +199,7 @@ describe("client error mapping (R2-O04): the exact 409 envelope through mutateAd
     ]) {
       fetchMock.mockImplementation(async () => conflict(text));
       const result = await sendTestEmailAction(input);
-      expect(result).toEqual({ status: "refused", message: ar.emailSettings.errors.generic });
+      expect(result).toEqual({ status: "error", message: ar.emailSettings.errors.generic });
       expect(JSON.stringify(result)).not.toMatch(/invalid_api_key|HTTP_|re_AbC123|Resend said/);
     }
   });
@@ -231,6 +231,92 @@ describe("client error mapping (R2-O04): the exact 409 envelope through mutateAd
     expect(await sendTestEmailAction(input)).toEqual(generic);
     fetchMock.mockReset().mockImplementation(async () => json(200, { nonsense: true }));
     expect(await sendTestEmailAction(input)).toEqual(generic);
+  });
+});
+
+/** The transport's exact answer while the SAME Idempotency-Key is still running (`packages/http/src/server.ts`). */
+function inFlight(): Response {
+  return json(409, {
+    code: "CONFLICT",
+    message: "A request with this Idempotency-Key is already in flight",
+    retryable: true,
+    fields: [],
+  });
+}
+
+describe("ambiguous 409s are not zero-dispatch refusals (I1)", () => {
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "409 SEND_OUTCOME_UNRECORDED (sent, outcome not recorded) is an UNKNOWN result in %s",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      fetchMock.mockImplementation(async () => conflict("SEND_OUTCOME_UNRECORDED"));
+      expect(await sendTestEmailAction(input)).toEqual({
+        status: "result",
+        outcome: "unknown",
+        message: t.emailSettings.test.resultUnknown,
+      });
+    },
+  );
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "the transport's in-flight 409 (retryable: true) is unresolved with generic copy in %s, never its prose",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      fetchMock.mockImplementation(async () => inFlight());
+      const result = await sendTestEmailAction(input);
+      expect(result).toEqual({ status: "error", message: t.emailSettings.errors.generic });
+      expect(JSON.stringify(result)).not.toMatch(/Idempotency|in flight/i);
+    },
+  );
+
+  it("an in-flight 409 stays unresolved even when its message names a known code", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementation(async () =>
+      json(409, { code: "CONFLICT", message: "EMAIL_CAP_REACHED", retryable: true, fields: [] }),
+    );
+    expect(await sendTestEmailAction(input)).toEqual({
+      status: "error",
+      message: ar.emailSettings.errors.generic,
+    });
+  });
+
+  it("safe cap / configuration / validation refusals stay definitive", async () => {
+    expect.hasAssertions();
+    for (const code of [
+      "EMAIL_CAP_REACHED",
+      "EMAIL_NOT_CONFIGURED",
+      "EMAIL_MARKETING_NOT_AVAILABLE",
+    ]) {
+      fetchMock.mockImplementation(async () => conflict(code));
+      expect((await sendTestEmailAction(input)).status, code).toBe("refused");
+    }
+    fetchMock.mockImplementation(async () =>
+      json(422, { code: "VALIDATION", message: "Invalid", retryable: false, fields: [] }),
+    );
+    expect(await sendTestEmailAction(input)).toEqual({
+      status: "refused",
+      message: ar.emailSettings.test.toInvalid,
+    });
+  });
+
+  it("revalidates /settings/email for both ambiguous cases", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementation(async () => conflict("SEND_OUTCOME_UNRECORDED"));
+    await sendTestEmailAction(input);
+    fetchMock.mockImplementation(async () => inFlight());
+    await sendTestEmailAction(input);
+    expect(mocks.revalidatePath.mock.calls.map((c) => c[0])).toEqual([
+      "/settings/email",
+      "/settings/email",
+    ]);
   });
 });
 

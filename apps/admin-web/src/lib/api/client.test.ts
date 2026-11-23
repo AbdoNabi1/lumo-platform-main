@@ -121,6 +121,47 @@ describe("mutateAdminApi", () => {
     expect(result).toEqual({ outcome: "conflict", message: "already in flight", code: "CONFLICT" });
   });
 
+  it("keeps a validated boolean `retryable` on a 409 so a caller can tell an in-flight request from a refusal", async () => {
+    expect.hasAssertions();
+    for (const retryable of [true, false]) {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          jsonResponse(409, {
+            code: "CONFLICT",
+            message: "A request with this Idempotency-Key is already in flight",
+            retryable,
+            fields: [],
+          }),
+        ),
+      );
+      expect(
+        await mutateAdminApi("/api/v1/x", { method: "POST", body: {} }, isRecord),
+        String(retryable),
+      ).toEqual({
+        outcome: "conflict",
+        message: "A request with this Idempotency-Key is already in flight",
+        code: "CONFLICT",
+        retryable,
+      });
+    }
+  });
+
+  it("omits `retryable` from a 409 when the envelope's value is missing or not a boolean", async () => {
+    expect.hasAssertions();
+    for (const body of [
+      { code: "CONFLICT", message: "m" },
+      { code: "CONFLICT", message: "m", retryable: "true" },
+      { code: "CONFLICT", message: "m", retryable: 1 },
+      { code: "CONFLICT", message: "m", retryable: null },
+    ]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(409, body)));
+      const result = await mutateAdminApi("/api/v1/x", { method: "POST", body: {} }, isRecord);
+      expect(result).toEqual({ outcome: "conflict", message: "m", code: "CONFLICT" });
+      expect(result).not.toHaveProperty("retryable");
+    }
+  });
+
   it("maps a 401 to unauthorized", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(401, { code: "UNAUTHENTICATED" }));
     vi.stubGlobal("fetch", fetchMock);

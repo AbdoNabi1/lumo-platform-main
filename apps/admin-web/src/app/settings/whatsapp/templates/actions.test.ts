@@ -292,6 +292,79 @@ describe("client error mapping (R2-O04): the exact 409 envelope through mutateAd
   });
 });
 
+/** The transport's exact answer while the SAME Idempotency-Key is still running (`packages/http/src/server.ts`). */
+function inFlight(): Response {
+  return json(409, {
+    code: "CONFLICT",
+    message: "A request with this Idempotency-Key is already in flight",
+    retryable: true,
+    fields: [],
+  });
+}
+
+describe("createTemplateAction: an ambiguous 409 is not a zero-dispatch refusal (I1)", () => {
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "the transport's in-flight 409 (retryable: true) is unresolved with generic copy in %s, never its prose",
+    async (locale, t: Dictionary) => {
+      expect.hasAssertions();
+      state.locale = locale;
+      fetchMock.mockImplementation(async () => inFlight());
+      const result = await createTemplateAction({ draft, idempotencyKey: KEY });
+      expect(result).toEqual({ status: "error", message: t.whatsappTemplates.errors.generic });
+      expect(JSON.stringify(result)).not.toMatch(/Idempotency|in flight/i);
+      expect(mocks.revalidatePath.mock.calls.map((c) => c[0])).toEqual(paths);
+    },
+  );
+
+  it("an in-flight 409 stays unresolved even when its message names a known code", async () => {
+    expect.hasAssertions();
+    fetchMock.mockImplementation(async () =>
+      json(409, {
+        code: "CONFLICT",
+        message: "TEMPLATE_ALREADY_EXISTS",
+        retryable: true,
+        fields: [],
+      }),
+    );
+    expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status).toBe("error");
+  });
+
+  it("an unknown code or provider prose is unresolved (generic copy), but a Meta refusal and every known code stay definitive", async () => {
+    expect.hasAssertions();
+    for (const text of ["SOMETHING_NEW", "generic", "Meta said: (#100) Invalid parameter"]) {
+      fetchMock.mockImplementation(async () => conflict(text));
+      const result = await createTemplateAction({ draft, idempotencyKey: KEY });
+      expect(result, text).toEqual({
+        status: "error",
+        message: ar.whatsappTemplates.errors.generic,
+      });
+      expect(JSON.stringify(result)).not.toMatch(/Invalid parameter/);
+    }
+    for (const code of [
+      "META_131056",
+      "META_ERROR",
+      "TEMPLATE_ALREADY_EXISTS",
+      "WHATSAPP_NOT_CONFIGURED",
+      "WHATSAPP_NOT_CONNECTED",
+      "CONNECTION_CHANGED",
+      "AUTHORIZATION_EXPIRED",
+      "CREDENTIALS_UNAVAILABLE",
+    ]) {
+      fetchMock.mockImplementation(async () => conflict(code));
+      expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status, code).toBe(
+        "refused",
+      );
+    }
+    fetchMock.mockImplementation(async () =>
+      json(409, { code: "CONCURRENCY", message: "version conflict", retryable: false, fields: [] }),
+    );
+    expect((await createTemplateAction({ draft, idempotencyKey: KEY })).status).toBe("refused");
+  });
+});
+
 describe("createTemplateAction: 422 issue codes become field copy", () => {
   it.each([
     ["en", en],

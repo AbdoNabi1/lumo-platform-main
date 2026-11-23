@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { BrandText } from "@/components/settings/whatsapp/brand-text";
 import { EmailSenderCard } from "@/components/settings/email/email-sender-card";
 import { EmailTestForm } from "@/components/settings/email/email-test-form";
 import { fetchEmailSettings } from "@/lib/api/outreach";
@@ -33,7 +34,9 @@ export default async function EmailSettingsPage() {
             {copy.back}
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{copy.subtitle}</p>
+          <p className="text-muted-foreground mt-1 text-sm">
+            <BrandText text={copy.subtitle} />
+          </p>
         </header>
 
         {result.outcome === "ok" ? (
@@ -58,7 +61,9 @@ export default async function EmailSettingsPage() {
             ) : (
               <AlertTriangleIcon aria-hidden="true" className="size-4" />
             )}
-            {result.outcome === "unauthorized" ? copy.unauthorized : copy.loadError}
+            <BrandText
+              text={result.outcome === "unauthorized" ? copy.unauthorized : copy.loadError}
+            />
           </div>
         )}
       </div>
