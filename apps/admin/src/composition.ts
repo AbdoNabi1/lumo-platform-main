@@ -307,9 +307,15 @@ export interface AdminOutreachDeps {
  */
 export const IN_MEMORY_PLATFORM_TENANT = "platform-in-memory";
 export function outreachPlatformScope(
-  deps: Pick<AdminWiringDeps, "platformTenantId" | "tenantId">,
+  deps: Pick<AdminWiringDeps, "platformTenantId" | "tenantId" | "prisma">,
 ): string {
-  return deps.platformTenantId ?? deps.tenantId ?? IN_MEMORY_PLATFORM_TENANT;
+  // The in-memory marker is a test stand-in only: with a database it must never become the scope of real rows, so
+  // "nothing to pin to" stays blank there (the transport then refuses the webhook with 403).
+  return (
+    deps.platformTenantId ??
+    deps.tenantId ??
+    (deps.prisma === undefined ? IN_MEMORY_PLATFORM_TENANT : "")
+  );
 }
 
 const randomSixDigitPin = (): string => String(randomInt(0, 1_000_000)).padStart(6, "0");

@@ -167,7 +167,11 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
     ...(tenantGate === undefined ? {} : { tenantGate }),
     // Only a `public` + `tenantScope:"platform"` route reads this (Meta's webhook). Under multi a blank value stays
     // blank, so that route refuses with 403 instead of running as no tenant at all.
-    platformTenantId: outreachPlatformScope({ platformTenantId, tenantId: deps.tenantId }),
+    platformTenantId: outreachPlatformScope({
+      platformTenantId,
+      tenantId: deps.tenantId,
+      ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+    }),
     rateLimiter: deps.rateLimiter,
     rateLimit: { limit: 300, windowMs: 60_000 },
     idempotencyKeys: deps.idempotencyKeys,
