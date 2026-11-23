@@ -3,6 +3,7 @@ import type { ContentIssue } from "./locale";
 import { ITEM_ID_PATTERN, SECTION_LIMITS } from "./limits";
 import type { CompletePublicSection, PublicAnnouncement, PublicSection } from "./public-sections";
 import {
+  COMMERCE_SECTION_TYPES,
   DEFAULT_HOMEPAGE_SECTIONS,
   HOMEPAGE_SECTIONS_MAX,
   newSection,
@@ -24,7 +25,7 @@ const run = (raw: unknown, placement: "header" | "homepage" = "homepage") => {
 };
 
 describe("section library v1 (spec 3.2)", () => {
-  it("has the ten types, in library order, each defined once", () => {
+  it("has the eleven types, in library order, each defined once", () => {
     expect(SECTION_DEFINITIONS.map((d) => d.type)).toEqual([...SECTION_TYPES]);
     expect(HOMEPAGE_SECTIONS_MAX).toBe(25);
   });
@@ -59,6 +60,7 @@ describe("section library v1 (spec 3.2)", () => {
       testimonials: ["homepage", null],
       features: ["homepage", null],
       whatsapp_cta: ["homepage", 2],
+      lead_form: ["homepage", 1],
     });
   });
 
@@ -68,6 +70,66 @@ describe("section library v1 (spec 3.2)", () => {
       en: "WhatsApp button",
       ar: "زرار واتساب",
     });
+  });
+
+  it("lead_form has its own label, icon and the spec's defaults, in field order", () => {
+    const def = sectionDefinition("lead_form")!;
+    expect(def.labels).toEqual({ en: "Lead form", ar: "فورم العملاء" });
+    expect(def.icon).toBe("message-circle");
+    expect(def.placement).toBe("homepage");
+    expect(def.maxPerPage).toBe(1);
+    expect(def.fields.map((f) => f.key)).toEqual([
+      "heading",
+      "text",
+      "submitLabel",
+      "successMessage",
+      "showEmail",
+      "showMessage",
+    ]);
+    expect(def.defaults()).toEqual({
+      heading: { ar: "اطلب استشارة", en: "Get in touch" },
+      text: {
+        ar: "سيب بياناتك وهنكلمك في أقرب وقت",
+        en: "Leave your details and we will call you back",
+      },
+      submitLabel: { ar: "ابعت", en: "Send" },
+      successMessage: {
+        ar: "وصلتنا بياناتك، هنتواصل معاك قريب",
+        en: "Thanks! We will contact you soon",
+      },
+      showEmail: true,
+      showMessage: true,
+    });
+    expect(Object.keys(def.defaults())).toEqual([
+      "heading",
+      "text",
+      "submitLabel",
+      "successMessage",
+      "showEmail",
+      "showMessage",
+    ]);
+  });
+
+  it("lead_form caps: success message 200, submit label 30, text 300", () => {
+    const form = newSection("lead_form", ID);
+    const withForm = (patch: Record<string, unknown>) =>
+      run({ ...form, settings: { ...form.settings, ...patch } }).issues;
+    expect(withForm({ successMessage: { en: "a".repeat(200) } })).toEqual([]);
+    expect(withForm({ successMessage: { en: "a".repeat(201) } })).toEqual([
+      { path: "x.settings.successMessage.en", code: "TOO_LONG" },
+    ]);
+    expect(withForm({ submitLabel: { en: "a".repeat(31) } })).toEqual([
+      { path: "x.settings.submitLabel.en", code: "TOO_LONG" },
+    ]);
+  });
+
+  it("COMMERCE_SECTION_TYPES lists exactly the three commerce sections, all known", () => {
+    expect([...COMMERCE_SECTION_TYPES]).toEqual([
+      "featured_collection",
+      "featured_products",
+      "collection_list",
+    ]);
+    for (const type of COMMERCE_SECTION_TYPES) expect(SECTION_TYPES).toContain(type);
   });
 
   it("a section in the wrong place is SECTION_NOT_ALLOWED_HERE", () => {
@@ -329,6 +391,8 @@ describe("section library v1 (spec 3.2)", () => {
       rating: { min: 0, max: 5 },
       heroPerPage: 3,
       whatsAppPerPage: 2,
+      leadFormPerPage: 1,
+      leadSuccess: 200,
     });
   });
 
@@ -354,7 +418,7 @@ describe("section library v1 (spec 3.2)", () => {
     ]);
   });
 
-  it("all ten admin labels are pinned (M-2)", () => {
+  it("all eleven admin labels are pinned (M-2)", () => {
     expect(Object.fromEntries(SECTION_DEFINITIONS.map((d) => [d.type, d.labels]))).toEqual({
       announcement_bar: { en: "Announcement bar", ar: "شريط إعلانات" },
       hero: { en: "Image banner", ar: "بانر بصورة" },
@@ -366,6 +430,7 @@ describe("section library v1 (spec 3.2)", () => {
       testimonials: { en: "Testimonials", ar: "آراء العملاء" },
       features: { en: "Store highlights", ar: "مميزات المتجر" },
       whatsapp_cta: { en: "WhatsApp button", ar: "زرار واتساب" },
+      lead_form: { en: "Lead form", ar: "فورم العملاء" },
     });
   });
 

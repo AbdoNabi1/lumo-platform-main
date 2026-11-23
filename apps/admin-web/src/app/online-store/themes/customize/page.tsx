@@ -3,6 +3,7 @@ import { CustomizeEditor } from "@/components/online-store/customize-editor";
 import type { MenuChoice } from "@/components/online-store/customize-panels";
 import type { StaffRole } from "@/components/online-store/theme-card";
 import { fetchMenus, fetchPreferences, fetchThemeState } from "@/lib/api/online-store";
+import { fetchStoreSettings } from "@/lib/api/store-settings";
 import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { menuDisplayTitle } from "@/lib/online-store/menu-copy";
@@ -12,11 +13,12 @@ export default async function CustomizePage() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
-  const [session, theme, prefs, menuList] = await Promise.all([
+  const [session, theme, prefs, menuList, storeSettings] = await Promise.all([
     readSession(),
     fetchThemeState(),
     fetchPreferences(),
     fetchMenus(),
+    fetchStoreSettings(),
   ]);
   const role: StaffRole = highestRole(session?.roles ?? []) ?? "viewer";
   if (theme.outcome !== "ok")
@@ -33,6 +35,9 @@ export default async function CustomizePage() {
           { handle: "main-menu", title: t.onlineStoreNavigation.defaultMain },
           { handle: "footer", title: t.onlineStoreNavigation.defaultFooter },
         ];
+  // A store when the API predates site types; null (offer no lead form) when the read failed.
+  const siteType =
+    storeSettings.outcome === "ok" ? (storeSettings.settings.siteType ?? "store") : null;
   return (
     <CustomizeEditor
       t={t}
@@ -41,6 +46,7 @@ export default async function CustomizePage() {
       role={role}
       storeName={prefs.outcome === "ok" ? prefs.data.storeName : ""}
       menus={menus}
+      siteType={siteType}
     />
   );
 }

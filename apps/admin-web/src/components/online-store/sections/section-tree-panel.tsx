@@ -36,6 +36,7 @@ import {
   type ThemeDocument,
 } from "@platform/storefront-content";
 import type { OnlineStoreImageDto, ThemeTargetsDto } from "@/lib/api/online-store";
+import type { SiteType } from "@/lib/api/store-settings";
 import type { Locale } from "@/lib/i18n";
 import { newItemId } from "@/lib/online-store/new-item-id";
 import { sectionProblems } from "@/lib/online-store/section-problems";
@@ -72,6 +73,8 @@ export interface SectionTreePanelProps {
   readonly selectedId: string | null;
   readonly disabled: boolean;
   readonly menus: readonly MenuChoice[];
+  /** Which section types the Add list offers; `null` when it could not be read. */
+  readonly siteType: SiteType | null;
   readonly onSelect: (id: string | null) => void;
   readonly onUpdate: (change: (doc: ThemeDocument) => ThemeDocument) => void;
   readonly handleRef?: Ref<SectionTreeHandle>;
@@ -185,6 +188,7 @@ export function SectionTreePanel({
   selectedId,
   disabled,
   menus,
+  siteType,
   onSelect,
   onUpdate,
   handleRef,
@@ -428,6 +432,7 @@ export function SectionTreePanel({
         }}
         doc={doc}
         placement={adding ?? "homepage"}
+        siteType={siteType}
         onAdd={add}
       />
       <Dialog open={removing !== null} onOpenChange={(open) => (open ? null : setRemoving(null))}>

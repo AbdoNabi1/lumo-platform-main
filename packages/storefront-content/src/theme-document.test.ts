@@ -417,7 +417,7 @@ describe("schema version 2 (Ruling 2)", () => {
   describe("limits, each at N and N+1", () => {
     const rich = (n: number) =>
       Array.from({ length: n }, (_, i) => newSection("rich_text", id(i + 1)));
-    const ofType = (type: "hero" | "whatsapp_cta", n: number) =>
+    const ofType = (type: "hero" | "whatsapp_cta" | "lead_form", n: number) =>
       Array.from({ length: n }, (_, i) => newSection(type, id(i + 1)));
 
     it("25 sections pass, 26 are TOO_MANY_SECTIONS at homepage.sections only", () => {
@@ -441,6 +441,14 @@ describe("schema version 2 (Ruling 2)", () => {
       expect(validateThemeDocument(v2(ofType("whatsapp_cta", 3)))).toEqual({
         ok: false,
         issues: [{ path: "homepage.sections.2.type", code: "TOO_MANY_OF_TYPE" }],
+      });
+    });
+
+    it("1 lead form passes, the 2nd is TOO_MANY_OF_TYPE", () => {
+      expect(validateThemeDocument(v2(ofType("lead_form", 1))).ok).toBe(true);
+      expect(validateThemeDocument(v2(ofType("lead_form", 2)))).toEqual({
+        ok: false,
+        issues: [{ path: "homepage.sections.1.type", code: "TOO_MANY_OF_TYPE" }],
       });
     });
 

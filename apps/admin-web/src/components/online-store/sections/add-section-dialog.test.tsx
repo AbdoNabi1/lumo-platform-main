@@ -32,6 +32,7 @@ function setup(props: Partial<React.ComponentProps<typeof AddSectionDialog>> = {
       onOpenChange={onOpenChange}
       doc={DEFAULT_THEME_DOCUMENT}
       placement="homepage"
+      siteType="store"
       onAdd={onAdd}
       {...props}
     />,
@@ -40,9 +41,11 @@ function setup(props: Partial<React.ComponentProps<typeof AddSectionDialog>> = {
 }
 
 describe("AddSectionDialog", () => {
-  it("the homepage placement lists nine types with name and description", () => {
+  it("a store's homepage placement lists nine types (all but the lead form) with name and description", () => {
     setup();
-    const homepage = SECTION_DEFINITIONS.filter((d) => d.placement === "homepage");
+    const homepage = SECTION_DEFINITIONS.filter(
+      (d) => d.placement === "homepage" && d.type !== "lead_form",
+    );
     expect(homepage).toHaveLength(9);
     const dialog = screen.getByRole("dialog");
     expect(dialog.querySelectorAll("button[data-section-type]")).toHaveLength(9);
@@ -56,6 +59,56 @@ describe("AddSectionDialog", () => {
       );
     }
     expect(dialog.querySelector('button[data-section-type="announcement_bar"]')).toBeNull();
+  });
+
+  it("a lead site is offered the lead form and none of the commerce sections", () => {
+    setup({ siteType: "lead_site" });
+    const types = Array.from(
+      screen.getByRole("dialog").querySelectorAll("button[data-section-type]"),
+    ).map((b) => b.getAttribute("data-section-type"));
+    expect(types).toContain("lead_form");
+    for (const commerce of ["featured_collection", "featured_products", "collection_list"]) {
+      expect(types).not.toContain(commerce);
+    }
+    expect(screen.getByText("Lead form")).toBeInTheDocument();
+    expect(screen.queryByText("Featured products")).toBeNull();
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      en.onlineStoreSections.descriptions.lead_form,
+    );
+    expect(types).toContain("hero");
+  });
+
+  it("a store, or an unknown site type, is not offered the lead form but keeps commerce", () => {
+    for (const siteType of ["store", null] as const) {
+      const { unmount } = setup({ siteType });
+      const types = Array.from(
+        screen.getByRole("dialog").querySelectorAll("button[data-section-type]"),
+      ).map((b) => b.getAttribute("data-section-type"));
+      expect(types, String(siteType)).not.toContain("lead_form");
+      expect(types, String(siteType)).toEqual(
+        expect.arrayContaining(["featured_collection", "featured_products", "collection_list"]),
+      );
+      unmount();
+    }
+  });
+
+  it("the lead form can be added once: a second is disabled by the type limit", () => {
+    setup({ siteType: "lead_site", doc: docWith([newSection("lead_form", id(1))]) });
+    const button = screen
+      .getByRole("dialog")
+      .querySelector('button[data-section-type="lead_form"]')!;
+    expect(button).toBeDisabled();
+    expect(document.getElementById(button.getAttribute("aria-describedby")!)).toHaveTextContent(
+      en.onlineStoreSections.typeLimit.replace("{max}", "1"),
+    );
+  });
+
+  it("the Arabic description of the lead form is shown to an Arabic admin", () => {
+    setup({ t: ar, locale: "ar", siteType: "lead_site" });
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "فورم بيجمع اسم العميل وتليفونه (وإيميله ورسالته لو حبيت) ويوصلك في صندوق الليدز",
+    );
+    expect(screen.getByText("فورم العملاء")).toBeInTheDocument();
   });
 
   it("the header placement lists only the announcement bar", () => {

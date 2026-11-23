@@ -299,6 +299,17 @@ function settingsOf(section: KnownSection, ctx: ResolutionContext): PublicSettin
         message: textOf(s.message),
       };
     }
+    case "lead_form": {
+      const s = section.settings;
+      return {
+        heading: textOf(s.heading),
+        text: textOf(s.text),
+        submitLabel: textOf(s.submitLabel),
+        successMessage: textOf(s.successMessage),
+        showEmail: s.showEmail !== false,
+        showMessage: s.showMessage !== false,
+      };
+    }
     default:
       return null;
   }

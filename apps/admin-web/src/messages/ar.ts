@@ -4342,6 +4342,7 @@ export const ar: Dictionary = {
       testimonials: "كلام عملاء مبسوطين.",
       features: "مميزات زي الدفع عند الاستلام والإرجاع السهل.",
       whatsapp_cta: "زرار يفتح شات واتساب معاك.",
+      lead_form: "فورم بيجمع اسم العميل وتليفونه (وإيميله ورسالته لو حبيت) ويوصلك في صندوق الليدز",
     },
     errors: {
       targetNotFound: "العنصر ده مبقاش موجود في متجرك.",
@@ -4387,6 +4388,10 @@ export const ar: Dictionary = {
       title: "العنوان",
       phone: "رقم الواتساب",
       message: "الرسالة الجاهزة",
+      submitLabel: "نص زرار الإرسال",
+      successMessage: "رسالة النجاح",
+      showEmail: "اطلب الإيميل",
+      showMessage: "اطلب رسالة",
       valueOf: "{label} (القيمة)",
     },
     options: {

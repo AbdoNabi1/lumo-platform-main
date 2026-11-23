@@ -76,6 +76,7 @@ const imageText = (over: Partial<SettingsByType["image_with_text"]> = {}) =>
 const list = (source: "all" | "manual", items: SettingsByType["collection_list"]["items"]) =>
   section("collection_list", { source, items });
 const whatsapp = (phone: string) => section("whatsapp_cta", { phone });
+const leadForm = (over: Partial<SettingsByType["lead_form"]> = {}) => section("lead_form", over);
 const UNSUPPORTED: UnsupportedSection = {
   id: "00000000-0000-4000-8000-000000000999",
   type: "countdown_timer",
@@ -420,6 +421,47 @@ describe("resolveSection (spec 3.4, Ruling 13)", () => {
         "live",
       ),
     ).toMatchObject({ settings: { button: { link: { href: "/pages/about" } } } });
+  });
+
+  it("a lead form is always complete and carries exactly its six settings", () => {
+    const expected = {
+      id: expect.any(String),
+      type: "lead_form",
+      settings: {
+        heading: { ar: "اطلب استشارة", en: "Get in touch" },
+        text: {
+          ar: "سيب بياناتك وهنكلمك في أقرب وقت",
+          en: "Leave your details and we will call you back",
+        },
+        submitLabel: { ar: "ابعت", en: "Send" },
+        successMessage: {
+          ar: "وصلتنا بياناتك، هنتواصل معاك قريب",
+          en: "Thanks! We will contact you soon",
+        },
+        showEmail: true,
+        showMessage: true,
+      },
+    };
+    expect(resolveSection(leadForm(), ctx(), "live")).toEqual(expected);
+    expect(resolveSection(leadForm(), ctx(), "preview")).toEqual({ ...expected, hidden: false });
+  });
+
+  it("a lead form keeps showEmail/showMessage false as false", () => {
+    expect(
+      resolveSection(leadForm({ showEmail: false, showMessage: false }), ctx(), "live"),
+    ).toMatchObject({ settings: { showEmail: false, showMessage: false } });
+    expect(resolveSection(leadForm({ showEmail: false }), ctx(), "live")).toMatchObject({
+      settings: { showEmail: false, showMessage: true },
+    });
+  });
+
+  it("a lead form with a missing or non-boolean flag reads it as true", () => {
+    const base = leadForm();
+    const { showEmail: _email, ...rest } = base.settings;
+    const odd = { ...base, settings: { ...rest, showMessage: "no" } } as unknown as Section;
+    expect(resolveSection(odd, ctx(), "live")).toMatchObject({
+      settings: { showEmail: true, showMessage: true },
+    });
   });
 
   it("hidden: omitted live, flagged in preview; unknown types are never served", () => {

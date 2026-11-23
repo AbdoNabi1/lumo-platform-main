@@ -25,8 +25,19 @@ export const SECTION_TYPES = [
   "testimonials",
   "features",
   "whatsapp_cta",
+  "lead_form",
 ] as const;
 export type SectionType = (typeof SECTION_TYPES)[number];
+
+/**
+ * The sections that sell products. A lead site's editor does not offer them (the add list only:
+ * a section already on a page is never removed). Shared so the admin and the storefront agree.
+ */
+export const COMMERCE_SECTION_TYPES = [
+  "featured_collection",
+  "featured_products",
+  "collection_list",
+] as const satisfies readonly SectionType[];
 
 export const FEATURE_ICONS = [
   "cod",
@@ -113,6 +124,15 @@ export interface WhatsAppCtaSettings {
   readonly phone: string;
   readonly message: LT;
 }
+export interface LeadFormSettings {
+  // key order = fields order = defaults order
+  readonly heading: LT;
+  readonly text: LT;
+  readonly submitLabel: LT;
+  readonly successMessage: LT;
+  readonly showEmail: boolean;
+  readonly showMessage: boolean;
+}
 
 export interface SettingsByType {
   announcement_bar: AnnouncementBarSettings;
@@ -125,6 +145,7 @@ export interface SettingsByType {
   testimonials: TestimonialsSettings;
   features: FeaturesSettings;
   whatsapp_cta: WhatsAppCtaSettings;
+  lead_form: LeadFormSettings;
 }
 
 export type KnownSection = {
@@ -468,6 +489,36 @@ const whatsappCta = define({
   }),
 });
 
+const leadForm = define({
+  type: "lead_form",
+  labels: { en: "Lead form", ar: "فورم العملاء" },
+  icon: "message-circle",
+  placement: "homepage",
+  maxPerPage: L.leadFormPerPage,
+  fields: [
+    heading,
+    localized("text", L.ctaText),
+    localized("submitLabel", L.buttonLabel),
+    localized("successMessage", L.leadSuccess),
+    { kind: "boolean", key: "showEmail" },
+    { kind: "boolean", key: "showMessage" },
+  ],
+  defaults: () => ({
+    heading: { ar: "اطلب استشارة", en: "Get in touch" },
+    text: {
+      ar: "سيب بياناتك وهنكلمك في أقرب وقت",
+      en: "Leave your details and we will call you back",
+    },
+    submitLabel: { ar: "ابعت", en: "Send" },
+    successMessage: {
+      ar: "وصلتنا بياناتك، هنتواصل معاك قريب",
+      en: "Thanks! We will contact you soon",
+    },
+    showEmail: true,
+    showMessage: true,
+  }),
+});
+
 export const SECTION_DEFINITIONS: readonly SectionDefinition[] = Object.freeze([
   announcementBar,
   hero,
@@ -479,6 +530,7 @@ export const SECTION_DEFINITIONS: readonly SectionDefinition[] = Object.freeze([
   testimonials,
   features,
   whatsappCta,
+  leadForm,
 ] as SectionDefinition[]);
 
 /** Scans the list: an untrusted string is never used as an index. */

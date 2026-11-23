@@ -78,6 +78,14 @@ export interface PublicSettingsByType {
   testimonials: { heading: LT; items: TestimonialsSettings["items"] };
   features: { heading: LT; items: FeaturesSettings["items"] };
   whatsapp_cta: { heading: LT; text: LT; buttonLabel: LT; phone: string; message: LT };
+  lead_form: {
+    heading: LT;
+    text: LT;
+    submitLabel: LT;
+    successMessage: LT;
+    showEmail: boolean;
+    showMessage: boolean;
+  };
 }
 
 type PublicBase<T extends SectionType> = {

@@ -289,6 +289,31 @@ describe("generated fields", () => {
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ showViewAll: false }));
   });
 
+  it("the lead form's own fields are labelled in both languages and its switches store booleans", () => {
+    const onChange = vi.fn();
+    render(<Harness section={newSection("lead_form", ID)} onChange={onChange} />);
+    expect(f.submitLabel).toBe("Submit button text");
+    expect(f.successMessage).toBe("Success message");
+    expect(f.showEmail).toBe("Ask for email");
+    expect(f.showMessage).toBe("Ask for a message");
+    expect(screen.getAllByLabelText(new RegExp(`${f.submitLabel}.*\\(English\\)`))).toHaveLength(1);
+    expect(screen.getAllByLabelText(new RegExp(`${f.successMessage}.*\\(English\\)`))).toHaveLength(
+      1,
+    );
+    expect(screen.getByRole("switch", { name: f.showEmail })).toBeChecked();
+    click(screen.getByRole("switch", { name: f.showEmail }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ showEmail: false }));
+    click(screen.getByRole("switch", { name: f.showMessage }));
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ showMessage: false }));
+    const fa = ar.onlineStoreSections.fields;
+    expect([fa.submitLabel, fa.successMessage, fa.showEmail, fa.showMessage]).toEqual([
+      "نص زرار الإرسال",
+      "رسالة النجاح",
+      "اطلب الإيميل",
+      "اطلب رسالة",
+    ]);
+  });
+
   it("the form shows the section's problems (removed collection)", () => {
     const section = withSettings(newSection("featured_collection", ID), { collection: "c-gone" });
     render(<Harness section={section} targets={{ collection: {}, product: {}, page: {} }} />);

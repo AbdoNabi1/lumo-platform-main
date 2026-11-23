@@ -4568,6 +4568,8 @@ export const en = {
       testimonials: "Quotes from happy customers.",
       features: "Badges like cash on delivery and easy returns.",
       whatsapp_cta: "A button that opens a WhatsApp chat with you.",
+      lead_form:
+        "A form that collects a visitor's name and phone (and optionally email and message) into your Leads inbox",
     },
     /** Save codes for a section's fields, shown beside the field. */
     errors: {
@@ -4615,6 +4617,10 @@ export const en = {
       title: "Title",
       phone: "WhatsApp number",
       message: "Prefilled message",
+      submitLabel: "Submit button text",
+      successMessage: "Success message",
+      showEmail: "Ask for email",
+      showMessage: "Ask for a message",
       /** The number box beside a slider: "{label} value". */
       valueOf: "{label} value",
     },
