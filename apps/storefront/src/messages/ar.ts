@@ -80,6 +80,24 @@ export const ar: Dictionary = {
     opensInNewTab: "يفتح في نافذة جديدة",
     whatsappDefault: "راسلنا على واتساب",
   },
+  /** Lead form section (Lead Site Part C, Task 6). */
+  leadForm: {
+    name: "الاسم",
+    phone: "رقم التليفون",
+    email: "الإيميل (اختياري)",
+    message: "رسالتك (اختياري)",
+    /** The label of the hidden trap field; only a bot reads it. */
+    honeypotLabel: "الموقع الإلكتروني",
+    /** The button label when the merchant left it empty. */
+    submitDefault: "ابعت",
+    successDefault: "وصلتنا بياناتك، هنتواصل معاك قريب",
+    validation: "راجع البيانات دي: {fields}",
+    errors: {
+      rateLimited: "بعت كتير في وقت قصير، جرّب كمان شوية",
+      unavailable: "الفورم مش متاح دلوقتي",
+      network: "حصلت مشكلة في الاتصال، جرّب تاني",
+    },
+  },
   product: {
     unavailable: "هذا المنتج غير متاح حالياً.",
     notFoundTitle: "المنتج غير موجود",

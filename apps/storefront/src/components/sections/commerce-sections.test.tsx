@@ -7,6 +7,7 @@ import { formatNumber } from "@/lib/format";
 import { en } from "@/messages/en";
 
 vi.mock("@/app/(store)/cart/actions", () => ({ addToCart: vi.fn() }));
+vi.mock("@/app/(store)/lead-actions", () => ({ submitLead: vi.fn() }));
 vi.mock("@/lib/catalog", () => ({
   priceOf: () => ({ status: "unavailable" }),
   AvailabilityBook: { load: async () => null },
@@ -53,6 +54,7 @@ function show(
       previewToken={mode === "preview" ? "tok" : null}
       mode={mode}
       eagerHeroId={null}
+      siteType="store"
     />,
   );
 }
