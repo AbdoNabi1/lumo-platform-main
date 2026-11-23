@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan
 > task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** `OPUS: PENDING · Sol: PENDING` (amendments round 1 applied)
+**Status:** `OPUS: AGREED · Sol: AGREED (plan review 3, 2026-11-23)`
 
 **Goal:** a merchant connects Meta, TikTok, Snap and GA4 (and records a Google Ads conversion id for the browser tag)
 in Settings → Ad platforms. Each connection turns into a per-shop delivery destination whose server request is
