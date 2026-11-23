@@ -27,6 +27,10 @@ overrides:
   "brace-expansion@1": ">=1.1.20 <2"
   "brace-expansion@2": ">=2.1.6 <3"
   "brace-expansion@5": ">=5.0.11 <6"
+  # 2026-11-23: GHSA-7589-6fvf-x4pw (effect <=3.22.0, ReDoS in Schema.TemplateLiteral) reaches the
+  # --prod graph via @prisma/client -> prisma -> @prisma/config, which pins effect 3.21.0. No stable
+  # Prisma release takes the fix (6.19.3 pins 3.21.0, 7.10.1 pins 3.20.0), so raise it within 3.x.
+  effect: ">=3.22.1 <4"
 
 # Approve build scripts for these trusted dependencies. pnpm sandboxes dependency
 # build scripts by default; these are required to run (Prisma query engine, esbuild
