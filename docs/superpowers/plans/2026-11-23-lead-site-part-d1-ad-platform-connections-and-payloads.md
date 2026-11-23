@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan
 > task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** `OPUS: PENDING · Sol: PENDING`
+**Status:** `OPUS: PENDING · Sol: PENDING` (amendments round 1 applied)
 
 **Goal:** a merchant connects Meta, TikTok, Snap and GA4 (and records a Google Ads conversion id for the browser tag)
 in Settings → Ad platforms. Each connection turns into a per-shop delivery destination whose server request is
@@ -88,6 +88,19 @@ PAGE_VIEW … LOGIN … LIST_VIEW … CUSTOM_EVENT_1 … CUSTOM_EVENT_5`; there 
 | `order_cancelled`  | `OrderCancelled` (custom) | `OrderCancelled` (custom)         | `CUSTOM_EVENT_5`             | `refund`           |
 
 "—" = not sent to that vendor by the server (no rule admits it).
+
+## Amendments round 1 (binding, preamble)
+
+Precedence: **Amendments round 1 > original task text.** Source: `2026-11-23-lead-site-part-d1-plan-review-1.md`.
+
+- **A0 (Plan review 1, finding 16).** Every command block starts with
+  `export pnpm_config_verify_deps_before_run=false` on its own line before the first `node …/pnpm.cjs` call. Dependency
+  linking is **not** done by implementers: before dispatching a task that adds a workspace package or dependency, Opus
+  runs `node …/pnpm.cjs install --offline --no-frozen-lockfile` once in the foreground (up to 1700 s) and tells the
+  implementer the lockfile is already updated; the implementer stages `pnpm-lock.yaml` with its package.json changes.
+  The `timeout 600 … install` lines in the tasks are replaced by this rule.
+- **A0b (finding 12).** Each manifest dependency or export is added by the first task that imports it, and each task's
+  own typecheck must pass at its commit without deep imports.
 
 ## Implementers
 
@@ -323,6 +336,26 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** (stage `services/ad-platforms/**`, `pnpm-lock.yaml`) `feat(ad-platforms): merchant ad platform connections with write-only secrets`.
 
+**Amendments round 1 (binding)**
+
+- (finding 12) Task 1's `wireAdPlatforms` has **no** `prisma` parameter and `package.json` has no `@platform/db`; Task 2
+  adds both. Task 1 signature: `wireAdPlatforms(deps: { clock: Clock; idGenerator: IdGenerator; vault?: CredentialVaultPort;
+deliverySync?: DeliverySyncPort; logger?: Logger; credentialPolicy?: CredentialPolicy })`.
+- (finding 11) Create `src/domain/errors.ts`: `export class CredentialStorageUnavailableError extends DomainError` with
+  code `"UNAVAILABLE"`, `retryable: false`, message `"ad platform credential storage is not configured"`. The service
+  presenter maps `UNAVAILABLE` → **503** explicitly (do not rely on the default 422). Replace the `NODE_ENV` check with
+  `export type CredentialPolicy = "require_real_vault" | "allow_stub"`: a non-empty secret with `vault.backing === "stub"`
+  and policy `require_real_vault` → that error. Default policy: `"allow_stub"` in Task 1 (in-memory only); Task 2 makes
+  the Prisma branch default to `"require_real_vault"`. Test: policy `require_real_vault` + stub vault + secret → 503 from
+  the controller, nothing stored; same without a secret → 200.
+- (finding 2) Task 1 also exports the delivery adapter used by Task 4:
+  `export interface ConnectionsForDelivery { listLive(tenantId: string): Promise<readonly LiveConnection[]>;
+openSecret(tenantId: string, platform: AdPlatform): Promise<string | null>; }` and
+  `export function connectionsForDelivery(internal: WiredAdPlatforms["internal"]): ConnectionsForDelivery` —
+  `listLive` calls `getLiveConnections.execute`, returns the value on `ok`, throws `Error("ad platform connections unavailable")`
+  otherwise; `openSecret` returns the value on `ok`, `null` on `NOT_FOUND`, throws the same generic error on any other
+  failure. `internal` is `{ getLiveConnections: GetLiveConnections; openSecret: OpenConnectionSecret }`. Tests for both mappings.
+
 ---
 
 ### Task 2: persistence and the real credential vault
@@ -401,6 +434,26 @@ cd 'F:/New folder/morbeh-lead-site' && node -e "import('./scripts/dev/check-pris
 ```
 
 - [ ] **Step 5: Commit** `feat(ad-platforms): persist connections with sealed credentials`.
+
+**Amendments round 1 (binding)**
+
+- (finding 12) Task 2 adds `@platform/ad-platforms: "workspace:*"` to `apps/runtime/package.json` **and**
+  `apps/admin/package.json` (both import its types here) plus `@platform/db`/`@platform/secrets`/`@prisma/client` to the
+  service; stage those files and `pnpm-lock.yaml` (Opus links before dispatch, A0). The Prisma branch of
+  `wireAdPlatforms` gains `prisma?: Database` and defaults `credentialPolicy` to `"require_real_vault"`.
+- (finding 10) `AD_PLATFORM_CREDENTIALS_KEK_REF: z.string().min(32).optional()` with the same comment as
+  `PAYMENT_CREDENTIALS_KEK_REF` (`apps/runtime/src/config.ts:232–238`: with the NodeCrypto backend the reference is the
+  key material). Config tests: absent → undefined; 31 characters → refused; 32 → accepted. `.env.example` documents it as
+  secret key material (commented out).
+- (finding 6) Name the runtime field `RuntimeCore.adPlatformCredentialVault?: CredentialVaultPort` (built only when the KEK
+  is set) and pass it **explicitly** into `createAdminHttpApi({ … })` in `apps/runtime/src/api.ts` next to the payment vault
+  (`api.ts:584–587`), then through `apps/admin/src/http/server.ts` into `wireAdmin`. Add `apps/runtime/src/api.ts` to this
+  task's files. Wiring test: a runtime core with a KEK yields an admin whose save seals with the envelope vault (stored
+  value parses as a sealed envelope, not `stub:`).
+- (finding 19) Repository tests use the leads-style recording Prisma helper for query + `set_config` assertions and a
+  queued P2002 error for the insert-conflict path (`createFakePrisma` models neither constraints nor `$executeRaw`);
+  uniqueness, RLS and migration shape are asserted by the `DATABASE_URL_TEST`-gated integration suite plus a static test
+  that reads `migration.sql` and checks the CHECKs, unique index, ENABLE/FORCE RLS and the policy text.
 
 ---
 
@@ -614,6 +667,41 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** `feat(tracking): vendor payload builders and per-destination match keys`.
 
+**Amendments round 1 (binding)**
+
+- (finding 3) `renderPayload` translates every builder refusal into the existing outcome:
+  `{ ok: false, failure: { gate: "mapping", detail: <reason> } }` (never the builder's raw shape); missing `extras` or
+  missing `vendorTarget` → same with detail `"vendor builder input missing"` / `"vendor target missing"`. Tests through
+  `receiveAndDeliver`: an unsupported event (tiktok `page_viewed`) and GA4 without client id are recorded `blocked` with
+  that detail and the fake HTTP transport is never called.
+- (finding 4) Click ids: `ttclid = clickIds.find(c => c.name === "ttclid")?.value`; Snap keeps the canonical key
+  `"scclid"` — `scClickId = clickIds.find(c => c.name === "scclid")?.value` — and only that definition's URL `param` changes to
+  `"ScCid"` in `envelope/click-ids.ts` (platform stays `"snapchat"`). `vendor-event-input.test.ts` builds `clickIds` from
+  real `extractClickIds` output for a URL with `ttclid=tt-click-1&ScCid=sc-click-1`.
+- (finding 9) Secrets in failure paths: `HttpJsonAdapter` never mutates `request.endpoint`; it builds the authenticated
+  URL/headers locally and passes every string it returns (`error`, and `vendorResponse` via JSON round-trip) through
+  `redactSecrets(text, [secret, encodeURIComponent(secret)])`, replacing each occurrence with `"[redacted]"`; a thrown
+  transport error is reduced to `redactSecrets(error.message)`. Tests: a transport that throws an error containing
+  `?access_token=secret-proof-1234` and a vendor that echoes the token in its JSON body → the whole recorded EventRecord
+  (history + attempts), the dead-letter payload and captured logger output contain no `secret-proof-1234` and no
+  `secret-proof-1234` URL-encoded; the registry destination URL is unchanged; `records.append` is captured before the
+  fake HTTP send (record-before-send). Remove the "recorded endpoint URL" assertion (no such field).
+- (finding 13) Snap: `external_id: keys.externalId` (scalar string) and `num_items: String(numItems)`; em/ph/fn/ln/ct/st/
+  zp/country stay arrays. Add a Snap golden with `externalId` and a Snap purchase golden with `num_items: "3"`.
+- (finding 14) Required-field refusals (reason text never contains raw values): every builder → `sourceUrl` must be an
+  `http(s)` URL else `"event source url missing"`; tiktok also needs `page.url` (same rule); snap → at least one of
+  `keys.em`, `keys.ph`, or both `ip` and `userAgent`, else `"snap matching data missing"`; snap `purchase` → `valueMajor`
+  and `currency` present else `"snap purchase value missing"`. Each through `receiveAndDeliver` as recorded blocked, no HTTP call.
+- (finding 15) `VendorEventInput.commerce` gains `contentIds: readonly string[]` = `payload.contentIds` when non-empty,
+  else the contents' `itemId`s; `contents[].quantity` = `item.quantity ?? 1`; `itemPriceMajor` = `priceMinor / 100` or
+  `null` when absent (omitted from the vendor item); `numItems` = `payload.numItems ?? deriveNumItems(...)` semantics.
+  Meta `content_ids` and Snap `content_ids` come from `contentIds`. Tests: ids-only payload → `content_ids` present, no
+  `contents`; a line item without quantity → quantity 1.
+- (finding 12) Export `STANDARD_RETRY` from `delivery/platform-profiles.ts` and the barrel (add the file to this task).
+- (finding 18, optional, accepted) `VendorEventInput.browser.gaSessionId: string | null` (from
+  `attribution.browserIds.gaSessionId?`); GA4 puts it in `params.session_id` when present. Golden with and without it.
+  D2 supplies the real GA session id from the `_ga_<container>` cookie (never Morbeh's `morbeh_sid`).
+
 ---
 
 ### Task 4: runtime — connections become destinations; `conn://` credentials
@@ -701,6 +789,34 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** `feat(runtime): ad platform connections drive per-shop delivery destinations`.
 
+**Amendments round 1 (binding)**
+
+- (finding 1) The stub mapping row value is a complete `MappingProfile`: `{ key: builderKey, version: <row version>,
+destination: <destination key>, fields: [] }` (check `delivery/mapping.ts:79–85` for any other required field and
+  include it). Tests load the sync-produced rows through the real `TrackingRegistrySnapshot` and run one event through
+  the recording runtime with a fake HTTP transport.
+- (finding 2) The sync and the resolver consume `ConnectionsForDelivery` (Task 1 amendment):
+  `connectionsForDelivery(wireAdPlatforms({ prisma, vault, clock, idGenerator }).internal)`.
+- (finding 5) Lifecycle comparison: group **all** rows by kind+key; the current state is the highest version of any
+  status. Append only when the desired (value, status) differs from that row; the next version is `max(all versions) + 1`.
+  Tests: disable twice → second sync appends nothing; re-enable unchanged → active v3 resolves again through the real
+  snapshot; no connection at all (or Google-Ads-only) → first sync writes an **empty active rule set** that loads via
+  `loadTrackingRegistry` (finding 19).
+- (finding 8) Add to `apps/runtime/src/tracking/tracking-registry.ts` (and its tests):
+  `withTenantRegistryTransaction<T>(tenantId: string, fn: (writer: TenantRegistryWriter) => Promise<T>): Promise<T>` on
+  `PrismaTrackingRegistryStore`, implemented with `runInTenantTransaction(this.prisma, tenantId, async (tx) => { await
+tx.$executeRaw\`SELECT pg_advisory_xact_lock(hashtext(${'tracking-registry:' + tenantId}))\`; return fn(writerOver(tx, tenantId)); })`where`TenantRegistryWriter = { loadAll(): Promise<readonly TrackingRegistryRow[]>; append(row): Promise<void> }`runs
+every query on`tx`and names`tenantId`. `AdPlatformDeliverySync.sync` reads the live connections **inside** that
+  transaction (after the lock) and does all appends there. No process-local lock, no casting a root client. Tests: a
+  failing middle append rolls back the earlier ones; two concurrent syncs (meta saved, tiktok saved) end with a
+  loadable registry whose versions are contiguous and which contains both destinations (in-memory store test simulates
+  the lock with a promise chain; the gated integration test uses real Postgres).
+- (finding 12) `retry: STANDARD_RETRY` imported from `@platform/tracking` (exported by Task 3).
+- (finding 6) `RuntimeCore.adPlatformDeliverySync?: DeliverySyncPort` populated in `composition.ts` and passed explicitly in
+  `apps/runtime/src/api.ts` to `createAdminHttpApi`; add `api.ts` to this task's files; a wiring test proves a save
+  through the admin reaches the real sync.
+- Use exactly `Expr.in(Expr.ref("event.name"), allowed)` for each rule (Sol verified the API).
+
 ---
 
 ### Task 5: admin API for connections
@@ -749,6 +865,14 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 
 - [ ] **Step 5: Commit** `feat(admin): ad platform connections api`.
 
+**Amendments round 1 (binding)**
+
+- (finding 7) Role expectations: **admin** GET and PUT allowed; **viewer and operator** GET and PUT → 403 (the role
+  table grants neither `settings:read` nor `settings:update` to them; no permission change). The route tests inject the
+  real `RoleTableAccessControl` and real staff tokens (the default harness uses `AllowAllAccessControl`, which would pass
+  falsely). The "assert whatever … grants" sentence is deleted.
+- (finding 11) A PUT with a token while no real vault is configured (production policy) → 503 envelope code `UNAVAILABLE`.
+
 ---
 
 ### Task 6: admin-web Settings → Ad platforms (UI)
@@ -794,3 +918,19 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
 Do not run `next build`.
 
 - [ ] **Step 5: Commit** `feat(admin-web): ad platforms settings page`.
+
+**Amendments round 1 (binding)**
+
+- (finding 17) Types in `lib/api/ad-platforms.ts` are browser-safe copies (no import from `@platform/ad-platforms`):
+  `AdPlatformKey`, `ConnectionViewDto`, `AD_PLATFORM_ORDER`. The action is
+  `saveAdPlatformAction(_prev: AdPlatformFormState, formData: FormData): Promise<AdPlatformFormState>` with
+  `AdPlatformFormState = { status: "idle" } | { status: "success"; view: ConnectionViewDto } | { status: "error"; message: string; fieldErrors?: Record<string, string>; conflict?: boolean }`.
+  After every call that reached the API (ok or not) it calls `revalidatePath("/settings/ad-platforms")`; after an ok save
+  that changed public ids or `enabled` it also calls the existing `revalidateStorefront()` helper. Each card keeps the
+  latest `ConnectionViewDto` in client state, seeded from props and replaced by `state.view` on success, and posts
+  `expectedVersion` from that state, so a second save does not conflict. Test two consecutive saves (second sends the
+  incremented version) and revalidation on a non-ok result.
+- (finding 17) "Remove token" is a button that opens a real `@platform/ui` `Dialog` (title, described warning, initial
+  focus on Cancel, Escape closes, focus returns to the still-mounted trigger); confirming submits `clearSecret: true`.
+  Vendor names render inside `<bdi dir="auto">`. Non-disclosure tests check `document.body` (portalled dialog) for the
+  token text after save.
