@@ -69,6 +69,11 @@ export interface OutreachWiringDeps {
   randomPin: () => string;
   /** Absent + prisma ⇒ the outbox sink; absent + no prisma ⇒ `InMemoryOutreachEventRecorder`. */
   events?: OutreachEventSink;
+  /**
+   * Test seam: called once with the SAME in-memory repositories the use cases run on (read handle for assertions).
+   * Never called when `prisma` is present, so production wiring cannot reach it.
+   */
+  inspectInMemory?: (repositories: OutreachRepositories) => void;
   /** `OUTREACH_UNRESOLVED_AFTER_MS` (default 300000; must exceed the provider timeout). */
   unresolvedAfterMs?: number;
 }
@@ -123,6 +128,7 @@ function repositories(deps: OutreachWiringDeps): OutreachRepositories & {
     };
   }
   const m = createInMemoryOutreach({ clock: deps.clock, platformTenantId: deps.platformTenantId });
+  deps.inspectInMemory?.(m);
   return {
     unitOfWork: m.unitOfWork,
     connections: m.connections,

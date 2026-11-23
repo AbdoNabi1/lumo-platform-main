@@ -4,6 +4,7 @@ export { validateTemplateDraft } from "./domain/message-template";
 export type { TemplateDraft, TemplateIssue } from "./domain/message-template";
 export { wireOutreach, wireOutreachRecovery } from "./composition";
 export type { OutreachWiringDeps, WiredOutreach } from "./composition";
+export type { OutreachRepositories } from "./domain/repositories";
 export { OutreachController } from "./interfaces/outreach.controller";
 export type {
   ContactDto,

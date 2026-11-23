@@ -5,6 +5,7 @@ import { createAdminHttpApi } from "@platform/admin";
 import { RoleTableAccessControl } from "@platform/auth";
 import type { Cache, IdempotencyKeyStore, RateLimiter } from "@platform/contracts";
 import { type IntegrationEvent, JsonEventSerializer } from "@platform/domain-events";
+import type { OutreachRepositories } from "@platform/outreach";
 import { createInMemoryOutboxEventSink } from "@platform/outreach/testing/outbox-store";
 import { buildRuntimeCore } from "./composition";
 import { loadRuntimeConfig } from "./config";
@@ -130,6 +131,8 @@ afterEach(async () => {
 
 async function boot() {
   const meta = fakeMeta();
+  // The SAME in-memory repositories the HTTP application runs on (test-only read handle, not a second store).
+  let repos: OutreachRepositories | undefined;
   const core = buildRuntimeCore(loadRuntimeConfig(baseEnv), { outreachFetch: meta.fetchImpl });
   const serializer = new JsonEventSerializer();
   const { sink, outbox } = createInMemoryOutboxEventSink({ serializer, clock: core.clock });
@@ -167,7 +170,13 @@ async function boot() {
     idempotencyKeys,
     responseCache: cache,
     tenantId: SHOP,
-    outreach: { ...core.outreach, events: sink },
+    outreach: {
+      ...core.outreach,
+      events: sink,
+      inspectInMemory: (r) => {
+        repos = r;
+      },
+    },
   });
   apps.push(app);
 
@@ -212,13 +221,17 @@ async function boot() {
       values: { body: ["سارة"] },
       ...(attestConsent ? { attestConsent: true } : {}),
     });
-  return { app, meta, outbox, post, webhook, published, send };
+  const stored = (): OutreachRepositories => {
+    if (repos === undefined) throw new Error("in-memory outreach repositories were not exposed");
+    return repos;
+  };
+  return { app, meta, outbox, post, webhook, published, send, stored };
 }
 
 describe("Outreach Part 1 end to end (runtime composition, signed webhooks, fake Meta fetch)", () => {
   it("connect → sync → consented send → statuses → button reply → STOP → suppressed → disconnect", async () => {
     expect.hasAssertions();
-    const { app, meta, post, webhook, published, send } = await boot();
+    const { app, meta, post, webhook, published, send, stored } = await boot();
     const now = Math.floor(Date.now() / 1000);
     const statusFor = (id: string, status: string, ts: number) => ({
       id,
@@ -342,6 +355,9 @@ describe("Outreach Part 1 end to end (runtime composition, signed webhooks, fake
         },
       });
     }
+    // The persisted outbound row (same store as the HTTP app) ends as `read`, still bound to the provider id.
+    const outboundRow = await stored().outbound.findById(SHOP, accepted.outboundId);
+    expect(outboundRow).toMatchObject({ status: "read", providerMessageId: wamid });
     // The same signed delivery again is a no-op.
     const replay = await webhook(wrap({ statuses: [statusFor(wamid, "read", times.read)] }));
     expect(replay.statusCode).toBe(200);
@@ -377,6 +393,14 @@ describe("Outreach Part 1 end to end (runtime composition, signed webhooks, fake
       },
     });
     expect(inbound[0]?.aggregateId).toBe(inbound[0]?.payload.inboundId);
+    // The persisted inbound row carries the button payload and the context (the outbound wamid).
+    const inboundRow = await stored().inbound.findByProviderMessageId(SHOP, "wamid.IN1");
+    expect(inboundRow).toMatchObject({
+      providerMessageId: "wamid.IN1",
+      type: "button",
+      buttonPayload: "btn:0",
+      contextProviderMessageId: wamid,
+    });
     // No message text travels in the event.
     expect(JSON.stringify(inbound[0])).not.toContain("تأكيد");
 
