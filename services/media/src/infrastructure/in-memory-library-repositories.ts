@@ -2,7 +2,11 @@ import type { EventContext, OutboxWriter } from "@platform/messaging";
 import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/repository";
 import type { CursorPage, Paginated } from "@platform/types";
 import type { Folder } from "../domain/folder";
-import type { FolderRepository, MediaAssetRepository } from "../domain/library-repositories";
+import type {
+  FolderRepository,
+  MediaAssetListQuery,
+  MediaAssetRepository,
+} from "../domain/library-repositories";
 import type { MediaAsset } from "../domain/media-asset";
 
 /** Sorting by id is required: the cursor is the id, so unsorted iteration would skip rows. */
@@ -91,10 +95,25 @@ export class InMemoryMediaAssetRepository implements MediaAssetRepository {
     );
   }
 
-  async list(page: CursorPage, tenantId: string): Promise<Paginated<MediaAsset>> {
-    return paginate(
-      [...this.store.values()].filter((e) => e.tenantId === tenantId).map((e) => e.asset),
-      page,
-    );
+  async list(page: MediaAssetListQuery, tenantId: string): Promise<Paginated<MediaAsset>> {
+    const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
+    const newest = page.sort === "newest";
+    const search = page.search?.toLowerCase();
+    const rows = [...this.store.values()]
+      .filter((e) => e.tenantId === tenantId)
+      .map((e) => e.asset)
+      .filter(
+        (a) =>
+          (!page.status || a.status.value === page.status) &&
+          (!search || a.name.toLowerCase().includes(search)),
+      )
+      .filter((a) => !after || (newest ? a.id.toString() < after : a.id.toString() > after))
+      .sort((a, b) =>
+        newest
+          ? b.id.toString().localeCompare(a.id.toString())
+          : a.id.toString().localeCompare(b.id.toString()),
+      );
+    const limit = normalizePageSize(page.first);
+    return buildPaginatedPage(rows.slice(0, limit + 1), limit, (a) => a.id.toString());
   }
 }

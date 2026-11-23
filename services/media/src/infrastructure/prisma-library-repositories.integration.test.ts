@@ -81,6 +81,42 @@ describe.runIf(Boolean(databaseUrl))("Prisma Media Library repositories (integra
     await prisma.$disconnect();
   });
 
+  it("filters active names case-insensitively and pages newest-first", async () => {
+    expect.hasAssertions();
+    const tenantId = `tenant-itest-filter-${crypto.randomUUID()}`;
+    const { prisma, mediaAssets, saveAsset } = wire(tenantId);
+    try {
+      const prefix = crypto.randomUUID().slice(0, 8);
+      const assetIds = [1, 2, 3, 4].map((n) => `${prefix}-0000-7000-8000-00000000000${n}`);
+      for (const [i, id] of assetIds.entries()) {
+        const asset = MediaAsset.create(
+          UniqueEntityId.from(id),
+          i === 1 ? "other.png" : `Beach-${i}.png`,
+          `media/${id}`,
+          ids.generate(),
+          clock.now(),
+        );
+        if (i === 3) asset.archive(ids.generate(), clock.now());
+        await saveAsset(asset);
+      }
+      const query = {
+        search: "BEACH",
+        status: "active" as const,
+        sort: "newest" as const,
+        first: 1,
+      };
+      const first = await mediaAssets.list(query, tenantId);
+      expect(first.items.map((asset) => asset.id.toString())).toEqual([assetIds[2]]);
+      expect(first.pageInfo.endCursor).toBe(assetIds[2]);
+      expect(first.pageInfo.hasNextPage).toBe(true);
+      const next = await mediaAssets.list({ ...query, after: first.pageInfo.endCursor! }, tenantId);
+      expect(next.items.map((asset) => asset.id.toString())).toEqual([assetIds[0]]);
+      expect(next.pageInfo.hasNextPage).toBe(false);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
   it("does not let tenant A read tenant B's folder through a SINGLE shared repository instance (ADR-0014, WP-10 T10.5)", async () => {
     const tenantA = `tenant-itest-folders-a-${crypto.randomUUID()}`;
     const tenantB = `tenant-itest-folders-b-${crypto.randomUUID()}`;

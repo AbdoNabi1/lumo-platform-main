@@ -16,7 +16,11 @@ export type { MediaLibraryWiringDeps, WiredMediaLibrary } from "./media-library.
 export { MediaLibraryController } from "./interfaces/media-library.controller";
 export { Folder } from "./domain/folder";
 export { MediaAsset } from "./domain/media-asset";
-export type { FolderRepository, MediaAssetRepository } from "./domain/library-repositories";
+export type {
+  FolderRepository,
+  MediaAssetListQuery,
+  MediaAssetRepository,
+} from "./domain/library-repositories";
 export type { ObjectStoragePort } from "./application/object-storage.port";
 export { sniffImage, type ImageType, type SniffedImage } from "./application/sniff-image";
 export {

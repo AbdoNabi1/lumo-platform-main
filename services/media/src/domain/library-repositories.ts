@@ -15,6 +15,12 @@ export interface FolderRepository {
   list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<Folder>>;
 }
 
+export interface MediaAssetListQuery extends CursorPage {
+  readonly search?: string;
+  readonly status?: "active" | "archived";
+  readonly sort?: "newest" | "oldest";
+}
+
 /** Persistence port for {@link MediaAsset}. Same ADR-0014 shape as {@link FolderRepository}. */
 export interface MediaAssetRepository {
   save(asset: MediaAsset, tenantId: string, tx?: unknown): Promise<void>;
@@ -25,5 +31,5 @@ export interface MediaAssetRepository {
    * not guaranteed; callers keep their own order.
    */
   findByIds(ids: readonly string[], tenantId: string, tx?: unknown): Promise<readonly MediaAsset[]>;
-  list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<MediaAsset>>;
+  list(query: MediaAssetListQuery, tenantId: string, tx?: unknown): Promise<Paginated<MediaAsset>>;
 }
