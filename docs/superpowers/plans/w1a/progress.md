@@ -3,3 +3,21 @@
 - 2026-11-23 11:15 Plan agreed: Sol VERDICT AGREED (plan-review-2.md), OPUS AGREED. BASE 6beb346c.
 - Round 1 partial (429 cut-off) + completion; round 2 convergence. Findings 1–9 all accepted, none rejected.
 - 2026-11-23 Task 1 dispatched → impl-terra.
+- 2026-11-23 11:23 Task 1 run 1 (terra) stopped on budget: 2 draft test files uncommitted, no code. Continuation dispatched to impl-terra (same worktree state).
+- 2026-11-23 11:32 Task 1 done by terra (continuation): 98fefbd2. Opus re-ran collections tests after hooks: 22/22 pass. Review → reviewer-sol.
+- 2026-11-23 11:40 Task 1 review (reviewer-sol): SPEC COMPLIANT, QUALITY APPROVED, 1 Minor (pin cursor value + 50/100 page-size boundaries in tests) → parked for Phase 4.
+- Opus acceptance: 12 controller methods with the planned permissions; listMembers index cursor, default 50 / max 100, missing rows, products.getByIds; uuid params, name 1..255, reorder without max; 8 route tests incl. 501 reorder, viewer 403, tenant 404, draft+published+deleted paging; collections 22/22 re-run after hooks. Task 1: complete (98fefbd2).
+- Task 2 dispatched → impl-sonnet (UI).
+- 2026-11-23 16:45 Task 2 done by sonnet: 4dd9502d (29 files, +3631; committed before its 429). Opus re-ran collections/navigation/middleware: 182/182. Review → reviewer-sol.
+- 2026-11-23 17:03 Task 2 review (reviewer-sol): SPEC COMPLIANT, QUALITY CHANGES_REQUESTED — Important I1 picker focus not restored to Browse (reproduced). Extra helper files ruled in scope. Opus: I1 accepted → fix round 1 → impl-sonnet.
+- 2026-11-23 17:12 Task 2 fix round 1 (sonnet): a9dfd29d. Scoped re-review by Opus (small verbatim fix): approved; 185/185.
+- Opus acceptance Task 2: client paths + encoding, picker action (no status filter, first 50, slice 20), revalidate on every API-reaching write (table test), membersPage 50/page + after=(p-1)*50-1, global-position moves, Remove on missing rows, delete Dialog contract, bdi, logical CSS, en/ar, nav Collections first, middleware entries + tests — all present in 4dd9502d/a9dfd29d. Task 2: complete.
+- Task 3 dispatched → impl-sonnet (UI-only).
+- 2026-11-23 17:26 Task 3 done by sonnet: 4a224dea (21 files, +1031/-282). Opus re-ran settings/navigation/middleware/global-search/mobile-nav/locales/collections: 42 files, 517 tests pass. Review → reviewer-sol.
+- 2026-11-23 17:40 Task 3 review (reviewer-sol): SPEC COMPLIANT, QUALITY APPROVED, 0 findings.
+- Opus acceptance Task 3: 19 settings ids in plan order, 9 unavailable, nav.growth on marketing, Menus id/href unchanged under Content, [section] awaits params + allowlist (unavailable items) + notFound, SettingsFrame on 8 settings pages + /locales; 517 tests across tasks green. Task 3: complete (4a224dea).
+- Phase 4: whole-branch review 6beb346c..4a224dea → reviewer-sol (with parked Task 1 Minor).
+- 2026-11-23 17:55 Branch review (reviewer-sol): SPEC COMPLIANT, QUALITY APPROVED, 1 Minor M1 (parked Task 1 cursor/page-size test pins). admin 93 tests, admin-web 526 tests, both tsc clean, en/ar parity on 80 new keys. Phase 4 fix dispatch → impl-terra (test-only).
+- 2026-11-23 18:02 Phase 4 fix (terra, test-only): 0aec0543 — M1 pins endCursor "0"/"1", default 50 → "49", after=49 starts at 50, first=100 → "99", first=101/0 → 422. Scoped re-review by Opus: approved.
+- Final verification (Opus): admin vitest collections+admin-http.e2e+public-catalog-routes 93/93; admin-web branch suites 526/526 (Sol run, unchanged since); tsc admin 0, admin-web 0; git diff --check clean.
+- Wave 1a COMPLETE at 0aec0543. Merge/push await owner go-ahead.
