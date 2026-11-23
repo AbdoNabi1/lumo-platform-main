@@ -16,6 +16,7 @@ import {
   normalizeHost,
 } from "./lib/shop-host";
 import { storefrontSecrets } from "./lib/storefront-env";
+import { withVisitorSession } from "./lib/visitor-session";
 
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const DEFAULT_SHOP_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
@@ -94,7 +95,7 @@ const hasUnlockCookie = (request: NextRequest, shopId: string, accessVersion: nu
 
 const unavailable = () => gated(text(503, "Temporarily unavailable / غير متاح مؤقتاً"));
 
-export async function middleware(request: NextRequest): Promise<NextResponse> {
+async function route(request: NextRequest): Promise<NextResponse> {
   const headers = new Headers(request.headers);
   headers.delete(SHOP_ID_HEADER); // never trust a client-sent shop id
   headers.delete(PREVIEW_HEADER); // nor a client-sent preview token header
@@ -188,6 +189,14 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const target = new URL("/password", request.url);
   target.searchParams.set("return_to", returnPath);
   return gated(NextResponse.redirect(target, 302));
+}
+
+/**
+ * Every response, whichever early return made it (page, redirect to the gate, refusal text), carries the
+ * visitor's first-party session cookie (Part C, D1): this is the one place it is stamped.
+ */
+export async function middleware(request: NextRequest): Promise<NextResponse> {
+  return withVisitorSession(request, await route(request));
 }
 
 export const config = {

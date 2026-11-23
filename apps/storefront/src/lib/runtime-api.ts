@@ -866,6 +866,80 @@ export function createProductReview(
   });
 }
 
+/**
+ * The public lead-form submission body, exactly the strict zod body of
+ * `apps/admin/src/http/public-leads-routes.ts` (no tenant: the shop comes from `x-tenant-id`).
+ */
+export interface CreateLeadBody {
+  readonly formId: string;
+  readonly name: string;
+  readonly phone: string;
+  readonly email?: string;
+  readonly message?: string;
+  readonly sessionId: string;
+  readonly sessionAlreadyEmitted: boolean;
+  readonly spamSignals: { readonly honeypot: boolean; readonly elapsedMs: number };
+  readonly context: {
+    readonly pageUrl: string | null;
+    readonly referrer: string | null;
+    readonly ip: string | null;
+    readonly userAgent: string | null;
+    readonly cookies: {
+      readonly fbp?: string;
+      readonly fbc?: string;
+      readonly ttp?: string;
+      readonly scid?: string;
+      readonly ga?: string;
+    };
+  };
+}
+
+/** The route's 201 body: what the lead was decided as (`emit` = forward it, Plan D). */
+export interface CreateLeadResult {
+  readonly leadId: string;
+  readonly eventId: string;
+  readonly emission: "emit" | "suppressed" | "spam";
+}
+
+const LEAD_EMISSIONS: ReadonlySet<unknown> = new Set(["emit", "suppressed", "spam"]);
+
+export function isCreateLeadResult(value: unknown): value is CreateLeadResult {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.leadId === "string" &&
+    v.leadId !== "" &&
+    typeof v.eventId === "string" &&
+    v.eventId !== "" &&
+    LEAD_EMISSIONS.has(v.emission)
+  );
+}
+
+/** The `fields[].field` strings of an API error envelope (422), in order; anything else is `[]`. */
+export function validationFieldsOf(value: unknown): readonly string[] {
+  if (typeof value !== "object" || value === null) return [];
+  const fields = (value as { readonly fields?: unknown }).fields;
+  if (!Array.isArray(fields)) return [];
+  return fields.flatMap((issue: unknown) => {
+    if (typeof issue !== "object" || issue === null) return [];
+    const field = (issue as { readonly field?: unknown }).field;
+    return typeof field === "string" ? [field] : [];
+  });
+}
+
+/**
+ * Lead Part C: an anonymous lead-form submission. The body is `unknown` on purpose: the caller
+ * checks it with `isCreateLeadResult` (201) or `validationFieldsOf` (422). The key is stored on the
+ * lead server-side, so a repeat with the same key replays the saved result (`Idempotency-Key`,
+ * 8-128 letters, digits and hyphens).
+ */
+export function createLead(
+  body: CreateLeadBody,
+  idempotencyKey: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  return postItem<unknown>("/api/v1/public/leads", body, { "Idempotency-Key": idempotencyKey });
+}
+
 export interface CheckoutAddressInput {
   /** Plan 3A: who receives the order and how to reach them. */
   readonly name?: string;

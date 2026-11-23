@@ -15,7 +15,9 @@ vi.mock("react", async (original) => ({
 }));
 const getStorefrontShell = vi.hoisted(() => vi.fn());
 vi.mock("./online-store", () => ({ PREVIEW_HEADER: "x-morbeh-preview", getStorefrontShell }));
-const { getLockedView, getRequestLocale } = await import("./request-locale");
+const getPublicStore = vi.hoisted(() => vi.fn());
+vi.mock("./runtime-api", () => ({ getPublicStore }));
+const { getLockedView, getRequestLocale, getRequestPublicStore } = await import("./request-locale");
 
 beforeEach(() => {
   cookieValue.value = undefined;
@@ -44,5 +46,17 @@ describe("getLockedView (Ruling 5)", () => {
     }
     requestHeaders.set("x-morbeh-locked-view", "1");
     expect(await getLockedView()).toBe(true);
+  });
+});
+
+describe("getRequestPublicStore", () => {
+  it("reads the runtime's public store (React's cache dedupes it per request)", async () => {
+    getPublicStore.mockResolvedValue({ name: "Shop", currency: "EGP", siteType: "lead_site" });
+    expect(await getRequestPublicStore()).toEqual({
+      name: "Shop",
+      currency: "EGP",
+      siteType: "lead_site",
+    });
+    expect(getPublicStore).toHaveBeenCalledTimes(1);
   });
 });

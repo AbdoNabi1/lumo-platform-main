@@ -57,11 +57,14 @@ Lead stages after submission (qualified / converted), Instant-Forms CRM integrat
 
 - **Event allow-list (C/D):** a resolved `lead_site` shop admits exactly `page_viewed`, `form_submitted`,
   `contact_clicked`; any commerce event is refused before delivery. A `store` shop's behavior is unchanged.
-- **Lead route (C):** saves every valid submission; resolves the collector session (minting one with the collector's
-  own rules and returning the cookie when missing) **before** calling `decideLeadEmission`; forwards only on `emit`.
-  Production ledger: claim = Redis `SET key 1 NX EX 1800`; the collector calls `extendLeadClaim` (Redis `EXPIRE key 1800`,
-  never creating the key) on every request of a `lead_site` shop that renews an existing session, so the claim lives
-  exactly as long as the session.
+- **Lead route (C):** saves every valid submission; the session id comes from the storefront's own first-party
+  `morbeh_sid` cookie (the collector's cookie is third-party on a merchant's custom domain), which the storefront
+  middleware reads or mints and re-issues with `Max-Age=1800` on every response; the route calls `decideLeadEmission`
+  with that id and forwards only on `emit`. "Once per session" holds in two layers: an HttpOnly cookie
+  `morbeh_lead_sent=<sid>`, set after a forwarded lead and slid with the session, suppresses the next lead of that
+  session (so sessions longer than 30 minutes need no per-page-view Redis call); the Redis claim (`SET key 1 NX EX 1800`)
+  covers two submits racing before the cookie exists. `extendLeadClaim` is not used by Part C (Lead Site Part C plan,
+  design decision D1).
 - **Ingest (D):** wire `checkProvidedDedupId` — `"invalid"` → permanent refusal `dedup_id_invalid` (value never echoed).
   Remove the `session_minute` fallback only after the browser SDK supplies `mb_<uuid>` on every beacon and queued
   legacy events are drained; never mint an independent random id at ingest. Server events use `businessEventId`.
