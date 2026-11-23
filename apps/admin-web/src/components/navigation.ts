@@ -115,7 +115,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   { id: "customers", label: (t) => t.nav.customers, href: "/customers", Icon: UserIcon },
   {
     id: "marketing",
-    label: (t) => t.nav.marketing,
+    label: (t) => t.nav.growth,
     href: "/marketing",
     Icon: MegaphoneIcon,
     children: [
@@ -128,7 +128,21 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     ],
   },
   { id: "discounts", label: (t) => t.nav.discounts, href: "/discounts", Icon: PercentIcon },
-  { id: "content", label: (t) => t.nav.content, href: "/content", Icon: FileTextIcon },
+  {
+    id: "content",
+    label: (t) => t.nav.content,
+    href: "/content",
+    Icon: FileTextIcon,
+    // Shopify's Content lists Metaobjects, Files, Menus and Blog posts; Menus is the one that exists.
+    children: [
+      {
+        id: "online-store-navigation",
+        label: (t) => t.nav.menus,
+        href: "/online-store/navigation",
+        Icon: MenuIcon,
+      },
+    ],
+  },
   { id: "finance", label: (t) => t.nav.finance, href: "/finance", Icon: LandmarkIcon },
   { id: "analytics", label: (t) => t.nav.analytics, href: "/analytics", Icon: BarChart3Icon },
 ];
@@ -150,12 +164,6 @@ export const ONLINE_STORE_NAV: NavItem = {
       Icon: PaletteIcon,
     },
     { id: "pages", label: (t) => t.nav.pages, href: "/pages", Icon: FileIcon },
-    {
-      id: "online-store-navigation",
-      label: (t) => t.nav.navigation,
-      href: "/online-store/navigation",
-      Icon: MenuIcon,
-    },
     {
       id: "online-store-preferences",
       label: (t) => t.nav.preferences,

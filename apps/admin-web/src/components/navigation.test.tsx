@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
-import { PRIMARY_NAV, isInSection, platformToolsEnabled, storefrontHref } from "./navigation";
+import {
+  ONLINE_STORE_NAV,
+  PRIMARY_NAV,
+  isInSection,
+  platformToolsEnabled,
+  storefrontHref,
+} from "./navigation";
 import { SidebarNav } from "./sidebar-nav";
 
 function renderNav(
@@ -95,7 +102,7 @@ describe("SidebarNav (Shopify layout)", () => {
       en.nav.orders,
       en.nav.products,
       en.nav.customers,
-      en.nav.marketing,
+      en.nav.growth,
       en.nav.discounts,
       en.nav.content,
       en.nav.finance,
@@ -138,16 +145,72 @@ describe("SidebarNav (Shopify layout)", () => {
     );
   });
 
-  it("puts Navigation right after Pages under Online Store (Part 2)", () => {
+  it("lists Menus under Content, current on a menu page, and not under Online Store (Shopify parity Wave 1a)", () => {
+    expect.hasAssertions();
     renderNav("online-store-navigation");
+    const primary = screen.getByRole("navigation", { name: en.nav.primary });
+    expect(within(primary).getByRole("link", { name: en.nav.content })).toBeInTheDocument();
+    const menus = within(primary).getByRole("link", { name: en.nav.menus });
+    expect(menus).toHaveAttribute("href", "/online-store/navigation");
+    expect(menus).toHaveAttribute("aria-current", "page");
     const channels = screen.getByRole("navigation", { name: en.nav.salesChannels });
-    const labels = within(channels)
+    const hrefs = within(channels)
       .getAllByRole("link")
-      .map((link) => link.textContent);
-    expect(labels.indexOf(en.nav.navigation)).toBe(labels.indexOf(en.nav.pages) + 1);
-    const link = within(channels).getByRole("link", { name: en.nav.navigation });
-    expect(link).toHaveAttribute("href", "/online-store/navigation");
-    expect(link).toHaveAttribute("aria-current", "page");
+      .map((link) => link.getAttribute("href"));
+    expect(hrefs).not.toContain("/online-store/navigation");
+    expect(within(channels).queryByRole("link", { name: en.nav.menus })).toBeNull();
+  });
+
+  it("keeps Menus closed until a Content page is current", () => {
+    expect.hasAssertions();
+    renderNav("dashboard");
+    expect(screen.queryByRole("link", { name: en.nav.menus })).toBeNull();
+  });
+
+  it("gives Content the Menus child and takes it out of Online Store's children", () => {
+    expect.hasAssertions();
+    const content = PRIMARY_NAV.find((item) => item.id === "content")!;
+    expect((content.children ?? []).map((child) => child.id)).toEqual(["online-store-navigation"]);
+    expect(isInSection(content, "online-store-navigation")).toBe(true);
+    expect((ONLINE_STORE_NAV.children ?? []).map((child) => child.id)).not.toContain(
+      "online-store-navigation",
+    );
+    expect((ONLINE_STORE_NAV.children ?? []).map((child) => child.id)).toEqual([
+      "online-store-themes",
+      "pages",
+      "online-store-preferences",
+      "seo",
+    ]);
+  });
+
+  it("labels the marketing item Growth in English and النمو in Arabic, keeping its id and href", () => {
+    expect.hasAssertions();
+    const marketing = PRIMARY_NAV.find((item) => item.id === "marketing")!;
+    expect(marketing.href).toBe("/marketing");
+    expect(marketing.label(en)).toBe("Growth");
+    expect(marketing.label(ar)).toBe("النمو");
+    expect((marketing.children ?? []).map((child) => child.id)).toEqual(["automations"]);
+    render(
+      <SidebarNav
+        t={ar}
+        locale="ar"
+        activeId="dashboard"
+        storefrontUrl={null}
+        showPlatformTools={false}
+      />,
+    );
+    const primary = screen.getByRole("navigation", { name: ar.nav.primary });
+    expect(within(primary).getByRole("link", { name: "النمو" })).toHaveAttribute(
+      "href",
+      "/marketing",
+    );
+  });
+
+  it("names the Menus child القوائم in Arabic", () => {
+    expect.hasAssertions();
+    const content = PRIMARY_NAV.find((item) => item.id === "content")!;
+    expect(content.children?.[0]?.label(ar)).toBe("القوائم");
+    expect(content.children?.[0]?.label(en)).toBe("Menus");
   });
 
   it("lists the raw theme tokens under Platform tools", () => {

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { CarriersCard } from "@/components/settings/shipping/carriers-card";
 import { ZonesView } from "@/components/settings/shipping/zones-view";
 import { fetchCarrierSettings } from "@/lib/api/carriers";
@@ -29,44 +30,48 @@ export default async function ShippingSettingsPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
-        <header>
-          <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
-            {t.shippingSettings.back}
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t.shippingSettings.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{t.shippingSettings.subtitle}</p>
-        </header>
+      <SettingsFrame t={t} activeId="shipping">
+        <div className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+          <header>
+            <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
+              {t.shippingSettings.back}
+            </Link>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+              {t.shippingSettings.title}
+            </h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.shippingSettings.subtitle}</p>
+          </header>
 
-        {carriers.outcome === "ok" && <CarriersCard carriers={carriers.data.carriers} t={t} />}
-        {carriers.outcome !== "ok" && carriers.outcome !== "unauthorized" && (
-          <p role="note" className="text-muted-foreground text-sm">
-            {t.shippingSettings.loadError}
-          </p>
-        )}
+          {carriers.outcome === "ok" && <CarriersCard carriers={carriers.data.carriers} t={t} />}
+          {carriers.outcome !== "ok" && carriers.outcome !== "unauthorized" && (
+            <p role="note" className="text-muted-foreground text-sm">
+              {t.shippingSettings.loadError}
+            </p>
+          )}
 
-        {result.outcome === "ok" ? (
-          <ZonesView
-            zones={result.zones}
-            currency={settings.currency}
-            weightUnit={settings.weightUnit}
-            homeCountry={homeCountryFor(settings.currency)}
-            t={t}
-            locale={locale}
-          />
-        ) : (
-          <div role="note" className="text-muted-foreground flex items-center gap-2 text-sm">
-            {result.outcome === "unauthorized" ? (
-              <LockIcon aria-hidden="true" className="size-4" />
-            ) : (
-              <AlertTriangleIcon aria-hidden="true" className="size-4" />
-            )}
-            {result.outcome === "unauthorized"
-              ? t.shippingSettings.unauthorized
-              : t.shippingSettings.loadError}
-          </div>
-        )}
-      </div>
+          {result.outcome === "ok" ? (
+            <ZonesView
+              zones={result.zones}
+              currency={settings.currency}
+              weightUnit={settings.weightUnit}
+              homeCountry={homeCountryFor(settings.currency)}
+              t={t}
+              locale={locale}
+            />
+          ) : (
+            <div role="note" className="text-muted-foreground flex items-center gap-2 text-sm">
+              {result.outcome === "unauthorized" ? (
+                <LockIcon aria-hidden="true" className="size-4" />
+              ) : (
+                <AlertTriangleIcon aria-hidden="true" className="size-4" />
+              )}
+              {result.outcome === "unauthorized"
+                ? t.shippingSettings.unauthorized
+                : t.shippingSettings.loadError}
+            </div>
+          )}
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

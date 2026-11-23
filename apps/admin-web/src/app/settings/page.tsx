@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { fetchUsageCounters } from "@/lib/api/licensing";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
@@ -117,47 +118,49 @@ export default async function SettingsPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">{t.settingsPage.title}</h1>
-        </header>
+      <SettingsFrame t={t}>
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <header>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.settingsPage.title}</h1>
+          </header>
 
-        <Card>
-          <CardContent className="divide-border flex flex-col divide-y p-0">
-            {SECTIONS.map(({ href, Icon, title, body }) => (
-              <Link
-                key={href}
-                href={href}
-                className="hover:bg-muted/50 flex items-center gap-3 p-4"
-              >
-                <Icon aria-hidden="true" className="text-muted-foreground size-5" />
-                <span className="flex flex-1 flex-col">
-                  <span className="text-sm font-medium">{title(t)}</span>
-                  <span className="text-muted-foreground text-sm">{body(t)}</span>
-                </span>
-                <ChevronRightIcon
-                  aria-hidden="true"
-                  className="text-muted-foreground size-4 rtl:rotate-180"
-                />
-              </Link>
-            ))}
-          </CardContent>
-        </Card>
-
-        {showPlatformTools() && (
           <Card>
-            <CardHeader>
-              <CardTitle>{t.settingsPage.usageSectionTitle}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-muted-foreground text-sm">{t.settingsPage.usageSectionBody}</p>
-              <Suspense fallback={<UsageCountersSkeleton />}>
-                <UsageCountersSection t={t} />
-              </Suspense>
+            <CardContent className="divide-border flex flex-col divide-y p-0">
+              {SECTIONS.map(({ href, Icon, title, body }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="hover:bg-muted/50 flex items-center gap-3 p-4"
+                >
+                  <Icon aria-hidden="true" className="text-muted-foreground size-5" />
+                  <span className="flex flex-1 flex-col">
+                    <span className="text-sm font-medium">{title(t)}</span>
+                    <span className="text-muted-foreground text-sm">{body(t)}</span>
+                  </span>
+                  <ChevronRightIcon
+                    aria-hidden="true"
+                    className="text-muted-foreground size-4 rtl:rotate-180"
+                  />
+                </Link>
+              ))}
             </CardContent>
           </Card>
-        )}
-      </div>
+
+          {showPlatformTools() && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t.settingsPage.usageSectionTitle}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground text-sm">{t.settingsPage.usageSectionBody}</p>
+                <Suspense fallback={<UsageCountersSkeleton />}>
+                  <UsageCountersSection t={t} />
+                </Suspense>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

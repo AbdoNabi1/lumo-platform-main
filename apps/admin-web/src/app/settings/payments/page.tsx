@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { PaymentMethodsForm } from "@/components/settings/payment-methods-form";
 import { fetchPaymentSettings } from "@/lib/api/payments";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -21,30 +22,34 @@ export default async function PaymentSettingsPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header>
-          <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
-            {t.paymentSettings.back}
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{t.paymentSettings.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{t.paymentSettings.subtitle}</p>
-        </header>
+      <SettingsFrame t={t} activeId="payments">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <header>
+            <Link href="/settings" className="text-muted-foreground text-sm hover:underline">
+              {t.paymentSettings.back}
+            </Link>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+              {t.paymentSettings.title}
+            </h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.paymentSettings.subtitle}</p>
+          </header>
 
-        {result.outcome === "ok" ? (
-          <PaymentMethodsForm settings={result.settings} t={t} />
-        ) : (
-          <div role="note" className="text-muted-foreground flex items-center gap-2 text-sm">
-            {result.outcome === "unauthorized" ? (
-              <LockIcon aria-hidden="true" className="size-4" />
-            ) : (
-              <AlertTriangleIcon aria-hidden="true" className="size-4" />
-            )}
-            {result.outcome === "unauthorized"
-              ? t.paymentSettings.unauthorized
-              : t.paymentSettings.loadError}
-          </div>
-        )}
-      </div>
+          {result.outcome === "ok" ? (
+            <PaymentMethodsForm settings={result.settings} t={t} />
+          ) : (
+            <div role="note" className="text-muted-foreground flex items-center gap-2 text-sm">
+              {result.outcome === "unauthorized" ? (
+                <LockIcon aria-hidden="true" className="size-4" />
+              ) : (
+                <AlertTriangleIcon aria-hidden="true" className="size-4" />
+              )}
+              {result.outcome === "unauthorized"
+                ? t.paymentSettings.unauthorized
+                : t.paymentSettings.loadError}
+            </div>
+          )}
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }
