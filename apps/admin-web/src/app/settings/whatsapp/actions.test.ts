@@ -104,6 +104,24 @@ const ALLOWLIST = Object.keys(en.whatsappSettings.errors).filter(
 
 describe("client error mapping (R2-O04): the exact 409 envelope through mutateAdminApi", () => {
   it.each([
+    [
+      "en",
+      "The selected phone number doesn't belong to the WhatsApp business account. Start setup again and select matching assets.",
+    ],
+    [
+      "ar",
+      "رقم التليفون المختار مش تابع لحساب WhatsApp للأعمال. ابدأ الإعداد تاني واختار الأصول المتطابقة.",
+    ],
+  ])("maps the META_ASSET_MISMATCH 409 for connect in %s", async (locale, message) => {
+    expect.hasAssertions();
+    state.locale = locale;
+    fetchMock.mockImplementation(async () => conflict("META_ASSET_MISMATCH"));
+    expect(await connectWhatsAppAction({ code: "c", wabaId: "1", phoneNumberId: "2" })).toEqual({
+      status: "error",
+      message,
+    });
+  });
+  it.each([
     ["en", en],
     ["ar", ar],
   ] as const)("localises every allowlisted code in %s", async (locale, t: Dictionary) => {

@@ -5009,6 +5009,8 @@ export const en = {
       ONBOARDING_NOT_ACTIVE: "There's no unfinished WhatsApp setup to cancel.",
       ONBOARDING_RECONCILIATION_REQUIRED:
         "Turn off two-step verification for this number in WhatsApp Manager, then continue setup.",
+      META_ASSET_MISMATCH:
+        "The selected phone number doesn't belong to the WhatsApp business account. Start setup again and select matching assets.",
       PHONE_IN_USE: "That phone number is already connected to another store.",
       WABA_IN_USE: "That WhatsApp Business account is already connected to another store.",
       WHATSAPP_NOT_CONFIGURED: "WhatsApp isn't set up on this platform yet.",

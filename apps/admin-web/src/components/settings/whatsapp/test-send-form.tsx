@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button, Input, Label, NativeSelect } from "@platform/ui";
 import { testSendAction, type TestSendActionState } from "@/app/settings/whatsapp/actions";
 import type { TestSendInput, WhatsAppTemplateDto } from "@/lib/api/outreach";
@@ -64,6 +64,10 @@ export function TestSendForm({
   const [blocked, setBlocked] = useState<ReadonlySet<string>>(new Set());
   const [suppressedPair, setSuppressedPair] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [unresolved, setUnresolved] = useState<{ payload: TestSendInput; key: string } | null>(
+    null,
+  );
+  const inFlight = useRef(false);
 
   const template = options.find((candidate) => templateKey(candidate) === selected) ?? null;
   const shape = template?.sendShape ?? null;
@@ -115,16 +119,27 @@ export function TestSendForm({
 
   function submit() {
     const input = request();
-    if (input === null || !canSubmit) return;
+    if (input === null || !canSubmit || inFlight.current) return;
     const signature = JSON.stringify(input);
-    // The key belongs to the request it was first sent with; a different request is a new submission.
-    if (holder.usedFor !== null && holder.usedFor !== signature) holder.key = newClientKey();
-    holder.usedFor = signature;
+    if (unresolved === null && holder.usedFor !== null && holder.usedFor !== signature)
+      holder.key = newClientKey();
+    const submission = unresolved ?? { payload: input, key: holder.key };
+    holder.usedFor = JSON.stringify(submission.payload);
+    setUnresolved(submission);
+    inFlight.current = true;
     const submittedPair = pair;
     startTransition(async () => {
-      const outcome = await testSendAction({ ...input, idempotencyKey: holder.key });
+      let outcome: TestSendActionState;
+      try {
+        outcome = await testSendAction({ ...submission.payload, idempotencyKey: submission.key });
+      } catch {
+        outcome = { status: "error", message: t.whatsappSettings.errors.generic };
+      } finally {
+        inFlight.current = false;
+      }
       setResult(outcome);
-      if (outcome.status !== "result") return; // a transport/validation error keeps the key for a retry
+      if (outcome.status !== "result") return;
+      setUnresolved(null);
       if (outcome.outcome === "accepted") {
         // Definitive: the next submission is a new one.
         holder.key = newClientKey();
@@ -161,116 +176,120 @@ export function TestSendForm({
         submit();
       }}
     >
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="whatsapp-test-to">{copy.to}</Label>
-        <Input
-          id="whatsapp-test-to"
-          type="tel"
-          inputMode="tel"
-          autoComplete="off"
-          dir="ltr"
-          className="text-start"
-          value={to}
-          aria-invalid={toTrimmed.length > 0 && !phoneValid}
-          aria-describedby="whatsapp-test-to-hint"
-          onChange={(event) => {
-            setTo(event.target.value);
-            setResult(null);
-          }}
-        />
-        <p
-          id="whatsapp-test-to-hint"
-          className={
-            toTrimmed.length > 0 && !phoneValid
-              ? "text-destructive text-sm"
-              : "text-muted-foreground text-sm"
-          }
-        >
-          {toTrimmed.length > 0 && !phoneValid ? copy.toInvalid : copy.toHint}
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="whatsapp-test-template">{copy.template}</Label>
-        <NativeSelect
-          id="whatsapp-test-template"
-          value={selected}
-          onChange={(event) => chooseTemplate(event.target.value)}
-        >
-          <option value="">{copy.templatePlaceholder}</option>
-          {options.map((candidate) => (
-            <option key={templateKey(candidate)} value={templateKey(candidate)}>
-              {candidate.name} · {candidate.language}
-            </option>
-          ))}
-        </NativeSelect>
-      </div>
-
-      {shape !== null && shape.headerHasVariable && (
+      <fieldset disabled={unresolved !== null || pending} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="whatsapp-test-header">{copy.headerValue}</Label>
+          <Label htmlFor="whatsapp-test-to">{copy.to}</Label>
           <Input
-            id="whatsapp-test-header"
-            dir="auto"
-            className="text-start"
-            value={header}
-            onChange={(event) => setHeader(event.target.value)}
-          />
-        </div>
-      )}
-      {body.map((value, index) => (
-        <div key={index} className="flex flex-col gap-1.5">
-          <Label htmlFor={`whatsapp-test-body-${index}`}>
-            {copy.bodyValue.replace("{index}", String(index + 1))}
-          </Label>
-          <Input
-            id={`whatsapp-test-body-${index}`}
-            dir="auto"
-            className="text-start"
-            value={value}
-            onChange={(event) =>
-              setBody((previous) => previous.map((v, i) => (i === index ? event.target.value : v)))
-            }
-          />
-        </div>
-      ))}
-      {urls.map(({ index }) => (
-        <div key={index} className="flex flex-col gap-1.5">
-          <Label htmlFor={`whatsapp-test-url-${index}`}>
-            {copy.urlSuffix.replace("{index}", String(index + 1))}
-          </Label>
-          <Input
-            id={`whatsapp-test-url-${index}`}
+            id="whatsapp-test-to"
+            type="tel"
+            inputMode="tel"
+            autoComplete="off"
             dir="ltr"
             className="text-start"
-            value={suffixes[String(index)] ?? ""}
-            onChange={(event) =>
-              setSuffixes((previous) => ({ ...previous, [String(index)]: event.target.value }))
+            value={to}
+            aria-invalid={toTrimmed.length > 0 && !phoneValid}
+            aria-describedby="whatsapp-test-to-hint"
+            onChange={(event) => {
+              setTo(event.target.value);
+              setResult(null);
+            }}
+          />
+          <p
+            id="whatsapp-test-to-hint"
+            className={
+              toTrimmed.length > 0 && !phoneValid
+                ? "text-destructive text-sm"
+                : "text-muted-foreground text-sm"
             }
-          />
-        </div>
-      ))}
-
-      <div className="flex flex-col gap-1">
-        <div className="flex items-start gap-2">
-          <input
-            id="whatsapp-test-attest"
-            type="checkbox"
-            className="accent-primary mt-1 size-4"
-            checked={attest}
-            aria-describedby={suppressedPair === pair ? "whatsapp-test-attest-hint" : undefined}
-            onChange={(event) => setAttest(event.target.checked)}
-          />
-          <Label htmlFor="whatsapp-test-attest" className="text-sm font-normal leading-snug">
-            <BrandText text={copy.attest} />
-          </Label>
-        </div>
-        {suppressedPair === pair && (
-          <p id="whatsapp-test-attest-hint" className="text-muted-foreground ps-6 text-sm">
-            {copy.attestHint}
+          >
+            {toTrimmed.length > 0 && !phoneValid ? copy.toInvalid : copy.toHint}
           </p>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="whatsapp-test-template">{copy.template}</Label>
+          <NativeSelect
+            id="whatsapp-test-template"
+            value={selected}
+            onChange={(event) => chooseTemplate(event.target.value)}
+          >
+            <option value="">{copy.templatePlaceholder}</option>
+            {options.map((candidate) => (
+              <option key={templateKey(candidate)} value={templateKey(candidate)}>
+                {candidate.name} · {candidate.language}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+
+        {shape !== null && shape.headerHasVariable && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="whatsapp-test-header">{copy.headerValue}</Label>
+            <Input
+              id="whatsapp-test-header"
+              dir="auto"
+              className="text-start"
+              value={header}
+              onChange={(event) => setHeader(event.target.value)}
+            />
+          </div>
         )}
-      </div>
+        {body.map((value, index) => (
+          <div key={index} className="flex flex-col gap-1.5">
+            <Label htmlFor={`whatsapp-test-body-${index}`}>
+              {copy.bodyValue.replace("{index}", String(index + 1))}
+            </Label>
+            <Input
+              id={`whatsapp-test-body-${index}`}
+              dir="auto"
+              className="text-start"
+              value={value}
+              onChange={(event) =>
+                setBody((previous) =>
+                  previous.map((v, i) => (i === index ? event.target.value : v)),
+                )
+              }
+            />
+          </div>
+        ))}
+        {urls.map(({ index }) => (
+          <div key={index} className="flex flex-col gap-1.5">
+            <Label htmlFor={`whatsapp-test-url-${index}`}>
+              {copy.urlSuffix.replace("{index}", String(index + 1))}
+            </Label>
+            <Input
+              id={`whatsapp-test-url-${index}`}
+              dir="ltr"
+              className="text-start"
+              value={suffixes[String(index)] ?? ""}
+              onChange={(event) =>
+                setSuffixes((previous) => ({ ...previous, [String(index)]: event.target.value }))
+              }
+            />
+          </div>
+        ))}
+
+        <div className="flex flex-col gap-1">
+          <div className="flex items-start gap-2">
+            <input
+              id="whatsapp-test-attest"
+              type="checkbox"
+              className="accent-primary mt-1 size-4"
+              checked={attest}
+              aria-describedby={suppressedPair === pair ? "whatsapp-test-attest-hint" : undefined}
+              onChange={(event) => setAttest(event.target.checked)}
+            />
+            <Label htmlFor="whatsapp-test-attest" className="text-sm font-normal leading-snug">
+              <BrandText text={copy.attest} />
+            </Label>
+          </div>
+          {suppressedPair === pair && (
+            <p id="whatsapp-test-attest-hint" className="text-muted-foreground ps-6 text-sm">
+              {copy.attestHint}
+            </p>
+          )}
+        </div>
+      </fieldset>
 
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={!canSubmit}>

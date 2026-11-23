@@ -27,6 +27,8 @@ export function ConfirmDialog({
   onConfirm,
   onResult,
   fallbackFocus,
+  onRetain,
+  onRelease,
   triggerVariant = "outline",
 }: {
   readonly triggerLabel: string;
@@ -37,25 +39,58 @@ export function ConfirmDialog({
   readonly onConfirm: () => Promise<WhatsAppActionState>;
   readonly onResult: (result: WhatsAppActionState) => void;
   readonly fallbackFocus?: RefObject<HTMLElement | null>;
+  readonly onRetain?: () => void;
+  readonly onRelease?: () => void;
   readonly triggerVariant?: "outline" | "destructive";
 }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const openRef = useRef(false);
+  const runningRef = useRef(false);
+  const restoredRef = useRef(false);
+
+  function changeOpen(next: boolean) {
+    openRef.current = next;
+    if (next) {
+      restoredRef.current = false;
+      onRetain?.();
+    }
+    setOpen(next);
+  }
 
   function confirm() {
+    if (runningRef.current) return;
+    runningRef.current = true;
     startTransition(async () => {
-      const result = await onConfirm();
-      setOpen(false);
-      onResult(result);
+      try {
+        const result = await onConfirm();
+        changeOpen(false);
+        onResult(result);
+      } finally {
+        runningRef.current = false;
+        if (
+          !openRef.current &&
+          restoredRef.current &&
+          document.activeElement !== triggerRef.current
+        )
+          onRelease?.();
+      }
     });
   }
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !pending && setOpen(next)}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogTrigger asChild>
-        <Button ref={triggerRef} type="button" variant={triggerVariant}>
+        <Button
+          ref={triggerRef}
+          type="button"
+          variant={triggerVariant}
+          onBlur={() => {
+            if (restoredRef.current && !openRef.current && !runningRef.current) onRelease?.();
+          }}
+        >
           <BrandText text={triggerLabel} />
         </Button>
       </DialogTrigger>
@@ -65,6 +100,7 @@ export function ConfirmDialog({
           cancelRef.current?.focus();
         }}
         onCloseAutoFocus={(event) => {
+          restoredRef.current = true;
           if (triggerRef.current?.isConnected !== true && fallbackFocus?.current) {
             event.preventDefault();
             fallbackFocus.current.focus();
@@ -85,7 +121,7 @@ export function ConfirmDialog({
             type="button"
             variant="outline"
             disabled={pending}
-            onClick={() => setOpen(false)}
+            onClick={() => changeOpen(false)}
           >
             {cancelLabel}
           </Button>

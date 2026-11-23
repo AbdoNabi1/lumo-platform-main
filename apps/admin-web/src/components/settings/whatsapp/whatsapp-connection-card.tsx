@@ -54,7 +54,7 @@ function StatusBadge({ status, t }: { status: WhatsAppConnectionDto["status"]; t
  * never a business-account or phone-number id, and never a raw provider code (codes map to copy; the rest is generic).
  */
 export function WhatsAppConnectionCard({
-  connection,
+  connection: liveConnection,
   templates,
   t,
   locale,
@@ -70,6 +70,8 @@ export function WhatsAppConnectionCard({
   const [notice, setNotice] = useState<Notice>(null);
   const [showTest, setShowTest] = useState(false);
   const [refreshing, startRefresh] = useTransition();
+  const [retainedConnection, setRetainedConnection] = useState<WhatsAppConnectionDto | null>(null);
+  const connection = retainedConnection ?? liveConnection;
 
   function report(result: WhatsAppActionState) {
     setNotice(result.status === "error" ? { tone: "error", text: result.message } : null);
@@ -175,6 +177,8 @@ export function WhatsAppConnectionCard({
               onConfirm={() => abandonOnboardingAction(connection.version)}
               onResult={report}
               fallbackFocus={headingRef}
+              onRetain={() => setRetainedConnection((current) => current ?? liveConnection)}
+              onRelease={() => setRetainedConnection(null)}
             />
           </div>
           {noticeLine}
@@ -262,29 +266,30 @@ export function WhatsAppConnectionCard({
             onConfirm={() => disconnectWhatsAppAction(connection.version)}
             onResult={report}
             fallbackFocus={headingRef}
+            onRetain={() => setRetainedConnection((current) => current ?? liveConnection)}
+            onRelease={() => setRetainedConnection(null)}
           />
         </div>
         {noticeLine}
 
-        {showTest && (
-          <section
-            id="whatsapp-test-panel"
-            aria-labelledby="whatsapp-test-title"
-            className="border-border flex flex-col gap-3 border-t pt-4"
-          >
-            <h3 id="whatsapp-test-title" className="text-base font-semibold">
-              {copy.test.title}
-            </h3>
-            <p className="text-muted-foreground text-sm">{copy.test.description}</p>
-            {templates === null ? (
-              <p role="note" className="text-muted-foreground text-sm">
-                {copy.loadError}
-              </p>
-            ) : (
-              <TestSendForm templates={templates} t={t} />
-            )}
-          </section>
-        )}
+        <section
+          hidden={!showTest}
+          id="whatsapp-test-panel"
+          aria-labelledby="whatsapp-test-title"
+          className={`border-border flex-col gap-3 border-t pt-4 ${showTest ? "flex" : "hidden"}`}
+        >
+          <h3 id="whatsapp-test-title" className="text-base font-semibold">
+            {copy.test.title}
+          </h3>
+          <p className="text-muted-foreground text-sm">{copy.test.description}</p>
+          {templates === null ? (
+            <p role="note" className="text-muted-foreground text-sm">
+              {copy.loadError}
+            </p>
+          ) : (
+            <TestSendForm templates={templates} t={t} />
+          )}
+        </section>
       </CardContent>
     </Card>
   );

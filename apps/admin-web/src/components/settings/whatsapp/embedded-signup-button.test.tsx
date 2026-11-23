@@ -335,6 +335,39 @@ describe("Embedded Signup v4 — events that must not connect", () => {
 });
 
 describe("Embedded Signup v4 — cancel and per-attempt reset", () => {
+  it("does not overlap logins while waiting or while the connect action settles", async () => {
+    expect.hasAssertions();
+    action.mockImplementation(() => new Promise(() => undefined));
+    await startAttempt();
+    const button = screen.getByRole("button", { name: "Connect WhatsApp" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(fb.login).toHaveBeenCalledTimes(1);
+    metaMessage(finish("11", "22"));
+    returnCode("original");
+    expect(action).toHaveBeenCalledWith({ code: "original", wabaId: "11", phoneNumberId: "22" });
+    metaMessage({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL" });
+    metaMessage(finish("33", "44"));
+    fireEvent.click(button);
+    expect(button).toBeDisabled();
+    expect(fb.login).toHaveBeenCalledTimes(1);
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+  it("ignores FINISH and CANCEL after cancellation and before another attempt", async () => {
+    expect.hasAssertions();
+    await startAttempt();
+    metaMessage({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL" });
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(en.whatsappSettings.signupCancelled);
+    metaMessage(finish("111", "222"));
+    metaMessage({ type: "WA_EMBEDDED_SIGNUP", event: "CANCEL" });
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent(en.whatsappSettings.signupCancelled);
+    expect(screen.getByRole("button", { name: "Connect WhatsApp" })).toBeEnabled();
+    expect(action).not.toHaveBeenCalled();
+    expect(fb.login).toHaveBeenCalledTimes(1);
+  });
   it("CANCEL shows the cancel copy", async () => {
     expect.hasAssertions();
     await startAttempt();

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { WhatsAppConnectionDto, WhatsAppTemplateDto } from "@/lib/api/outreach";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
@@ -86,6 +86,47 @@ function activate(element: HTMLElement) {
 }
 
 describe("each state renders", () => {
+  it("shows the localized asset mismatch and starts a fresh signup without revealing ids", async () => {
+    expect.hasAssertions();
+    type Callback = (response: { authResponse: { code: string } }) => void;
+    const login = vi.fn<(callback: Callback) => void>();
+    const facebook = window as unknown as { FB?: unknown };
+    facebook.FB = { init: vi.fn(), login };
+    actions.connectWhatsAppAction.mockResolvedValue({
+      status: "error",
+      message: en.whatsappSettings.errors.META_ASSET_MISMATCH,
+    });
+    try {
+      renderCard(base);
+      const button = screen.getByRole("button", { name: en.whatsappSettings.connect });
+      fireEvent.click(button);
+      await waitFor(() => expect(login).toHaveBeenCalledTimes(1));
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            origin: "https://www.facebook.com",
+            data: JSON.stringify({
+              type: "WA_EMBEDDED_SIGNUP",
+              event: "FINISH",
+              data: { waba_id: "111222333", phone_number_id: "444555666" },
+            }),
+          }),
+        );
+        login.mock.calls[0]![0]({ authResponse: { code: "first-code" } });
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        en.whatsappSettings.errors.META_ASSET_MISMATCH,
+      );
+      expect(document.body).not.toHaveTextContent(/111222333|444555666/);
+      expect(button).toBeEnabled();
+      fireEvent.click(button);
+      await waitFor(() => expect(login).toHaveBeenCalledTimes(2));
+      act(() => login.mock.calls[1]![0]({ authResponse: { code: "second-code" } }));
+      expect(actions.connectWhatsAppAction).toHaveBeenCalledTimes(1);
+    } finally {
+      delete facebook.FB;
+    }
+  });
   it("available:false is an info card with no Connect button", () => {
     expect.hasAssertions();
     const { signup: _signup, ...rest } = base;
@@ -269,6 +310,74 @@ describe("onboarding state (R2-B01, R3-B01)", () => {
 });
 
 describe("Disconnect dialog (A7)", () => {
+  it.each([
+    ["disconnect", connected, en.whatsappSettings.disconnect, en.whatsappSettings.disconnectTitle],
+    ["abandon", onboarding, en.whatsappSettings.cancelSetup, en.whatsappSettings.cancelSetup],
+  ] as const)(
+    "keeps the %s trigger through a disconnected DTO and focus restoration",
+    async (_kind, initial, label, title) => {
+      expect.hasAssertions();
+      let release!: (value: { status: "success" }) => void;
+      const action =
+        initial.status === "onboarding"
+          ? actions.abandonOnboardingAction
+          : actions.disconnectWhatsAppAction;
+      action.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      const view = renderCard(initial);
+      const trigger = screen.getByRole("button", { name: label });
+      fireEvent.click(trigger);
+      fireEvent.click(
+        within(screen.getByRole("dialog", { name: title })).getByRole("button", { name: label }),
+      );
+      await waitFor(() => expect(action).toHaveBeenCalledTimes(1));
+      view.rerender(
+        <WhatsAppConnectionCard
+          connection={{ ...base, status: "disconnected" }}
+          templates={[template]}
+          t={en}
+          locale="en"
+        />,
+      );
+      expect(trigger).toBeInTheDocument();
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      release({ status: "success" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(trigger).toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    },
+  );
+  it("Escape dismisses an unresolved disconnect without cancelling or duplicating it", async () => {
+    expect.hasAssertions();
+    let release!: (value: { status: "success" }) => void;
+    actions.disconnectWhatsAppAction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderCard(connected);
+    const trigger = screen.getByRole("button", { name: en.whatsappSettings.disconnect });
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: en.whatsappSettings.disconnect }));
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(trigger).toHaveFocus();
+    fireEvent.click(trigger);
+    expect(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: en.whatsappSettings.disconnect,
+      }),
+    ).toBeDisabled();
+    expect(actions.disconnectWhatsAppAction).toHaveBeenCalledTimes(1);
+    release({ status: "success" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
   it("has a title and description, focuses Cancel, closes on Escape, returns focus to the trigger which stays mounted", async () => {
     expect.hasAssertions();
     renderCard(connected);
@@ -337,6 +446,70 @@ describe("Disconnect dialog (A7)", () => {
 });
 
 describe("Refresh and the test panel", () => {
+  it("preserves an unresolved send through collapse and retries its key", async () => {
+    expect.hasAssertions();
+    let release!: (value: unknown) => void;
+    actions.testSendAction
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ status: "error", message: "network" });
+    renderCard(connected);
+    const toggle = screen.getByRole("button", { name: en.whatsappSettings.sendTest });
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText(en.whatsappSettings.test.to), {
+      target: { value: "+201001234567" },
+    });
+    fireEvent.change(screen.getByLabelText(en.whatsappSettings.test.template), {
+      target: { value: "order_update::en" },
+    });
+    fireEvent.change(screen.getByLabelText("Body value 1"), { target: { value: "Mona" } });
+    fireEvent.click(screen.getByRole("button", { name: en.whatsappSettings.test.submit }));
+    await waitFor(() => expect(actions.testSendAction).toHaveBeenCalledTimes(1));
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(
+      screen.getByRole("button", { name: en.whatsappSettings.test.submitting }),
+    ).toBeDisabled();
+    release({ status: "error", message: "network" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: en.whatsappSettings.test.submit })).toBeEnabled(),
+    );
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole("button", { name: en.whatsappSettings.test.submit }));
+    await waitFor(() => expect(actions.testSendAction).toHaveBeenCalledTimes(2));
+    expect(actions.testSendAction.mock.calls[1]![0]).toEqual(
+      actions.testSendAction.mock.calls[0]![0],
+    );
+  });
+  it.each(["failed", "unknown"])(
+    "keeps %s pairs blocked after reopening the test panel",
+    async (outcome) => {
+      expect.hasAssertions();
+      actions.testSendAction.mockResolvedValue({ status: "result", outcome, message: outcome });
+      renderCard(connected);
+      const toggle = screen.getByRole("button", { name: en.whatsappSettings.sendTest });
+      fireEvent.click(toggle);
+      fireEvent.change(screen.getByLabelText(en.whatsappSettings.test.to), {
+        target: { value: "+201001234567" },
+      });
+      fireEvent.change(screen.getByLabelText(en.whatsappSettings.test.template), {
+        target: { value: "order_update::en" },
+      });
+      fireEvent.change(screen.getByLabelText("Body value 1"), { target: { value: "Mona" } });
+      fireEvent.click(screen.getByRole("button", { name: en.whatsappSettings.test.submit }));
+      await screen.findByText(en.whatsappSettings.test.blockedHint);
+      fireEvent.click(toggle);
+      fireEvent.click(toggle);
+      expect(screen.getByRole("button", { name: en.whatsappSettings.test.submit })).toBeDisabled();
+      expect(screen.getByText(en.whatsappSettings.test.blockedHint)).toBeVisible();
+      expect(actions.testSendAction).toHaveBeenCalledTimes(1);
+    },
+  );
   it("Refresh status calls the action and says so", async () => {
     expect.hasAssertions();
     renderCard(connected);
@@ -361,13 +534,13 @@ describe("Refresh and the test panel", () => {
     renderCard(connected);
     const button = screen.getByRole("button", { name: en.whatsappSettings.sendTest });
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByLabelText(en.whatsappSettings.test.to)).toBeNull();
+    expect(screen.getByLabelText(en.whatsappSettings.test.to)).not.toBeVisible();
     fireEvent.click(button);
     expect(button).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText(en.whatsappSettings.test.to)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "order_update · en" })).toBeInTheDocument();
     fireEvent.click(button);
-    expect(screen.queryByLabelText(en.whatsappSettings.test.to)).toBeNull();
+    expect(screen.getByLabelText(en.whatsappSettings.test.to)).not.toBeVisible();
   });
 
   it("says so when the templates could not be loaded", () => {

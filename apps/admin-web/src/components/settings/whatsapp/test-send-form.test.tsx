@@ -289,6 +289,27 @@ describe("results (never 'Sent' on HTTP 200)", () => {
 });
 
 describe("idempotency key lifecycle (R2-B14)", () => {
+  it.each([
+    "Body value 1",
+    en.whatsappSettings.test.headerValue,
+    "Link ending for button 3",
+    en.whatsappSettings.test.attest,
+  ])("freezes %s after an unresolved submission and retries the exact request", async (label) => {
+    expect.hasAssertions();
+    action.mockResolvedValue({ status: "error", message: "network" });
+    render(<TestSendForm templates={wireTemplates()} t={en} />);
+    type(en.whatsappSettings.test.to, "+201001234567");
+    choose("order_update::en");
+    type("Body value 1", "Mona");
+    type("Body value 2", "1001");
+    type(en.whatsappSettings.test.headerValue, "header");
+    type("Link ending for button 3", "url");
+    await submitAndSettle();
+    expect(screen.getByLabelText(label)).toBeDisabled();
+    await submitAndSettle();
+    expect(action.mock.calls[1]![0]).toEqual(action.mock.calls[0]![0]);
+    expect(globalThis.crypto.randomUUID).toHaveBeenCalledTimes(1);
+  });
   it("is created when the form mounts, once", () => {
     expect.hasAssertions();
     const spy = vi.spyOn(globalThis.crypto, "randomUUID");

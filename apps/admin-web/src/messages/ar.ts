@@ -4763,6 +4763,8 @@ export const ar: Dictionary = {
       ONBOARDING_NOT_ACTIVE: "مفيش إعداد WhatsApp ماكملش عشان تلغيه.",
       ONBOARDING_RECONCILIATION_REQUIRED:
         "اقفل التحقق بخطوتين للرقم ده من WhatsApp Manager، وبعدين كمّل الإعداد.",
+      META_ASSET_MISMATCH:
+        "رقم التليفون المختار مش تابع لحساب WhatsApp للأعمال. ابدأ الإعداد تاني واختار الأصول المتطابقة.",
       PHONE_IN_USE: "رقم التليفون ده مربوط بالفعل بمتجر تاني.",
       WABA_IN_USE: "حساب WhatsApp Business ده مربوط بالفعل بمتجر تاني.",
       WHATSAPP_NOT_CONFIGURED: "WhatsApp لسه متفعّلش على المنصة دي.",

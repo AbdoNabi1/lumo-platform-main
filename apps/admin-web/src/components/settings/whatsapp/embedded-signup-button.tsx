@@ -192,7 +192,7 @@ export function EmbeddedSignupButton({
     mountedRef.current = true;
     function onMessage(event: MessageEvent) {
       const attempt = attemptRef.current;
-      if (attempt === null || attempt.ended) return;
+      if (attempt === null || attempt.ended || attempt.fired) return;
       const message = readSignupMessage(event);
       if (message === null) return;
       if (message.kind === "finish") {
@@ -216,6 +216,7 @@ export function EmbeddedSignupButton({
   completeRef.current = complete;
 
   async function start() {
+    if (attemptRef.current !== null && !attemptRef.current.ended) return;
     // Each attempt starts clean: the previous code and ids can never complete a new attempt.
     const attempt: Attempt = { code: null, ids: null, fired: false, ended: false };
     attemptRef.current = attempt;
@@ -238,7 +239,7 @@ export function EmbeddedSignupButton({
     setPhase("waiting");
     sdk.login(
       (response) => {
-        if (attemptRef.current !== attempt || attempt.ended) return;
+        if (attemptRef.current !== attempt || attempt.ended || attempt.fired) return;
         const code = response?.authResponse?.code;
         if (typeof code === "string" && code.length > 0) {
           attempt.code = code;
@@ -256,7 +257,7 @@ export function EmbeddedSignupButton({
     );
   }
 
-  const busy = phase === "loading" || phase === "connecting";
+  const busy = phase === "loading" || phase === "waiting" || phase === "connecting";
   return (
     <div className="flex flex-col items-start gap-3">
       <div className="flex flex-wrap items-center gap-2">
