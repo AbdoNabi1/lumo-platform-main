@@ -355,6 +355,9 @@ openSecret(tenantId: string, platform: AdPlatform): Promise<string | null>; }` a
   `listLive` calls `getLiveConnections.execute`, returns the value on `ok`, throws `Error("ad platform connections unavailable")`
   otherwise; `openSecret` returns the value on `ok`, `null` on `NOT_FOUND`, throws the same generic error on any other
   failure. `internal` is `{ getLiveConnections: GetLiveConnections; openSecret: OpenConnectionSecret }`. Tests for both mappings.
+- (round 2, finding 9) `SECRET_RULE = { min: 10, max: 1024, pattern: /^[A-Za-z0-9._~+/=:|-]+$/ }`, message
+  `must be 10–1024 characters using letters, digits and . _ ~ + / = : | -`; validation cases add a token with `"`, one
+  with `\` and one with a space (each `VALIDATION` field `secret`).
 
 ---
 
@@ -679,9 +682,16 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
   `"ScCid"` in `envelope/click-ids.ts` (platform stays `"snapchat"`). `vendor-event-input.test.ts` builds `clickIds` from
   real `extractClickIds` output for a URL with `ttclid=tt-click-1&ScCid=sc-click-1`.
 - (finding 9) Secrets in failure paths: `HttpJsonAdapter` never mutates `request.endpoint`; it builds the authenticated
-  URL/headers locally and passes every string it returns (`error`, and `vendorResponse` via JSON round-trip) through
-  `redactSecrets(text, [secret, encodeURIComponent(secret)])`, replacing each occurrence with `"[redacted]"`; a thrown
-  transport error is reduced to `redactSecrets(error.message)`. Tests: a transport that throws an error containing
+  URL/headers locally. **Round 2 (finding 9):** (a) `SECRET_RULE.pattern` becomes `/^[A-Za-z0-9._~+/=:|-]+$/` (no
+  quotes, backslashes, spaces or other JSON-escaped characters; message `must be 10–1024 characters using letters,
+digits and . _ ~ + / = : | -`), with validation tests for a quote, a backslash and a space; (b) `redactSecrets(value,
+needles)` walks the **decoded** value recursively (strings, array items, object keys and values) and replaces every
+  occurrence of each needle in `[secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]` with
+  `"[redacted]"` — it never does string replacement over serialized JSON; (c) `error` and `vendorResponse` pass through
+  it before being returned, and a thrown transport error becomes `redactSecrets(error.message, needles)`; (d) if the
+  value is deeper than 8 levels or larger than 16 KB after redaction, `vendorResponse` is dropped (fail closed).
+  Regressions: tokens containing `+`, `/`, `=`, `:` and `|` echoed in a nested vendor body (as a key and as a value) and
+  inside a nested authenticated URL are absent from every decoded string leaf. Tests: a transport that throws an error containing
   `?access_token=secret-proof-1234` and a vendor that echoes the token in its JSON body → the whole recorded EventRecord
   (history + attempts), the dead-letter payload and captured logger output contain no `secret-proof-1234` and no
   `secret-proof-1234` URL-encoded; the registry destination URL is unchanged; `records.append` is captured before the
@@ -804,7 +814,8 @@ destination: <destination key>, fields: [] }` (check `delivery/mapping.ts:79–8
   `loadTrackingRegistry` (finding 19).
 - (finding 8) Add to `apps/runtime/src/tracking/tracking-registry.ts` (and its tests):
   `withTenantRegistryTransaction<T>(tenantId: string, fn: (writer: TenantRegistryWriter) => Promise<T>): Promise<T>` on
-  `PrismaTrackingRegistryStore`, implemented as `runInTenantTransaction(this.prisma, tenantId, async (tx) => …)`; the
+  `PrismaTrackingRegistryStore`, implemented as `runInTenantTransaction(this.db, tenantId, async (tx) => …)` (the store's existing private `db`
+  member, `tracking-registry.ts:75–101`; the old root-bound `append` is never called inside it); the
   first statement inside is the tagged-template raw query `SELECT pg_advisory_xact_lock(hashtext(<'tracking-registry:' + tenantId>))`
   (key as a bound parameter), then `return fn(writerOver(tx, tenantId))`, where
   `TenantRegistryWriter = { loadAll(): Promise<readonly TrackingRegistryRow[]>; append(row): Promise<void> }` runs
