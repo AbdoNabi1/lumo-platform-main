@@ -350,6 +350,23 @@ export class PrismaStaffDirectoryRepository implements StaffDirectoryRepository 
     });
   }
 
+  async delete(entry: StaffDirectoryEntry, tx?: unknown): Promise<boolean> {
+    const tenantId = this.deps.tenantId;
+    let removed = 0;
+    await this.inTransaction(tx, async (client) => {
+      const result = await client.staffDirectoryEntry.deleteMany({
+        where: {
+          email: entry.email,
+          tenantId,
+          shopRef: entry.shopId,
+          ownerExternalId: entry.ownerExternalId,
+        },
+      });
+      removed = result.count;
+    });
+    return removed > 0;
+  }
+
   /** Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS. */
   private async inTransaction(
     tx: unknown,
