@@ -1953,6 +1953,43 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
 
+  services/ad-platforms:
+    dependencies:
+      '@platform/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@platform/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@platform/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
   services/analytics:
     dependencies:
       '@clickhouse/client':

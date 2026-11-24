@@ -1,0 +1,33 @@
+{
+  "name": "@platform/ad-platforms",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Ad platforms bounded context: per-merchant Meta/TikTok/Snap/GA4/Google Ads connections with sealed write-only secrets (Lead Site Part D1).",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@platform/application": "workspace:*",
+    "@platform/contracts": "workspace:*",
+    "@platform/domain": "workspace:*",
+    "@platform/types": "workspace:*",
+    "@platform/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@platform/eslint-config": "workspace:*",
+    "@platform/tsconfig": "workspace:*",
+    "@vitest/coverage-v8": "^2.1.4",
+    "eslint": "^9.13.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  }
+}
