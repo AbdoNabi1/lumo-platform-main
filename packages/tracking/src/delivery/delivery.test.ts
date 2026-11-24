@@ -873,7 +873,9 @@ describe("http adapter: vendor auth styles", () => {
   const SECRET = "s3cret";
   const sendInput: { url: string; headers: Record<string, string>; body?: string }[] = [];
 
-  function adapterFor(respond?: () => Promise<{ status: number; body?: Record<string, unknown> }>) {
+  function adapterFor(
+    respond?: () => Promise<{ status: number; body?: Record<string, unknown>; error?: string }>,
+  ) {
     sendInput.length = 0;
     return new HttpJsonAdapter({
       http: {
@@ -975,7 +977,7 @@ describe("http adapter: vendor auth styles", () => {
     }
   });
 
-  it("redacts the secret from a thrown transport error", async () => {
+  it("records only a trusted diagnostic for a thrown transport error", async () => {
     const adapter = adapterFor(() =>
       Promise.reject(new Error("socket hang up https://graph.test/e?access_token=s3cret")),
     );
@@ -985,8 +987,62 @@ describe("http adapter: vendor auth styles", () => {
     expect(response).toMatchObject({
       ok: false,
       retryable: true,
-      error: "socket hang up https://graph.test/e?access_token=[redacted]",
+      error: "transport error (Error)",
     });
+    expect(JSON.stringify(response)).not.toContain("s3cret");
+  });
+
+  it("records only the status for a failed response when a credential was used", async () => {
+    const adapter = adapterFor(() =>
+      Promise.resolve({ status: 401, error: "token s3cret rejected" }),
+    );
+    const response = await adapter.send(requestWith({ auth: { kind: "bearer" } }));
+    expect(response).toMatchObject({ ok: false, error: "vendor responded 401" });
+  });
+
+  it("keeps the vendor error text when no credential is involved (legacy behaviour)", async () => {
+    const adapter = new HttpJsonAdapter({
+      http: {
+        send: () => Promise.resolve({ status: 400, error: "bad request: field x" }),
+      },
+      now: () => 0,
+    });
+    const { credentialRef: _ref, ...noCredential } = requestWith({}).endpoint;
+    const response = await adapter.send({ ...requestWith({}), endpoint: noCredential });
+    expect(response.error).toBe("bad request: field x");
+  });
+
+  it("counts the 16 KB cap in UTF-8 bytes, not code units", async () => {
+    // `{"blob":"…"}` is 11 characters of JSON around the value; each Arabic letter is 2 bytes.
+    const sendBody = (body: Record<string, unknown>) =>
+      adapterFor(() => Promise.resolve({ status: 200, body })).send(
+        requestWith({ auth: { kind: "bearer" } }),
+      );
+
+    const dropped = { blob: "ش".repeat(8187) }; // 8,198 code units, 16,385 bytes
+    expect(JSON.stringify(dropped).length).toBeLessThan(16 * 1024);
+    expect(new TextEncoder().encode(JSON.stringify(dropped)).length).toBe(16 * 1024 + 1);
+    expect((await sendBody(dropped)).vendorResponse).toBeUndefined();
+
+    const kept = { blob: "ش".repeat(8186) }; // 16,383 bytes
+    expect(new TextEncoder().encode(JSON.stringify(kept)).length).toBe(16 * 1024 - 1);
+    expect((await sendBody(kept)).vendorResponse).toEqual(kept);
+
+    const exact = { blob: "ش".repeat(8186) + "x" }; // exactly 16,384 bytes is still allowed
+    expect(new TextEncoder().encode(JSON.stringify(exact)).length).toBe(16 * 1024);
+    expect((await sendBody(exact)).vendorResponse).toEqual(exact);
+
+    expect((await sendBody({ blob: "ش".repeat(9000) })).vendorResponse).toBeUndefined();
+  });
+
+  it("does not apply the byte cap when no credential is involved", async () => {
+    const adapter = new HttpJsonAdapter({
+      http: { send: () => Promise.resolve({ status: 200, body: { blob: "ش".repeat(9000) } }) },
+      now: () => 0,
+    });
+    const { credentialRef: _ref, ...noCredential } = requestWith({}).endpoint;
+    const response = await adapter.send({ ...requestWith({}), endpoint: noCredential });
+    expect((response.vendorResponse?.blob as string).length).toBe(9000);
   });
 
   it("redacts the secret from the vendor body", async () => {

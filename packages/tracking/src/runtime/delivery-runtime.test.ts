@@ -157,7 +157,11 @@ interface HttpCall {
 function world(
   destinations: readonly DestinationDefinition[],
   options: {
-    readonly respond?: () => Promise<{ status: number; body?: Record<string, unknown> }>;
+    readonly respond?: () => Promise<{
+      status: number;
+      body?: Record<string, unknown>;
+      error?: string;
+    }>;
     readonly maxAttempts?: number;
   } = {},
 ) {
@@ -478,5 +482,186 @@ describe("receiveAndDeliver: secrets never reach a record", () => {
     expect(everything).not.toContain(SECRET);
     expect(everything).not.toContain(encoded);
     expect(META.endpoint.url).toBe("https://graph.facebook.com/v27.0/123456789012345/events");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lead-site plan D1, Task 3 fix round 1.
+// ---------------------------------------------------------------------------
+
+/** Every textual form a recorded error could take: raw, JSON-parsed, unicode and slash escapes decoded. */
+function decodings(text: string): string[] {
+  const slashes = (s: string): string => s.replaceAll("\\/", "/");
+  const out = [text, slashes(text)];
+  const unicode = (s: string): string =>
+    s.replaceAll(/\\u([0-9a-fA-F]{4})/g, (_m, hex: string) =>
+      String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+  out.push(unicode(text), unicode(slashes(text)));
+  try {
+    out.push(JSON.stringify(JSON.parse(text)));
+    out.push(JSON.parse(text) as string);
+  } catch {
+    // not JSON: the raw forms above already cover it
+  }
+  return out.map(String);
+}
+
+function expectNoCredential(text: string | undefined): void {
+  expect(text).toBeDefined();
+  for (const form of decodings(text ?? "")) {
+    expect(form).not.toContain(SECRET);
+    expect(form).not.toContain(encodeURIComponent(SECRET));
+    expect(form).not.toContain("proof1234");
+  }
+}
+
+describe("receiveAndDeliver: no vendor error text survives when a credential was used", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const escapedSlash = JSON.stringify({ message: `bad token ${SECRET}` }).replaceAll("/", "\\/");
+  const unicodeSlash = JSON.stringify({ message: `bad token ${SECRET}` }).replaceAll(
+    "/",
+    "\\u002f",
+  );
+
+  async function failed(
+    respond: () => Promise<{ status: number; error?: string; body?: Record<string, unknown> }>,
+  ) {
+    const w = world([META], { respond });
+    const out = await receiveAndDeliver(w.deps, { envelope: envelope(), routing: w.routing });
+    const outcome = out.results[0]?.result.outcome;
+    expect(outcome?.status).toBe("dead_lettered");
+
+    const attemptErrors = [
+      out.record.destinationHistory[0]?.attempts.map((a) => a.error),
+      w.appended.flatMap((r) =>
+        r.destinationHistory.flatMap((d) => d.attempts.map((a) => a.error)),
+      ),
+      (w.histories as { destinations: { attempts: { error?: string }[] }[] }[]).flatMap((h) =>
+        h.destinations.flatMap((d) => d.attempts.map((a) => a.error)),
+      ),
+    ].flat();
+    const deadLetterErrors = (w.deadLetters as { error?: string }[]).map((e) => e.error);
+    const outcomeError = (outcome as { error?: string } | undefined)?.error;
+    return { w, out, outcomeError, attemptErrors, deadLetterErrors };
+  }
+
+  it.each([
+    ["JSON-escaped slashes", escapedSlash],
+    ["a unicode-escaped slash", unicodeSlash],
+  ])(
+    "a vendor error echoing the token with %s is replaced by the trusted status",
+    async (_n, echoed) => {
+      const r = await failed(() =>
+        Promise.resolve({ status: 400, error: echoed, body: { message: `bad token ${SECRET}` } }),
+      );
+
+      expect(r.outcomeError).toBe("vendor responded 400");
+      expectNoCredential(r.outcomeError);
+      expect(r.attemptErrors.length).toBeGreaterThan(0);
+      for (const e of r.attemptErrors) {
+        expect(e).toContain("vendor responded 400");
+        expectNoCredential(e);
+      }
+      expect(r.deadLetterErrors).toHaveLength(1);
+      for (const e of r.deadLetterErrors) {
+        expect(e).toBe("vendor responded 400");
+        expectNoCredential(e);
+      }
+      const everything = JSON.stringify([
+        r.out.record,
+        r.w.appended,
+        r.w.histories,
+        r.w.deadLetters,
+      ]);
+      for (const form of decodings(everything)) expect(form).not.toContain(SECRET);
+    },
+  );
+
+  it("a thrown error carrying the token keeps only its name", async () => {
+    const r = await failed(() => {
+      const thrown = new Error(JSON.stringify({ m: SECRET }).replaceAll("/", "\\u002f"));
+      thrown.name = "ConnectError";
+      return Promise.reject(thrown);
+    });
+
+    expect(r.outcomeError).toBe("transport error (ConnectError)");
+    for (const e of [r.outcomeError, ...r.attemptErrors, ...r.deadLetterErrors]) {
+      expect(e).toContain("transport error (ConnectError)");
+      expectNoCredential(e);
+    }
+  });
+
+  it("a thrown error whose name is not a plain identifier is recorded as Error", async () => {
+    const r = await failed(() => {
+      const thrown = new Error("boom");
+      thrown.name = `bad ${SECRET}`;
+      return Promise.reject(thrown);
+    });
+    expect(r.outcomeError).toBe("transport error (Error)");
+    expectNoCredential(r.outcomeError);
+  });
+});
+
+describe("receiveAndDeliver: the TikTok user object is never dropped", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const hashedNoBrowser = (): EnrichedEnvelope => {
+    const base = envelope({}, { email: "h-em", phone: "h-ph", hashStatus: "sha256" });
+    return {
+      ...base,
+      context: { ...base.context, technical: {}, attribution: {} },
+    } as EnrichedEnvelope;
+  };
+
+  it("already-hashed identity and no ip, user agent, ttp or click id is blocked, with no HTTP", async () => {
+    const w = world([TIKTOK]);
+    const out = await receiveAndDeliver(w.deps, {
+      envelope: hashedNoBrowser(),
+      routing: w.routing,
+    });
+
+    expect(w.calls).toHaveLength(0);
+    expect(out.results).toHaveLength(0);
+    expect(out.renderFailures).toEqual([
+      { destination: TIKTOK.key, detail: "tiktok user data missing" },
+    ]);
+    const entry = out.record.destinationHistory.find((e) => e.destination === TIKTOK.key);
+    expect(entry?.status).toBe("blocked");
+    expect(entry?.attempts[0]?.error).toBe("mapping: tiktok user data missing");
+  });
+
+  it("a sparse user (ip and user agent only) is sent with its user object", async () => {
+    const base = hashedNoBrowser();
+    const sparse = {
+      ...base,
+      context: {
+        ...base.context,
+        technical: { clientIpAddress: "203.0.113.7", clientUserAgent: "Mozilla/5.0 (test)" },
+      },
+    } as EnrichedEnvelope;
+    const w = world([TIKTOK]);
+    await receiveAndDeliver(w.deps, { envelope: sparse, routing: w.routing });
+
+    expect(w.calls).toHaveLength(1);
+    const body = w.calls[0]?.body as { data: { user?: unknown }[] };
+    expect(body.data[0]?.user).toEqual({ ip: "203.0.113.7", user_agent: "Mozilla/5.0 (test)" });
+  });
+
+  it("meta with nothing to put in user_data is blocked rather than sent without it", async () => {
+    const w = world([META]);
+    const out = await receiveAndDeliver(w.deps, {
+      envelope: hashedNoBrowser(),
+      routing: w.routing,
+    });
+    expect(w.calls).toHaveLength(0);
+    expect(out.renderFailures).toEqual([
+      { destination: META.key, detail: "meta user data missing" },
+    ]);
   });
 });

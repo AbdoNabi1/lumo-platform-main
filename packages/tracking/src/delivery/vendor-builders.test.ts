@@ -225,6 +225,26 @@ describe("vendor builders: golden request bodies", () => {
     });
   });
 
+  it("tiktok: a sparse but valid user (ip and user agent only) keeps its user object", async () => {
+    const input = await inputFor("tiktok", {
+      keys: {},
+      browser: { ...(await inputFor("tiktok")).browser, ttclid: null, ttp: null },
+    });
+    expect(build("tiktok.events.v1_3", input, TIKTOK_TARGET)).toEqual({
+      event_source: "web",
+      event_source_id: "CABCDE1234567890",
+      data: [
+        {
+          event: "Lead",
+          event_time: 1764000000,
+          event_id: EVENT_ID,
+          user: { ip: IP, user_agent: UA },
+          page: { url: URL_ },
+        },
+      ],
+    });
+  });
+
   it("tiktok: test_event_code is top level", async () => {
     const input = await inputFor("tiktok");
     const payload = build("tiktok.events.v1_3", input, { ...TIKTOK_TARGET, testEventCode: "TT1" });
@@ -637,6 +657,36 @@ describe("vendor builders: refusals", () => {
     expect(buildVendorPayload("snap.capi.v3", onlyIp, SNAP_TARGET)).toEqual({
       ok: false,
       reason: "snap matching data missing",
+    });
+  });
+
+  it("tiktok refuses rather than dropping the required user object", async () => {
+    const base = await inputFor("tiktok");
+    const input = {
+      ...base,
+      keys: {},
+      ip: null,
+      userAgent: null,
+      browser: { ...base.browser, ttclid: null, ttp: null },
+    };
+    expect(buildVendorPayload("tiktok.events.v1_3", input, TIKTOK_TARGET)).toEqual({
+      ok: false,
+      reason: "tiktok user data missing",
+    });
+  });
+
+  it("meta refuses rather than dropping the required user_data object", async () => {
+    const base = await inputFor("meta");
+    const input = {
+      ...base,
+      keys: {},
+      ip: null,
+      userAgent: null,
+      browser: { ...base.browser, fbp: null, fbc: null },
+    };
+    expect(buildVendorPayload("meta.capi.v27", input, META_TARGET)).toEqual({
+      ok: false,
+      reason: "meta user data missing",
     });
   });
 

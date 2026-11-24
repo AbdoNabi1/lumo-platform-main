@@ -57,6 +57,15 @@ function refuse(reason: string): BuildResult {
   return { ok: false, reason };
 }
 
+/**
+ * True when a required container would survive `compact`. A vendor container the API marks
+ * required (Meta/Snap/TikTok user data) must never be silently deleted by compaction: the builder
+ * checks it up front and refuses instead of emitting a request without it.
+ */
+function hasContent(container: Record<string, unknown>): boolean {
+  return compact(container) !== undefined;
+}
+
 function isHttpUrl(value: string | null): value is string {
   if (value === null) return false;
   try {
@@ -75,6 +84,24 @@ const seconds = (input: VendorEventInput): number => Math.floor(input.eventTimeM
 function buildMeta(name: string, input: VendorEventInput, target: VendorTarget): BuildResult {
   const { keys, browser, commerce } = input;
 
+  const userData = {
+    em: list(keys.em),
+    ph: list(keys.ph),
+    fn: list(keys.fn),
+    ln: list(keys.ln),
+    ct: list(keys.ct),
+    st: list(keys.st),
+    zp: list(keys.zp),
+    country: list(keys.country),
+    external_id: list(keys.externalId),
+    client_ip_address: input.ip,
+    client_user_agent: input.userAgent,
+    fbp: browser.fbp,
+    fbc: browser.fbc,
+  };
+  // `user_data` is required by the API; never let compaction delete it.
+  if (!hasContent(userData)) return refuse("meta user data missing");
+
   return ok({
     data: [
       {
@@ -83,21 +110,7 @@ function buildMeta(name: string, input: VendorEventInput, target: VendorTarget):
         event_id: input.eventId,
         action_source: "website",
         event_source_url: input.sourceUrl,
-        user_data: {
-          em: list(keys.em),
-          ph: list(keys.ph),
-          fn: list(keys.fn),
-          ln: list(keys.ln),
-          ct: list(keys.ct),
-          st: list(keys.st),
-          zp: list(keys.zp),
-          country: list(keys.country),
-          external_id: list(keys.externalId),
-          client_ip_address: input.ip,
-          client_user_agent: input.userAgent,
-          fbp: browser.fbp,
-          fbc: browser.fbc,
-        },
+        user_data: userData,
         custom_data: {
           value: commerce.valueMajor,
           currency: commerce.currency,
@@ -120,6 +133,19 @@ function buildMeta(name: string, input: VendorEventInput, target: VendorTarget):
 function buildTikTok(name: string, input: VendorEventInput, target: VendorTarget): BuildResult {
   const { keys, browser, commerce } = input;
 
+  const user = {
+    email: keys.em,
+    phone: keys.ph,
+    external_id: keys.externalId,
+    ttclid: browser.ttclid,
+    ttp: browser.ttp,
+    ip: input.ip,
+    user_agent: input.userAgent,
+  };
+  // `user` is required for Web events. Never delete it, never fabricate identifiers: with nothing
+  // to put in it, refuse (recorded blocked, no HTTP).
+  if (!hasContent(user)) return refuse("tiktok user data missing");
+
   return ok({
     event_source: "web",
     event_source_id: target.id,
@@ -129,15 +155,7 @@ function buildTikTok(name: string, input: VendorEventInput, target: VendorTarget
         event: name,
         event_time: seconds(input),
         event_id: input.eventId,
-        user: {
-          email: keys.em,
-          phone: keys.ph,
-          external_id: keys.externalId,
-          ttclid: browser.ttclid,
-          ttp: browser.ttp,
-          ip: input.ip,
-          user_agent: input.userAgent,
-        },
+        user,
         properties: {
           value: commerce.valueMajor,
           currency: commerce.currency,
@@ -177,6 +195,25 @@ function buildSnap(
     return refuse("snap purchase value missing");
   }
 
+  const userData = {
+    em: list(keys.em),
+    ph: list(keys.ph),
+    fn: list(keys.fn),
+    ln: list(keys.ln),
+    ct: list(keys.ct),
+    st: list(keys.st),
+    zp: list(keys.zp),
+    country: list(keys.country),
+    // Snap's external_id is a scalar string, unlike Meta's array.
+    external_id: keys.externalId,
+    client_ip_address: input.ip,
+    client_user_agent: input.userAgent,
+    sc_click_id: browser.scClickId,
+    sc_cookie1: browser.scid,
+  };
+  // `user_data` is required; an empty-string key would pass the check above but be compacted away.
+  if (!hasContent(userData)) return refuse("snap matching data missing");
+
   return ok({
     data: [
       {
@@ -185,22 +222,7 @@ function buildSnap(
         event_id: input.eventId,
         action_source: "WEB",
         event_source_url: input.sourceUrl,
-        user_data: {
-          em: list(keys.em),
-          ph: list(keys.ph),
-          fn: list(keys.fn),
-          ln: list(keys.ln),
-          ct: list(keys.ct),
-          st: list(keys.st),
-          zp: list(keys.zp),
-          country: list(keys.country),
-          // Snap's external_id is a scalar string, unlike Meta's array.
-          external_id: keys.externalId,
-          client_ip_address: input.ip,
-          client_user_agent: input.userAgent,
-          sc_click_id: browser.scClickId,
-          sc_cookie1: browser.scid,
-        },
+        user_data: userData,
         custom_data: {
           value: commerce.valueMajor,
           currency: commerce.currency,

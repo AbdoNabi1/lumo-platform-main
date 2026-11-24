@@ -111,7 +111,25 @@ function safeVendorResponse(
   if (exceedsDepth(body, MAX_VENDOR_RESPONSE_DEPTH)) return undefined;
 
   const redacted = redactSecrets(body, needles) as Readonly<Record<string, unknown>>;
-  return JSON.stringify(redacted).length > MAX_VENDOR_RESPONSE_BYTES ? undefined : redacted;
+  // Bytes, not UTF-16 code units: a multibyte body is larger on the wire than `.length` says.
+  const bytes = new TextEncoder().encode(JSON.stringify(redacted)).length;
+  return bytes > MAX_VENDOR_RESPONSE_BYTES ? undefined : redacted;
+}
+
+/**
+ * Recorded text for a failed attempt. When a credential was used nothing is derived from vendor or
+ * transport text — it can carry the credential in a spelling no needle anticipates (JSON escapes,
+ * encodings) — so only fixed, trusted diagnostics are kept. Vendor detail stays available through
+ * the recursively sanitized decoded `vendorResponse`.
+ */
+function trustedHttpError(status: number): string {
+  return `vendor responded ${String(status)}`;
+}
+
+function trustedTransportError(error: unknown, credential: string): string {
+  const name = error instanceof Error ? error.name : "";
+  const safe = /^[A-Za-z]{1,40}$/.test(name) && !name.includes(credential) ? name : "Error";
+  return `transport error (${safe})`;
 }
 
 /** Appends `param=<secret>` to a URL; the result is local to the send and never recorded. */
@@ -223,7 +241,10 @@ export class HttpJsonAdapter implements DestinationAdapter {
         ...(ok
           ? {}
           : {
-              error: redactString(response.error ?? `status ${String(response.status)}`, needles),
+              error:
+                credential === undefined
+                  ? (response.error ?? `status ${String(response.status)}`)
+                  : trustedHttpError(response.status),
             }),
         latencyMs: clock() - startedAt,
         ...(vendorResponse === undefined ? {} : { vendorResponse }),
@@ -233,7 +254,12 @@ export class HttpJsonAdapter implements DestinationAdapter {
       return {
         ok: false,
         retryable: true,
-        error: error instanceof Error ? redactString(error.message, needles) : "transport error",
+        error:
+          credential !== undefined
+            ? trustedTransportError(error, credential)
+            : error instanceof Error
+              ? error.message
+              : "transport error",
         latencyMs: clock() - startedAt,
       };
     }
