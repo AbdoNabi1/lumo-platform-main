@@ -1209,6 +1209,8 @@ describe("scheduler jobs", () => {
       "cdc-watchdog",
       "billing-renewals",
       "billing-dunning-retries",
+      // Always registered by the real composition: the recovery wiring needs only the shared Prisma client.
+      "outreach-reconcile-unresolved",
     ]);
 
     let ran = 0;

@@ -254,6 +254,12 @@ orders.order.refunded.v1 base 220752000000 single
 orders.order.resumed.v1 base 220752000000 single
 orders.order.return_requested.v1 base 220752000000 single
 orders.order.returned.v1 base 220752000000 single
+outreach.contact.consent_changed.v1 base 2592000000 single
+outreach.message.status_changed.v1 base 2592000000 single
+outreach.template.status_changed.v1 base 2592000000 single
+outreach.whatsapp.connected.v1 base 2592000000 single
+outreach.whatsapp.disconnected.v1 base 2592000000 single
+outreach.whatsapp.inbound_received.v1 base 2592000000 single
 pages.page.archived.v1 base 2592000000 single
 pages.page.draft.v1 base 2592000000 single
 pages.page.published.v1 base 2592000000 single

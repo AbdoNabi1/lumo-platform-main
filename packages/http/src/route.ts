@@ -73,6 +73,17 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
    */
   readonly public?: boolean;
   /**
+   * Whose tenant a `public` route runs as. `"request"` (the default, and the only behaviour before this
+   * field existed) resolves the tenant from the request (header / claim / host) and applies the tenant
+   * lifecycle gate. `"platform"` is for an app-level ingress that has NO shop on the wire (Meta's one
+   * webhook URL for every merchant): the transport skips tenant resolution AND the lifecycle gate, ignores
+   * `x-tenant-id` entirely, and runs the handler with `context.tenantId` = `HttpServerDeps.platformTenantId`.
+   * The route must derive the real shop itself from a trusted source (a signed payload → a directory). It
+   * is only valid together with `public: true` (registering anything else throws), and is refused with 403
+   * when no platform tenant is configured.
+   */
+  readonly tenantScope?: "request" | "platform";
+  /**
    * T10.6: opt-in for a route a SUSPENDED tenant must still be able to call (paying an overdue
    * invoice). Absent ⇒ refused while suspended, unless it is an authenticated `GET` — see
    * `suspendedTenantMayCall`. A cancelled tenant is refused regardless.
@@ -89,6 +100,14 @@ export interface RouteDefinition<TBody = unknown, TParams = unknown, TQuery = un
     readonly maxBytes: number;
     readonly contentTypes: readonly string[];
   };
+  /**
+   * A signed JSON ingress (Meta's webhook): when `true` the transport does NOT parse the body. The exact wire bytes
+   * arrive as `context.rawBody` and `body` is `undefined`; the handler must authenticate the bytes FIRST and only then
+   * `JSON.parse` them (so malformed unsigned input is rejected as unauthenticated, never as a parser error). The route
+   * gets its own encapsulated `application/json` parser; every other route keeps the shared one, and the body limit
+   * is the server's. Leave `schema.body` unset.
+   */
+  readonly rawJsonBody?: boolean;
   readonly summary: string;
   readonly schema: {
     readonly body?: z.ZodType<TBody>;

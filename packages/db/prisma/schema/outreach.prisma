@@ -1,0 +1,199 @@
+model WhatsAppConnection {
+  tenantId String @id @map("tenant_id")
+  status String
+  wabaId String @map("waba_id")
+  phoneNumberId String @map("phone_number_id")
+  displayPhoneNumber String? @map("display_phone_number")
+  verifiedName String? @map("verified_name")
+  qualityRating String? @map("quality_rating")
+  messagingLimitTier String? @map("messaging_limit_tier")
+  sealedCredentials String @map("sealed_credentials")
+  connectedAt DateTime? @map("connected_at")
+  disconnectedAt DateTime? @map("disconnected_at")
+  lastStatusSyncAt DateTime? @map("last_status_sync_at")
+  lastError String? @map("last_error")
+  onboardingAttemptId String? @db.Uuid @map("onboarding_attempt_id")
+  onboardingStage String? @map("onboarding_stage")
+  onboardingFailure String? @map("onboarding_failure")
+  onboardingLeaseOwner String? @db.Uuid @map("onboarding_lease_owner")
+  onboardingLeaseUntil DateTime? @map("onboarding_lease_until")
+  version Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("whatsapp_connections")
+  @@schema("outreach")
+}
+
+model WhatsAppPhoneDirectory {
+  tenantId String @map("tenant_id")
+  phoneNumberId String @id @map("phone_number_id")
+  shopTenantId String @map("shop_tenant_id")
+  wabaId String @map("waba_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([tenantId, wabaId], map: "whatsapp_phone_directory_0_key")
+  @@unique([tenantId, shopTenantId], map: "whatsapp_phone_directory_1_key")
+  @@index([shopTenantId], map: "whatsapp_phone_directory_2_idx")
+  @@map("whatsapp_phone_directory")
+  @@schema("outreach")
+}
+
+model MessageTemplate {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  wabaId String @map("waba_id")
+  metaTemplateId String? @map("meta_template_id")
+  name String
+  language String
+  category String
+  components Json
+  status String
+  rejectedReason String? @map("rejected_reason")
+  qualityScore String? @map("quality_score")
+  lastSyncedAt DateTime? @map("last_synced_at")
+  statusEventAt DateTime? @map("status_event_at")
+  categoryEventAt DateTime? @map("category_event_at")
+  reconciledAt DateTime? @map("reconciled_at")
+  revision Int @default(0)
+  version Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@unique([tenantId, wabaId, name, language], map: "message_templates_0_key")
+  @@map("message_templates")
+  @@schema("outreach")
+}
+
+model Contact {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  phoneE164 String? @map("phone_e164")
+  email String?
+  customerRef String? @map("customer_ref")
+  displayName String? @map("display_name")
+  whatsappMarketing String @default("unknown") @map("whatsapp_marketing")
+  whatsappTransactional String @default("unknown") @map("whatsapp_transactional")
+  emailMarketing String @default("unknown") @map("email_marketing")
+  lastInboundAt DateTime? @map("last_inbound_at")
+  version Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@unique([tenantId, phoneE164], map: "contacts_0_key")
+  @@unique([tenantId, email], map: "contacts_1_key")
+  @@map("contacts")
+  @@schema("outreach")
+}
+
+model ConsentEvent {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  contactId String @db.Uuid @map("contact_id")
+  channel String
+  purpose String
+  action String
+  source String
+  evidence String?
+  operationKey String? @map("operation_key")
+  occurredAt DateTime @map("occurred_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([tenantId, contactId, occurredAt], map: "consent_events_0_idx")
+  @@unique([tenantId, operationKey], map: "consent_events_1_key")
+  @@map("consent_events")
+  @@schema("outreach")
+}
+
+model OutboundMessage {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  channel String
+  kind String
+  contactId String? @db.Uuid @map("contact_id")
+  recipient String
+  templateName String? @map("template_name")
+  templateLanguage String? @map("template_language")
+  templateRevision Int? @map("template_revision")
+  purpose String
+  payload Json
+  idempotencyKey String @map("idempotency_key")
+  status String
+  providerMessageId String? @map("provider_message_id")
+  errorCode String? @map("error_code")
+  errorMessage String? @map("error_message")
+  contextRef String? @map("context_ref")
+  acceptedAt DateTime? @map("accepted_at")
+  correlationId String @db.Uuid @map("correlation_id")
+  dispatchStartedAt DateTime? @map("dispatch_started_at")
+  providerIdempotencyKey String? @map("provider_idempotency_key")
+  dispatchPhoneNumberId String? @map("dispatch_phone_number_id")
+  dispatchWabaId String? @map("dispatch_waba_id")
+  version Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@unique([tenantId, idempotencyKey], map: "outbound_messages_0_key")
+  @@unique([tenantId, correlationId], map: "outbound_messages_1_key")
+  @@index([tenantId, providerMessageId], map: "outbound_messages_2_idx")
+  @@map("outbound_messages")
+  @@schema("outreach")
+}
+
+model MessageStatusEvent {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  outboundMessageId String @db.Uuid @map("outbound_message_id")
+  providerEventId String @map("provider_event_id")
+  status String
+  occurredAt DateTime @map("occurred_at")
+  raw Json
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([tenantId, providerEventId], map: "message_status_events_0_key")
+  @@map("message_status_events")
+  @@schema("outreach")
+}
+
+model InboundMessage {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  contactId String @db.Uuid @map("contact_id")
+  providerMessageId String @map("provider_message_id")
+  type String
+  text String?
+  buttonPayload String? @map("button_payload")
+  contextProviderMessageId String? @map("context_provider_message_id")
+  occurredAt DateTime @map("occurred_at")
+  receivedAt DateTime @map("received_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([tenantId, providerMessageId], map: "inbound_messages_0_key")
+  @@map("inbound_messages")
+  @@schema("outreach")
+}
+
+model UnmatchedStatusEvent {
+  id String @id @db.Uuid
+  tenantId String @map("tenant_id")
+  phoneNumberId String @map("phone_number_id")
+  providerEventId String @map("provider_event_id")
+  providerMessageId String @map("provider_message_id")
+  correlationId String? @map("correlation_id")
+  status String
+  recipient String? @map("recipient")
+  dispatchWabaId String? @map("dispatch_waba_id")
+  errorCode String? @map("error_code")
+  quarantined Boolean @default(false) @map("quarantined")
+  occurredAt DateTime @map("occurred_at")
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([tenantId, providerEventId], map: "unmatched_status_events_0_key")
+  @@index([tenantId, providerMessageId], map: "unmatched_status_events_1_idx")
+  @@index([tenantId, correlationId], map: "unmatched_status_events_2_idx")
+  @@index([tenantId, phoneNumberId, providerMessageId], map: "unmatched_status_events_3_idx")
+  @@map("unmatched_status_events")
+  @@schema("outreach")
+}
+
+model EmailSendCounter {
+  tenantId String @map("tenant_id")
+  windowKind String @map("window_kind")
+  windowStart DateTime @map("window_start")
+  count Int
+  @@id([tenantId, windowKind, windowStart])
+  @@map("email_send_counters")
+  @@schema("outreach")
+}

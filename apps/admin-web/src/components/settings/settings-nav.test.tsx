@@ -22,6 +22,8 @@ const EXPECTED = [
   ["domains", "Domains", "/settings/domains"],
   ["customer-events", "Customer events", "/settings/customer-events"],
   ["notifications", "Notifications", "/settings/notifications"],
+  ["whatsapp", "WhatsApp", "/settings/whatsapp"],
+  ["email", "Email", "/settings/email"],
   ["custom-data", "Metafields and metaobjects", "/settings/custom-data"],
   ["languages", "Languages", "/locales"],
   ["customer-privacy", "Customer privacy", "/settings/customer-privacy"],
@@ -45,7 +47,7 @@ function labelOf(link: HTMLElement): string | null | undefined {
 }
 
 describe("SettingsNav", () => {
-  it("defines Shopify's 19 entries with the exact ids, labels and hrefs, in order", () => {
+  it("defines Shopify's 19 entries plus WhatsApp and Email after Notifications, with the exact ids, labels and hrefs, in order", () => {
     expect.hasAssertions();
     expect(SETTINGS_NAV_ITEMS.map((item) => [item.id, item.label(en), item.href] as const)).toEqual(
       EXPECTED,
@@ -55,16 +57,50 @@ describe("SettingsNav", () => {
     );
   });
 
-  it("renders 19 links in the table order", () => {
+  it("renders 21 links in the table order (Shopify's 19 plus WhatsApp and Email)", () => {
     expect.hasAssertions();
     render(<SettingsNav t={en} />);
     const nav = screen.getByRole("navigation", { name: en.settingsNav.label });
     const links = within(nav).getAllByRole("link");
-    expect(links).toHaveLength(19);
+    expect(links).toHaveLength(21);
     expect(links.map(labelOf)).toEqual(EXPECTED.map(([, label]) => label));
     expect(links.map((link) => link.getAttribute("href"))).toEqual(
       EXPECTED.map(([, , href]) => href),
     );
+  });
+
+  it("lists WhatsApp and Email right after Notifications, available, with no Soon badge", () => {
+    expect.hasAssertions();
+    render(<SettingsNav t={en} />);
+    const links = screen.getAllByRole("link");
+    const hrefs = links.map((link) => link.getAttribute("href"));
+    const notifications = hrefs.indexOf("/settings/notifications");
+    expect(hrefs.slice(notifications, notifications + 3)).toEqual([
+      "/settings/notifications",
+      "/settings/whatsapp",
+      "/settings/email",
+    ]);
+    for (const link of [links[notifications + 1], links[notifications + 2]]) {
+      expect(link).not.toHaveTextContent(en.settingsNav.soon);
+    }
+    expect(SETTINGS_NAV_ITEMS.filter((item) => ["whatsapp", "email"].includes(item.id))).toEqual([
+      expect.objectContaining({ id: "whatsapp", available: true }),
+      expect.objectContaining({ id: "email", available: true }),
+    ]);
+  });
+
+  it("marks WhatsApp and Email current for their own activeId, with the brand name isolated in <bdi>", () => {
+    expect.hasAssertions();
+    const { unmount } = render(<SettingsNav t={en} activeId="whatsapp" />);
+    const whatsapp = screen.getByRole("link", { name: "WhatsApp" });
+    expect(whatsapp).toHaveAttribute("aria-current", "page");
+    expect(whatsapp.querySelector("bdi")).toHaveAttribute("dir", "auto");
+    unmount();
+    render(<SettingsNav t={en} activeId="email" />);
+    expect(screen.getByRole("link", { name: "Email" })).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getAllByRole("link").filter((link) => link.hasAttribute("aria-current")),
+    ).toHaveLength(1);
   });
 
   it("marks both Plan and Billing current when activeId is billing", () => {
@@ -136,6 +172,8 @@ describe("SettingsNav", () => {
       ar.settingsNav.domains,
       ar.settingsNav.customerEvents,
       ar.settingsNav.notifications,
+      ar.settingsNav.whatsapp,
+      ar.settingsNav.email,
       ar.settingsNav.customData,
       ar.settingsNav.languages,
       ar.settingsNav.customerPrivacy,

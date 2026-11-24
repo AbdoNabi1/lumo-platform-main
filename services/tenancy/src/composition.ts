@@ -262,3 +262,32 @@ export function wireTenancy(deps: TenancyWiringDeps): WiredTenancy {
     deliveredEventTypes: delivered,
   };
 }
+
+/**
+ * Read-only tenant enumeration over the deployment/platform scope (`tenantId` is the scope tenant rows live in), for a
+ * process that has no admin composition — the scheduler's per-tenant jobs. It builds the same Prisma tenant repository
+ * `wireTenancy` builds; `ListTenants` never writes, so the outbox it is constructed with is never used.
+ */
+export function wireTenantListing(deps: {
+  readonly prisma: Database;
+  readonly tenantId: string;
+  readonly serializer: EventSerializer;
+  readonly clock: Clock;
+  readonly idGenerator: IdGenerator;
+}): ListTenants {
+  const outbox = new OutboxWriter({
+    store: new PrismaOutboxStore(deps.prisma),
+    translator: new TenancyEventTranslator(),
+    serializer: deps.serializer,
+    clock: deps.clock,
+    producer: "tenancy",
+  });
+  return new ListTenants({
+    tenants: new PrismaTenantRepository({
+      prisma: deps.prisma,
+      tenantId: deps.tenantId,
+      outbox,
+      context: rootEventContext(deps.idGenerator, deps.tenantId),
+    }),
+  });
+}

@@ -1,0 +1,170 @@
+import type { ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import type { WhatsAppConnectionDto } from "@/lib/api/outreach";
+import { ar } from "@/messages/ar";
+import { en } from "@/messages/en";
+
+const mocks = vi.hoisted(() => ({ locale: "en" as string | undefined, fetchConnection: vi.fn() }));
+vi.mock("next/headers", () => ({
+  cookies: () =>
+    Promise.resolve({
+      get: () => (mocks.locale === undefined ? undefined : { value: mocks.locale }),
+    }),
+}));
+vi.mock("next/link", () => ({
+  default: ({
+    children,
+    href,
+    "aria-current": ariaCurrent,
+  }: {
+    children: ReactNode;
+    href: string;
+    "aria-current"?: "page";
+  }) => (
+    <a href={href} aria-current={ariaCurrent}>
+      {children}
+    </a>
+  ),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: async () => ({ name: "Staff" }) }));
+vi.mock("@/components/app-shell", () => ({
+  AppShell: ({ children }: { children: ReactNode }) => <main data-testid="shell">{children}</main>,
+}));
+vi.mock("@/lib/api/outreach", () => ({ fetchWhatsAppConnection: mocks.fetchConnection }));
+vi.mock("@/app/settings/whatsapp/templates/actions", () => ({ createTemplateAction: vi.fn() }));
+const { default: NewTemplatePage } = await import("./page");
+
+const connected: WhatsAppConnectionDto = {
+  available: true,
+  status: "connected",
+  displayPhoneNumber: "+20 100 123 4567",
+  verifiedName: "Nour Store",
+  qualityRating: "GREEN",
+  messagingLimitTier: "TIER_250",
+  connectedAt: "2026-11-20T10:00:00.000Z",
+  lastError: null,
+  onboardingFailure: null,
+  onboardingStage: null,
+  version: 3,
+};
+
+/** Every text node that names a brand without being the content of a `<bdi dir="auto">` (A6). */
+function bareBrandText(): string[] {
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const bare: string[] = [];
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+    const text = node.textContent ?? "";
+    if (!/\b(WhatsApp|Meta)\b/.test(text)) continue;
+    const parent = node.parentElement;
+    if (!(parent?.tagName === "BDI" && parent.getAttribute("dir") === "auto")) bare.push(text);
+  }
+  return bare;
+}
+
+/**
+ * The page's own layout wrapper (the element holding the header and the content). It sits inside the settings frame,
+ * which is the shell's first child since the pages render within `SettingsFrame`.
+ */
+function pageLayout(): HTMLElement {
+  return screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
+}
+
+beforeEach(() => {
+  cleanup();
+  mocks.locale = "en";
+  mocks.fetchConnection.mockReset().mockResolvedValue({ outcome: "ok", data: connected });
+});
+
+describe("Settings → WhatsApp → Templates → New page", () => {
+  it("renders the form and the preview with a way back to the list", async () => {
+    expect.hasAssertions();
+    render(await NewTemplatePage());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      en.whatsappTemplates.form.title,
+    );
+    expect(screen.getByLabelText(en.whatsappTemplates.form.body)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: en.whatsappTemplates.preview.title }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link", { name: en.whatsappTemplates.form.back })[0],
+    ).toHaveAttribute("href", "/settings/whatsapp/templates");
+  });
+
+  it("without an active connection it explains and offers no form", async () => {
+    expect.hasAssertions();
+    mocks.fetchConnection.mockResolvedValue({
+      outcome: "ok",
+      data: { ...connected, status: "disconnected" },
+    });
+    render(await NewTemplatePage());
+    expect(
+      screen.getByRole("heading", { level: 2, name: en.whatsappTemplates.notConnectedTitle }),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(en.whatsappTemplates.form.body)).toBeNull();
+  });
+
+  it("shows the sign-in note when unauthorized", async () => {
+    expect.hasAssertions();
+    mocks.fetchConnection.mockResolvedValue({ outcome: "unauthorized" });
+    render(await NewTemplatePage());
+    expect(screen.getByRole("note")).toHaveTextContent(en.whatsappTemplates.unauthorized);
+  });
+
+  it("renders Arabic copy and an Arabic default language", async () => {
+    expect.hasAssertions();
+    mocks.locale = "ar";
+    render(await NewTemplatePage());
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      ar.whatsappTemplates.form.title,
+    );
+    expect(screen.getByLabelText(ar.whatsappTemplates.form.language)).toHaveValue("ar");
+  });
+
+  it("brand names are isolated on the form page and on the not-connected explanation (A6)", async () => {
+    expect.hasAssertions();
+    render(await NewTemplatePage());
+    expect(document.body.textContent).toContain("Meta");
+    expect(bareBrandText()).toEqual([]);
+    cleanup();
+    mocks.fetchConnection.mockResolvedValue({
+      outcome: "ok",
+      data: { ...connected, status: "disconnected" },
+    });
+    render(await NewTemplatePage());
+    expect(document.body.textContent).toContain("WhatsApp");
+    expect(bareBrandText()).toEqual([]);
+  });
+});
+
+describe("NewTemplatePage inside the settings frame", () => {
+  it("renders within the settings navigation with its entry current, and the page after the navigation", async () => {
+    expect.hasAssertions();
+    render(await NewTemplatePage());
+    const nav = screen.getByRole("navigation", { name: en.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.getAttribute("href"))).toEqual(["/settings/whatsapp"]);
+    expect(current.map((link) => link.textContent)).toEqual([en.settingsNav.whatsapp]);
+    expect(
+      nav.compareDocumentPosition(screen.getByRole("heading", { level: 1 })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(pageLayout()).toHaveAttribute("dir", "ltr");
+  });
+
+  it("renders the Arabic navigation beside the RTL page, with the entry current", async () => {
+    expect.hasAssertions();
+    mocks.locale = "ar";
+    render(await NewTemplatePage());
+    const nav = screen.getByRole("navigation", { name: ar.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.textContent)).toEqual([ar.settingsNav.whatsapp]);
+    expect(pageLayout()).toHaveAttribute("dir", "rtl");
+  });
+});

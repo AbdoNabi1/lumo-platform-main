@@ -62,7 +62,7 @@ describe("/settings/[section] coming-soon page", () => {
     expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
   });
 
-  it.each(["nope", "general", "billing", "locations", "plan", "languages"])(
+  it.each(["nope", "general", "billing", "locations", "plan", "languages", "whatsapp", "email"])(
     "calls notFound for %s (not one of the nine unavailable ids)",
     async (section) => {
       expect.hasAssertions();

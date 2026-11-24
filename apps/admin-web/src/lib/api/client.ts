@@ -51,7 +51,17 @@ export type MutationResult<T> =
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "forbidden" }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "conflict"; readonly message: string; readonly code?: string }
+  | {
+      readonly outcome: "conflict";
+      readonly message: string;
+      readonly code?: string;
+      /**
+       * The envelope's own `retryable` flag, kept only when it is a boolean. The transport answers a 409 with
+       * `retryable: true` while the SAME Idempotency-Key is still running, so a caller that must not duplicate a send
+       * can tell that case from a refusal. Absent when the envelope has none (or a non-boolean one).
+       */
+      readonly retryable?: boolean;
+    }
   | {
       readonly outcome: "invalid";
       readonly message: string;
@@ -218,6 +228,7 @@ export async function mutateAdminApi<T>(
     readonly message?: unknown;
     readonly code?: unknown;
     readonly fields?: unknown;
+    readonly retryable?: unknown;
   } | null;
   const code = typeof envelope?.code === "string" ? { code: envelope.code } : {};
   if (response.status === 409) {
@@ -225,6 +236,7 @@ export async function mutateAdminApi<T>(
       outcome: "conflict",
       message: typeof envelope?.message === "string" ? envelope.message : "Conflict",
       ...code,
+      ...(typeof envelope?.retryable === "boolean" ? { retryable: envelope.retryable } : {}),
     };
   }
   if (response.status === 422) {

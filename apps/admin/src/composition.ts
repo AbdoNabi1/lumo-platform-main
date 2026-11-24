@@ -37,6 +37,17 @@ import type {
 import { wireCoupons } from "@platform/coupons";
 import { wireCustomer360 } from "@platform/customer-360";
 import type { Database } from "@platform/db";
+import {
+  DEFAULT_EMAIL_CAPS,
+  wireOutreach,
+  type EmailSendPort,
+  type OutreachCredentialVault,
+  type OutreachEventSink,
+  type OutreachRepositories,
+  type WhatsAppCloudApiPort,
+  type WiredOutreach,
+} from "@platform/outreach";
+import { randomInt } from "node:crypto";
 import type { EventSerializer } from "@platform/domain-events";
 import { wireExperience } from "@platform/experience";
 import { wireExperimentation } from "@platform/experimentation";
@@ -228,6 +239,10 @@ import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
 import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
 import { CarrierSettingsAdminController } from "./interfaces/carrier-settings.admin-controller";
+import {
+  OutreachAdminController,
+  type OutreachSignupInfo,
+} from "./interfaces/outreach.admin-controller";
 import { CarrierShippingAdminController } from "./interfaces/carrier-shipping.admin-controller";
 import { CarrierOrderAdapter } from "./carrier-shipping/carrier-order.adapter";
 import { CarrierFulfillmentAdapter } from "./carrier-shipping/carrier-fulfillment.adapter";
@@ -268,7 +283,59 @@ export interface StorefrontDnsTarget {
   readonly ipv4: readonly string[];
 }
 
+/**
+ * What the runtime hands the Outreach context (readiness is decided in `apps/runtime/src/outreach-readiness.ts`, never
+ * here). A port that is not provided means "the platform is not configured": the routes answer `available:false` /
+ * `WHATSAPP_NOT_CONFIGURED`, with no stub default.
+ */
+export interface AdminOutreachDeps {
+  readonly whatsapp?: WhatsAppCloudApiPort;
+  readonly vault?: OutreachCredentialVault;
+  readonly email?: EmailSendPort;
+  readonly emailFrom?: string;
+  readonly emailCaps?: { readonly perHour: number; readonly perDay: number };
+  readonly unresolvedAfterMs?: number;
+  /**
+   * Test seam: where Outreach events go when there is no database. Absent + no `prisma` ⇒ the recording sink; with
+   * `prisma` the outbox sink is always used and this is ignored.
+   */
+  readonly events?: OutreachEventSink;
+  /**
+   * Test seam: read handle on the in-memory repositories the wired Outreach runs on. Gated like `events`: forwarded
+   * only when there is no `prisma`, so with a database it is never called.
+   */
+  readonly inspectInMemory?: (repositories: OutreachRepositories) => void;
+  /** Test seam: the 6-digit PIN the onboarding registers the number with. */
+  readonly randomPin?: () => string;
+  /** Non-secret Embedded Signup values, present only when WhatsApp is ready. */
+  readonly signup?: OutreachSignupInfo;
+  /** The webhook secrets; absent ⇒ the webhook routes fail closed (403 verify / 401 delivery). */
+  readonly webhook?: { readonly appSecret: string; readonly verifyToken: string };
+}
+
+/**
+ * The scope the platform-level phone directory and the platform-scoped public webhook run in: the explicit platform
+ * tenant, else the deployment tenant, else an in-memory marker (tests with no tenant at all). Blank (multi mode with
+ * nothing to pin to) stays blank — the transport then refuses the webhook, fail closed.
+ */
+export const IN_MEMORY_PLATFORM_TENANT = "platform-in-memory";
+export function outreachPlatformScope(
+  deps: Pick<AdminWiringDeps, "platformTenantId" | "tenantId" | "prisma">,
+): string {
+  // The in-memory marker is a test stand-in only: with a database it must never become the scope of real rows, so
+  // "nothing to pin to" stays blank there (the transport then refuses the webhook with 403).
+  return (
+    deps.platformTenantId ??
+    deps.tenantId ??
+    (deps.prisma === undefined ? IN_MEMORY_PLATFORM_TENANT : "")
+  );
+}
+
+const randomSixDigitPin = (): string => String(randomInt(0, 1_000_000)).padStart(6, "0");
+
 export interface AdminWiringDeps {
+  /** WhatsApp (Meta) + email channels; absent ⇒ not configured. */
+  readonly outreach?: AdminOutreachDeps;
   readonly carrierRegistrations?: ShippingWiringDeps["carrierRegistrations"];
   readonly carrierCredentialVault?: ShippingWiringDeps["carrierCredentialVault"];
   readonly randomSecret?: ShippingWiringDeps["randomSecret"];
@@ -569,6 +636,17 @@ export interface WiredAdmin {
   readonly shippingZones: ShippingZonesAdminController;
   readonly carrierSettings: CarrierSettingsAdminController;
   readonly carrierShipping: CarrierShippingAdminController;
+  /** Settings → WhatsApp / Email → Outreach (guarded per method: `outreach:read` / `manage` / `send`). */
+  readonly outreach: OutreachAdminController;
+  /**
+   * Meta's webhook ingress seam. Like `paymentsWebhook`, it carries no principal: the authentication IS the app secret
+   * (signature) / verify token. `process` resolves the shop from the payload's phone number, never from the request.
+   */
+  readonly outreachWebhook: {
+    readonly appSecret: string | undefined;
+    readonly verifyToken: string | undefined;
+    readonly process: WiredOutreach["webhook"]["process"];
+  };
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -1224,6 +1302,45 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const licensing = deps.licensing ?? wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
+  // Outreach (WhatsApp + email). The fields are listed, never `...deps`: `deps.tenantId` must not reach this context
+  // (ADR-0014). The store profile is the same tenant-scoped settings read `GET /store/settings` uses, adapted here so
+  // Outreach never queries a tenancy table.
+  const outreachDeps = deps.outreach;
+  const outreach = wireOutreach({
+    serializer: deps.serializer,
+    idGenerator: deps.idGenerator,
+    clock: deps.clock,
+    platformTenantId: outreachPlatformScope(deps),
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+    ...(outreachDeps?.whatsapp === undefined ? {} : { whatsapp: outreachDeps.whatsapp }),
+    ...(outreachDeps?.vault === undefined ? {} : { vault: outreachDeps.vault }),
+    ...(outreachDeps?.email === undefined ? {} : { email: outreachDeps.email }),
+    ...(outreachDeps?.emailFrom === undefined ? {} : { emailFrom: outreachDeps.emailFrom }),
+    ...(outreachDeps?.events === undefined || deps.prisma !== undefined
+      ? {}
+      : { events: outreachDeps.events }),
+    emailCaps: outreachDeps?.emailCaps ?? DEFAULT_EMAIL_CAPS,
+    ...(outreachDeps?.unresolvedAfterMs === undefined
+      ? {}
+      : { unresolvedAfterMs: outreachDeps.unresolvedAfterMs }),
+    ...(outreachDeps?.inspectInMemory === undefined || deps.prisma !== undefined
+      ? {}
+      : { inspectInMemory: outreachDeps.inspectInMemory }),
+    randomPin: outreachDeps?.randomPin ?? randomSixDigitPin,
+    storeProfile: {
+      get: async (tenantId) => {
+        const settings = await tenancy.tenancy.getStoreSettings(tenantId);
+        if (settings.status !== 200) {
+          throw new Error(`outreach: store settings unreadable (status ${settings.status})`);
+        }
+        const { storeName, contactEmail } = settings.body as {
+          storeName: string;
+          contactEmail: string | null;
+        };
+        return { storeName, contactEmail };
+      },
+    },
+  });
   const accessControl = deps.accessControl ?? new AllowAllAccessControl();
   const auditTrail = deps.auditTrail ?? new InMemoryAuditTrail();
   const guard = new AdminGuard({ accessControl, auditTrail, clock: deps.clock });
@@ -1367,6 +1484,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy,
     licensing,
     wishlist,
+    outreach,
   ];
 
   const tenantProvisioner = new TenantProvisioner({
@@ -1454,6 +1572,16 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       shipping: shipping.shipping,
       shipper: carrierShipper,
     }),
+    outreach: new OutreachAdminController({
+      outreach: outreach.outreach,
+      guard,
+      ...(outreachDeps?.signup === undefined ? {} : { signup: outreachDeps.signup }),
+    }),
+    outreachWebhook: {
+      appSecret: outreachDeps?.webhook?.appSecret,
+      verifyToken: outreachDeps?.webhook?.verifyToken,
+      process: (payload) => outreach.webhook.process(payload),
+    },
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),

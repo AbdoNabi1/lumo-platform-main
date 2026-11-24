@@ -84,14 +84,17 @@ export class PrismaTenantRepository implements TenantRepository {
   }
 
   async list(page: CursorPage, tx?: unknown): Promise<Paginated<Tenant>> {
-    const client = (tx as TransactionClient | undefined) ?? this.deps.prisma;
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
-    const rows = await client.tenant.findMany({
-      where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
-      orderBy: { id: "asc" },
-      take: limit + 1,
-    });
+    // Each page is read on a tenant-scoped transaction (`app.tenant_id` set): a `where.tenantId` is not the Postgres
+    // session setting, so a bare read returns nothing once RLS is enforced for a non-bypass role.
+    const rows = await readScoped(this.deps.prisma, this.deps.tenantId, tx, (client) =>
+      client.tenant.findMany({
+        where: { tenantId: this.deps.tenantId, ...(after ? { id: { gt: after } } : {}) },
+        orderBy: { id: "asc" },
+        take: limit + 1,
+      }),
+    );
     return buildPaginatedPage(
       rows.map((row) => TenantMapper.toDomain(row as TenantRow)),
       limit,

@@ -129,7 +129,12 @@ const schema = z
     METRICS_TOKEN: z.string().min(16).optional(),
 
     TENANT_MODE: z.enum(["single", "multi"]).default("single"),
-    TENANT_DEFAULT_ID: z.string().default("tenant-local"),
+    // An OMITTED id keeps the default; an explicitly empty or whitespace-only one is a misconfiguration (it would be
+    // the platform scope of the webhook and the deployment tenant) and is refused here instead of being defaulted.
+    TENANT_DEFAULT_ID: z
+      .string()
+      .refine((value) => value.trim().length > 0, "TENANT_DEFAULT_ID must not be blank")
+      .default("tenant-local"),
 
     /** Plan 1A: the zone shops get subdomains under (`<slug>.<this>`). Unset ⇒ no automatic subdomain. */
     PLATFORM_STORE_DOMAIN: z.string().min(3).optional(),
@@ -243,6 +248,26 @@ const schema = z
     // post status updates); exactly one set refuses boot outside `local` (Ruling 31).
     SHIPPING_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
     ADMIN_API_PUBLIC_URL: z.string().url().optional(),
+
+    // ── Outreach (WhatsApp via Meta Cloud API + email via Resend), all optional: absent ⇒ "not configured".
+    // Readiness (what is actually built from them) is ONE function: `outreachReadiness` (outreach-readiness.ts).
+    // WhatsApp needs META_APP_ID, META_APP_SECRET, META_WHATSAPP_CONFIG_ID, META_WEBHOOK_VERIFY_TOKEN and
+    // OUTREACH_CREDENTIALS_KEK_REF together; email needs RESEND_API_KEY (above) and OUTREACH_EMAIL_FROM.
+    META_APP_ID: z.string().min(1).optional(),
+    META_APP_SECRET: z.string().min(16).optional(),
+    META_WHATSAPP_CONFIG_ID: z.string().min(1).optional(),
+    META_WEBHOOK_VERIFY_TOKEN: z.string().min(16).optional(),
+    META_GRAPH_API_VERSION: z
+      .string()
+      .regex(/^v\d+\.\d+$/, "must look like v24.0")
+      .default("v24.0"),
+    /** Seals each merchant's Meta token under its OWN alias/KEK (never the payments or carriers KEK). */
+    OUTREACH_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    OUTREACH_EMAIL_FROM: z.string().email().optional(),
+    OUTREACH_EMAIL_CAP_PER_HOUR: z.coerce.number().int().positive().default(200),
+    OUTREACH_EMAIL_CAP_PER_DAY: z.coerce.number().int().positive().default(2000),
+    /** A `pending` send older than this is recovered to `unknown` by the scheduled recovery job. */
+    OUTREACH_UNRESOLVED_AFTER_MS: z.coerce.number().int().min(60_000).default(300_000),
 
     // ── Tracking ingest (P1.3 / C-07) ──
     /**

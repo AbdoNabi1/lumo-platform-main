@@ -56,6 +56,7 @@ import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
 import { publicCarrierWebhookRoutes } from "./public-carrier-webhook-routes";
+import { outreachRoutes } from "./outreach-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
@@ -2247,6 +2248,7 @@ export function adminRoutes(
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
     ...carrierSettingsRoutes(admin),
+    ...outreachRoutes(admin),
     ...carrierShippingRoutes(admin),
     ...taxesRoutes(admin),
     ...returnsRoutes(admin),

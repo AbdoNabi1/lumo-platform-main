@@ -42,10 +42,15 @@ export const ROLE_PERMISSIONS = {
   operator: [
     ...SHOP_RESOURCES.map((r) => `${r}:*`),
     ...READ_ONLY_RESOURCES.map((r) => `${r}:read`),
+    // Outreach is deliberately NOT in SHOP_RESOURCES (that is a `:*` wildcard): an operator reads and
+    // sends test messages, but connecting/disconnecting WhatsApp and editing templates is admin-only.
+    "outreach:read",
+    "outreach:send",
     "account:update_self",
   ],
   viewer: [
     ...[...SHOP_RESOURCES, ...READ_ONLY_RESOURCES].map((r) => `${r}:read`),
+    "outreach:read",
     "account:update_self",
   ],
 } as const satisfies Readonly<Record<string, readonly string[]>>;

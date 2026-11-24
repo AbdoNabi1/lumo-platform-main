@@ -91,6 +91,12 @@ export interface HttpServerDeps {
    * unknown tenants are refused and an unreadable status fails closed (503).
    */
   readonly tenantGate?: TenantGate;
+  /**
+   * The platform-operator tenant scope. Used ONLY by a route declared `public: true` + `tenantScope:
+   * "platform"` (see `RouteDefinition.tenantScope`): that route's `context.tenantId` is this value, never
+   * anything from the request. Absent or blank ⇒ such a route answers 403 (fail closed).
+   */
+  readonly platformTenantId?: string;
   readonly rateLimiter: RateLimiter;
   /** Requests allowed per window per (tenant, principal) bucket. */
   readonly rateLimit: { readonly limit: number; readonly windowMs: number };
@@ -294,6 +300,9 @@ export async function registerRoutes(
 
   const addRoute = (instance: FastifyInstance, route: RouteDefinition): void => {
     const url = `/api/v${route.version}${route.path}`;
+    if (route.tenantScope === "platform" && route.public !== true) {
+      throw new Error(`Route ${route.method} ${url}: tenantScope "platform" requires public: true`);
+    }
     instance.route({
       method: route.method,
       url,
@@ -322,6 +331,24 @@ export async function registerRoutes(
   };
 
   for (const route of routes) {
+    if (route.rawJsonBody === true) {
+      // An encapsulated JSON parser that only captures the bytes: ONLY this route skips `JSON.parse` (the handler
+      // authenticates the buffer, then decodes once). The server's body limit still applies (no `bodyLimit` override).
+      await app.register((scope, _options, done) => {
+        scope.removeContentTypeParser("application/json");
+        scope.addContentTypeParser(
+          "application/json",
+          { parseAs: "buffer" },
+          (request, body: Buffer, parsed) => {
+            request.rawBody = body;
+            parsed(null, undefined);
+          },
+        );
+        addRoute(scope, route);
+        done();
+      });
+      continue;
+    }
     const binary = route.binaryBody;
     if (binary === undefined) {
       addRoute(app, route);
@@ -431,21 +458,38 @@ async function executeRoute(
 
   // 2. Tenant-resolution-first (ADR-0008): nothing below runs tenant-less, public routes included
   //    (a storefront read is still scoped to one merchant's catalog via `x-tenant-id`).
-  const tenantId = resolveTenant(deps.tenantResolvers, {
-    headers: request.headers as Record<string, string | undefined>,
-    hostname: request.hostname,
-    principal: identity,
-    claims,
-  });
-  if (tenantId === null) {
-    throw new AuthorizationError("No tenant resolved for this request");
-  }
-  request.tenantId = tenantId;
+  //     A `public` + `tenantScope:"platform"` route (an app-level ingress such as Meta's webhook, which
+  //     names no shop) is the one exception: it skips the resolvers AND the lifecycle gate — so a forged
+  //     `x-tenant-id` changes nothing and a cancelled shop cannot block ingestion for the others — and
+  //     runs as the configured platform tenant. The handler derives the real shop from a trusted source.
+  const platformScoped = route.public === true && route.tenantScope === "platform";
+  let tenantId: string;
+  if (platformScoped) {
+    const platformTenantId = deps.platformTenantId;
+    // An empty or whitespace-only id is "no platform tenant" (fail closed): it must never be used as a real scope.
+    if (platformTenantId === undefined || platformTenantId.trim().length === 0) {
+      throw new AuthorizationError("No platform tenant is configured for this route");
+    }
+    tenantId = platformTenantId;
+    request.tenantId = tenantId;
+  } else {
+    const resolved = resolveTenant(deps.tenantResolvers, {
+      headers: request.headers as Record<string, string | undefined>,
+      hostname: request.hostname,
+      principal: identity,
+      claims,
+    });
+    if (resolved === null) {
+      throw new AuthorizationError("No tenant resolved for this request");
+    }
+    tenantId = resolved;
+    request.tenantId = tenantId;
 
-  // 2b. Tenant lifecycle (T10.6): the one place a suspended/cancelled tenant is refused. Same body for
-  //     every endpoint; an unreadable status is a 503, never a pass.
-  const refused = await lifecycleRefusal(deps, request, tenantId, route);
-  if (refused !== null) return refused;
+    // 2b. Tenant lifecycle (T10.6): the one place a suspended/cancelled tenant is refused. Same body for
+    //     every endpoint; an unreadable status is a 503, never a pass.
+    const refused = await lifecycleRefusal(deps, request, tenantId, route);
+    if (refused !== null) return refused;
+  }
 
   // The identity is bound to the RESOLVED tenant exactly once, here — never defaulted. Everything
   // downstream (guard, authorization cache key, audit record, handlers) sees a tenant-scoped principal.

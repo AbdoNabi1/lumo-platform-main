@@ -43,6 +43,20 @@ function relative(path: string): string {
 const byName = new Map(topicInventory().map((spec) => [spec.name, spec]));
 
 describe("the Kafka topic inventory is complete", () => {
+  it("provisions all six outreach event topics", () => {
+    expect.hasAssertions();
+    expect(PRODUCED_EVENT_LISTS["@platform/outreach"]).toEqual([
+      "outreach.whatsapp.connected",
+      "outreach.whatsapp.disconnected",
+      "outreach.message.status_changed",
+      "outreach.whatsapp.inbound_received",
+      "outreach.contact.consent_changed",
+      "outreach.template.status_changed",
+    ]);
+    for (const type of PRODUCED_EVENT_LISTS["@platform/outreach"] ?? []) {
+      expect(byName.get(`${type}.v1`)?.kind).toBe("base");
+    }
+  });
   it("has a base topic for every type in every published list (the producer half of G-80)", () => {
     const missing = Object.entries(PRODUCED_EVENT_LISTS).flatMap(([source, types]) =>
       types

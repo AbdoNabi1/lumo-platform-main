@@ -66,6 +66,7 @@
     "@platform/observability": "workspace:*",
     "@platform/online-store": "workspace:*",
     "@platform/orders": "workspace:*",
+    "@platform/outreach": "workspace:*",
     "@platform/pages": "workspace:*",
     "@platform/payments": "workspace:*",
     "@platform/pricing": "workspace:*",

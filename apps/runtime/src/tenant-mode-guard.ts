@@ -93,8 +93,8 @@ export interface TenantDefaultIdSite {
 }
 
 /**
- * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (9 code
- * sites after G-64 removed the six event-path pins and T14.5 added one scheduled-job site;
+ * Every non-test, non-comment `TENANT_DEFAULT_ID` reference under apps/ services/ packages/ (code
+ * sites after G-64 removed the six event-path pins; T14.5 and the outreach recovery sweep each added a scheduled-job site;
  * comment-only mentions are prose, not references). A count is not a classification:
  * `tenant-mode-guard.test.ts` diffs this table against the source tree, so a new reference — or a
  * moved one — fails the build until someone classifies it here.
@@ -142,9 +142,28 @@ export const TENANT_DEFAULT_ID_SITES: readonly TenantDefaultIdSite[] = Object.fr
   },
   {
     file: "apps/runtime/src/config.ts",
-    line: 'TENANT_DEFAULT_ID: z.string().default("tenant-local"),',
+    line: "TENANT_DEFAULT_ID: z",
     class: "definition",
     why: "The config field itself. Read only by the sites in this table.",
+  },
+  {
+    file: "apps/runtime/src/config.ts",
+    line: '.refine((value) => value.trim().length > 0, "TENANT_DEFAULT_ID must not be blank")',
+    class: "definition",
+    why:
+      "The field's validation: an explicitly blank or whitespace-only id is refused (an omitted one keeps the " +
+      "default), because it would be the platform scope of the Meta webhook and the deployment tenant.",
+  },
+  {
+    file: "apps/runtime/src/scheduler.ts",
+    line: 'if (core.config.TENANT_MODE === "single") await sweep(core.config.TENANT_DEFAULT_ID);',
+    class: "platform-scope-job",
+    why:
+      "Outreach recovery sweep (R3-B04): under TENANT_MODE=single a merchant request is pinned to the deployment " +
+      "tenant, which the deployment supports without a tenancy directory row, so that tenant is reconciled once " +
+      'alongside the listed ones. Guarded by `=== "single"`: under multi nothing is read here and only the ' +
+      "directory's tenants are swept (each under its own scope). It acts only through the recovery wiring, which " +
+      "owns no provider.",
   },
   {
     file: "apps/admin-web/src/lib/api/client.ts",

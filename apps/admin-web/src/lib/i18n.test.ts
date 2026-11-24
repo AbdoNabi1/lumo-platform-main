@@ -40,6 +40,8 @@ const SHARED_VERBATIM = new Set([
   "pricingPage.datetimePlaceholder",
   // Plan 3C - shipping rate texts that are only placeholders and a symbol, no words: "{min} - {max}"
   // and the dash for "no condition". Nothing to translate (same rationale as the 3B entries above).
+  // Outreach Task 8 — the template form's character counter is only placeholders and a slash, no words.
+  "whatsappTemplates.form.count",
   "shippingSettings.between",
   "shippingSettings.noCondition",
   "taxSettings.noOverrides",

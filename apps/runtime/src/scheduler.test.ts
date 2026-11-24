@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Clock } from "@platform/contracts";
 import type { Logger } from "@platform/utils";
+import { wireOutreachRecovery } from "@platform/outreach";
+import { JsonEventSerializer } from "@platform/domain-events";
+import type { Database } from "@platform/db";
 import { buildJobs, createCdcWatchdogState, runCdcWatchdog, startJobLoop } from "./scheduler";
 import type { RuntimeCore } from "./composition";
 
@@ -455,6 +458,9 @@ describe("scheduled jobs are classified for tenancy (T10.7)", () => {
     "cdc-watchdog": "platform-global",
     "billing-renewals": "platform-tenant-scoped",
     "billing-dunning-retries": "platform-tenant-scoped",
+    // Sweeps every shop itself (core.listTenants) under the one global lock; a failing shop is logged and skipped,
+    // so one shop's slow or failing run never starves the others.
+    "outreach-reconcile-unresolved": "platform-global",
   };
 
   it("has exactly the jobs the classification names — a new job must be classified before it ships", () => {
@@ -464,6 +470,7 @@ describe("scheduled jobs are classified for tenancy (T10.7)", () => {
         OUTBOX_RETENTION_DAYS: 7,
         CDC_WATCHDOG_INTERVAL_MS: 1000,
       } as RuntimeCore["config"],
+      outreachRecovery: { reconcileUnresolved: vi.fn() },
     } as RuntimeCore;
     expect(
       buildJobs(core)
@@ -674,5 +681,324 @@ describe("billing-renewals / billing-dunning-retries jobs (T14.5)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * Round 3/4 (R3-B04, R4-B02): the outreach recovery job runs over `core.listTenants` + `core.outreachRecovery` ONLY — no
+ * admin HTTP server is ever created in this file — with the REAL `wireOutreachRecovery` over a stateful Prisma double.
+ */
+describe("outreach-reconcile-unresolved job (R3-B04, R4-B02)", () => {
+  const NOW = new Date("2026-11-20T12:00:00.000Z");
+  const clock: Clock = { now: () => NOW };
+
+  interface Row {
+    tenantId: string;
+    id: string;
+    version: number;
+    status: string;
+  }
+
+  /** Outbound rows per tenant; `updateMany`/`findMany` honour the tenant in their `where`, as the RLS-scoped adapter does. */
+  function statefulPrisma(rows: Row[]): {
+    prisma: Database;
+    outbox: Array<{ topic: string; tenantId: string }>;
+  } {
+    const outbox: Array<{ topic: string; tenantId: string }> = [];
+    const fullRow = (r: Row) => ({
+      id: r.id,
+      tenantId: r.tenantId,
+      channel: "whatsapp",
+      kind: "template",
+      contactId: null,
+      recipient: "+201****5678",
+      templateName: "t",
+      templateLanguage: "ar",
+      templateRevision: 2,
+      purpose: "utility",
+      payload: {},
+      idempotencyKey: `k-${r.id}`,
+      status: r.status,
+      providerMessageId: null,
+      errorCode: null,
+      errorMessage: null,
+      contextRef: null,
+      acceptedAt: null,
+      correlationId: `c-${r.id}`,
+      dispatchStartedAt: new Date(0),
+      providerIdempotencyKey: null,
+      dispatchPhoneNumberId: "phone-1",
+      dispatchWabaId: "waba-1",
+      version: r.version,
+    });
+    const tx = {
+      $executeRaw: () => Promise.resolve(0),
+      outboundMessage: {
+        findMany: ({ where }: { where: { tenantId: string; status: string } }) =>
+          Promise.resolve(
+            rows
+              .filter((r) => r.tenantId === where.tenantId && r.status === where.status)
+              .map(({ tenantId, id, version }) => ({ tenantId, id, version })),
+          ),
+        updateMany: ({
+          where,
+          data,
+        }: {
+          where: { tenantId: string; id: string; status: string; version: number };
+          data: { status: string; version: number };
+        }) => {
+          const row = rows.find(
+            (r) =>
+              r.tenantId === where.tenantId &&
+              r.id === where.id &&
+              r.status === where.status &&
+              r.version === where.version,
+          );
+          if (row === undefined) return Promise.resolve({ count: 0 });
+          row.status = data.status;
+          row.version = data.version;
+          return Promise.resolve({ count: 1 });
+        },
+        findFirst: ({ where }: { where: { tenantId: string; id: string } }) => {
+          const row = rows.find((r) => r.tenantId === where.tenantId && r.id === where.id);
+          return Promise.resolve(row === undefined ? null : fullRow(row));
+        },
+      },
+      outboxEntry: {
+        createMany: ({ data }: { data: Array<{ topic: string; tenantId: string }> }) => {
+          outbox.push(...data.map(({ topic, tenantId }) => ({ topic, tenantId })));
+          return Promise.resolve({ count: data.length });
+        },
+      },
+    };
+    return {
+      prisma: {
+        $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx),
+      } as unknown as Database,
+      outbox,
+    };
+  }
+
+  const tenant = (id: string) => ({ id: { toString: () => id } });
+  /** A `ListTenants` fake that serves the given pages, keyed by the cursor it is asked after. */
+  function pagedTenants(pages: Array<{ ids: string[]; next: string | null }>) {
+    const asked: Array<{ first?: number; after?: string }> = [];
+    return {
+      asked,
+      execute: vi.fn((page: { first?: number; after?: string }) => {
+        asked.push(page);
+        const index = page.after === undefined ? 0 : Number(page.after.replace("page-", ""));
+        const current = pages[index]!;
+        return Promise.resolve({
+          ok: true as const,
+          value: {
+            items: current.ids.map(tenant),
+            pageInfo: { hasNextPage: current.next !== null, endCursor: current.next },
+          },
+        });
+      }),
+    };
+  }
+
+  function coreWith(
+    recovery: RuntimeCore["outreachRecovery"],
+    listTenants: unknown,
+    errors: unknown[] = [],
+  ): RuntimeCore {
+    const logger: Logger = {
+      ...silentLogger,
+      error: (...args: unknown[]) => void errors.push(args),
+    };
+    return {
+      config: { OUTBOX_RETENTION_DAYS: 7, CDC_WATCHDOG_INTERVAL_MS: 1000 } as RuntimeCore["config"],
+      clock,
+      logger,
+      outreachRecovery: recovery,
+      listTenants,
+    } as unknown as RuntimeCore;
+  }
+
+  it("settles both tenants' abandoned rows across two pages, without the admin HTTP server and with zero provider calls", async () => {
+    expect.hasAssertions();
+    const providerCalls = vi.fn();
+    vi.stubGlobal("fetch", providerCalls);
+    try {
+      const rows: Row[] = [
+        { tenantId: "tenant-1", id: "o-1", version: 3, status: "pending" },
+        { tenantId: "tenant-2", id: "o-2", version: 5, status: "pending" },
+        { tenantId: "tenant-3", id: "o-3", version: 1, status: "sent" },
+      ];
+      const { prisma, outbox } = statefulPrisma(rows);
+      const recovery = wireOutreachRecovery({
+        prisma,
+        clock,
+        idGenerator: { generate: () => crypto.randomUUID() },
+        serializer: new JsonEventSerializer(),
+        reconcileAfterMs: 300_000,
+      });
+      const listTenants = pagedTenants([
+        { ids: ["tenant-1"], next: "page-1" },
+        { ids: ["tenant-2", "tenant-3"], next: null },
+      ]);
+      const job = buildJobs(coreWith(recovery, listTenants)).find(
+        (j) => j.name === "outreach-reconcile-unresolved",
+      );
+      expect(job).toBeDefined();
+      expect(job?.intervalMs).toBe(60_000);
+
+      await job!.run();
+
+      // Both pages were read (size 100, following the cursor to the end).
+      expect(listTenants.asked).toEqual([{ first: 100 }, { first: 100, after: "page-1" }]);
+      // Both shops' abandoned rows became `unknown`; a settled row of a third shop is untouched.
+      expect(rows.map((r) => `${r.tenantId}:${r.status}`)).toEqual([
+        "tenant-1:unknown",
+        "tenant-2:unknown",
+        "tenant-3:sent",
+      ]);
+      expect(outbox.map((o) => `${o.tenantId}:${o.topic}`).sort()).toEqual([
+        "tenant-1:outreach.message.status_changed.v1",
+        "tenant-2:outreach.message.status_changed.v1",
+      ]);
+      // No provider is ever called: the recovery wiring owns none (a real client would have used `fetch`).
+      expect(providerCalls).not.toHaveBeenCalled();
+
+      // Running again settles nothing more and emits nothing more.
+      await job!.run();
+      expect(outbox).toHaveLength(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a failing tenant is logged and the rest are still settled", async () => {
+    expect.hasAssertions();
+    const errors: unknown[] = [];
+    const reconcile = vi.fn((tenantId: string) => {
+      if (tenantId === "tenant-1") return Promise.reject(new Error("db unavailable"));
+      return Promise.resolve(1);
+    });
+    const listTenants = pagedTenants([{ ids: ["tenant-1", "tenant-2", "tenant-3"], next: null }]);
+    const job = buildJobs(coreWith({ reconcileUnresolved: reconcile }, listTenants, errors)).find(
+      (j) => j.name === "outreach-reconcile-unresolved",
+    );
+    await expect(job!.run()).resolves.toBeUndefined();
+    expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["tenant-1", "tenant-2", "tenant-3"]);
+    expect(errors).toHaveLength(1);
+    expect(JSON.stringify(errors)).toContain("tenant-1");
+    expect(JSON.stringify(errors)).toContain("db unavailable");
+  });
+
+  it("a failed tenant listing aborts the sweep (the next tick retries) without calling recovery", async () => {
+    expect.hasAssertions();
+    const reconcile = vi.fn();
+    const listTenants = {
+      execute: vi.fn().mockResolvedValue({ ok: false, error: new Error("tenants unreadable") }),
+    };
+    const job = buildJobs(coreWith({ reconcileUnresolved: reconcile }, listTenants)).find(
+      (j) => j.name === "outreach-reconcile-unresolved",
+    );
+    await expect(job!.run()).rejects.toThrow("tenants unreadable");
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("is registered only when the runtime has the recovery wiring", () => {
+    expect.hasAssertions();
+    const without = buildJobs(coreWith(undefined, pagedTenants([{ ids: [], next: null }])));
+    expect(without.map((j) => j.name)).not.toContain("outreach-reconcile-unresolved");
+    const withRecovery = buildJobs(
+      coreWith({ reconcileUnresolved: vi.fn() }, pagedTenants([{ ids: [], next: null }])),
+    );
+    expect(withRecovery.map((j) => j.name)).toContain("outreach-reconcile-unresolved");
+  });
+
+  describe("single-mode deployment tenant", () => {
+    const single = (core: RuntimeCore, id = "shop-1"): RuntimeCore =>
+      ({
+        ...core,
+        config: { ...core.config, TENANT_MODE: "single", TENANT_DEFAULT_ID: id },
+      }) as unknown as RuntimeCore;
+    const run = (core: RuntimeCore) =>
+      buildJobs(core)
+        .find((j) => j.name === "outreach-reconcile-unresolved")!
+        .run();
+
+    it("sweeps the deployment tenant with an EMPTY directory and a pending row (no lifecycle row needed)", async () => {
+      expect.hasAssertions();
+      const rows: Row[] = [{ tenantId: "shop-1", id: "o-1", version: 3, status: "pending" }];
+      const { prisma, outbox } = statefulPrisma(rows);
+      const recovery = wireOutreachRecovery({
+        prisma,
+        clock,
+        idGenerator: { generate: () => crypto.randomUUID() },
+        serializer: new JsonEventSerializer(),
+        reconcileAfterMs: 300_000,
+      });
+      const listTenants = pagedTenants([{ ids: [], next: null }]);
+      await run(single(coreWith(recovery, listTenants)));
+      expect(rows.map((r) => `${r.tenantId}:${r.status}`)).toEqual(["shop-1:unknown"]);
+      expect(outbox.map((o) => o.tenantId)).toEqual(["shop-1"]);
+    });
+
+    it("an already-listed deployment tenant is swept exactly once, wherever it appears in the pages", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = pagedTenants([
+        { ids: ["other-1"], next: "page-1" },
+        { ids: ["shop-1", "other-2"], next: null },
+      ]);
+      await run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants)));
+      const swept = reconcile.mock.calls.map((c) => c[0] as string);
+      expect(swept.filter((id) => id === "shop-1")).toHaveLength(1);
+      expect([...swept].sort()).toEqual(["other-1", "other-2", "shop-1"]);
+    });
+
+    it("still pages the directory (cursor to the end) alongside the deployment tenant", async () => {
+      expect.hasAssertions();
+      const listTenants = pagedTenants([
+        { ids: ["a"], next: "page-1" },
+        { ids: ["b"], next: null },
+      ]);
+      await run(
+        single(coreWith({ reconcileUnresolved: vi.fn().mockResolvedValue(0) }, listTenants)),
+      );
+      expect(listTenants.asked).toEqual([{ first: 100 }, { first: 100, after: "page-1" }]);
+    });
+
+    it("the deployment tenant is swept even when the directory listing fails (the failure still surfaces)", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = {
+        execute: vi.fn().mockResolvedValue({ ok: false, error: new Error("tenants unreadable") }),
+      };
+      await expect(
+        run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants))),
+      ).rejects.toThrow("tenants unreadable");
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["shop-1"]);
+    });
+
+    it("a failing deployment tenant is logged and the directory is still swept", async () => {
+      expect.hasAssertions();
+      const errors: unknown[] = [];
+      const reconcile = vi.fn((tenantId: string) =>
+        tenantId === "shop-1" ? Promise.reject(new Error("db unavailable")) : Promise.resolve(0),
+      );
+      const listTenants = pagedTenants([{ ids: ["a"], next: null }]);
+      await run(single(coreWith({ reconcileUnresolved: reconcile }, listTenants, errors)));
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["shop-1", "a"]);
+      expect(JSON.stringify(errors)).toContain("shop-1");
+    });
+
+    it("multi mode sweeps only the listed tenants (no configured default is invented)", async () => {
+      expect.hasAssertions();
+      const reconcile = vi.fn().mockResolvedValue(0);
+      const listTenants = pagedTenants([{ ids: ["a", "b"], next: null }]);
+      const core = coreWith({ reconcileUnresolved: reconcile }, listTenants);
+      await run({
+        ...core,
+        config: { ...core.config, TENANT_MODE: "multi", TENANT_DEFAULT_ID: "tenant-local" },
+      } as unknown as RuntimeCore);
+      expect(reconcile.mock.calls.map((c) => c[0])).toEqual(["a", "b"]);
+    });
   });
 });

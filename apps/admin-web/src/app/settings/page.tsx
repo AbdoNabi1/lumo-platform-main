@@ -8,7 +8,9 @@ import {
   GlobeIcon,
   LanguagesIcon,
   LockIcon,
+  MailIcon,
   MapPinIcon,
+  MessageCircleIcon,
   ReceiptIcon,
   ScrollTextIcon,
   StoreIcon,
@@ -30,6 +32,7 @@ import {
   TableRow,
 } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { BrandText } from "@/components/settings/whatsapp/brand-text";
 import { SettingsFrame } from "@/components/settings/settings-frame";
 import { fetchUsageCounters } from "@/lib/api/licensing";
 import { getCurrentUser } from "@/lib/auth/current-user";
@@ -63,6 +66,18 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: CreditCardIcon,
     title: (t) => t.settingsPage.paymentsTitle,
     body: (t) => t.settingsPage.paymentsBody,
+  },
+  {
+    href: "/settings/whatsapp",
+    Icon: MessageCircleIcon,
+    title: (t) => t.settingsPage.whatsappTitle,
+    body: (t) => t.settingsPage.whatsappBody,
+  },
+  {
+    href: "/settings/email",
+    Icon: MailIcon,
+    title: (t) => t.settingsPage.emailTitle,
+    body: (t) => t.settingsPage.emailBody,
   },
   {
     href: "/settings/shipping",
@@ -134,8 +149,12 @@ export default async function SettingsPage() {
                 >
                   <Icon aria-hidden="true" className="text-muted-foreground size-5" />
                   <span className="flex flex-1 flex-col">
-                    <span className="text-sm font-medium">{title(t)}</span>
-                    <span className="text-muted-foreground text-sm">{body(t)}</span>
+                    <span className="text-sm font-medium">
+                      <BrandText text={title(t)} />
+                    </span>
+                    <span className="text-muted-foreground text-sm">
+                      <BrandText text={body(t)} />
+                    </span>
                   </span>
                   <ChevronRightIcon
                     aria-hidden="true"

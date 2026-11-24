@@ -1,0 +1,370 @@
+/**
+ * Template reconciliation rules (plan Task 4, rounds 2–3). Pure decision functions plus a small orchestration over a
+ * `TemplateRowAccess`, so the in-memory and the Prisma template repositories share ONE implementation of the ordering
+ * rules (revision CAS, fence, equal-second staleness) and differ only in how rows are read and compare-and-set.
+ */
+import { ConcurrencyError } from "@platform/utils";
+import {
+  UNEXPECTED_UNIQUE_CONFLICT,
+  type FetchedTemplate,
+  type TemplateCategoryValue,
+  type TemplateEventOutcome,
+  type TemplateFetchResult,
+  type TemplateRecord,
+  type TemplateSnapshotResult,
+  type TemplateStatus,
+  type TemplateStatusChange,
+} from "./repositories";
+
+export type TemplatePatch = Partial<
+  Pick<
+    TemplateRecord,
+    | "metaTemplateId"
+    | "category"
+    | "components"
+    | "status"
+    | "rejectedReason"
+    | "qualityScore"
+    | "lastSyncedAt"
+    | "statusEventAt"
+    | "categoryEventAt"
+    | "reconciledAt"
+  >
+>;
+
+/** The access a template repository gives the shared algorithm. Scoped to ONE tenant + ONE WABA by the implementer. */
+export interface TemplateRowAccess {
+  list(): Promise<TemplateRecord[]>;
+  findByMetaId(metaTemplateId: string): Promise<TemplateRecord | null>;
+  findByNameLanguage(name: string, language: string): Promise<TemplateRecord | null>;
+  /** `false` when the insert hit a unique conflict (a concurrent writer created the row). */
+  insert(row: TemplateRecord): Promise<boolean>;
+  /** Compare-and-set on `current.revision`; applies `patch` with `revision + 1` and `version + 1`. `false` on a miss. */
+  update(current: TemplateRecord, patch: TemplatePatch): Promise<boolean>;
+}
+
+/** The row as it looks after `patch` is applied by a successful CAS. */
+export function patchedRow(row: TemplateRecord, patch: TemplatePatch): TemplateRecord {
+  return { ...row, ...patch, revision: row.revision + 1, version: row.version + 1 };
+}
+
+const MAX_CAS_ATTEMPTS = 3;
+const same = (a: Date | null, b: Date): boolean => a !== null && a.getTime() === b.getTime();
+
+type EventDecision =
+  { result: "stale" | "noop" } | { result: "applied" | "conflict" | "noop"; patch: TemplatePatch };
+
+/**
+ * `stale` when `eventAt <= reconciledAt` (an equal-second fact is not provably newer than an authoritative fetch) or
+ * `eventAt < marker`. An equal marker with the same value is a `noop`; with a different value a `conflict` (the status
+ * becomes UNKNOWN: non-sendable until the next fetch).
+ */
+function decideEvent(
+  row: TemplateRecord,
+  eventAt: Date,
+  marker: Date | null,
+  sameValue: boolean,
+  applied: TemplatePatch,
+): EventDecision {
+  if (row.reconciledAt !== null && eventAt.getTime() <= row.reconciledAt.getTime()) {
+    return { result: "stale" };
+  }
+  if (marker !== null && eventAt.getTime() < marker.getTime()) return { result: "stale" };
+  if (same(marker, eventAt)) {
+    if (sameValue || row.status === "UNKNOWN") return { result: "noop" };
+    return { result: "conflict", patch: { status: "UNKNOWN" } };
+  }
+  return { result: "applied", patch: applied };
+}
+
+export function decideStatusEvent(
+  row: TemplateRecord,
+  event: { status: TemplateStatus; reason: string | null; eventAt: Date },
+): EventDecision {
+  const decision = decideEvent(row, event.eventAt, row.statusEventAt, row.status === event.status, {
+    status: event.status,
+    rejectedReason: event.reason,
+    statusEventAt: event.eventAt,
+  });
+  // A webhook never moves a row OUT of `UNKNOWN` (an unresolved conflict or a post-reinstatement state): it only
+  // records the ordering marker. Only an authoritative fetch (`applyFetched` / `replaceSnapshot`) clears it.
+  if (decision.result === "applied" && row.status === "UNKNOWN") {
+    return { result: "noop", patch: { statusEventAt: event.eventAt } };
+  }
+  return decision;
+}
+
+export function decideCategoryEvent(
+  row: TemplateRecord,
+  event: { category: TemplateCategoryValue; eventAt: Date },
+): EventDecision {
+  return decideEvent(row, event.eventAt, row.categoryEventAt, row.category === event.category, {
+    category: event.category,
+    categoryEventAt: event.eventAt,
+  });
+}
+
+const maxDate = (a: Date | null, b: Date): Date =>
+  a !== null && a.getTime() > b.getTime() ? a : b;
+
+type FetchDecision =
+  { result: "raced" } | { result: "fence_newer" } | { result: "applied"; patch: TemplatePatch };
+
+export function decideFetched(
+  row: TemplateRecord,
+  fetched: FetchedTemplate,
+  fetch: { revisionAtFetchStart: number; fetchStartedAt: Date },
+): FetchDecision {
+  if (row.revision !== fetch.revisionAtFetchStart) return { result: "raced" };
+  if (row.reconciledAt !== null && row.reconciledAt.getTime() > fetch.fetchStartedAt.getTime()) {
+    return { result: "fence_newer" };
+  }
+  return {
+    result: "applied",
+    patch: {
+      metaTemplateId: fetched.metaTemplateId,
+      category: fetched.category,
+      components: fetched.components,
+      status: fetched.status,
+      rejectedReason: fetched.rejectedReason,
+      qualityScore: fetched.qualityScore,
+      lastSyncedAt: fetch.fetchStartedAt,
+      reconciledAt: maxDate(row.reconciledAt, fetch.fetchStartedAt),
+    },
+  };
+}
+
+async function applyEvent(
+  access: TemplateRowAccess,
+  metaTemplateId: string,
+  decide: (row: TemplateRecord) => EventDecision,
+): Promise<TemplateEventOutcome> {
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+    const row = await access.findByMetaId(metaTemplateId);
+    if (row === null) return { result: "not_found", change: null };
+    const decision = decide(row);
+    if (!("patch" in decision)) return { result: decision.result, change: null };
+    // The transition is the one THIS compare-and-set made: `row` is exactly what it replaced.
+    if (await access.update(row, decision.patch)) {
+      return {
+        result: decision.result,
+        change: { before: row, after: patchedRow(row, decision.patch) },
+      };
+    }
+  }
+  throw new ConcurrencyError(`Template ${metaTemplateId} kept changing during an event apply`);
+}
+
+export function applyStatusEventTo(
+  access: TemplateRowAccess,
+  metaTemplateId: string,
+  event: { status: TemplateStatus; reason: string | null; eventAt: Date },
+): Promise<TemplateEventOutcome> {
+  return applyEvent(access, metaTemplateId, (row) => decideStatusEvent(row, event));
+}
+
+export function applyCategoryEventTo(
+  access: TemplateRowAccess,
+  metaTemplateId: string,
+  event: { category: TemplateCategoryValue; eventAt: Date },
+): Promise<TemplateEventOutcome> {
+  return applyEvent(access, metaTemplateId, (row) => decideCategoryEvent(row, event));
+}
+
+export async function applyFetchedTo(
+  access: TemplateRowAccess,
+  row: FetchedTemplate,
+  fetch: { revisionAtFetchStart: number; fetchStartedAt: Date },
+): Promise<TemplateFetchResult> {
+  const current = await access.findByMetaId(row.metaTemplateId);
+  if (current === null) return "raced";
+  const decision = decideFetched(current, row, fetch);
+  if (decision.result !== "applied") return decision.result;
+  // A miss means a write landed between the read and the CAS: the snapshot is stale by definition.
+  return (await access.update(current, decision.patch)) ? "applied" : "raced";
+}
+
+/**
+ * Rewrites a `DELETED` tombstone in place under a new provider id (see `TemplateRepository.replaceTombstone`). The row
+ * is looked up by its scoped name/language key and must be the expected local id, still `DELETED`, at the expected
+ * revision.
+ */
+export async function replaceTombstoneTo(
+  access: TemplateRowAccess,
+  tombstone: { id: string; name: string; language: string; expectedRevision: number },
+  row: FetchedTemplate,
+  at: Date,
+): Promise<"applied" | "raced"> {
+  const current = await access.findByNameLanguage(tombstone.name, tombstone.language);
+  if (
+    current === null ||
+    current.id !== tombstone.id ||
+    current.status !== "DELETED" ||
+    current.revision !== tombstone.expectedRevision
+  ) {
+    return "raced";
+  }
+  const patch: TemplatePatch = {
+    metaTemplateId: row.metaTemplateId,
+    category: row.category,
+    components: row.components,
+    status: row.status,
+    rejectedReason: row.rejectedReason,
+    qualityScore: row.qualityScore,
+    lastSyncedAt: at,
+    // The markers ordered events of the OLD provider object; they must not fence the new one.
+    statusEventAt: null,
+    categoryEventAt: null,
+    reconciledAt: maxDate(current.reconciledAt, at),
+  };
+  return (await access.update(current, patch)) ? "applied" : "raced";
+}
+
+const nameLanguageKey = (name: string, language: string): string => `${name}\u0000${language}`;
+
+export function newTemplateRow(
+  tenantId: string,
+  wabaId: string,
+  row: FetchedTemplate,
+  fetchStartedAt: Date,
+): TemplateRecord {
+  return {
+    id: row.id,
+    tenantId,
+    wabaId,
+    metaTemplateId: row.metaTemplateId,
+    name: row.name,
+    language: row.language,
+    category: row.category,
+    components: row.components,
+    status: row.status,
+    rejectedReason: row.rejectedReason,
+    qualityScore: row.qualityScore,
+    lastSyncedAt: fetchStartedAt,
+    statusEventAt: null,
+    categoryEventAt: null,
+    reconciledAt: fetchStartedAt,
+    revision: 1,
+    version: 1,
+  };
+}
+
+/**
+ * The ONE discriminating insert both the public `insert` and the snapshot path use: a zero-row create is a benign
+ * duplicate only when the scoped (tenant, WABA, name, language) key exists in the same transaction; any other unique
+ * conflict (e.g. a fresh UUID colliding with an unrelated row) throws so the transaction rolls back.
+ */
+export async function insertTemplateRow(
+  access: TemplateRowAccess,
+  row: TemplateRecord,
+): Promise<"inserted" | "duplicate"> {
+  if (await access.insert(row)) return "inserted";
+  if ((await access.findByNameLanguage(row.name, row.language)) !== null) return "duplicate";
+  throw new Error(UNEXPECTED_UNIQUE_CONFLICT);
+}
+
+export async function reconcileSnapshotTo(
+  access: TemplateRowAccess,
+  identity: { tenantId: string; wabaId: string },
+  rows: readonly FetchedTemplate[],
+  fetch: {
+    revisionsAtFetchStart: ReadonlyMap<string, number>;
+    revisionsByLocalId?: ReadonlyMap<string, number> | undefined;
+    fetchStartedAt: Date;
+  },
+): Promise<TemplateSnapshotResult> {
+  /**
+   * Start revision of a local row. A supplied local-id map is COMPLETE and authoritative: exactly its entry for the row,
+   * and an absent entry means the row did not exist when the fetch started (the caller treats `undefined` as raced), so
+   * another row's provider-keyed revision is never borrowed. Only a caller that supplied no local map falls back to the
+   * provider id the row carried.
+   */
+  const startRevision = (l: TemplateRecord, adoptedMetaId?: string): number | undefined => {
+    if (fetch.revisionsByLocalId !== undefined) return fetch.revisionsByLocalId.get(l.id);
+    const metaId = l.metaTemplateId ?? adoptedMetaId;
+    return metaId === undefined ? undefined : fetch.revisionsAtFetchStart.get(metaId);
+  };
+  const local = await access.list();
+  const byMeta = new Map<string, TemplateRecord>();
+  const byKey = new Map<string, TemplateRecord>();
+  for (const l of local) {
+    if (l.metaTemplateId !== null) byMeta.set(l.metaTemplateId, l);
+    byKey.set(nameLanguageKey(l.name, l.language), l);
+  }
+  const seen = new Set<string>();
+  const result: TemplateSnapshotResult = { statusChanges: [], raced: 0, fenceNewer: 0 };
+  const change = (
+    id: string,
+    r: {
+      metaTemplateId: string | null;
+      name: string;
+      language: string;
+      category: TemplateCategoryValue;
+    },
+    from: TemplateStatus | null,
+    to: TemplateStatus,
+  ): void => {
+    const c: TemplateStatusChange = {
+      id,
+      metaTemplateId: r.metaTemplateId,
+      name: r.name,
+      language: r.language,
+      category: r.category,
+      from,
+      to,
+    };
+    result.statusChanges.push(c);
+  };
+
+  for (const fetched of rows) {
+    const existing =
+      byMeta.get(fetched.metaTemplateId) ??
+      byKey.get(nameLanguageKey(fetched.name, fetched.language));
+    if (existing === undefined) {
+      const inserted = await insertTemplateRow(
+        access,
+        newTemplateRow(identity.tenantId, identity.wabaId, fetched, fetch.fetchStartedAt),
+      );
+      if (inserted === "inserted") change(fetched.id, fetched, null, fetched.status);
+      else result.raced += 1;
+      continue;
+    }
+    seen.add(existing.id);
+    const expected = startRevision(existing, fetched.metaTemplateId);
+    if (expected === undefined) {
+      result.raced += 1;
+      continue;
+    }
+    const decision = decideFetched(existing, fetched, {
+      revisionAtFetchStart: expected,
+      fetchStartedAt: fetch.fetchStartedAt,
+    });
+    if (decision.result === "raced") result.raced += 1;
+    else if (decision.result === "fence_newer") result.fenceNewer += 1;
+    else if (!(await access.update(existing, decision.patch))) result.raced += 1;
+    else if (existing.status !== fetched.status)
+      change(existing.id, fetched, existing.status, fetched.status);
+  }
+
+  for (const l of local) {
+    if (seen.has(l.id)) continue;
+    const expected = startRevision(l);
+    if (expected === undefined || expected !== l.revision) {
+      result.raced += 1;
+      continue;
+    }
+    if (l.reconciledAt !== null && l.reconciledAt.getTime() > fetch.fetchStartedAt.getTime()) {
+      result.fenceNewer += 1;
+      continue;
+    }
+    const ok = await access.update(l, {
+      status: "DELETED",
+      lastSyncedAt: fetch.fetchStartedAt,
+      reconciledAt: maxDate(l.reconciledAt, fetch.fetchStartedAt),
+    });
+    // DELETED → DELETED refreshes the fence and the revision (a newer authoritative absence) without a status change.
+    if (!ok) result.raced += 1;
+    else if (l.status !== "DELETED") change(l.id, l, l.status, "DELETED");
+  }
+  return result;
+}
