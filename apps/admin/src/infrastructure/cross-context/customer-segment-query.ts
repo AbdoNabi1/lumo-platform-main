@@ -331,7 +331,8 @@ export interface PrismaCustomerSegmentQueryDeps {
 /**
  * Production {@link CustomerSegmentQuery}: runs the compiled list and count inside
  * `runReadScoped` (so `app.tenant_id` is set and RLS is the second wall), each statement with its
- * own bind array, in one transaction so `total` and the page see the same snapshot.
+ * own bind array, in one tenant-scoped transaction. READ COMMITTED gives each statement its own
+ * snapshot, so a concurrent write can make `total` differ slightly from the returned page.
  */
 export class PrismaCustomerSegmentQuery implements CustomerSegmentQuery {
   private readonly deps: PrismaCustomerSegmentQueryDeps;
