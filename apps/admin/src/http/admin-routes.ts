@@ -43,6 +43,7 @@ import { componentsRoutes } from "./components-routes";
 import { contentRoutes } from "./content-routes";
 import { couponsRoutes } from "./coupons-routes";
 import { customer360Routes } from "./customer-360-routes";
+import { annotationsOfCustomer, customerRoutes, marketingOf } from "./customer-routes";
 import { experienceRoutes } from "./experience-routes";
 import { experimentationRoutes } from "./experimentation-routes";
 import { featureFlagsRoutes } from "./feature-flags-routes";
@@ -477,13 +478,30 @@ export interface CustomerDetailDto {
   readonly addresses: readonly OrderAddressDto[];
   /** Full append-only consent log, occurrence order — current state per scope is the latest record. */
   readonly consents: readonly CustomerConsentDto[];
+  readonly phone: string | null;
+  readonly language: "en" | "ar" | null;
+  readonly isGuest: boolean;
+  /** Staff note and tags live outside the aggregate (Identity's annotation repository). */
+  readonly note: string | null;
+  readonly tags: readonly string[];
+  /** Current staff-asserted marketing state, derived from the latest consent record per scope. */
+  readonly marketing: { readonly email: boolean; readonly sms: boolean };
 }
 
-function toCustomerDetailDto(customer: Customer): CustomerDetailDto {
+function toCustomerDetailDto(
+  customer: Customer,
+  annotations: { readonly note: string | null; readonly tags: readonly string[] },
+): CustomerDetailDto {
   return {
     id: customer.id.toString(),
     name: customer.name,
     email: customer.email.value,
+    phone: customer.phone,
+    language: customer.language,
+    isGuest: customer.isGuest,
+    note: annotations.note,
+    tags: annotations.tags,
+    marketing: marketingOf(customer),
     addresses: customer.addresses.map((address) => ({
       line1: address.line1,
       city: address.city,
@@ -1689,6 +1707,9 @@ export function adminRoutes(
         };
       },
     }),
+    // Wave 1b: registered before `GET /customers/:customerId` so `/customers/export-rows` is not
+    // swallowed by the `:customerId` parameter.
+    ...customerRoutes(admin),
     defineRoute({
       method: "GET",
       path: "/customers",
@@ -1723,7 +1744,16 @@ export function adminRoutes(
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toCustomerDetailDto(response.body as Customer) };
+        const customer = response.body as Customer;
+        // A failed annotations read is that error response — never a detail without its note/tags.
+        const annotations = await annotationsOfCustomer(
+          admin,
+          context.principal,
+          context.tenantId,
+          customer.id.toString(),
+        );
+        if (!annotations.ok) return annotations.response;
+        return { status: 200, body: toCustomerDetailDto(customer, annotations) };
       },
     }),
     defineRoute({
