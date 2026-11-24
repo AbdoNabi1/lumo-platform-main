@@ -32,7 +32,14 @@ export type ApiResult<T> =
   | { readonly outcome: "ok"; readonly data: T }
   | { readonly outcome: "unauthorized" }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "error"; readonly message: string };
+  | {
+      readonly outcome: "error";
+      readonly message: string;
+      /** The HTTP status when the API answered non-2xx; absent for a network failure or a bad body. */
+      readonly status?: number;
+      /** The API error envelope's `code` (for example `UNAVAILABLE`), when the body carried one. */
+      readonly code?: string;
+    };
 
 /** One field-level validation failure, as returned in the API error envelope's `fields`. */
 export interface FieldIssue {
@@ -137,7 +144,14 @@ export async function getAdminApi<T>(
     return { outcome: "not_found" };
   }
   if (!response.ok) {
-    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+    const envelope: unknown = await response.json().catch(() => null);
+    const code = (envelope as { readonly code?: unknown } | null)?.code;
+    return {
+      outcome: "error",
+      message: `Admin API responded with status ${response.status}`,
+      status: response.status,
+      ...(typeof code === "string" ? { code } : {}),
+    };
   }
 
   const body: unknown = await response.json();
