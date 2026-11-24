@@ -75,12 +75,22 @@ export function connectionsForDelivery(
 ): ConnectionsForDelivery {
   return {
     async listLive(tenantId) {
-      const result = await internal.getLiveConnections.execute({ tenantId });
+      let result: Awaited<ReturnType<GetLiveConnections["execute"]>>;
+      try {
+        result = await internal.getLiveConnections.execute({ tenantId });
+      } catch {
+        throw new Error(UNAVAILABLE_MESSAGE);
+      }
       if (result.ok) return result.value;
       throw new Error(UNAVAILABLE_MESSAGE);
     },
     async openSecret(tenantId, platform) {
-      const result = await internal.openSecret.execute({ tenantId, platform });
+      let result: Awaited<ReturnType<OpenConnectionSecret["execute"]>>;
+      try {
+        result = await internal.openSecret.execute({ tenantId, platform });
+      } catch {
+        throw new Error(UNAVAILABLE_MESSAGE);
+      }
       if (result.ok) return result.value;
       if (result.error.code === "NOT_FOUND") return null;
       throw new Error(UNAVAILABLE_MESSAGE);

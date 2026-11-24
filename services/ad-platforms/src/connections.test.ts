@@ -683,3 +683,190 @@ describe("connectionsForDelivery", () => {
     );
   });
 });
+
+describe("dependency failures never escape", () => {
+  const LEAK = "TOKEN-LEAK-9f3c";
+  const leaky = (label: string): Error =>
+    new Error(`${label} ${LEAK}`, { cause: new Error(`nested ${LEAK}`, { cause: LEAK }) });
+  const unexpectedStatus = present({ ok: false, error: new UnexpectedError() }, 200).status;
+
+  function spyLogger() {
+    const fns = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    return { logger: fns as unknown as Logger, fns };
+  }
+  const noLeakIn = (value: unknown): void => {
+    expect(JSON.stringify(value)).not.toContain("TOKEN-LEAK");
+    expect(String(value)).not.toContain("TOKEN-LEAK");
+  };
+  const expectFixed = (result: { ok: boolean }, message: string): void => {
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const { error } = result as unknown as { error: Error & { code: string } };
+      expect(error.code).toBe("UNEXPECTED");
+      expect(error.message).toBe(message);
+      expect(error.cause).toBeUndefined();
+      noLeakIn(error);
+    }
+  };
+  const allLogged = (fns: Record<string, ReturnType<typeof vi.fn>>): string =>
+    JSON.stringify(Object.values(fns).map((fn) => fn.mock.calls));
+
+  it("turns a rejected vault.seal into a generic response with no write and no sync", async () => {
+    const { logger, fns } = spyLogger();
+    const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+    const vault: CredentialVaultPort = {
+      backing: "real",
+      seal: () => Promise.reject(leaky("seal")),
+      open: () => Promise.resolve(SECRET),
+    };
+    const h = harness({ vault, logger, deliverySync: { sync } });
+    const response = await h.controller.save(h.input());
+    expect(response.status).toBe(unexpectedStatus);
+    expect(JSON.stringify(response)).not.toContain("TOKEN-LEAK");
+    expect(JSON.stringify(response)).toContain("Ad platform credentials could not be sealed");
+    expect(await h.repo.list("t-1")).toEqual([]);
+    expect(sync).not.toHaveBeenCalled();
+    expect(allLogged(fns)).not.toContain("TOKEN-LEAK");
+  });
+
+  it("turns a rejected repository.get into a fixed cause-free error on save and open", async () => {
+    const { logger, fns } = spyLogger();
+    const h = harness({ logger });
+    vi.spyOn(h.repo, "get").mockRejectedValue(leaky("get"));
+    expectFixed(await h.save.execute(h.input()), "Ad platform connections could not be loaded");
+    expectFixed(
+      await h.open.execute({ tenantId: "t-1", platform: "meta" }),
+      "Ad platform connections could not be loaded",
+    );
+    expect(allLogged(fns)).not.toContain("TOKEN-LEAK");
+  });
+
+  it("turns a rejected repository.list into a fixed error everywhere it is read", async () => {
+    const { logger, fns } = spyLogger();
+    const h = harness({ logger });
+    vi.spyOn(h.repo, "list").mockRejectedValue(leaky("list"));
+    const message = "Ad platform connections could not be loaded";
+    expectFixed(
+      await new ListConnections({ connections: h.repo }).execute({ tenantId: "t-1" }),
+      message,
+    );
+    expectFixed(
+      await new GetPublicAdPlatforms({ connections: h.repo }).execute({ tenantId: "t-1" }),
+      message,
+    );
+    expectFixed(await h.live.execute({ tenantId: "t-1" }), message);
+    for (const response of [
+      await h.controller.list({ tenantId: "t-1" }),
+      await h.controller.publicView({ tenantId: "t-1" }),
+    ]) {
+      expect(response.status).toBe(unexpectedStatus);
+      noLeakIn(response);
+    }
+    expect(allLogged(fns)).not.toContain("TOKEN-LEAK");
+  });
+
+  it("makes the delivery adapter reject with one generic message and no cause", async () => {
+    const h = harness();
+    await h.save.execute(h.input());
+    vi.spyOn(h.repo, "list").mockRejectedValue(leaky("list"));
+    vi.spyOn(h.repo, "get").mockRejectedValue(leaky("get"));
+    const delivery = connectionsForDelivery({ getLiveConnections: h.live, openSecret: h.open });
+    for (const call of [() => delivery.listLive("t-1"), () => delivery.openSecret("t-1", "meta")]) {
+      const error: unknown = await call().then(
+        () => undefined,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(Error);
+      const caught = error as Error;
+      expect(caught.message).toBe("ad platform connections unavailable");
+      expect(caught.cause).toBeUndefined();
+      expect(caught.message).not.toContain("TOKEN-LEAK");
+      expect(caught.stack ?? "").not.toContain("TOKEN-LEAK");
+    }
+  });
+
+  it("makes the delivery adapter generic even if a use case itself rejects", async () => {
+    const rejecting = {
+      getLiveConnections: { execute: () => Promise.reject(leaky("live")) },
+      openSecret: { execute: () => Promise.reject(leaky("open")) },
+    } as unknown as Parameters<typeof connectionsForDelivery>[0];
+    const delivery = connectionsForDelivery(rejecting);
+    for (const call of [() => delivery.listLive("t-1"), () => delivery.openSecret("t-1", "meta")]) {
+      const error: unknown = await call().then(
+        () => undefined,
+        (thrown: unknown) => thrown,
+      );
+      expect((error as Error).message).toBe("ad platform connections unavailable");
+      expect((error as Error).cause).toBeUndefined();
+    }
+  });
+
+  it("makes the controller answer a generic error when a use case rejects", async () => {
+    const reject = { execute: () => Promise.reject(leaky("use case")) };
+    const controller = new ConnectionsController({
+      listConnections: reject as unknown as ListConnections,
+      saveConnection: reject as unknown as SaveConnection,
+      getPublicAdPlatforms: reject as unknown as GetPublicAdPlatforms,
+    });
+    for (const response of [
+      await controller.list({ tenantId: "t-1" }),
+      await controller.save({
+        tenantId: "t-1",
+        platform: "meta",
+        enabled: true,
+        publicConfig: META,
+        expectedVersion: 0,
+      }),
+      await controller.publicView({ tenantId: "t-1" }),
+    ]) {
+      expect(response.status).toBe(unexpectedStatus);
+      expect(response.body).toMatchObject({
+        code: "UNEXPECTED",
+        message: "An unexpected error occurred",
+      });
+      noLeakIn(response);
+    }
+  });
+
+  it("turns a rejected repository.save after a seal into a fixed error and skips sync", async () => {
+    const { logger, fns } = spyLogger();
+    const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+    const h = harness({ logger, deliverySync: { sync } });
+    vi.spyOn(h.repo, "save").mockRejectedValue(leaky("save"));
+    const result = await h.save.execute(h.input());
+    expectFixed(result, "Ad platform connections could not be saved");
+    expect(sync).not.toHaveBeenCalled();
+    expect(allLogged(fns)).not.toContain("TOKEN-LEAK");
+  });
+
+  it("survives a logger that throws while reporting a sync failure", async () => {
+    const logger = {
+      warn: () => {
+        throw leaky("logger");
+      },
+    } as unknown as Logger;
+    const sync = vi.fn<(tenantId: string) => Promise<void>>().mockRejectedValue(leaky("sync"));
+    const h = harness({ logger, deliverySync: { sync } });
+    const result = await h.save.execute(h.input());
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("publicConfig undefined", () => {
+  it.each([true, false])("is rejected as required when enabled is %s", async (enabled) => {
+    const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+    const h = harness({ deliverySync: { sync } });
+    const result = await h.save.execute(
+      h.input({ enabled, publicConfig: undefined, secret: undefined }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("VALIDATION");
+      expect((result.error as ValidationError).fields).toEqual([
+        { field: "publicConfig", message: "is required" },
+      ]);
+    }
+    expect(await h.repo.list("t-1")).toEqual([]);
+    expect(sync).not.toHaveBeenCalled();
+  });
+});

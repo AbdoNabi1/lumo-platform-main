@@ -74,6 +74,26 @@ function invalid(field: string, message: string): Result<never, ValidationError>
   return err(new ValidationError("Invalid ad platform connection", issues));
 }
 
+const LOAD_FAILED = "Ad platform connections could not be loaded";
+const SAVE_FAILED = "Ad platform connections could not be saved";
+const SEAL_FAILED = "Ad platform credentials could not be sealed";
+const OPEN_FAILED = "Ad platform credentials could not be opened";
+
+/**
+ * Runs one dependency call. A throw or rejection becomes a fixed, cause-free `UnexpectedError`:
+ * the original error may carry secrets or request details, so it is neither kept nor logged.
+ */
+async function guarded<T>(
+  operation: () => Promise<T> | T,
+  message: string,
+): Promise<Result<T, UnexpectedError>> {
+  try {
+    return ok(await operation());
+  } catch {
+    return err(new UnexpectedError(message));
+  }
+}
+
 // ------------------------------------------------------------------------- ListConnections
 
 export class ListConnections implements UseCase<
@@ -90,8 +110,9 @@ export class ListConnections implements UseCase<
   async execute(input: {
     tenantId: string;
   }): Promise<Result<readonly ConnectionView[], DomainError>> {
-    const rows = await this.deps.connections.list(input.tenantId);
-    const byPlatform = new Map(rows.map((row) => [row.props.platform, row]));
+    const loaded = await guarded(() => this.deps.connections.list(input.tenantId), LOAD_FAILED);
+    if (!loaded.ok) return loaded;
+    const byPlatform = new Map(loaded.value.map((row) => [row.props.platform, row]));
     return ok(
       AD_PLATFORMS.map((platform) => {
         const row = byPlatform.get(platform);
@@ -139,12 +160,13 @@ export class SaveConnection implements UseCase<SaveConnectionInput, ConnectionVi
   async execute(input: SaveConnectionInput): Promise<Result<ConnectionView, DomainError>> {
     const { tenantId, platform } = input;
     if (!AD_PLATFORMS.includes(platform)) return invalid("platform", "unknown platform");
+    if (input.publicConfig === undefined) return invalid("publicConfig", "is required");
     if (input.enabled && input.publicConfig === null) {
       return invalid("publicConfig", "is required when the platform is enabled");
     }
 
     let publicConfig: PublicConfig | null = null;
-    if (input.publicConfig !== null && input.publicConfig !== undefined) {
+    if (input.publicConfig !== null) {
       const validated = validatePublicConfig(platform, input.publicConfig);
       if (!validated.ok) return validated;
       publicConfig = validated.value;
@@ -185,40 +207,58 @@ export class SaveConnection implements UseCase<SaveConnectionInput, ConnectionVi
       return err(new CredentialStorageUnavailableError());
     }
 
-    const existing = await this.deps.connections.get(tenantId, platform);
+    const loaded = await guarded(() => this.deps.connections.get(tenantId, platform), LOAD_FAILED);
+    if (!loaded.ok) return loaded;
+    const existing = loaded.value;
     if ((existing?.props.version ?? 0) !== input.expectedVersion)
       return err(new ConcurrencyError());
 
     let sealedSecret = existing?.props.sealedSecret ?? null;
     let secretLast4 = existing?.props.secretLast4 ?? null;
     if (newSecret !== "") {
-      sealedSecret = await this.deps.vault.seal(tenantId, platform, newSecret);
+      const sealed = await guarded(
+        () => this.deps.vault.seal(tenantId, platform, newSecret),
+        SEAL_FAILED,
+      );
+      if (!sealed.ok) return sealed;
+      sealedSecret = sealed.value;
       secretLast4 = newSecret.slice(-4);
     } else if (input.clearSecret === true) {
       sealedSecret = null;
       secretLast4 = null;
     }
 
-    const now = this.deps.clock.now();
-    const saved = Connection.restore({
-      id: existing?.props.id ?? this.deps.idGenerator.generate(),
-      platform,
-      enabled: input.enabled,
-      publicConfig,
-      sealedSecret,
-      secretLast4,
-      testEventCode:
-        newTestEventCode === undefined ? (existing?.props.testEventCode ?? null) : newTestEventCode,
-      version: input.expectedVersion + 1,
-      createdAt: existing?.props.createdAt ?? now,
-      updatedAt: now,
-    });
-    const stored = await this.deps.connections.save(
-      tenantId,
-      saved,
-      existing === null ? null : input.expectedVersion,
+    const built = await guarded(() => {
+      const now = this.deps.clock.now();
+      return Connection.restore({
+        id: existing?.props.id ?? this.deps.idGenerator.generate(),
+        platform,
+        enabled: input.enabled,
+        publicConfig,
+        sealedSecret,
+        secretLast4,
+        testEventCode:
+          newTestEventCode === undefined
+            ? (existing?.props.testEventCode ?? null)
+            : newTestEventCode,
+        version: input.expectedVersion + 1,
+        createdAt: existing?.props.createdAt ?? now,
+        updatedAt: now,
+      });
+    }, SAVE_FAILED);
+    if (!built.ok) return built;
+    const saved = built.value;
+    const stored = await guarded(
+      () =>
+        this.deps.connections.save(
+          tenantId,
+          saved,
+          existing === null ? null : input.expectedVersion,
+        ),
+      SAVE_FAILED,
     );
-    if (!stored) return err(new ConcurrencyError());
+    if (!stored.ok) return stored;
+    if (!stored.value) return err(new ConcurrencyError());
 
     await this.syncDelivery(tenantId);
     return ok(toView(saved));
@@ -230,7 +270,11 @@ export class SaveConnection implements UseCase<SaveConnectionInput, ConnectionVi
       await this.deps.deliverySync.sync(tenantId);
     } catch {
       // never log the error object: it could carry request details. The next save or the D2 backfill re-syncs.
-      this.deps.logger?.warn("ad platform delivery sync failed", { tenantId });
+      try {
+        this.deps.logger?.warn("ad platform delivery sync failed", { tenantId });
+      } catch {
+        // a failing logger must not turn a saved connection into a failure
+      }
     }
   }
 }
@@ -265,7 +309,9 @@ export class GetLiveConnections implements UseCase<
   async execute(input: {
     tenantId: string;
   }): Promise<Result<readonly LiveConnection[], DomainError>> {
-    const rows = await this.deps.connections.list(input.tenantId);
+    const loaded = await guarded(() => this.deps.connections.list(input.tenantId), LOAD_FAILED);
+    if (!loaded.ok) return loaded;
+    const rows = loaded.value;
     const live: LiveConnection[] = [];
     for (const platform of SERVER_PLATFORMS) {
       const row = rows.find((candidate) => candidate.props.platform === platform);
@@ -283,7 +329,7 @@ export class GetLiveConnections implements UseCase<
       try {
         secret = await this.deps.vault.open(input.tenantId, platform, p.sealedSecret);
       } catch {
-        return err(new UnexpectedError("Ad platform credentials could not be opened"));
+        return err(new UnexpectedError(OPEN_FAILED));
       }
       live.push({ platform, publicConfig: p.publicConfig, secret, testEventCode: p.testEventCode });
     }
@@ -314,14 +360,19 @@ export class OpenConnectionSecret implements UseCase<
     tenantId: string;
     platform: AdPlatform;
   }): Promise<Result<string, DomainError>> {
-    const row = await this.deps.connections.get(input.tenantId, input.platform);
+    const loaded = await guarded(
+      () => this.deps.connections.get(input.tenantId, input.platform),
+      LOAD_FAILED,
+    );
+    if (!loaded.ok) return loaded;
+    const row = loaded.value;
     if (row === null || !row.isLive() || row.props.sealedSecret === null) {
       return err(new NotFoundError("Ad platform connection not found"));
     }
     try {
       return ok(await this.deps.vault.open(input.tenantId, input.platform, row.props.sealedSecret));
     } catch {
-      return err(new UnexpectedError("Ad platform credentials could not be opened"));
+      return err(new UnexpectedError(OPEN_FAILED));
     }
   }
 }
@@ -351,7 +402,9 @@ export class GetPublicAdPlatforms implements UseCase<
   }
 
   async execute(input: { tenantId: string }): Promise<Result<PublicAdPlatformsView, DomainError>> {
-    const rows = await this.deps.connections.list(input.tenantId);
+    const loaded = await guarded(() => this.deps.connections.list(input.tenantId), LOAD_FAILED);
+    if (!loaded.ok) return loaded;
+    const rows = loaded.value;
     let view: PublicAdPlatformsView = {
       meta: null,
       tiktok: null,
