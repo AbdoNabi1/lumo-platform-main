@@ -4,18 +4,25 @@ import { cookies } from "next/headers";
 import { AlertTriangleIcon, LockIcon, SearchXIcon, UsersIcon } from "lucide-react";
 import { Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { CustomersHeader } from "@/components/customers/customers-header";
 import { CustomersPagination } from "@/components/customers/customers-pagination";
 import { CustomersTable } from "@/components/customers/customers-table";
 import { CustomersToolbar } from "@/components/customers/customers-toolbar";
 import { fetchCustomersPage } from "@/lib/api/customers";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
 const PAGE_SIZE = 20;
 
 interface CustomersPageProps {
-  readonly searchParams: Promise<{ readonly q?: string; readonly after?: string }>;
+  readonly searchParams: Promise<{
+    readonly q?: string;
+    readonly after?: string;
+    /** Set by the export route handler when it sends the merchant back instead of a file. */
+    readonly exportError?: string;
+  }>;
 }
 
 /**
@@ -30,16 +37,30 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const params = await searchParams;
+  // Operators and admins add and export customers (the API enforces `customers:register` and
+  // `customers:export`); a viewer or an unknown role gets neither button.
+  const role = highestRole((await readSession())?.roles ?? []);
+  const canEdit = role === "operator" || role === "admin";
+  const canExport = canEdit;
+  const exportError = (["too_many", "failed"] as const).find(
+    (error) => error === params.exportError,
+  );
 
   return (
     <AppShell t={t} locale={locale} activeNavId="customers" user={user}>
       <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">{t.customersPage.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{t.customersPage.subtitle}</p>
-        </header>
+        <CustomersHeader canEdit={canEdit} canExport={canExport} t={t} />
 
         <CustomersToolbar t={t} />
+
+        {exportError !== undefined && (
+          <p
+            role="alert"
+            className="bg-warning-subtle text-warning-foreground rounded-2xl px-4 py-3 text-base"
+          >
+            {t.customersPage.exportError[exportError]}
+          </p>
+        )}
 
         <Suspense
           key={`${params.q ?? ""}:${params.after ?? ""}`}
