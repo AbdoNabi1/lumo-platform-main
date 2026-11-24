@@ -585,6 +585,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // sealed credentials) and the vault that seals them. Neither is a process-wide provider.
     providerRegistrations: runtime.providerRegistrations,
     paymentCredentialVault: runtime.paymentCredentialVault,
+    // Lead Site Part D1: the envelope vault merchants' ad platform tokens are sealed with. Passed explicitly
+    // (absent when AD_PLATFORM_CREDENTIALS_KEK_REF is unset ⇒ the admin API refuses to store a token).
+    ...(runtime.adPlatformCredentialVault === undefined
+      ? {}
+      : { adPlatformCredentialVault: runtime.adPlatformCredentialVault }),
     // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
     // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
     ...(runtime.platformBillingPayments === undefined

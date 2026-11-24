@@ -46,6 +46,7 @@ import {
   type PaymentCredentialVault,
   type ProviderRegistration,
 } from "@platform/payments";
+import { EnvelopeCredentialVault, type CredentialVaultPort } from "@platform/ad-platforms";
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
@@ -161,6 +162,12 @@ export interface RuntimeCore {
    */
   readonly providerRegistrations: readonly ProviderRegistration[];
   readonly paymentCredentialVault: PaymentCredentialVault | undefined;
+  /**
+   * Lead Site Part D1: the REAL envelope vault the merchants' ad platform tokens are sealed with, built only
+   * when `AD_PLATFORM_CREDENTIALS_KEK_REF` is configured. Absent ⇒ the admin API saves public ids but answers
+   * 503 to a token (never a stub next to a real database).
+   */
+  readonly adPlatformCredentialVault?: CredentialVaultPort;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
@@ -385,6 +392,11 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
   const providerRegistrations: readonly ProviderRegistration[] =
     paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
 
+  const adPlatformCredentialVault: CredentialVaultPort | undefined =
+    config.AD_PLATFORM_CREDENTIALS_KEK_REF !== undefined
+      ? buildAdPlatformCredentialVault(config.AD_PLATFORM_CREDENTIALS_KEK_REF)
+      : undefined;
+
   const platformBillingPayments = buildPlatformBillingPayments(config);
   const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
     config,
@@ -429,6 +441,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentProvider,
     providerRegistrations,
     paymentCredentialVault,
+    ...(adPlatformCredentialVault === undefined ? {} : { adPlatformCredentialVault }),
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,
@@ -489,6 +502,20 @@ function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
   return new EnvelopePaymentCredentialVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
     "payments-credentials",
+  );
+}
+
+/**
+ * The real ad platform credential vault (Lead Site Part D1), built exactly like
+ * `buildPaymentCredentialVault`: `@platform/secrets`' envelope encryption over `@platform/security`'s
+ * `NodeCrypto`, the data key wrapped under a KEK derived from `kekRef`, under its own alias.
+ */
+export function buildAdPlatformCredentialVault(kekRef: string): CredentialVaultPort {
+  const aliases = new KeyAliasRegistry();
+  aliases.set("ad-platform-credentials", kekRef);
+  return new EnvelopeCredentialVault(
+    new EnvelopeCipher(new NodeCrypto(), aliases),
+    "ad-platform-credentials",
   );
 }
 

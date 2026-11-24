@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
+    "@platform/ad-platforms": "workspace:*",
     "@platform/admin": "workspace:*",
     "@platform/auth": "workspace:*",
     "@platform/automation": "workspace:*",

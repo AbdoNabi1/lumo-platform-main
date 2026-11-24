@@ -129,3 +129,25 @@ model TrackingEventRevision {
   @@map("tracking_event_revisions")
   @@schema("tracking")
 }
+
+// Ad platform connections (services/ad-platforms, Lead Site Part D1): one row per shop and platform
+// (meta | tiktok | snap | ga4 | google_ads). `public_config` holds the browser-safe ids; `sealed_secret`
+// is the envelope-sealed vendor token (never plaintext, never returned by any API) and `secret_last4`
+// its masked tail. Tenant-scoped with RLS; `version` is the optimistic-concurrency counter.
+model AdPlatformConnection {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  platform      String
+  enabled       Boolean  @default(false)
+  publicConfig  Json?    @map("public_config")
+  sealedSecret  String?  @map("sealed_secret")
+  secretLast4   String?  @map("secret_last4")
+  testEventCode String?  @map("test_event_code")
+  version       Int      @default(1)
+  createdAt     DateTime @map("created_at")
+  updatedAt     DateTime @map("updated_at")
+
+  @@unique([tenantId, platform])
+  @@map("ad_platform_connections")
+  @@schema("tracking")
+}

@@ -789,3 +789,69 @@ describe("leads.leads — migration history matches the Prisma model (Lead Site 
     expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"leads"/);
   });
 });
+
+describe("tracking.ad_platform_connections — migration history matches the Prisma model (Lead Site Part D1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n")
+    .replace(/\r\n/g, "\n");
+  const model = /model AdPlatformConnection \{([\s\S]*?)\n\}/.exec(
+    readFileSync(join(migrationsDir, "..", "tracking.prisma"), "utf-8").replace(/\r\n/g, "\n"),
+  )?.[1];
+
+  const modelColumns = (model ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("//") && !line.startsWith("@@"))
+    .map((line) => /@map\("(\w+)"\)/.exec(line)?.[1] ?? /^(\w+)\s/.exec(line)?.[1] ?? "");
+
+  it("reads the model's columns", () => {
+    expect(modelColumns).toHaveLength(11);
+    expect(modelColumns).toContain("sealed_secret");
+    expect(modelColumns).not.toContain("");
+  });
+
+  it("has exactly the model's columns", () => {
+    expect([...columnsEverAddedTo("tracking", "ad_platform_connections", allSql)].sort()).toEqual(
+      [...modelColumns].sort(),
+    );
+  });
+
+  it("is RLS-forced with the exact tenant_isolation predicate", () => {
+    const table = '"tracking"."ad_platform_connections"';
+    expect(allSql).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+    expect(allSql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
+    expect(allSql).toContain(`DROP POLICY IF EXISTS tenant_isolation ON ${table};`);
+    expect(allSql).toContain(
+      `CREATE POLICY tenant_isolation ON ${table} FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+
+  it("has the platform CHECK, the no-secret-for-google-ads CHECK and the unique (tenant, platform) index", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "ad_platform_connections_platform_check" CHECK ("platform" IN ('meta', 'tiktok', 'snap', 'ga4', 'google_ads'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "ad_platform_connections_google_ads_no_secret_check" CHECK ("sealed_secret" IS NULL OR "platform" <> 'google_ads')`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "ad_platform_connections_tenant_id_platform_key" ON "tracking"."ad_platform_connections" ("tenant_id", "platform");',
+    );
+  });
+
+  it("is additive: the migration only creates the table (no drop, no alter of existing objects)", () => {
+    const sql = readFileSync(
+      join(migrationsDir, "20261123000000_ad_platform_connections", "migration.sql"),
+      "utf-8",
+    ).replace(/\r\n/g, "\n");
+    expect(sql).toMatch(/^SET row_security = off;$/m);
+    expect(sql).toMatch(/^RESET row_security;$/m);
+    expect(sql).not.toMatch(/\bDROP (TABLE|COLUMN|SCHEMA|INDEX)\b/i);
+    expect(sql).not.toMatch(/\bALTER TABLE\b(?![^\n]*"ad_platform_connections")/i);
+  });
+});

@@ -71,6 +71,9 @@ importers:
 
   apps/admin:
     dependencies:
+      '@platform/ad-platforms':
+        specifier: workspace:*
+        version: link:../../services/ad-platforms
       '@platform/analytics':
         specifier: workspace:*
         version: link:../../services/analytics
@@ -437,6 +440,9 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
+      '@platform/ad-platforms':
+        specifier: workspace:*
+        version: link:../../services/ad-platforms
       '@platform/admin':
         specifier: workspace:*
         version: link:../admin
@@ -1961,15 +1967,24 @@ importers:
       '@platform/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@platform/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@platform/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@platform/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@prisma/client':
+        specifier: ^6.5.0
+        version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
     devDependencies:
       '@platform/eslint-config':
         specifier: workspace:*

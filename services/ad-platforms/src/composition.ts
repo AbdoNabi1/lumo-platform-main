@@ -1,4 +1,5 @@
 import type { Clock, IdGenerator } from "@platform/contracts";
+import type { Database } from "@platform/db";
 import type { Logger } from "@platform/utils";
 import {
   GetLiveConnections,
@@ -13,6 +14,7 @@ import type { AdPlatform } from "./domain/connection";
 import type { ConnectionRepository } from "./domain/connection-repository";
 import { InMemoryConnectionRepository } from "./infrastructure/in-memory-connection-repository";
 import { InMemoryCredentialVault } from "./infrastructure/in-memory-credential-vault";
+import { PrismaConnectionRepository } from "./infrastructure/prisma-connection-repository";
 import { ConnectionsController } from "./interfaces/connections.controller";
 
 export interface AdPlatformsWiringDeps {
@@ -22,8 +24,16 @@ export interface AdPlatformsWiringDeps {
   readonly vault?: CredentialVaultPort;
   readonly deliverySync?: DeliverySyncPort;
   readonly logger?: Logger;
-  /** Default `allow_stub` (in-memory only); the Prisma branch (Task 2) defaults to `require_real_vault`. */
+  /**
+   * Default `allow_stub` for the in-memory branch; the Prisma branch defaults to `require_real_vault` (no
+   * environment check anywhere: a stub vault never stores a secret next to a real database).
+   */
   readonly credentialPolicy?: CredentialPolicy;
+  /**
+   * Production persistence. Present ⇒ the Prisma repository; absent ⇒ in-memory. ADR-0014: the repository
+   * built here is a tenant-agnostic singleton.
+   */
+  readonly prisma?: Database;
 }
 
 export interface WiredAdPlatforms {
@@ -38,7 +48,10 @@ export interface WiredAdPlatforms {
 
 /** Composition root for the Ad platforms context. It publishes no events, so there is no outbox to drain. */
 export function wireAdPlatforms(deps: AdPlatformsWiringDeps): WiredAdPlatforms {
-  const connections: ConnectionRepository = new InMemoryConnectionRepository();
+  const connections: ConnectionRepository =
+    deps.prisma !== undefined
+      ? new PrismaConnectionRepository({ prisma: deps.prisma })
+      : new InMemoryConnectionRepository();
   const vault = deps.vault ?? new InMemoryCredentialVault();
   const getLiveConnections = new GetLiveConnections({ connections, vault });
   const openSecret = new OpenConnectionSecret({ connections, vault });
@@ -50,7 +63,9 @@ export function wireAdPlatforms(deps: AdPlatformsWiringDeps): WiredAdPlatforms {
         vault,
         clock: deps.clock,
         idGenerator: deps.idGenerator,
-        credentialPolicy: deps.credentialPolicy ?? "allow_stub",
+        credentialPolicy:
+          deps.credentialPolicy ??
+          (deps.prisma !== undefined ? "require_real_vault" : "allow_stub"),
         deliverySync: deps.deliverySync,
         logger: deps.logger,
       }),

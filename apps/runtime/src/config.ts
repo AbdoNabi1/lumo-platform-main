@@ -237,6 +237,14 @@ const schema = z
     // with a KMS backend it is that KMS's key reference.
     PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
 
+    // ── Ad platform credentials (Lead Site Part D1). A merchant's Meta / TikTok / Snap / GA4 server token is
+    // sealed with `@platform/secrets`' envelope encryption (alias `ad-platform-credentials`) before it reaches
+    // Postgres; this is the key-encryption key reference it is sealed under. Absent ⇒ saving a token answers
+    // 503 and nothing is stored (never a stub next to a real database). With the local `NodeCrypto` backend the
+    // ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY and use a
+    // value different from PAYMENT_CREDENTIALS_KEK_REF; with a KMS backend it is that KMS's key reference.
+    AD_PLATFORM_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
      * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `off`: the collector

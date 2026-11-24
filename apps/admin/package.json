@@ -16,6 +16,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@platform/ad-platforms": "workspace:*",
     "@platform/analytics": "workspace:*",
     "@platform/auth": "workspace:*",
     "@platform/automation": "workspace:*",

@@ -29,3 +29,5 @@ export {
 } from "./application/connections.use-cases";
 export { InMemoryCredentialVault } from "./infrastructure/in-memory-credential-vault";
 export { InMemoryConnectionRepository } from "./infrastructure/in-memory-connection-repository";
+export { EnvelopeCredentialVault } from "./infrastructure/envelope-credential-vault";
+export { PrismaConnectionRepository } from "./infrastructure/prisma-connection-repository";

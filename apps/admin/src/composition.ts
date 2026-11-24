@@ -47,6 +47,7 @@ import type { PostingAccounts } from "@platform/finance";
 import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
+import type { CredentialVaultPort } from "@platform/ad-platforms";
 import { wireLeads, type LeadsController, type ShopFactsPort } from "@platform/leads";
 import {
   wireLicensing,
@@ -421,6 +422,12 @@ export interface AdminWiringDeps {
    */
   readonly providerRegistrations?: readonly ProviderRegistration[];
   readonly paymentCredentialVault?: PaymentCredentialVault;
+  /**
+   * Lead Site Part D1: the real envelope vault ad platform tokens are sealed with (`apps/runtime` builds it from
+   * `AD_PLATFORM_CREDENTIALS_KEK_REF`). Absent ⇒ the ad-platform connections refuse to store a token
+   * (503), never a stub. Consumed when the admin mounts the connections (Task 5).
+   */
+  readonly adPlatformCredentialVault?: CredentialVaultPort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;

@@ -18,9 +18,12 @@
   "dependencies": {
     "@platform/application": "workspace:*",
     "@platform/contracts": "workspace:*",
+    "@platform/db": "workspace:*",
     "@platform/domain": "workspace:*",
+    "@platform/secrets": "workspace:*",
     "@platform/types": "workspace:*",
-    "@platform/utils": "workspace:*"
+    "@platform/utils": "workspace:*",
+    "@prisma/client": "^6.5.0"
   },
   "devDependencies": {
     "@platform/eslint-config": "workspace:*",
