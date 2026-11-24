@@ -68,6 +68,14 @@ function bareBrandText(): string[] {
   return bare;
 }
 
+/**
+ * The page's own layout wrapper (the element holding the header and the content). It sits inside the settings frame,
+ * which is the shell's first child since the pages render within `SettingsFrame`.
+ */
+function pageLayout(): HTMLElement {
+  return screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
+}
+
 const connected: WhatsAppConnectionDto = {
   available: true,
   status: "connected",
@@ -147,10 +155,7 @@ describe.each(LOCALES)("Templates page in %s", (locale, t) => {
         expect(document.body.textContent).toContain("WhatsApp");
       }
       expect(bareBrandText()).toEqual([]);
-      expect(screen.getByTestId("shell").firstElementChild).toHaveAttribute(
-        "dir",
-        locale === "ar" ? "rtl" : "ltr",
-      );
+      expect(pageLayout()).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
     },
   );
 
@@ -177,10 +182,7 @@ describe.each(LOCALES)("New template page in %s", (locale, t) => {
       expect(document.body.textContent).toContain("WhatsApp");
     }
     expect(bareBrandText()).toEqual([]);
-    expect(screen.getByTestId("shell").firstElementChild).toHaveAttribute(
-      "dir",
-      locale === "ar" ? "rtl" : "ltr",
-    );
+    expect(pageLayout()).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
   });
 
   it("the ready form", async () => {
@@ -205,10 +207,7 @@ describe.each(LOCALES)("Email page in %s", (locale, t) => {
       expect(screen.getByRole("note").textContent).toBe(note);
       expect(document.body.textContent).toContain("Morbeh");
       expect(bareBrandText()).toEqual([]);
-      expect(screen.getByTestId("shell").firstElementChild).toHaveAttribute(
-        "dir",
-        locale === "ar" ? "rtl" : "ltr",
-      );
+      expect(pageLayout()).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
     },
   );
 

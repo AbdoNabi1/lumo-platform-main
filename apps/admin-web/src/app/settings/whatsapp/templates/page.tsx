@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { BrandText } from "@/components/settings/whatsapp/brand-text";
 import { TemplatesTable } from "@/components/settings/whatsapp/templates-table";
 import { fetchWhatsAppConnection, fetchWhatsAppTemplateRows } from "@/lib/api/outreach";
@@ -75,18 +76,23 @@ export default async function WhatsAppTemplatesPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div dir={directionFor(locale)} className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header>
-          <Link href="/settings/whatsapp" className="text-muted-foreground text-sm hover:underline">
-            <BrandText text={copy.back} />
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            <BrandText text={copy.subtitle} />
-          </p>
-        </header>
-        {content}
-      </div>
+      <SettingsFrame t={t} activeId="whatsapp">
+        <div dir={directionFor(locale)} className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <header>
+            <Link
+              href="/settings/whatsapp"
+              className="text-muted-foreground text-sm hover:underline"
+            >
+              <BrandText text={copy.back} />
+            </Link>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              <BrandText text={copy.subtitle} />
+            </p>
+          </header>
+          {content}
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

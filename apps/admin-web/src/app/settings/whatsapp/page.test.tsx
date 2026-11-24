@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import type { WhatsAppConnectionDto, WhatsAppTemplateDto } from "@/lib/api/outreach";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
@@ -17,8 +17,18 @@ vi.mock("next/headers", () => ({
     }),
 }));
 vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: ReactNode; href: string }) => (
-    <a href={href}>{children}</a>
+  default: ({
+    children,
+    href,
+    "aria-current": ariaCurrent,
+  }: {
+    children: ReactNode;
+    href: string;
+    "aria-current"?: "page";
+  }) => (
+    <a href={href} aria-current={ariaCurrent}>
+      {children}
+    </a>
   ),
 }));
 vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: async () => ({ name: "Staff" }) }));
@@ -63,6 +73,14 @@ const template: WhatsAppTemplateDto = {
   sendShape: { bodyVariableCount: 0, headerHasVariable: false, buttons: [] },
 };
 
+/**
+ * The page's own layout wrapper (the element holding the header and the content). It sits inside the settings frame,
+ * which is the shell's first child since the pages render within `SettingsFrame`.
+ */
+function pageLayout(): HTMLElement {
+  return screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
+}
+
 beforeEach(() => {
   cleanup();
   mocks.locale = "en";
@@ -80,7 +98,7 @@ describe("Settings → WhatsApp page", () => {
       "/settings",
     );
     expect(screen.getByText("+20 100 123 4567")).toBeInTheDocument();
-    const layout = screen.getByTestId("shell").firstElementChild!;
+    const layout = pageLayout();
     expect(layout).toHaveClass("max-w-3xl", "mx-auto");
     expect(mocks.fetchTemplates).toHaveBeenCalledTimes(1);
   });
@@ -113,7 +131,7 @@ describe("Settings → WhatsApp page", () => {
     expect.hasAssertions();
     mocks.locale = "ar";
     render(await WhatsAppSettingsPage());
-    const layout = screen.getByTestId("shell").firstElementChild!;
+    const layout = pageLayout();
     expect(layout).toHaveAttribute("dir", "rtl");
     expect(screen.getByRole("link", { name: ar.whatsappSettings.back })).toBeInTheDocument();
     const phone = screen.getByText("+20 100 123 4567");
@@ -124,14 +142,14 @@ describe("Settings → WhatsApp page", () => {
   it("English: the layout is dir=ltr", async () => {
     expect.hasAssertions();
     render(await WhatsAppSettingsPage());
-    expect(screen.getByTestId("shell").firstElementChild).toHaveAttribute("dir", "ltr");
+    expect(pageLayout()).toHaveAttribute("dir", "ltr");
   });
 
   it("falls back to the default locale when the cookie holds something else", async () => {
     expect.hasAssertions();
     mocks.locale = "fr";
     render(await WhatsAppSettingsPage());
-    expect(screen.getByTestId("shell").firstElementChild).toHaveAttribute("dir", "ltr");
+    expect(pageLayout()).toHaveAttribute("dir", "ltr");
   });
 
   it.each(["not_connected", "disconnected", "onboarding"] as const)(
@@ -183,5 +201,35 @@ describe("Settings → WhatsApp page", () => {
     render(await WhatsAppSettingsPage());
     expect(screen.getByRole("note")).toHaveTextContent(en.whatsappSettings.loadError);
     expect(document.body).not.toHaveTextContent("provider text");
+  });
+});
+
+describe("WhatsAppSettingsPage inside the settings frame", () => {
+  it("renders within the settings navigation with its entry current, and the page after the navigation", async () => {
+    expect.hasAssertions();
+    render(await WhatsAppSettingsPage());
+    const nav = screen.getByRole("navigation", { name: en.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.getAttribute("href"))).toEqual(["/settings/whatsapp"]);
+    expect(current.map((link) => link.textContent)).toEqual([en.settingsNav.whatsapp]);
+    expect(
+      nav.compareDocumentPosition(screen.getByRole("heading", { level: 1 })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(pageLayout()).toHaveAttribute("dir", "ltr");
+  });
+
+  it("renders the Arabic navigation beside the RTL page, with the entry current", async () => {
+    expect.hasAssertions();
+    mocks.locale = "ar";
+    render(await WhatsAppSettingsPage());
+    const nav = screen.getByRole("navigation", { name: ar.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.textContent)).toEqual([ar.settingsNav.whatsapp]);
+    expect(pageLayout()).toHaveAttribute("dir", "rtl");
   });
 });

@@ -2163,7 +2163,7 @@ export const en = {
     billingTitle: "Plan and billing",
     billingBody: "Your Morbeh plan, payment method and bills.",
   },
-  /** Shopify parity Wave 1a — the Settings sub-navigation (Shopify's 19 entries, in its order). */
+  /** Shopify parity Wave 1a — the Settings sub-navigation (Shopify's 19 entries, in its order, plus WhatsApp and Email after Notifications). */
   settingsNav: {
     label: "Settings sections",
     soon: "Soon",
@@ -2184,6 +2184,8 @@ export const en = {
     domains: "Domains",
     customerEvents: "Customer events",
     notifications: "Notifications",
+    whatsapp: "WhatsApp",
+    email: "Email",
     customData: "Metafields and metaobjects",
     languages: "Languages",
     customerPrivacy: "Customer privacy",

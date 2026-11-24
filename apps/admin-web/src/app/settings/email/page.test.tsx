@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 
@@ -16,8 +16,18 @@ vi.mock("next/headers", () => ({
     }),
 }));
 vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: ReactNode; href: string }) => (
-    <a href={href}>{children}</a>
+  default: ({
+    children,
+    href,
+    "aria-current": ariaCurrent,
+  }: {
+    children: ReactNode;
+    href: string;
+    "aria-current"?: "page";
+  }) => (
+    <a href={href} aria-current={ariaCurrent}>
+      {children}
+    </a>
   ),
 }));
 vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: async () => ({ name: "Staff" }) }));
@@ -38,6 +48,14 @@ const available = {
   from: "Nour Store <noreply@mail.example.com>",
   replyTo: "hello@nour.example",
 };
+
+/**
+ * The page's own layout wrapper (the element holding the header and the content). It sits inside the settings frame,
+ * which is the shell's first child since the pages render within `SettingsFrame`.
+ */
+function pageLayout(): HTMLElement {
+  return screen.getByRole("heading", { level: 1 }).closest("header")!.parentElement!;
+}
 
 beforeEach(() => {
   cleanup();
@@ -64,7 +82,7 @@ describe("Settings → Email page", () => {
       "href",
       "/settings/general",
     );
-    const layout = screen.getByTestId("shell").firstElementChild!;
+    const layout = pageLayout();
     expect(layout).toHaveClass("max-w-3xl", "mx-auto");
   });
 
@@ -110,5 +128,35 @@ describe("Settings → Email page", () => {
     expect(screen.getByLabelText(ar.emailSettings.test.to)).toHaveAttribute("dir", "ltr");
     expect(screen.getByText("noreply@mail.example.com")).toHaveAttribute("dir", "ltr");
     expect(document.body).not.toHaveTextContent(en.emailSettings.transactionalNote);
+  });
+});
+
+describe("EmailSettingsPage inside the settings frame", () => {
+  it("renders within the settings navigation with its entry current, and the page after the navigation", async () => {
+    expect.hasAssertions();
+    render(await EmailSettingsPage());
+    const nav = screen.getByRole("navigation", { name: en.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.getAttribute("href"))).toEqual(["/settings/email"]);
+    expect(current.map((link) => link.textContent)).toEqual([en.settingsNav.email]);
+    expect(
+      nav.compareDocumentPosition(screen.getByRole("heading", { level: 1 })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(pageLayout()).toHaveAttribute("dir", "ltr");
+  });
+
+  it("renders the Arabic navigation beside the RTL page, with the entry current", async () => {
+    expect.hasAssertions();
+    mocks.locale = "ar";
+    render(await EmailSettingsPage());
+    const nav = screen.getByRole("navigation", { name: ar.settingsNav.label });
+    const current = within(nav)
+      .getAllByRole("link")
+      .filter((link) => link.getAttribute("aria-current") === "page");
+    expect(current.map((link) => link.textContent)).toEqual([ar.settingsNav.email]);
+    expect(pageLayout()).toHaveAttribute("dir", "rtl");
   });
 });

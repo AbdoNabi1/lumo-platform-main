@@ -4,6 +4,7 @@ import Link from "next/link";
 import { AlertTriangleIcon, LockIcon } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { BrandText } from "@/components/settings/whatsapp/brand-text";
 import { TemplateForm } from "@/components/settings/whatsapp/template-form";
 import { fetchWhatsAppConnection } from "@/lib/api/outreach";
@@ -65,21 +66,23 @@ export default async function NewWhatsAppTemplatePage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div dir={directionFor(locale)} className="mx-auto flex w-full max-w-5xl flex-col gap-6">
-        <header>
-          <Link
-            href="/settings/whatsapp/templates"
-            className="text-muted-foreground text-sm hover:underline"
-          >
-            {copy.form.back}
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.form.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            <BrandText text={copy.form.description} />
-          </p>
-        </header>
-        {content}
-      </div>
+      <SettingsFrame t={t} activeId="whatsapp">
+        <div dir={directionFor(locale)} className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+          <header>
+            <Link
+              href="/settings/whatsapp/templates"
+              className="text-muted-foreground text-sm hover:underline"
+            >
+              {copy.form.back}
+            </Link>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.form.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">
+              <BrandText text={copy.form.description} />
+            </p>
+          </header>
+          {content}
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

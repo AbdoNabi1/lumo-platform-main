@@ -21,6 +21,19 @@ vi.mock("@/lib/api/licensing", () => ({ fetchUsageCounters: vi.fn() }));
 vi.mock("@/lib/platform-tools", () => ({ showPlatformTools: () => false }));
 const { default: SettingsPage } = await import("./page");
 
+/**
+ * The landing's section cards. The page now also renders the Settings navigation, which repeats WhatsApp and
+ * Email as plain links, so card queries leave the `<nav>` out.
+ */
+function cardLinks(): HTMLElement[] {
+  return screen.getAllByRole("link").filter((link) => link.closest("nav") === null);
+}
+function cardLink(name: RegExp): HTMLElement {
+  const matches = cardLinks().filter((link) => name.test(link.textContent ?? ""));
+  expect(matches).toHaveLength(1);
+  return matches[0]!;
+}
+
 beforeEach(() => {
   cleanup();
   mocks.locale = "en";
@@ -30,7 +43,7 @@ describe("Settings index", () => {
   it("lists WhatsApp right after Payments, linking to /settings/whatsapp", async () => {
     expect.hasAssertions();
     render(await SettingsPage());
-    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
+    const hrefs = cardLinks().map((link) => link.getAttribute("href"));
     expect(hrefs.indexOf("/settings/whatsapp")).toBe(hrefs.indexOf("/settings/payments") + 1);
     expect(hrefs.indexOf("/settings/whatsapp")).toBeGreaterThan(-1);
   });
@@ -38,7 +51,7 @@ describe("Settings index", () => {
   it("shows the section's title and body with the brand name isolated", async () => {
     expect.hasAssertions();
     render(await SettingsPage());
-    const link = screen.getByRole("link", { name: new RegExp(en.settingsPage.whatsappTitle) });
+    const link = cardLink(new RegExp(en.settingsPage.whatsappTitle));
     expect(link).toHaveTextContent(en.settingsPage.whatsappTitle);
     expect(link).toHaveTextContent(en.settingsPage.whatsappBody);
     expect(link.querySelector("bdi")).toHaveAttribute("dir", "auto");
@@ -49,7 +62,7 @@ describe("Settings index", () => {
     expect.hasAssertions();
     mocks.locale = "ar";
     render(await SettingsPage());
-    const link = screen.getByRole("link", { name: new RegExp(ar.settingsPage.whatsappTitle) });
+    const link = cardLink(new RegExp(ar.settingsPage.whatsappTitle));
     expect(link).toHaveAttribute("href", "/settings/whatsapp");
     expect(link).toHaveTextContent(ar.settingsPage.whatsappBody);
     expect(ar.settingsPage.whatsappTitle).not.toBe(en.settingsPage.whatsappTitle);
@@ -58,15 +71,15 @@ describe("Settings index", () => {
   it("lists Email right after WhatsApp, linking to /settings/email, in both languages", async () => {
     expect.hasAssertions();
     render(await SettingsPage());
-    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
+    const hrefs = cardLinks().map((link) => link.getAttribute("href"));
     expect(hrefs.indexOf("/settings/email")).toBe(hrefs.indexOf("/settings/whatsapp") + 1);
-    const link = screen.getByRole("link", { name: new RegExp(en.settingsPage.emailTitle) });
+    const link = cardLink(new RegExp(en.settingsPage.emailTitle));
     expect(link).toHaveTextContent(en.settingsPage.emailBody);
     expect(link.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     cleanup();
     mocks.locale = "ar";
     render(await SettingsPage());
-    const arabic = screen.getByRole("link", { name: new RegExp(ar.settingsPage.emailTitle) });
+    const arabic = cardLink(new RegExp(ar.settingsPage.emailTitle));
     expect(arabic).toHaveAttribute("href", "/settings/email");
     expect(arabic).toHaveTextContent(ar.settingsPage.emailBody);
     expect(ar.settingsPage.emailTitle).not.toBe(en.settingsPage.emailTitle);
@@ -75,7 +88,7 @@ describe("Settings index", () => {
   it("leaves the other sections' copy as plain text", async () => {
     expect.hasAssertions();
     render(await SettingsPage());
-    const payments = screen.getByRole("link", { name: new RegExp(en.settingsPage.paymentsTitle) });
+    const payments = cardLink(new RegExp(en.settingsPage.paymentsTitle));
     expect(payments.querySelector("bdi")).toBeNull();
   });
 });

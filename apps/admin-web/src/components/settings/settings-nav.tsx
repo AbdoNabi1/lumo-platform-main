@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge, cn, focusRingInset } from "@platform/ui";
 import type { Dictionary } from "@/messages/en";
+import { BrandText } from "./whatsapp/brand-text";
 
 export interface SettingsNavItem {
   /** Matches the `activeId` a settings page passes to `SettingsFrame`. */
@@ -11,7 +12,11 @@ export interface SettingsNavItem {
   readonly available: boolean;
 }
 
-/** Shopify's 19 settings entries, in Shopify's order (Plan and Billing share Morbeh's one page). */
+/**
+ * Shopify's 19 settings entries, in Shopify's order (Plan and Billing share Morbeh's one page), plus
+ * WhatsApp and Email right after Notifications (21 in all): Shopify keeps customer messaging under
+ * Notifications, and Morbeh's two outreach channels are configured on their own pages.
+ */
 export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
   {
     id: "general",
@@ -79,6 +84,13 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     available: false,
   },
   {
+    id: "whatsapp",
+    label: (t) => t.settingsNav.whatsapp,
+    href: "/settings/whatsapp",
+    available: true,
+  },
+  { id: "email", label: (t) => t.settingsNav.email, href: "/settings/email", available: true },
+  {
     id: "custom-data",
     label: (t) => t.settingsNav.customData,
     href: "/settings/custom-data",
@@ -136,7 +148,9 @@ export function SettingsNav({
                     : "text-secondary-foreground hover:bg-card/60 hover:text-foreground",
                 )}
               >
-                <span className="flex-1 truncate">{item.label(t)}</span>
+                <span className="flex-1 truncate">
+                  <BrandText text={item.label(t)} />
+                </span>
                 {item.available ? null : <Badge>{t.settingsNav.soon}</Badge>}
               </Link>
             </li>

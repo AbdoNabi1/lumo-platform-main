@@ -2084,6 +2084,8 @@ export const ar: Dictionary = {
     domains: "الدومينات",
     customerEvents: "أحداث العملاء",
     notifications: "الإشعارات",
+    whatsapp: "واتساب",
+    email: "البريد الإلكتروني",
     customData: "الحقول الوصفية والكائنات الوصفية",
     languages: "اللغات",
     customerPrivacy: "خصوصية العملاء",
