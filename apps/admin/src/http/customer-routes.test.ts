@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { RoleTableAccessControl } from "@platform/auth";
 import type { Cache, IdempotencyKeyStore, Principal } from "@platform/contracts";
@@ -6,6 +6,7 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import type { Customer } from "@platform/identity";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import type { WiredAdmin } from "../composition";
+import { CustomersAdminController } from "../interfaces/customers.admin-controller";
 import { annotationsOfCustomer, toCustomerExportRowDto } from "./customer-routes";
 import { createAdminHttpApi } from "./server";
 
@@ -640,11 +641,36 @@ describe("GET /customers/export-rows", () => {
     expect(none.json().items).toEqual([]);
     expect(none.json().pageInfo.hasNextPage).toBe(false);
   });
-  it("defaults the page size to 100 and rejects first outside 1..100", async () => {
+  it("defaults the page size to 100: 101 customers, no `first`, one full page and a usable cursor", async () => {
     const tenant = `t-export-${unique()}`;
-    for (let i = 0; i < 3; i += 1) await customer({ email: emailOf() }, tenant);
-    const all = await get("/customers/export-rows", tenant);
-    expect(all.json().items).toHaveLength(3);
+    const token = unique().slice(0, 8);
+    const ids: string[] = [];
+    for (let i = 0; i < 101; i += 1) {
+      ids.push(await customer({ email: emailOf(`${token}-${i}`) }, tenant));
+    }
+    const page = await get("/customers/export-rows", tenant);
+    expect(page.statusCode).toBe(200);
+    const firstRows = page.json().items as { id: string }[];
+    expect(firstRows).toHaveLength(100);
+    expect(page.json().pageInfo.hasNextPage).toBe(true);
+    const cursor = page.json().pageInfo.endCursor as unknown;
+    expect(typeof cursor).toBe("string");
+    expect(cursor).not.toBe("");
+    const rest = await get(
+      `/customers/export-rows?after=${encodeURIComponent(cursor as string)}`,
+      tenant,
+    );
+    expect(rest.statusCode).toBe(200);
+    const lastRows = rest.json().items as { id: string }[];
+    expect(lastRows).toHaveLength(1);
+    expect(rest.json().pageInfo.hasNextPage).toBe(false);
+    const seen = [...firstRows, ...lastRows].map((row) => row.id);
+    expect(new Set(seen).size).toBe(101);
+    expect([...seen].sort()).toEqual([...ids].sort());
+  });
+  it("rejects first outside 1..100 and accepts an explicit first=100", async () => {
+    const tenant = `t-export-${unique()}`;
+    await customer({ email: emailOf() }, tenant);
     for (const first of ["0", "101", "abc", "-1"]) {
       const res = await get(`/customers/export-rows?first=${first}`, tenant);
       expect(res.statusCode, first).toBe(422);
@@ -720,6 +746,43 @@ describe("toCustomerExportRowDto", () => {
     });
     expect(row).toMatchObject({ note: "n", tags: ["a"], isGuest: true });
     expect(toCustomerExportRowDto(fake({}), null, []).address).toBeNull();
+  });
+});
+
+describe("GET /customers/:customerId when the annotations read fails (real route, real permissions)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    { label: "a server failure", status: 500, body: { code: "UNEXPECTED", message: "boom" } },
+    { label: "a forbidden answer", status: 403, body: { code: "FORBIDDEN", message: "denied" } },
+  ])(
+    "answers $label from the annotations read as is: same status and body, no detail DTO",
+    async ({ status, body }) => {
+      const id = await customer({ note: "secret note", tags: ["VIP"] });
+      const reads = vi
+        .spyOn(CustomersAdminController.prototype, "customerAnnotations")
+        .mockResolvedValue({ status, body });
+
+      const res = await get(`/customers/${id}`);
+
+      expect(reads).toHaveBeenCalledTimes(1);
+      expect(reads.mock.calls[0]?.[1]).toMatchObject({ tenantId: "t-1", customerIds: [id] });
+      expect(res.statusCode).toBe(status);
+      expect(res.json()).toEqual(body);
+      for (const key of ["id", "name", "email", "note", "tags", "marketing", "addresses"]) {
+        expect(res.json()).not.toHaveProperty(key);
+      }
+      expect(res.body).not.toContain("secret note");
+    },
+  );
+
+  it("still serves the full detail when the annotations read succeeds (control)", async () => {
+    const id = await customer({ note: "kept", tags: ["VIP"] });
+    const res = await get(`/customers/${id}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id, note: "kept", tags: ["VIP"] });
   });
 });
 

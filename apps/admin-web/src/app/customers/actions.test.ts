@@ -170,21 +170,54 @@ describe("createCustomerAction", () => {
     });
   });
 
-  it("an idempotency-key contention 409 is not the duplicate-email case: it keeps the generic mapping", async () => {
+  it("a non-duplicate 409 CONFLICT (idempotency-key contention) shows the locale's own try-again copy", async () => {
     api.createCustomer.mockResolvedValue({
       outcome: "conflict",
       message: "A request with this Idempotency-Key is already in flight",
       code: "CONFLICT",
     });
+    const values = { name: "N", email: "n@example.com", phone: "0101", tags: "vip" };
 
-    const state = await createCustomerAction(IDLE, form({ name: "N", email: "n@example.com" }));
+    const state = await createCustomerAction(IDLE, form(values));
 
     expect(state).toEqual({
       status: "error",
-      message: "A request with this Idempotency-Key is already in flight",
+      message: en.formErrors.conflict,
       fieldErrors: {},
     });
+    expect(en.formErrors.conflict).toBe("That didn't go through — try again.");
+    // The entered values went to the API unchanged and nothing marks Email as a duplicate.
+    expect(api.createCustomer.mock.calls[0]![0]).toMatchObject({
+      name: "N",
+      email: "n@example.com",
+      phone: "0101",
+      tags: ["vip"],
+    });
     expect(state).not.toMatchObject({ fieldErrors: { email: expect.anything() } });
+    expect(revalidatePath).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).toHaveBeenCalledWith("/customers");
+    expect(redirect).not.toHaveBeenCalled();
+
+    revalidatePath.mockClear();
+    cookieLocale.value = "ar";
+    const arabic = await createCustomerAction(IDLE, form(values));
+    expect(arabic).toEqual({
+      status: "error",
+      message: ar.formErrors.conflict,
+      fieldErrors: {},
+    });
+    expect(ar.formErrors.conflict).toBe("لم تكتمل العملية — حاول مرة أخرى.");
+    expect(revalidatePath).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).toHaveBeenCalledWith("/customers");
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("a 409 without the CONFLICT code is left to the generic mapping (server message kept)", async () => {
+    api.createCustomer.mockResolvedValue({ outcome: "conflict", message: "Rule says no" });
+
+    const state = await createCustomerAction(IDLE, form({ name: "N", email: "n@example.com" }));
+
+    expect(state).toEqual({ status: "error", message: "Rule says no", fieldErrors: {} });
   });
 
   it("a 422 puts each field's message on its own field", async () => {

@@ -98,6 +98,11 @@ export async function createCustomerAction(
       fieldErrors: { email: t.customerForm.duplicateEmail },
     };
   }
+  // Any other 409 CONFLICT (e.g. an idempotency-key contention) is not the duplicate-email case: the
+  // locale's own "try again" copy, with no field marked and the entered values kept.
+  if (result.outcome === "conflict" && result.code === "CONFLICT") {
+    return { status: "error", message: t.formErrors.conflict, fieldErrors: {} };
+  }
   return toFormState(result, t.formErrors);
 }
 

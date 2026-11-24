@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import type {
-  AccessControl,
   Authenticator,
   AuthenticatedIdentity,
   Cache,
@@ -18,9 +17,9 @@ import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { createAdminHttpApi } from "./server";
 
 /**
- * Plan 2C-3 — product image uploads over the real HTTP stack: staff only (`products:update`), 8 MB at
- * most, magic-byte checked, never SVG, tenant-prefixed keys, and an honest 503 when storage is not set
- * up. The storage here is a recording fake with fake values only.
+ * GET /media/assets over the real HTTP stack with the real role table: staff-readable library listing
+ * (status/search/sort filters, cursor paging), the asset DTO metadata it returns, and strict tenant
+ * scoping of every page. The storage here is a recording fake with fake values only.
  */
 
 const admin: AuthenticatedIdentity = { id: "staff-a", kind: "staff", roles: ["admin"] };
@@ -53,7 +52,6 @@ function recordingStorage(stored: Stored[]): ObjectStoragePort {
 function buildApp(options: {
   objectStorage?: ObjectStoragePort;
   publicMediaBaseUrl?: string;
-  accessControl?: AccessControl;
 }): Promise<FastifyInstance> {
   const claims = new Set<string>();
   const store = new Map<string, unknown>();
