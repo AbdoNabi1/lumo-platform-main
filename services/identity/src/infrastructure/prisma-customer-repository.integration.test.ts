@@ -6,11 +6,14 @@ import { UniqueEntityId } from "@platform/domain";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { OutboxWriter, rootEventContext } from "@platform/messaging";
 import { ConcurrencyError, ConflictError } from "@platform/utils";
+import { CreateCustomer } from "../application/create-customer.use-case";
 import { Address } from "../domain/address";
 import { Customer } from "../domain/customer";
 import { ConsentScope } from "../domain/value-objects/consent-scope";
 import { Email } from "../domain/value-objects/email";
+import type { CustomerAnnotationRepository, CustomerTag } from "../domain/customer-annotations";
 import { IdentityEventTranslator } from "./identity-event-translator";
+import { PrismaCustomerAnnotationRepository } from "./prisma-customer-annotation-repository";
 import { PrismaCustomerRepository } from "./prisma-customer-repository";
 
 /**
@@ -423,5 +426,208 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
     expect(row.id).toMatch(uuidPattern);
     expect(row.createdAt).toBeInstanceOf(Date);
     expect(row.updatedAt).toBeInstanceOf(Date);
+  });
+
+  // ---- Wave 1b Task 3: profile fields, note and tags (DATABASE_URL_TEST-gated) ----
+
+  function tagOf(tag: string): CustomerTag {
+    return { tag, tagKey: tag.toLowerCase() };
+  }
+
+  async function savedCustomer(w: ReturnType<typeof wire>): Promise<string> {
+    const customer = registerCustomer();
+    await w.unitOfWork.run((tx) => w.repository.save(customer, w.tenantId, tx));
+    return customer.id.toString();
+  }
+
+  it("round-trips phone and language, and clears them with null", async () => {
+    const w = wire();
+    const customer = registerCustomer();
+    customer.updateProfile({ phone: "+201012345678", language: "ar" });
+    await w.unitOfWork.run((tx) => w.repository.save(customer, w.tenantId, tx));
+
+    const loaded = await w.repository.findById(customer.id.toString(), w.tenantId);
+    if (loaded === null) throw new Error("setup failed");
+    expect(loaded.phone).toBe("+201012345678");
+    expect(loaded.language).toBe("ar");
+
+    loaded.updateProfile({ phone: null, language: null });
+    await w.unitOfWork.run((tx) => w.repository.save(loaded, w.tenantId, tx));
+    const cleared = await w.repository.findById(customer.id.toString(), w.tenantId);
+    expect(cleared?.phone).toBeNull();
+    expect(cleared?.language).toBeNull();
+    expect(cleared?.version).toBe(2);
+  });
+
+  it("round-trips note and tags (sorted) and leaves the customer version unchanged", async () => {
+    const w = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const customerId = await savedCustomer(w);
+    const versionBefore = (await w.repository.findById(customerId, w.tenantId))?.version;
+
+    expect(
+      await w.unitOfWork.run((tx) => annotations.setNote(customerId, "hello", w.tenantId, tx)),
+    ).toBe(true);
+    expect(
+      await w.unitOfWork.run((tx) =>
+        annotations.replaceTags(customerId, [tagOf("VIP"), tagOf("Cairo")], w.tenantId, tx),
+      ),
+    ).toEqual(["Cairo", "VIP"]);
+
+    const read = await annotations.annotationsOf([customerId], w.tenantId);
+    expect(read.get(customerId)).toEqual({ note: "hello", tags: ["Cairo", "VIP"] });
+    expect((await w.repository.findById(customerId, w.tenantId))?.version).toBe(versionBefore);
+
+    await w.unitOfWork.run((tx) =>
+      annotations.replaceTags(customerId, [tagOf("New")], w.tenantId, tx),
+    );
+    await w.unitOfWork.run((tx) => annotations.setNote(customerId, null, w.tenantId, tx));
+    expect((await annotations.annotationsOf([customerId], w.tenantId)).get(customerId)).toEqual({
+      note: null,
+      tags: ["New"],
+    });
+    expect(
+      await w.unitOfWork.run((tx) => annotations.replaceTags(customerId, [], w.tenantId, tx)),
+    ).toEqual([]);
+  });
+
+  it("treats a soft-deleted customer, another tenant and a non-UUID id as missing", async () => {
+    const w = wire();
+    const other = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const customerId = await savedCustomer(w);
+
+    // Another tenant: same id, different tenantId.
+    expect(
+      await w.unitOfWork.run((tx) => annotations.setNote(customerId, "x", other.tenantId, tx)),
+    ).toBe(false);
+    expect(
+      await w.unitOfWork.run((tx) =>
+        annotations.replaceTags(customerId, [tagOf("a")], other.tenantId, tx),
+      ),
+    ).toBeNull();
+    expect((await annotations.annotationsOf([customerId], other.tenantId)).size).toBe(0);
+    // Not a UUID: never queried.
+    expect(
+      await w.unitOfWork.run((tx) => annotations.setNote("not-a-uuid", "x", w.tenantId, tx)),
+    ).toBe(false);
+    expect(
+      await w.unitOfWork.run((tx) => annotations.replaceTags("not-a-uuid", [], w.tenantId, tx)),
+    ).toBeNull();
+
+    // Soft-deleted.
+    await w.prisma.customer.update({ where: { id: customerId }, data: { deletedAt: new Date() } });
+    expect(
+      await w.unitOfWork.run((tx) => annotations.setNote(customerId, "x", w.tenantId, tx)),
+    ).toBe(false);
+    expect(
+      await w.unitOfWork.run((tx) =>
+        annotations.replaceTags(customerId, [tagOf("a")], w.tenantId, tx),
+      ),
+    ).toBeNull();
+    expect((await annotations.annotationsOf([customerId], w.tenantId)).size).toBe(0);
+    expect(await w.prisma.customerTag.count({ where: { customerId } })).toBe(0);
+  });
+
+  it("requires the unit-of-work transaction for note and tag writes", async () => {
+    const w = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const customerId = await savedCustomer(w);
+
+    await expect(annotations.setNote(customerId, "x", w.tenantId)).rejects.toThrow(
+      /requires the unit of work's transaction client/,
+    );
+    await expect(annotations.replaceTags(customerId, [], w.tenantId)).rejects.toThrow(
+      /requires the unit of work's transaction client/,
+    );
+  });
+
+  it("CreateCustomer whose annotation write fails leaves NO customer, consent or outbox row", async () => {
+    const w = wire();
+    const real = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const failing: CustomerAnnotationRepository = {
+      annotationsOf: (customerIds, tenantId, tx) => real.annotationsOf(customerIds, tenantId, tx),
+      setNote: (customerId, note, tenantId, tx) => real.setNote(customerId, note, tenantId, tx),
+      replaceTags: () => Promise.reject(new Error("annotation write failed")),
+    };
+    const generated: string[] = [];
+    const recordingIds: IdGenerator = {
+      generate: () => {
+        const id = crypto.randomUUID();
+        generated.push(id);
+        return id;
+      },
+    };
+    const useCase = new CreateCustomer({
+      customers: w.repository,
+      annotations: failing,
+      unitOfWork: w.unitOfWork,
+      idGenerator: recordingIds,
+      clock,
+    });
+
+    await expect(
+      useCase.execute({
+        tenantId: w.tenantId,
+        name: "Rollback",
+        email: `${crypto.randomUUID()}@itest.example.com`,
+        note: "written before the failure",
+        tags: ["x"],
+        marketingEmail: true,
+        marketingSms: true,
+      }),
+    ).rejects.toThrow("annotation write failed");
+
+    expect(await w.prisma.customer.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    expect(await w.prisma.consentRecord.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    expect(await w.prisma.customerTag.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    expect(await w.prisma.outboxEntry.count({ where: { tenantId: w.tenantId } })).toBe(0);
+    expect(await w.prisma.outboxEntry.count({ where: { key: { in: generated } } })).toBe(0);
+  });
+
+  it("concurrent replaceTags never ends with a union — from zero tags and from existing tags", async () => {
+    const w = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const first = [tagOf("a1"), tagOf("a2")];
+    const second = [tagOf("b1"), tagOf("b2"), tagOf("b3")];
+
+    for (const seed of [[], [tagOf("old1"), tagOf("old2")]]) {
+      const customerId = await savedCustomer(w);
+      if (seed.length > 0) {
+        await w.unitOfWork.run((tx) => annotations.replaceTags(customerId, seed, w.tenantId, tx));
+      }
+      await Promise.all([
+        w.unitOfWork.run((tx) => annotations.replaceTags(customerId, first, w.tenantId, tx)),
+        w.unitOfWork.run((tx) => annotations.replaceTags(customerId, second, w.tenantId, tx)),
+      ]);
+      const stored = (await annotations.annotationsOf([customerId], w.tenantId)).get(
+        customerId,
+      )?.tags;
+      expect([
+        ["a1", "a2"],
+        ["b1", "b2", "b3"],
+      ]).toContainEqual(stored);
+    }
+  });
+
+  it("a forced insert failure (duplicate tagKey) rolls back to the previous tag set", async () => {
+    const w = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const customerId = await savedCustomer(w);
+    await w.unitOfWork.run((tx) =>
+      annotations.replaceTags(customerId, [tagOf("keep1"), tagOf("keep2")], w.tenantId, tx),
+    );
+
+    const duplicateKeys: CustomerTag[] = [
+      { tag: "One", tagKey: "dup" },
+      { tag: "Two", tagKey: "dup" },
+    ];
+    await expect(
+      w.unitOfWork.run((tx) => annotations.replaceTags(customerId, duplicateKeys, w.tenantId, tx)),
+    ).rejects.toThrow();
+
+    expect(
+      (await annotations.annotationsOf([customerId], w.tenantId)).get(customerId)?.tags,
+    ).toEqual(["keep1", "keep2"]);
   });
 });
