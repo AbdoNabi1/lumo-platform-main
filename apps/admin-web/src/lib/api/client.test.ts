@@ -265,11 +265,17 @@ describe("getAdminApi error branch carries status and code (Wave 1c)", () => {
     expect.hasAssertions();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, {})));
     expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({ outcome: "unauthorized" });
-    // A 403 stays `unauthorized` for every existing caller, and now also says it was a 403.
+    // A 403 stays exactly `unauthorized` for every caller that does not opt in.
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, {})));
-    expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({
+    expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({ outcome: "unauthorized" });
+    // ...and says it was a 403 for one that does (the owner-only pages); a 401 never does.
+    expect(await getAdminApi("/api/v1/x", isRecord, { reportForbidden: true })).toEqual({
       outcome: "unauthorized",
       status: 403,
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, {})));
+    expect(await getAdminApi("/api/v1/x", isRecord, { reportForbidden: true })).toEqual({
+      outcome: "unauthorized",
     });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, {})));
     expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({ outcome: "not_found" });

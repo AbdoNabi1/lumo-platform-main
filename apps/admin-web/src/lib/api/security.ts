@@ -1,4 +1,17 @@
-import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
+import {
+  getAdminApi as getApi,
+  mutateAdminApi,
+  type ApiResult,
+  type MutationResult,
+} from "./client";
+
+/** Every console read: a 403 keeps its status so the page can say the console is for the store owner only. */
+function getAdminApi<T>(
+  path: string,
+  isValid: (value: unknown) => value is T,
+): Promise<ApiResult<T>> {
+  return getApi(path, isValid, { reportForbidden: true });
+}
 // Imported for local use as well as re-exported below: `export ... from` re-exports a name without
 // binding it in this module's scope, and `transitionPrincipal`'s signature annotates with it.
 import type { PrincipalTransitionTarget } from "./security-transitions";

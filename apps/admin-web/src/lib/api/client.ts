@@ -123,10 +123,17 @@ async function adminRequestHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-/** GETs `path` off the admin runtime API. Never throws — every failure mode is a typed outcome. */
+/**
+ * GETs `path` off the admin runtime API. Never throws — every failure mode is a typed outcome.
+ *
+ * A 401 and a 403 are both `unauthorized`. A screen that must tell them apart (the owner-only
+ * pages: "signed in, but not allowed") opts in with `{ reportForbidden: true }`, which adds
+ * `status: 403` to the 403 outcome only; every other caller sees exactly what it always did.
+ */
 export async function getAdminApi<T>(
   path: string,
   isValid: (value: unknown) => value is T,
+  options: { readonly reportForbidden?: boolean } = {},
 ): Promise<ApiResult<T>> {
   const runtimeApiUrl = requireProdEnv("RUNTIME_API_URL", DEFAULT_RUNTIME_API_URL);
   const headers = await adminRequestHeaders();
@@ -141,11 +148,10 @@ export async function getAdminApi<T>(
     };
   }
 
-  if (response.status === 401) {
-    return { outcome: "unauthorized" };
-  }
-  if (response.status === 403) {
-    return { outcome: "unauthorized", status: 403 };
+  if (response.status === 401 || response.status === 403) {
+    return options.reportForbidden === true && response.status === 403
+      ? { outcome: "unauthorized", status: 403 }
+      : { outcome: "unauthorized" };
   }
   if (response.status === 404) {
     return { outcome: "not_found" };

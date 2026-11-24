@@ -128,7 +128,7 @@ const memberPath = (principalExternalId: string): string =>
 
 /** `GET /staff` (`staff:read`) — the owner first, then everyone by email; 403 for anyone but an admin. */
 export function fetchStaff(): Promise<ApiResult<{ items: readonly StaffMemberView[] }>> {
-  return getAdminApi("/api/v1/staff", isStaffList);
+  return getAdminApi("/api/v1/staff", isStaffList, { reportForbidden: true });
 }
 
 /**
