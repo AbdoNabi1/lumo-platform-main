@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, type RefObject } from "react";
 import { Trash2Icon } from "lucide-react";
 import {
   Button,
@@ -12,63 +12,43 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@platform/ui";
-import { archiveFileAction } from "@/app/content/files/actions";
 import type { Dictionary } from "@/messages/en";
 
 /**
  * "Delete file", behind a real confirm `Dialog`: a title, a description saying what is lost, initial
- * focus on Cancel (never on the destructive button), Escape closes, and focus goes back to the
- * trigger — which stays mounted the whole time so there is something to return to. A refusal is shown
- * inside the dialog, which stays open. `onDeleted` runs once the file is archived and this dialog has
- * closed (the details dialog around it closes too).
+ * focus on Cancel (never on the destructive button), Escape closes — also while a delete is in
+ * flight — and the trigger stays mounted so focus has somewhere to go. This is a controlled view:
+ * `FilesBrowser` owns `open`, the in-flight operation and its outcome, so dismissing the dialog never
+ * cancels or forgets the request, and a refusal is shown here while the dialog stays open.
  */
 export function FileDeleteDialog({
-  mediaAssetId,
   name,
   t,
-  onDeleted,
+  open,
+  onOpenChange,
+  pending,
+  error,
+  onConfirm,
+  onCloseAutoFocus,
+  triggerRef,
 }: {
-  readonly mediaAssetId: string;
   readonly name: string;
   readonly t: Dictionary;
-  readonly onDeleted?: () => void;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly pending: boolean;
+  readonly error: string | null;
+  readonly onConfirm: () => void;
+  readonly onCloseAutoFocus: (event: Event) => void;
+  readonly triggerRef: RefObject<HTMLButtonElement | null>;
 }) {
   const k = t.files.delete;
-  const [open, setOpen] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const cancel = useRef<HTMLButtonElement>(null);
 
-  async function confirm(): Promise<void> {
-    setPending(true);
-    setError(null);
-    try {
-      const state = await archiveFileAction(mediaAssetId);
-      if (state.status === "error") {
-        setError(state.message);
-        return;
-      }
-      setOpen(false);
-      onDeleted?.();
-    } catch {
-      setError(t.formErrors.unexpected);
-    } finally {
-      setPending(false);
-    }
-  }
-
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        // A delete in flight cannot be dismissed; the answer decides what happens next.
-        if (pending) return;
-        setOpen(next);
-        if (!next) setError(null);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button type="button" variant="destructive" size="sm">
+        <Button ref={triggerRef} type="button" variant="destructive" size="sm">
           <Trash2Icon aria-hidden="true" />
           {t.files.details.delete}
         </Button>
@@ -78,6 +58,7 @@ export function FileDeleteDialog({
           event.preventDefault();
           cancel.current?.focus();
         }}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogHeader>
           <DialogTitle>{k.title}</DialogTitle>
@@ -92,13 +73,7 @@ export function FileDeleteDialog({
           </p>
         )}
         <DialogFooter>
-          <Button
-            ref={cancel}
-            type="button"
-            variant="outline"
-            disabled={pending}
-            onClick={() => setOpen(false)}
-          >
+          <Button ref={cancel} type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {k.cancel}
           </Button>
           <Button
@@ -106,7 +81,7 @@ export function FileDeleteDialog({
             variant="destructive"
             loading={pending}
             disabled={pending}
-            onClick={() => void confirm()}
+            onClick={onConfirm}
           >
             {pending ? k.deleting : k.confirm}
           </Button>

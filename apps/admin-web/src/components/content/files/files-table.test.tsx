@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { MediaFileDto } from "@/lib/api/media";
 import { ar } from "@/messages/ar";
-import { en } from "@/messages/en";
+import { en, type Dictionary } from "@/messages/en";
 
 vi.mock("@/app/content/files/actions", () => ({
   updateFileAltAction: vi.fn(),
@@ -11,6 +11,15 @@ vi.mock("@/app/content/files/actions", () => ({
 }));
 
 const { FilesTable } = await import("./files-table");
+const { FilesBrowser } = await import("./files-browser");
+
+function renderTable(files: MediaFileDto[], t: Dictionary = en, locale: "en" | "ar" = "en") {
+  return render(
+    <FilesBrowser canEdit t={t} locale={locale}>
+      <FilesTable files={files} t={t} locale={locale} />
+    </FilesBrowser>,
+  );
+}
 
 const file = (overrides: Partial<MediaFileDto> = {}): MediaFileDto => ({
   id: "m-1",
@@ -29,14 +38,14 @@ beforeEach(() => {
 
 describe("FilesTable", () => {
   it("has the five columns", () => {
-    render(<FilesTable files={[file()]} canEdit t={en} locale="en" />);
+    renderTable([file()]);
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).toEqual(["File name", "Alt text", "Type", "Size", "Date added"]);
   });
 
   it("renders a row with name in a bdi, alt text, type, size and a locale date", () => {
-    render(<FilesTable files={[file()]} canEdit t={en} locale="en" />);
+    renderTable([file()]);
 
     const row = screen.getByRole("row", { name: /Beach\.png/ });
     const name = within(row).getByText("Beach.png");
@@ -50,16 +59,9 @@ describe("FilesTable", () => {
   });
 
   it("shows 'No alt text' when there is none, and the file icon for a non-image", () => {
-    render(
-      <FilesTable
-        files={[
-          file({ id: "m-2", name: "Terms.pdf", contentType: "application/pdf", image: null }),
-        ]}
-        canEdit
-        t={en}
-        locale="en"
-      />,
-    );
+    renderTable([
+      file({ id: "m-2", name: "Terms.pdf", contentType: "application/pdf", image: null }),
+    ]);
 
     const row = screen.getByRole("row", { name: /Terms\.pdf/ });
     expect(within(row).getByText("No alt text")).toBeInTheDocument();
@@ -68,7 +70,7 @@ describe("FilesTable", () => {
   });
 
   it("renders in Arabic", () => {
-    render(<FilesTable files={[file()]} canEdit t={ar} locale="ar" />);
+    renderTable([file()], ar, "ar");
 
     expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
       ar.files.columns.name,

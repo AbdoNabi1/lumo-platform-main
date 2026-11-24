@@ -1,23 +1,56 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useRef, useState } from "react";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
-
-const actions = vi.hoisted(() => ({ archiveFileAction: vi.fn() }));
-vi.mock("@/app/content/files/actions", () => actions);
-
-const { FileDeleteDialog } = await import("./file-delete-dialog");
+import { FileDeleteDialog } from "./file-delete-dialog";
 
 const body = () => within(document.body);
 
 beforeEach(() => {
   expect.hasAssertions();
-  actions.archiveFileAction.mockReset();
 });
 
-function open(t: Dictionary = en, onDeleted?: () => void) {
-  render(<FileDeleteDialog mediaAssetId="m-1" name="Beach.png" t={t} onDeleted={onDeleted} />);
-  const trigger = screen.getByRole("button", { name: t.files.details.delete });
+/** The controlled dialog with real open state, so Escape / Cancel / the trigger behave for real. */
+function Harness({
+  t,
+  pending = false,
+  error = null,
+  onConfirm = () => {},
+  onOpenChange,
+}: {
+  readonly t: Dictionary;
+  readonly pending?: boolean;
+  readonly error?: string | null;
+  readonly onConfirm?: () => void;
+  readonly onOpenChange?: (open: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  return (
+    <FileDeleteDialog
+      name="Beach.png"
+      t={t}
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange?.(next);
+        setOpen(next);
+      }}
+      pending={pending}
+      error={error}
+      onConfirm={onConfirm}
+      onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        trigger.current?.focus();
+      }}
+      triggerRef={trigger}
+    />
+  );
+}
+
+function open(props: Partial<Parameters<typeof Harness>[0]> = {}) {
+  render(<Harness t={en} {...props} />);
+  const trigger = screen.getByRole("button", { name: (props.t ?? en).files.details.delete });
   fireEvent.click(trigger);
   return trigger;
 }
@@ -46,10 +79,9 @@ describe("FileDeleteDialog", () => {
     await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
     expect(trigger).toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
-    expect(actions.archiveFileAction).not.toHaveBeenCalled();
   });
 
-  it("Cancel closes it without deleting, and focus returns to the trigger", async () => {
+  it("Cancel closes it, and focus returns to the trigger", async () => {
     const trigger = open();
     await body().findByRole("dialog", { name: "Delete file?" });
 
@@ -57,53 +89,47 @@ describe("FileDeleteDialog", () => {
 
     await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
     await waitFor(() => expect(trigger).toHaveFocus());
-    expect(actions.archiveFileAction).not.toHaveBeenCalled();
   });
 
-  it("confirming archives the file, closes the dialog and reports it deleted", async () => {
-    actions.archiveFileAction.mockResolvedValue({ status: "success" });
-    const onDeleted = vi.fn();
-    open(en, onDeleted);
+  it("confirming reports it once; it is the owner who closes the dialog", async () => {
+    const onConfirm = vi.fn();
+    open({ onConfirm });
     await body().findByRole("dialog", { name: "Delete file?" });
 
     fireEvent.click(body().getByRole("button", { name: "Delete file" }));
 
-    await waitFor(() => expect(actions.archiveFileAction).toHaveBeenCalledWith("m-1"));
-    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
-  });
-
-  it("shows 'This file was already deleted.' inside the open dialog on the 409", async () => {
-    actions.archiveFileAction.mockResolvedValue({
-      status: "error",
-      message: en.files.delete.alreadyDeleted,
-      fieldErrors: {},
-    });
-    const onDeleted = vi.fn();
-    open(en, onDeleted);
-    const dialog = await body().findByRole("dialog", { name: "Delete file?" });
-
-    fireEvent.click(body().getByRole("button", { name: "Delete file" }));
-
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "This file was already deleted.",
-    );
+    expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(body().getByRole("dialog", { name: "Delete file?" })).toBeInTheDocument();
-    expect(onDeleted).not.toHaveBeenCalled();
   });
 
-  it("shows a generic message when the action throws", async () => {
-    actions.archiveFileAction.mockRejectedValue(new Error("boom"));
-    open();
+  it("while pending: the confirm button is busy and disabled, but Cancel and Escape still close", async () => {
+    const onConfirm = vi.fn();
+    const onOpenChange = vi.fn();
+    const trigger = open({ pending: true, onConfirm, onOpenChange });
     const dialog = await body().findByRole("dialog", { name: "Delete file?" });
 
-    fireEvent.click(body().getByRole("button", { name: "Delete file" }));
+    const busy = within(dialog).getByRole("button", { name: "Deleting…" });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(en.formErrors.unexpected);
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("shows the refusal inside the open dialog", async () => {
+    open({ error: en.files.delete.alreadyDeleted });
+    const dialog = await body().findByRole("dialog", { name: "Delete file?" });
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("This file was already deleted.");
   });
 
   it("renders in Arabic from ar.files.delete", async () => {
-    open(ar);
+    open({ t: ar });
 
     const dialog = await body().findByRole("dialog", { name: ar.files.delete.title });
     expect(dialog).toHaveAccessibleDescription(ar.files.delete.body);

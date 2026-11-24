@@ -43,6 +43,11 @@ const SHARED_VERBATIM = new Set([
   "shippingSettings.between",
   "shippingSettings.noCondition",
   "taxSettings.noOverrides",
+  // Content > Files — the upload-failure template "{name}: {reason}" is only placeholders and
+  // punctuation, and `files.unknown` is the em dash for "no value" (type/size/date unavailable).
+  // Neither carries a word; nothing to translate (same rationale as the 3B/3C entries above).
+  "files.uploadFailed",
+  "files.unknown",
   // Settings → Domains: an example hostname typed in Latin letters (hostnames are ASCII); nothing to
   // translate.
   "domainsPage.hostnamePlaceholder",

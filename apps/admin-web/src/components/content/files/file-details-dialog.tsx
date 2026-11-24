@@ -10,7 +10,6 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   Label,
   Textarea,
 } from "@platform/ui";
@@ -19,36 +18,43 @@ import type { MediaFileDto } from "@/lib/api/media";
 import { formatFileDate, formatFileSize, formatFileType } from "@/lib/files/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
-import { FileDeleteDialog } from "./file-delete-dialog";
 
 const MAX_ALT_LENGTH = 512;
 
 /**
  * A file's details: preview, name, type, size, date added, editable alt text, copy link, download
- * and delete. `children` is the tile or row button that opens it (the dialog's trigger, so focus
- * returns to it on close). Without `canEdit` (a viewer) the alt text is read-only and there is no
- * Download or Delete — those need permissions a viewer lacks, and the API refuses them anyway.
- * "Copy link" stays: the public image URL is already on the page.
+ * and delete. A controlled view — `FilesBrowser` owns `open`, the file snapshot and where focus goes
+ * on close (`onCloseAutoFocus`), so the dialog does not depend on the tile that opened it, which a
+ * refresh can remove. `deleteControl` is the delete confirmation (its trigger lives in this dialog);
+ * `deleteNotice` is a delete refusal that arrived after that confirmation had been dismissed.
+ * Without `canEdit` (a viewer) the alt text is read-only and there is no Download or Delete — those
+ * need permissions a viewer lacks, and the API refuses them anyway. "Copy link" stays: the public
+ * image URL is already on the page.
  */
 export function FileDetailsDialog({
   file,
   canEdit,
   t,
   locale,
-  children,
+  open,
+  onOpenChange,
+  onCloseAutoFocus,
+  deleteControl,
+  deleteNotice,
 }: {
   readonly file: MediaFileDto;
   readonly canEdit: boolean;
   readonly t: Dictionary;
   readonly locale: Locale;
-  readonly children: ReactNode;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onCloseAutoFocus: (event: Event) => void;
+  readonly deleteControl: ReactNode;
+  readonly deleteNotice: string | null;
 }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{children}</DialogTrigger>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>
             <bdi dir="auto">{file.name}</bdi>
@@ -61,7 +67,13 @@ export function FileDetailsDialog({
             ].join(" · ")}
           </DialogDescription>
         </DialogHeader>
-        <DetailsBody file={file} canEdit={canEdit} t={t} onDeleted={() => setOpen(false)} />
+        <DetailsBody
+          file={file}
+          canEdit={canEdit}
+          t={t}
+          deleteControl={deleteControl}
+          deleteNotice={deleteNotice}
+        />
       </DialogContent>
     </Dialog>
   );
@@ -71,12 +83,14 @@ function DetailsBody({
   file,
   canEdit,
   t,
-  onDeleted,
+  deleteControl,
+  deleteNotice,
 }: {
   readonly file: MediaFileDto;
   readonly canEdit: boolean;
   readonly t: Dictionary;
-  readonly onDeleted: () => void;
+  readonly deleteControl: ReactNode;
+  readonly deleteNotice: string | null;
 }) {
   const d = t.files.details;
   const image = file.image;
@@ -213,6 +227,12 @@ function DetailsBody({
         </p>
       ) : null}
 
+      {deleteNotice !== null ? (
+        <p role="alert" className="text-destructive text-sm">
+          {deleteNotice}
+        </p>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
         {image !== null ? (
           <Button type="button" variant="outline" size="sm" onClick={() => void copyLink()}>
@@ -233,7 +253,7 @@ function DetailsBody({
               <DownloadIcon aria-hidden="true" />
               {d.download}
             </Button>
-            <FileDeleteDialog mediaAssetId={file.id} name={file.name} t={t} onDeleted={onDeleted} />
+            {deleteControl}
           </>
         ) : null}
       </div>

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { MediaFileDto } from "@/lib/api/media";
 import { ar } from "@/messages/ar";
-import { en } from "@/messages/en";
+import { en, type Dictionary } from "@/messages/en";
 
 vi.mock("@/app/content/files/actions", () => ({
   updateFileAltAction: vi.fn(),
@@ -11,6 +11,15 @@ vi.mock("@/app/content/files/actions", () => ({
 }));
 
 const { FilesGrid } = await import("./files-grid");
+const { FilesBrowser } = await import("./files-browser");
+
+function renderGrid(files: MediaFileDto[], t: Dictionary = en, locale: "en" | "ar" = "en") {
+  return render(
+    <FilesBrowser canEdit t={t} locale={locale}>
+      <FilesGrid files={files} t={t} locale={locale} />
+    </FilesBrowser>,
+  );
+}
 
 const imageFile = (overrides: Partial<MediaFileDto> = {}): MediaFileDto => ({
   id: "m-1",
@@ -38,7 +47,7 @@ beforeEach(() => {
 
 describe("FilesGrid", () => {
   it("shows a square thumbnail with its alt text, the name in a bdi, then type and size", () => {
-    render(<FilesGrid files={[imageFile()]} canEdit t={en} locale="en" />);
+    renderGrid([imageFile()]);
 
     const tile = screen.getByRole("button", { name: /Beach\.png/ });
     expect(within(tile).getByRole("img", { name: "A beach" })).toHaveAttribute(
@@ -53,15 +62,13 @@ describe("FilesGrid", () => {
   });
 
   it("formats megabytes with one decimal", () => {
-    render(
-      <FilesGrid files={[imageFile({ byteSize: 2.5 * 1024 * 1024 })]} canEdit t={en} locale="en" />,
-    );
+    renderGrid([imageFile({ byteSize: 2.5 * 1024 * 1024 })]);
 
     expect(screen.getByRole("button", { name: /Beach\.png/ })).toHaveTextContent("2.5 MB");
   });
 
   it("draws the file icon for a non-image", () => {
-    render(<FilesGrid files={[document_()]} canEdit t={en} locale="en" />);
+    renderGrid([document_()]);
 
     const tile = screen.getByRole("button", { name: /Terms\.pdf/ });
     expect(within(tile).queryByRole("img")).toBeNull();
@@ -70,20 +77,20 @@ describe("FilesGrid", () => {
   });
 
   it("isolates a right-to-left file name", () => {
-    render(<FilesGrid files={[imageFile({ name: "شاطئ.png" })]} canEdit t={en} locale="en" />);
+    renderGrid([imageFile({ name: "شاطئ.png" })]);
 
     expect(screen.getByText("شاطئ.png").tagName).toBe("BDI");
   });
 
   it("renders in Arabic with Arabic units", () => {
-    render(<FilesGrid files={[imageFile()]} canEdit t={ar} locale="ar" />);
+    renderGrid([imageFile()], ar, "ar");
 
     expect(screen.getByRole("list", { name: ar.files.title })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Beach\.png/ })).toHaveTextContent(ar.files.units.kb);
   });
 
   it("opens the details dialog when a tile is clicked", async () => {
-    render(<FilesGrid files={[imageFile()]} canEdit t={en} locale="en" />);
+    renderGrid([imageFile()]);
 
     fireEvent.click(screen.getByRole("button", { name: /Beach\.png/ }));
 

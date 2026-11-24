@@ -1,22 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MediaFileDto } from "@/lib/api/media";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 
 const api = vi.hoisted(() => ({ fetchMediaFilesPage: vi.fn() }));
-vi.mock("@/lib/api/media", () => api);
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
-  usePathname: () => "/content/files",
-  useSearchParams: () => new URLSearchParams(),
-}));
-vi.mock("@/app/content/files/actions", () => ({
+const nav = vi.hoisted(() => ({ push: vi.fn(), query: "" }));
+const actions = vi.hoisted(() => ({
   uploadFileAction: vi.fn(),
   updateFileAltAction: vi.fn(),
   getFileDownloadUrlAction: vi.fn(),
   archiveFileAction: vi.fn(),
 }));
+vi.mock("@/lib/api/media", () => api);
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: nav.push }),
+  usePathname: () => "/content/files",
+  useSearchParams: () => new URLSearchParams(nav.query),
+}));
+vi.mock("@/app/content/files/actions", () => actions);
 vi.mock("@/lib/media/prepare-image", () => ({ prepareImage: vi.fn() }));
 
 const { FilesResults } = await import("./files-results");
@@ -46,24 +48,28 @@ type Props = Partial<{
 }>;
 
 /** Calls the async server component as a function, then renders what it returned. */
-async function renderResults(props: Props = {}) {
+async function resultsElement(props: Props = {}) {
   const t = props.t ?? en;
-  render(
-    await FilesResults({
-      q: props.q ?? "",
-      sort: props.sort ?? "newest",
-      view: props.view ?? "grid",
-      after: props.after,
-      canEdit: props.canEdit ?? true,
-      t,
-      locale: t === ar ? "ar" : "en",
-    }),
-  );
+  return await FilesResults({
+    q: props.q ?? "",
+    sort: props.sort ?? "newest",
+    view: props.view ?? "grid",
+    after: props.after,
+    canEdit: props.canEdit ?? true,
+    t,
+    locale: t === ar ? "ar" : "en",
+  });
+}
+
+async function renderResults(props: Props = {}) {
+  return render(await resultsElement(props));
 }
 
 beforeEach(() => {
   expect.hasAssertions();
   api.fetchMediaFilesPage.mockReset();
+  nav.push.mockReset();
+  nav.query = "";
 });
 
 describe("FilesResults", () => {
@@ -156,5 +162,92 @@ describe("FilesResults", () => {
     await renderResults({ t: ar, canEdit: true });
 
     expect(screen.getByRole("heading", { name: ar.files.emptyTitle })).toBeInTheDocument();
+  });
+
+  describe("an empty page past the first", () => {
+    const previous = () => screen.getByRole("button", { name: /Previous/ });
+    const pushedParams = () =>
+      new URLSearchParams(String(nav.push.mock.calls.at(-1)?.[0]).split("?")[1] ?? "");
+
+    it("keeps Previous and does not claim the library is empty (no search)", async () => {
+      nav.query = "after=c2&stack=c1";
+      api.fetchMediaFilesPage.mockResolvedValue(okPage([]));
+
+      await renderResults({ after: "c2" });
+
+      expect(screen.getByText(en.files.noMoreFiles)).toBeInTheDocument();
+      expect(screen.queryByText(en.files.emptyBody)).toBeNull();
+      expect(screen.queryByText(en.files.noMatches)).toBeNull();
+      expect(screen.queryByRole("button", { name: "Upload files" })).toBeNull();
+      expect(previous()).toBeEnabled();
+      expect(screen.getByRole("button", { name: /Next/ })).toBeDisabled();
+
+      fireEvent.click(previous());
+      expect(pushedParams().get("after")).toBe("c1");
+      expect(pushedParams().has("stack")).toBe(false);
+    });
+
+    it("keeps Previous with a search too, and the search rides along", async () => {
+      nav.query = "q=beach&after=c1";
+      api.fetchMediaFilesPage.mockResolvedValue(okPage([]));
+
+      await renderResults({ q: "beach", after: "c1" });
+
+      expect(screen.getByText(en.files.noMoreFiles)).toBeInTheDocument();
+      expect(screen.queryByText(en.files.noMatches)).toBeNull();
+      fireEvent.click(previous());
+      expect(pushedParams().get("q")).toBe("beach");
+      expect(pushedParams().has("after")).toBe(false);
+    });
+
+    it("renders it in Arabic", async () => {
+      nav.query = "after=c1";
+      api.fetchMediaFilesPage.mockResolvedValue(okPage([]));
+
+      await renderResults({ t: ar, after: "c1" });
+
+      expect(screen.getByText(ar.files.noMoreFiles)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: new RegExp(ar.files.previous) })).toBeEnabled();
+    });
+
+    it("deleting the only file on a later page leaves Previous, the dialogs and a truthful message", async () => {
+      nav.query = "after=c1&stack=";
+      actions.archiveFileAction.mockReset();
+      api.fetchMediaFilesPage.mockResolvedValue(okPage([file("m-9", "Last.png")]));
+      const withSearch = (element: Awaited<ReturnType<typeof resultsElement>>) => (
+        <>
+          <input id="files-search" aria-label="Search files" />
+          {element}
+        </>
+      );
+      const view = render(withSearch(await resultsElement({ after: "c1" })));
+      actions.archiveFileAction.mockImplementation(async () => {
+        api.fetchMediaFilesPage.mockResolvedValue(okPage([]));
+        const next = await resultsElement({ after: "c1" });
+        await act(async () => view.rerender(withSearch(next)));
+        return { status: "success" };
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^Last\.png/ }));
+      const details = await within(document.body).findByRole("dialog", { name: "Last.png" });
+      fireEvent.click(within(details).getByRole("button", { name: "Delete file" }));
+      const confirm = await within(document.body).findByRole("dialog", { name: "Delete file?" });
+
+      fireEvent.click(within(confirm).getByRole("button", { name: "Delete file" }));
+
+      await waitFor(() => expect(within(document.body).queryByRole("dialog")).toBeNull());
+      expect(screen.getByText(en.files.noMoreFiles)).toBeInTheDocument();
+      expect(screen.queryByText(en.files.emptyBody)).toBeNull();
+      await waitFor(() => expect(previous()).toBeEnabled());
+      expect(screen.getByRole("textbox", { name: "Search files" })).toHaveFocus();
+    });
+  });
+
+  it("an empty first page without a search shows no pagination", async () => {
+    api.fetchMediaFilesPage.mockResolvedValue(okPage([]));
+
+    await renderResults();
+
+    expect(screen.queryByRole("button", { name: /Previous/ })).toBeNull();
+    expect(screen.queryByText(en.files.noMoreFiles)).toBeNull();
   });
 });

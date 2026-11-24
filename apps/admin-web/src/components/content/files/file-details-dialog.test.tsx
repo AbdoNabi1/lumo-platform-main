@@ -11,7 +11,8 @@ const actions = vi.hoisted(() => ({
 }));
 vi.mock("@/app/content/files/actions", () => actions);
 
-const { FileDetailsDialog } = await import("./file-details-dialog");
+const { FilesBrowser } = await import("./files-browser");
+const { FilesGrid } = await import("./files-grid");
 
 const body = () => within(document.body);
 
@@ -37,12 +38,13 @@ afterEach(() => {
 });
 
 async function open(canEdit: boolean, file: MediaFileDto = FILE, t: Dictionary = en) {
+  const locale = t === ar ? "ar" : "en";
   render(
-    <FileDetailsDialog file={file} canEdit={canEdit} t={t} locale={t === ar ? "ar" : "en"}>
-      <button type="button">open details</button>
-    </FileDetailsDialog>,
+    <FilesBrowser canEdit={canEdit} t={t} locale={locale}>
+      <FilesGrid files={[file]} t={t} locale={locale} />
+    </FilesBrowser>,
   );
-  fireEvent.click(screen.getByRole("button", { name: "open details" }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(file.name.replace(".", "\\.")) }));
   return body().findByRole("dialog");
 }
 

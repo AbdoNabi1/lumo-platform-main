@@ -7,21 +7,24 @@ import type { MediaFileDto } from "@/lib/api/media";
 import { formatFileDate, formatFileSize, formatFileType } from "@/lib/files/format";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
-import { FileDetailsDialog } from "./file-details-dialog";
+import { FILE_TILE_ATTRIBUTE, useFileDetails } from "./files-browser";
 
-/** The list view: file name, alt text, type, size and date added. */
+/**
+ * The list view: file name, alt text, type, size and date added. Must sit inside `FilesBrowser`,
+ * which owns the details dialog a row's name button opens.
+ */
 export function FilesTable({
   files,
-  canEdit,
   t,
   locale,
 }: {
   readonly files: readonly MediaFileDto[];
-  readonly canEdit: boolean;
   readonly t: Dictionary;
   readonly locale: Locale;
 }) {
   const c = t.files.columns;
+  const { openFile } = useFileDetails();
+  const ids = files.map((file) => file.id);
   return (
     <Table aria-label={t.files.title}>
       <TableHeader>
@@ -37,29 +40,29 @@ export function FilesTable({
         {files.map((file) => (
           <TableRow key={file.id}>
             <TableCell className="font-medium">
-              <FileDetailsDialog file={file} canEdit={canEdit} t={t} locale={locale}>
-                <button
-                  type="button"
-                  className="hover:text-primary flex items-center gap-3 text-start"
-                >
-                  <span className="bg-muted text-muted-foreground relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg">
-                    {file.image !== null ? (
-                      <Image
-                        src={file.image.url}
-                        alt=""
-                        fill
-                        sizes="40px"
-                        unoptimized
-                        loading="lazy"
-                        className="object-cover"
-                      />
-                    ) : (
-                      <FileIcon aria-hidden="true" className="size-4" />
-                    )}
-                  </span>
-                  <bdi dir="auto">{file.name}</bdi>
-                </button>
-              </FileDetailsDialog>
+              <button
+                type="button"
+                {...{ [FILE_TILE_ATTRIBUTE]: file.id }}
+                onClick={() => openFile(file, ids)}
+                className="hover:text-primary flex items-center gap-3 text-start"
+              >
+                <span className="bg-muted text-muted-foreground relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg">
+                  {file.image !== null ? (
+                    <Image
+                      src={file.image.url}
+                      alt=""
+                      fill
+                      sizes="40px"
+                      unoptimized
+                      loading="lazy"
+                      className="object-cover"
+                    />
+                  ) : (
+                    <FileIcon aria-hidden="true" className="size-4" />
+                  )}
+                </span>
+                <bdi dir="auto">{file.name}</bdi>
+              </button>
             </TableCell>
             <TableCell className="text-muted-foreground max-w-64 truncate">
               {(file.image?.alt ?? "").length > 0 ? (

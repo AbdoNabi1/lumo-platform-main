@@ -1524,6 +1524,7 @@ export const en = {
       "Images you upload here can be used across your store. JPG, PNG, WebP or GIF, up to 8 MB each.",
     emptyViewerBody: "No files have been uploaded yet.",
     noMatches: "No files match your search.",
+    noMoreFiles: "There are no more files on this page. Go back to see the earlier ones.",
     unauthorized: "Sign in to view files.",
     error: "Couldn't load files. Try refreshing the page.",
     previous: "Previous",
