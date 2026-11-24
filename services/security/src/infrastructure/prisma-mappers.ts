@@ -30,6 +30,7 @@ import {
   type PolicyStatus,
 } from "../domain/policy";
 import { Principal } from "../domain/principal";
+import type { PrincipalSummary } from "../domain/repositories";
 import { RelationTuple } from "../domain/relationship";
 import { Role, type RoleStatus } from "../domain/role";
 import { RoleAssignment, type AssignmentStatus } from "../domain/role-assignment";
@@ -75,6 +76,18 @@ export const PrincipalMapper = {
     displayName: p.displayName,
     status: p.status,
     attributes: { ...p.attributes },
+  }),
+  /** Staff read model: the columns the `Principal` aggregate does not carry (`createdAt`). */
+  toSummary: (r: {
+    id: string;
+    externalId: string;
+    status: string;
+    createdAt: Date;
+  }): PrincipalSummary => ({
+    id: r.id,
+    externalId: r.externalId,
+    status: r.status as PrincipalStatus,
+    createdAt: r.createdAt,
   }),
   toDomain: (r: {
     id: string;

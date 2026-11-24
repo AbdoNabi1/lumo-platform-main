@@ -20,6 +20,7 @@ import type {
   MachineIdentityProfileRepository,
   MfaEnrollmentRepository,
   PolicyRepository,
+  PrincipalReader,
   PrincipalRepository,
   RelationTupleRepository,
   RoleAssignmentRepository,
@@ -50,6 +51,7 @@ import type {
   MfaProviderResolver,
 } from "./auth-ports";
 import type { RelationshipCheckPort } from "./authz-ports";
+import type { PasswordCredentialStore, PasswordHasher } from "./password-credentials";
 import type { ComplianceRulePackResolver } from "./compliance-ports";
 import type { ThreatIntelResolver } from "./threat-ports";
 import type {
@@ -74,6 +76,12 @@ export interface SecurityOutboxPort {
 /** The full dependency surface every Security use-case is constructed with (composition-injected). */
 export interface SecurityDeps {
   readonly principals: PrincipalRepository;
+  /** Wave 1d: tenant-wide principal summaries (internal id, externalId, status, createdAt). */
+  readonly principalReader: PrincipalReader;
+  /** Wave 1d: where `staff:<email>` password credentials live (the hashed provider's store). */
+  readonly staffCredentials: PasswordCredentialStore;
+  /** Wave 1d: the SAME scrypt hasher the hashed password provider verifies with. */
+  readonly passwordHasher: Pick<PasswordHasher, "hash">;
   readonly credentials: CredentialRepository;
   readonly sessions: SessionRepository;
   readonly roles: RoleRepository;
@@ -138,6 +146,28 @@ export interface SecurityDeps {
   readonly aiProfiles: AiGovernanceProfileRepository;
 }
 
+/** The slice of {@link SecurityDeps} the audit seam touches (lets narrower use cases reuse it). */
+export type AuditDeps = Pick<
+  SecurityDeps,
+  "auditLedger" | "auditChain" | "idGenerator" | "clock" | "telemetry" | "outbox"
+>;
+
+/** The slice of {@link SecurityDeps} the Wave 1d staff use cases need. */
+export type StaffDeps = AuditDeps &
+  Pick<
+    SecurityDeps,
+    | "principals"
+    | "principalReader"
+    | "assignments"
+    | "roles"
+    | "sessions"
+    | "staffInvitations"
+    | "staffMutationLock"
+    | "staffCredentials"
+    | "passwordHasher"
+    | "unitOfWork"
+  >;
+
 export interface AuditAppendInput {
   /** ADR-0014 (WP-10, T10.3): the row/scope tenant — distinct from `tenantRef`, the audit chain's own scope (null ⇒ platform chain). */
   readonly tenantId: string;
@@ -154,7 +184,7 @@ export interface AuditAppendInput {
  * and bumps telemetry — the single audit seam every use-case funnels through (ADR-0009/ADR-0023).
  */
 export async function recordAudit(
-  deps: SecurityDeps,
+  deps: AuditDeps,
   tx: unknown,
   input: AuditAppendInput,
 ): Promise<AuditRecord> {
@@ -191,7 +221,7 @@ export async function recordAudit(
 
 /** Builds a {@link SecurityChanged} for a non-aggregate fact (audit anchor / access decision). */
 export function securityEvent(
-  deps: SecurityDeps,
+  deps: Pick<SecurityDeps, "idGenerator" | "clock">,
   aggregate: SecurityAggregate,
   aggregateId: string,
   key: string,

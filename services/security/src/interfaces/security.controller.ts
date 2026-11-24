@@ -104,6 +104,12 @@ import type {
   RegisterPolicyFragment,
   RegisterPolicyFragmentInput,
 } from "../application/registry.use-cases";
+import type {
+  ListStaff,
+  ListStaffInput,
+  StaffAccess,
+  StaffAccessInput,
+} from "../application/staff.use-cases";
 import type { EvaluateRisk, EvaluateRiskInput } from "../application/risk.use-cases";
 import type { RevokeAllSessions, RevokeAllSessionsInput } from "../application/session.use-cases";
 import type {
@@ -224,6 +230,9 @@ export interface SecurityControllerDeps {
   readonly evaluateAccess: EvaluateAccess;
   /** Plan 1B-2 — the role keys a principal holds now (staff token minting). */
   readonly listPrincipalRoleKeys: ListPrincipalRoleKeys;
+  /** Wave 1d — the store's staff (Users and permissions) and the live access check's read. */
+  readonly listStaff: ListStaff;
+  readonly staffAccess: StaffAccess;
   readonly verifyAuditChain: VerifyAuditChain;
   // P2.0-B — authentication, MFA, device, risk
   readonly registerAuthMethod: RegisterAuthMethod;
@@ -378,6 +387,14 @@ export class SecurityController {
   }
   async listPrincipalRoleKeys(input: ListPrincipalRoleKeysInput): Promise<ControllerResponse> {
     return present(await this.deps.listPrincipalRoleKeys.execute(input), 200);
+  }
+  /** Wave 1d: the staff list — 200 `{ items: StaffMemberView[] }`. */
+  async listStaff(input: ListStaffInput): Promise<ControllerResponse> {
+    return present(await this.deps.listStaff.execute(input), 200);
+  }
+  /** Wave 1d: a principal's live status + active role keys — 200, or 404 when it does not exist in the tenant. */
+  async staffAccess(input: StaffAccessInput): Promise<ControllerResponse> {
+    return present(await this.deps.staffAccess.execute(input), 200);
   }
   async verifyAuditChain(input: VerifyAuditChainInput): Promise<ControllerResponse> {
     return present(await this.deps.verifyAuditChain.execute(input), 200);

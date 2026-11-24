@@ -32,6 +32,7 @@ import {
   RevokeRoleAssignment,
 } from "./application/authorization.use-cases";
 import { ListPrincipalRoleKeys } from "./application/principal-roles.use-cases";
+import { ListStaff, StaffAccess } from "./application/staff.use-cases";
 import {
   CheckAccess,
   DeleteRelationTuple,
@@ -157,9 +158,15 @@ import type {
   CryptoPort,
   MfaProviderResolver,
 } from "./application/auth-ports";
-import type { PasswordRegistrar } from "./application/password-credentials";
+import type {
+  PasswordCredentialStore,
+  PasswordHasher,
+  PasswordRegistrar,
+} from "./application/password-credentials";
 import { PasswordResetService, type PasswordResetTokenStore } from "./application/password-reset";
 import { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+import { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
+import { ScryptPasswordHasher } from "./infrastructure/scrypt-password-hasher";
 import { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
 import type { ThreatIntelResolver } from "./application/threat-ports";
 import type { RelationshipCheckPort } from "./application/authz-ports";
@@ -511,8 +518,23 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const threatIntel: ThreatIntelResolver =
     deps.threatIntel ?? new MultiThreatIntelResolver([threatProvider]);
 
+  // Wave 1d: staff credentials live where the hashed provider keeps them, and an accepted invitation
+  // hashes with the SAME scrypt parameters. Without a hashed provider (tests/local reference mode)
+  // there is no durable store, so a private in-memory pair backs the staff use cases.
+  const hashedProvider =
+    deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+      ? deps.passwordAuthProvider
+      : undefined;
+  const staffCredentials: PasswordCredentialStore =
+    hashedProvider?.credentialStore ?? new InMemoryPasswordCredentialStore();
+  const passwordHasher: Pick<PasswordHasher, "hash"> =
+    hashedProvider?.passwordHasher ?? new ScryptPasswordHasher({ log2N: 10 });
+
   const securityDeps: SecurityDeps = {
     principals,
+    principalReader: principals,
+    staffCredentials,
+    passwordHasher,
     credentials,
     sessions,
     roles,
@@ -615,6 +637,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const configureTenantSecurity = new ConfigureTenantSecurity(securityDeps);
   const evaluateAccess = new EvaluateAccess(securityDeps);
   const listPrincipalRoleKeys = new ListPrincipalRoleKeys(securityDeps);
+  const listStaff = new ListStaff(securityDeps);
+  const staffAccess = new StaffAccess(securityDeps);
   const verifyAuditChain = new VerifyAuditChain(securityDeps);
   const registerAuthMethod = new RegisterAuthMethod(securityDeps);
   const authenticate = new Authenticate(securityDeps);
@@ -683,6 +707,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     configureTenantSecurity,
     evaluateAccess,
     listPrincipalRoleKeys,
+    listStaff,
+    staffAccess,
     verifyAuditChain,
     registerAuthMethod,
     authenticate,

@@ -9,6 +9,7 @@ import type { MfaEnrollment } from "./mfa-enrollment";
 import type { Policy } from "./policy";
 import type { RelationTuple } from "./relationship";
 import type { Principal } from "./principal";
+import type { PrincipalStatus } from "./value-objects/principal-kind";
 import type { Role } from "./role";
 import type { RoleAssignment } from "./role-assignment";
 import type { Session } from "./session";
@@ -22,6 +23,19 @@ export interface PrincipalRepository {
   findByExternalId(externalId: string, tenantId: string, tx?: unknown): Promise<Principal | null>;
   /** Resolves a human principal by its Identity `subjectRef` (the shared identity id) — H-2 resolution. */
   findBySubjectRef(subjectRef: string, tenantId: string, tx?: unknown): Promise<Principal | null>;
+}
+
+/** What the staff read model needs of a principal (the aggregate does not expose `createdAt`). */
+export interface PrincipalSummary {
+  readonly id: string;
+  readonly externalId: string;
+  readonly status: PrincipalStatus;
+  readonly createdAt: Date;
+}
+
+/** Tenant-wide principal summaries (id = the INTERNAL id that assignments and sessions store). */
+export interface PrincipalReader {
+  listSummaries(tenantId: string, tx?: unknown): Promise<readonly PrincipalSummary[]>;
 }
 
 export interface CredentialRepository {
@@ -52,6 +66,15 @@ export interface SessionRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly Session[]>;
+  /**
+   * The latest `establishedAt` per principal (keys are INTERNAL principal ids, as stored in
+   * `principalRef`); principals without a session are absent. Staff list "last signed in".
+   */
+  lastEstablishedByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, Date>>;
   /** All sessions — session intelligence + analytics read models (§5). */
   listAll(tenantId: string, tx?: unknown): Promise<readonly Session[]>;
 }
@@ -71,6 +94,15 @@ export interface RoleAssignmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly RoleAssignment[]>;
+  /**
+   * Every assignment of the tenant that is active at `now` (status `active`, not past its expiry),
+   * reduced to what the staff read model needs. `principalRef` is the INTERNAL principal id.
+   */
+  listActiveByTenant(
+    tenantId: string,
+    now: Date,
+    tx?: unknown,
+  ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]>;
 }
 
 export interface PolicyRepository {

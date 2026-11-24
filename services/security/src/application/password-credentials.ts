@@ -17,8 +17,19 @@ export interface PasswordCredentialRecord {
   readonly lockedUntil: Date | null;
 }
 
+/** A credential's owner without any secret material — what listings may see. */
+export interface PasswordCredentialOwner {
+  readonly identifier: string;
+  readonly principalExternalId: string;
+}
+
 export interface PasswordCredentialStore {
   find(tenantId: string, identifier: string): Promise<PasswordCredentialRecord | null>;
+  /**
+   * Wave 1d: the credentials of a tenant whose identifier starts with `prefix` (e.g. `"staff:"`),
+   * ordered by identifier. Never returns hashes, failure counters or locks.
+   */
+  listByPrefix(tenantId: string, prefix: string): Promise<readonly PasswordCredentialOwner[]>;
   /** Plan 1C: the credential owned by this principal (change-password has the principal, not the email). */
   findByPrincipal(
     tenantId: string,

@@ -5,6 +5,7 @@ import {
   type TransactionClient,
 } from "@platform/db";
 import type {
+  PasswordCredentialOwner,
   PasswordCredentialRecord,
   PasswordCredentialStore,
 } from "../application/password-credentials";
@@ -37,6 +38,23 @@ export class PrismaPasswordCredentialStore implements PasswordCredentialStore {
           failedAttempts: row.failedAttempts,
           lockedUntil: row.lockedUntil,
         };
+  }
+
+  async listByPrefix(
+    tenantId: string,
+    prefix: string,
+  ): Promise<readonly PasswordCredentialOwner[]> {
+    const rows = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.securityPasswordCredential.findMany({
+        where: { tenantId, identifier: { startsWith: prefix } },
+        select: { identifier: true, principalExternalId: true },
+        orderBy: { identifier: "asc" },
+      }),
+    );
+    return rows.map((r) => ({
+      identifier: r.identifier,
+      principalExternalId: r.principalExternalId,
+    }));
   }
 
   async findByPrincipal(

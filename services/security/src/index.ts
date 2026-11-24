@@ -43,6 +43,16 @@ export {
   ListPrincipalRoleKeys,
   type ListPrincipalRoleKeysInput,
 } from "./application/principal-roles.use-cases";
+// Wave 1d — staff read model (Users and permissions) and the live access check's read.
+export {
+  ListStaff,
+  StaffAccess,
+  type ListStaffInput,
+  type ListStaffOutput,
+  type StaffAccessInput,
+  type StaffAccessOutput,
+} from "./application/staff.use-cases";
+export { STAFF_IDENTIFIER_PREFIX } from "./application/staff-support";
 // Zero-trust access decision types — reused by the H-4 edge guard (decision stays in EvaluateAccess).
 export type { EvaluateAccessInput, AccessDecisionOutput } from "./application/access.use-cases";
 
@@ -300,6 +310,7 @@ export { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-aut
 export { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
 export {
   normalizeIdentifier,
+  type PasswordCredentialOwner,
   type PasswordCredentialRecord,
   type PasswordCredentialStore,
   type PasswordHasher,
