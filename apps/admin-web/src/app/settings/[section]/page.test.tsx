@@ -36,18 +36,17 @@ describe("/settings/[section] coming-soon page", () => {
 
   it("renders inside the settings frame with the section's own entry current", async () => {
     expect.hasAssertions();
-    render(await SectionPage({ params: Promise.resolve({ section: "users" }) }));
+    render(await SectionPage({ params: Promise.resolve({ section: "checkout" }) }));
     expect(screen.getByRole("navigation", { name: en.settingsNav.label })).toBeInTheDocument();
     expect(
       screen
         .getAllByRole("link")
         .filter((link) => link.getAttribute("aria-current") === "page")
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/settings/users"]);
+    ).toEqual(["/settings/checkout"]);
   });
 
   it.each([
-    "users",
     "checkout",
     "customer-accounts",
     "markets",
@@ -62,8 +61,8 @@ describe("/settings/[section] coming-soon page", () => {
     expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
   });
 
-  it.each(["nope", "general", "billing", "locations", "plan", "languages"])(
-    "calls notFound for %s (not one of the nine unavailable ids)",
+  it.each(["nope", "general", "billing", "locations", "plan", "languages", "users"])(
+    "calls notFound for %s (not one of the eight unavailable ids)",
     async (section) => {
       expect.hasAssertions();
       await expect(SectionPage({ params: Promise.resolve({ section }) })).rejects.toThrow(
