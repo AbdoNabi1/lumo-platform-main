@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { CheckIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Label } from "@platform/ui";
 import { setCustomerTagsAction } from "@/app/customers/actions";
@@ -35,10 +35,13 @@ export function CustomerTagsCard({
   >(null);
   const savedKey = tags.join("\u0000");
 
-  // The page re-renders with the stored set after a save; start the draft from it.
-  useEffect(() => {
+  // The page re-renders with the stored set after a save; start the draft from it (state adjusted
+  // while rendering, the documented alternative to an effect that copies props into state).
+  const [seenKey, setSeenKey] = useState(savedKey);
+  if (seenKey !== savedKey) {
+    setSeenKey(savedKey);
     setDraft([...tags]);
-  }, [savedKey]);
+  }
 
   const effective = mergeTags(draft, splitTags(pending));
   const changed = !sameTags(effective, tags);

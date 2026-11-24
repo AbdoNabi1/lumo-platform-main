@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useId, useState } from "react";
+import { useActionState, useCallback, useEffect, useId, useState } from "react";
 import {
   Button,
   Card,
@@ -32,6 +32,7 @@ export function CustomerNoteCard({
 }) {
   const n = t.customerDetail.notes;
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
 
   return (
     <Card>
@@ -45,13 +46,7 @@ export function CustomerNoteCard({
             open={open}
             onOpenChange={setOpen}
           >
-            <NoteForm
-              customerId={customerId}
-              note={note}
-              t={t}
-              onDone={() => setOpen(false)}
-              onCancel={() => setOpen(false)}
-            />
+            <NoteForm customerId={customerId} note={note} t={t} onDone={close} onCancel={close} />
           </CustomerEditDialog>
         )}
       </CardHeader>
@@ -92,8 +87,7 @@ function NoteForm({
 
   useEffect(() => {
     if (state.status === "success") onDone();
-    // `onDone` closes the dialog; it must only run when a save succeeds.
-  }, [state]);
+  }, [state, onDone]);
 
   return (
     <form action={formAction} className="flex flex-col gap-4">

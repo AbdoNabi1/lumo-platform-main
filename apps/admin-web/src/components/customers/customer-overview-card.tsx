@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useId, useState, type ReactNode } from "react";
+import { useActionState, useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import {
   Badge,
   Button,
@@ -48,6 +48,7 @@ export function CustomerOverviewCard({
 }) {
   const o = t.customerDetail.overview;
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
   const rows: readonly { readonly label: string; readonly value: ReactNode }[] = [
     { label: t.customerForm.name, value: <bdi dir="auto">{customer.name}</bdi> },
     { label: t.customerForm.email, value: <bdi dir="auto">{customer.email}</bdi> },
@@ -78,12 +79,7 @@ export function CustomerOverviewCard({
             open={open}
             onOpenChange={setOpen}
           >
-            <ProfileForm
-              customer={customer}
-              t={t}
-              onDone={() => setOpen(false)}
-              onCancel={() => setOpen(false)}
-            />
+            <ProfileForm customer={customer} t={t} onDone={close} onCancel={close} />
           </CustomerEditDialog>
         )}
       </CardHeader>
@@ -131,8 +127,7 @@ function ProfileForm({
 
   useEffect(() => {
     if (state.status === "success") onDone();
-    // `onDone` closes the dialog; it must only run when a save succeeds.
-  }, [state]);
+  }, [state, onDone]);
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
