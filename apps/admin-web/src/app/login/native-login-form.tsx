@@ -13,6 +13,7 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
 const NOTICE_TEXT: Readonly<Record<string, string>> = {
   done: "Password changed. Sign in / اتغيرت كلمة السر، ادخل",
   ready: "Your store is ready — sign in / متجرك جاهز — سجّل دخول",
+  invited: "Your account is ready. Sign in. / حسابك جاهز. سجّل الدخول.",
   sent: "If the account exists, a reset link is on its way / لو الحساب موجود، هيوصلك لينك إعادة التعيين",
 };
 
@@ -21,6 +22,7 @@ export function NativeLoginForm({
   returnTo,
   reset,
   signup,
+  invited,
   signupEnabled = false,
 }: {
   readonly error: string | undefined;
@@ -28,12 +30,20 @@ export function NativeLoginForm({
   readonly reset?: string | undefined;
   /** `?signup=done` after a sign-up that still needs a sign-in. */
   readonly signup?: string | undefined;
+  /** `?invited=1` after an invitation was accepted (Wave 1d). */
+  readonly invited?: string | undefined;
   /** Whether to offer the "Open your store" link; decided by the server page, never here. */
   readonly signupEnabled?: boolean;
 }) {
   const message = error === undefined ? undefined : ERROR_TEXT[error];
   const notice =
-    reset !== undefined ? NOTICE_TEXT[reset] : signup === "done" ? NOTICE_TEXT["ready"] : undefined;
+    reset !== undefined
+      ? NOTICE_TEXT[reset]
+      : signup === "done"
+        ? NOTICE_TEXT["ready"]
+        : invited === "1"
+          ? NOTICE_TEXT["invited"]
+          : undefined;
   return (
     <main className="lumo-canvas flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-sm">

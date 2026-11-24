@@ -59,6 +59,8 @@ const PUBLIC_PREFIXES = [
   "/reset-password",
   "/auth/forgot",
   "/auth/reset",
+  // Wave 1d: an invited person has no session yet; the link carries a single-use token.
+  "/accept-invite",
   "/logout",
   "/api/healthz",
 ];
