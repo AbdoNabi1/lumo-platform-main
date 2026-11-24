@@ -22,6 +22,29 @@ function customer(): Customer {
 }
 
 describe("Customer", () => {
+  it("updates only provided profile fields without events", () => {
+    const c = customer();
+    c.pullDomainEvents();
+    expect(c.phone).toBeNull();
+    expect(c.language).toBeNull();
+    c.updateProfile({ name: "New", phone: "+201012345678", language: "ar" });
+    c.updateProfile({ phone: null });
+    expect([c.name, c.phone, c.language]).toEqual(["New", null, "ar"]);
+    expect(c.pullDomainEvents()).toEqual([]);
+    const restored = Customer.reconstitute(
+      UniqueEntityId.from("r"),
+      email(),
+      "R",
+      [],
+      [],
+      1,
+      false,
+      null,
+      "1234567",
+      "en",
+    );
+    expect([restored.phone, restored.language]).toEqual(["1234567", "en"]);
+  });
   it("registers and emits customer.registered", () => {
     const c = customer();
     const events = c.pullDomainEvents();

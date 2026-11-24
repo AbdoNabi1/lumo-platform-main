@@ -5,11 +5,14 @@ import { ConsentRecord } from "./consent-record";
 import { ConsentChanged } from "./events/consent-changed.event";
 import { CustomerRegistered } from "./events/customer-registered.event";
 import type { ConsentScope } from "./value-objects/consent-scope";
+import type { CustomerLanguage } from "./value-objects/customer-language";
 import type { Email } from "./value-objects/email";
 
 interface CustomerProps {
   readonly email: Email;
   name: string;
+  phone: string | null;
+  language: CustomerLanguage | null;
   readonly addresses: Address[];
   readonly consents: ConsentRecord[];
   /**
@@ -62,7 +65,16 @@ export class Customer extends AggregateRoot<CustomerProps> {
     occurredAt: Date,
   ): Customer {
     const customer = new Customer(
-      { email, name, addresses: [], consents: [], isGuest, emailVerifiedAt: null },
+      {
+        email,
+        name,
+        phone: null,
+        language: null,
+        addresses: [],
+        consents: [],
+        isGuest,
+        emailVerifiedAt: null,
+      },
       id,
     );
     customer.addDomainEvent(
@@ -88,12 +100,41 @@ export class Customer extends AggregateRoot<CustomerProps> {
     version: number,
     isGuest = false,
     emailVerifiedAt: Date | null = null,
+    phone: string | null = null,
+    language: CustomerLanguage | null = null,
   ): Customer {
     return new Customer(
-      { email, name, addresses: [...addresses], consents: [...consents], isGuest, emailVerifiedAt },
+      {
+        email,
+        name,
+        phone,
+        language,
+        addresses: [...addresses],
+        consents: [...consents],
+        isGuest,
+        emailVerifiedAt,
+      },
       id,
       version,
     );
+  }
+
+  /** Updates profile fields without raising an event. */
+  updateProfile(changes: {
+    name?: string;
+    phone?: string | null;
+    language?: CustomerLanguage | null;
+  }): void {
+    if (changes.name !== undefined) this.props.name = changes.name;
+    if (changes.phone !== undefined) this.props.phone = changes.phone;
+    if (changes.language !== undefined) this.props.language = changes.language;
+  }
+
+  get phone(): string | null {
+    return this.props.phone;
+  }
+  get language(): CustomerLanguage | null {
+    return this.props.language;
   }
 
   addAddress(address: Address): void {
