@@ -165,6 +165,11 @@ export { Session } from "./domain/session";
 export type { SessionStatus } from "./domain/session";
 export { Role } from "./domain/role";
 export { RoleAssignment } from "./domain/role-assignment";
+// Wave 1d: staff vocabulary + invitations.
+export { OWNER_ROLE_KEY, STAFF_ROLES } from "./domain/staff";
+export type { StaffMemberView, StaffRole, StaffStatus } from "./domain/staff";
+export { INVITATION_TTL_MS, StaffInvitation } from "./domain/staff-invitation";
+export type { StaffInvitationStatus } from "./domain/staff-invitation";
 export { Policy, PolicyVersion } from "./domain/policy";
 export type { PolicyEffect, PolicyMode, PolicyRule, PolicyCondition } from "./domain/policy";
 export { Delegation } from "./domain/delegation";

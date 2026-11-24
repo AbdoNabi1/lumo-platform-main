@@ -24,13 +24,21 @@ export interface PasswordCredentialStore {
     tenantId: string,
     principalExternalId: string,
   ): Promise<PasswordCredentialRecord | null>;
-  /** Insert or replace the hash and owner; resets failures and any lock. */
-  save(input: {
-    readonly tenantId: string;
-    readonly identifier: string;
-    readonly principalExternalId: string;
-    readonly passwordHash: string;
-  }): Promise<void>;
+  /**
+   * Insert or replace the hash and owner; resets failures and any lock. With `tx` (a unit-of-work
+   * transaction handle) the Prisma store writes through that client instead of opening its own
+   * transaction, so the credential commits atomically with the caller's other writes; the in-memory
+   * store ignores it.
+   */
+  save(
+    input: {
+      readonly tenantId: string;
+      readonly identifier: string;
+      readonly principalExternalId: string;
+      readonly passwordHash: string;
+    },
+    tx?: unknown,
+  ): Promise<void>;
   /** Atomically adds one failure and returns the new count. */
   incrementFailures(tenantId: string, identifier: string): Promise<number>;
   lockUntil(tenantId: string, identifier: string, until: Date): Promise<void>;

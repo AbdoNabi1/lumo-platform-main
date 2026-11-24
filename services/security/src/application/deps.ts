@@ -25,6 +25,8 @@ import type {
   RoleAssignmentRepository,
   RoleRepository,
   SessionRepository,
+  StaffInvitationRepository,
+  StaffMutationLock,
   TenantSecurityProfileRepository,
 } from "../domain/repositories";
 import { UniqueEntityId } from "@platform/domain";
@@ -76,6 +78,10 @@ export interface SecurityDeps {
   readonly sessions: SessionRepository;
   readonly roles: RoleRepository;
   readonly assignments: RoleAssignmentRepository;
+  /** Wave 1d: staff invitations (own single-use token, hashed). */
+  readonly staffInvitations: StaffInvitationRepository;
+  /** Wave 1d: serialises every staff write of a tenant (advisory lock / in-memory mutex). */
+  readonly staffMutationLock: StaffMutationLock;
   readonly policies: PolicyRepository;
   readonly delegations: DelegationRepository;
   readonly tenantProfiles: TenantSecurityProfileRepository;

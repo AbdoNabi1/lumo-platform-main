@@ -412,6 +412,91 @@ describe("identity customer segments (20261125000000)", () => {
   });
 });
 
+describe("security staff invitations (20261126000000)", () => {
+  const migration = join(migrationsDir, "20261126000000_staff_invitations", "migration.sql");
+
+  it("defines invitation columns, types, defaults and key", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("security", "staff_invitations", sql)].sort()).toEqual([
+      "accepted_at",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "invited_by",
+      "principal_external_id",
+      "role_key",
+      "status",
+      "tenant_id",
+      "token_hash",
+      "updated_at",
+      "version",
+    ]);
+    for (const definition of [
+      '"id" UUID NOT NULL',
+      '"tenant_id" TEXT NOT NULL',
+      '"email" TEXT NOT NULL',
+      '"principal_external_id" TEXT NOT NULL',
+      '"role_key" TEXT NOT NULL',
+      '"invited_by" TEXT NOT NULL',
+      '"token_hash" TEXT NOT NULL',
+      '"status" TEXT NOT NULL',
+      '"expires_at" TIMESTAMP(3) NOT NULL',
+      '"accepted_at" TIMESTAMP(3),',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      'CONSTRAINT "staff_invitations_pkey" PRIMARY KEY ("id")',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("constrains email normalisation, role key and status", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_email_normalized" CHECK ("email" = lower(btrim("email")) AND "email" <> '')`,
+    );
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_role_key_check" CHECK ("role_key" IN ('admin','operator','viewer'))`,
+    );
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_status_check" CHECK ("status" IN ('pending','accepted','revoked'))`,
+    );
+  });
+
+  it("allows one pending invitation per email, a unique token hash and a status index", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain(
+      `CREATE UNIQUE INDEX "staff_invitations_one_pending_per_email" ON "security"."staff_invitations"("tenant_id", "email") WHERE "status" = 'pending';`,
+    );
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "staff_invitations_token_hash_key" ON "security"."staff_invitations"("token_hash");',
+    );
+    expect(sql).toContain(
+      'CREATE INDEX "staff_invitations_tenant_id_status_idx" ON "security"."staff_invitations"("tenant_id", "status");',
+    );
+  });
+
+  it("forces tenant isolation on invitation reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "security"."staff_invitations" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "security"."staff_invitations" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "security"."staff_invitations";',
+    );
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "security"."staff_invitations" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+
+  it("is purely additive", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).not.toMatch(/\b(DROP TABLE|DROP COLUMN|ALTER COLUMN|TRUNCATE|DELETE FROM)\b/i);
+  });
+});
+
 describe("identity customer profile and tags (20261124000000)", () => {
   const migration = join(migrationsDir, "20261124000000_customer_profile_tags", "migration.sql");
 

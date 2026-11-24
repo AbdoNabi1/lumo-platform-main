@@ -187,7 +187,11 @@ import {
   InMemorySessionRepository,
   InMemoryTenantSecurityProfileRepository,
 } from "./infrastructure/in-memory-repositories";
+import { InMemoryStaffInvitationRepository } from "./infrastructure/in-memory-staff-invitation-repository";
+import { InMemoryStaffMutationLock } from "./infrastructure/in-memory-staff-mutation-lock";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
+import { PrismaStaffInvitationRepository } from "./infrastructure/prisma-staff-invitation-repository";
+import { PrismaStaffMutationLock } from "./infrastructure/prisma-staff-mutation-lock";
 import {
   PrismaAiGovernanceProfileRepository,
   PrismaAuditLedgerRepository,
@@ -267,6 +271,8 @@ interface SecurityInfra {
   readonly sessions: PrismaSessionRepository | InMemorySessionRepository;
   readonly roles: PrismaRoleRepository | InMemoryRoleRepository;
   readonly assignments: PrismaRoleAssignmentRepository | InMemoryRoleAssignmentRepository;
+  readonly staffInvitations: PrismaStaffInvitationRepository | InMemoryStaffInvitationRepository;
+  readonly staffMutationLock: PrismaStaffMutationLock | InMemoryStaffMutationLock;
   readonly policies: PrismaPolicyRepository | InMemoryPolicyRepository;
   readonly delegations: PrismaDelegationRepository | InMemoryDelegationRepository;
   readonly tenantProfiles:
@@ -310,6 +316,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       sessions: new PrismaSessionRepository(rd),
       roles: new PrismaRoleRepository(rd),
       assignments: new PrismaRoleAssignmentRepository(rd),
+      staffInvitations: new PrismaStaffInvitationRepository({ prisma }),
+      staffMutationLock: new PrismaStaffMutationLock(),
       policies: new PrismaPolicyRepository(rd),
       delegations: new PrismaDelegationRepository(rd),
       tenantProfiles: new PrismaTenantSecurityProfileRepository(rd),
@@ -361,6 +369,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
     sessions: new InMemorySessionRepository(rd),
     roles: new InMemoryRoleRepository(rd),
     assignments: new InMemoryRoleAssignmentRepository(rd),
+    staffInvitations: new InMemoryStaffInvitationRepository(),
+    staffMutationLock: new InMemoryStaffMutationLock(),
     policies: new InMemoryPolicyRepository(rd),
     delegations: new InMemoryDelegationRepository(rd),
     tenantProfiles: new InMemoryTenantSecurityProfileRepository(rd),
@@ -419,6 +429,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     sessions,
     roles,
     assignments,
+    staffInvitations,
+    staffMutationLock,
     policies,
     delegations,
     tenantProfiles,
@@ -505,6 +517,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     sessions,
     roles,
     assignments,
+    staffInvitations,
+    staffMutationLock,
     policies,
     delegations,
     tenantProfiles,
