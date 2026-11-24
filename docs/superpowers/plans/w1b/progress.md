@@ -12,3 +12,38 @@
 - 2026-11-24 Plan review 1 (Sol): CHANGES_REQUESTED, 12 blocking + 2 optional. Sol wrote over the tracked Wave 1a plan-review-1.md path → moved to w1b/plan-review-1.md and restored the 1a file from HEAD. All 12 accepted (R10 with deviation: filename customers_export.csv). Amendments added to all 5 tasks + preamble. Round 2 → reviewer-sol.
 - 2026-11-24 Round 2 (Sol): 11 resolved, R7 still blocking (tags transport max before normalization). Accepted → Task 4 round-2 amendment. Round 3 (last allowed) → reviewer-sol.
 - 2026-11-24 Round 3 (Sol): AGREED. OPUS AGREED. Task 1 → impl-terra.
+- 2026-11-24 Task 1 run 1 (terra) stopped on budget after 2.5 min: 2 test files uncommitted, no code. Continuation → impl-terra (implement first).
+- 2026-11-24 Task 1 done (terra continuation): f80ec1b8 (12 files +399). Opus re-ran post-commit: media 116 pass/4 gated skipped; admin media 34/34. Review → reviewer-sol.
+- 2026-11-24 Task 1 review (Sol): SPEC COMPLIANT, QUALITY APPROVED, 1 Minor (unused accessControl option + stale header in media-library-list-routes.test.ts) → parked for Phase 4.
+- Opus acceptance Task 1: createdAt create/reconstitute/getter/mapper; assetListQuery zod; DTO contentType/byteSize/createdAt; post-commit media 116/4 skipped, admin media 34/34. Task 1: complete (f80ec1b8).
+- Task 2 (Files UI) → impl-sonnet.
+- 2026-11-24 06:05 PR #15 CI all green (13 checks incl. dependency audit) → merged into main at 33e9bbc2 (match-head 1584a254). Wave 1a live on main.
+- Task 2 run 1 (sonnet) cut off by Claude 5-hour 429 at 23:52: partial uncommitted (media.ts/test, en/ar, actions.test.ts). Continuation → impl-sonnet (reset passed 03:10).
+- 2026-11-24 06:35 Task 2 done (sonnet continuation): 03491838 (30 files +3279). Opus re-ran post-commit: files/media/navigation/middleware 310/310. Review → reviewer-sol.
+- 2026-11-24 06:46 Task 2 review (Sol): SPEC NON_COMPLIANT, QUALITY CHANGES_REQUESTED, 5 Important (I1 delete focus, I2 Escape while pending, I3 empty later page, I4 i18n SHARED_VERBATIM, I5 global-search oracle). Rulings: 6 of 8 implementer choices accepted (UTC dates, files-results split, etc.). All 5 accepted → fix round 1 → impl-sonnet.
+- 2026-11-24 06:58 Task 2 fix round 1 (sonnet): 39839985 (+960/-220). Opus re-ran: 23 files 333/333. Scoped re-review → reviewer-sol.
+- 2026-11-24 07:07 Task 2 re-review 1 (Sol): I2-I5 resolved; I1 still open (success racing pending dismissal skips Delete-trigger handoff; reproduced by in-memory probe). Accepted → fix round 2 → impl-sonnet.
+- 2026-11-24 07:12 Task 2 fix round 2 (sonnet): b8a512a0 (+85, 14 prod lines). Scoped re-review by Opus (verbatim fix, Sol probe now passes): approved; 336/336.
+- Opus acceptance Task 2: client contract + BUSINESS_RULE mapping, canEdit gating, stack pagination + resets, upload per file keys, details/delete dialogs with focus lifecycle, empty later page, nav order + oracles (navigation, global-search), middleware, i18n SHARED_VERBATIM. Task 2: complete (03491838, 39839985, b8a512a0).
+- Task 3 (identity: migration, domain, use cases) → impl-terra.
+- 2026-11-24 07:16 Task 3 run 1 (terra): checkpoint A committed d932e7f6 (migration + prisma + consistency tests; validate/generate/scanner pass), stopped on budget. Continuation for B+C → impl-terra.
+- 2026-11-24 07:22 Task 3 run 2 (terra): B 8e8ddf38 + C 6dd4135a committed; identity 121 pass/44 gated skipped, tsc + scanner clean. Continuation for D → impl-terra.
+- 2026-11-24 07:27 Task 3 run 3 (terra): only 72433987 (validateProfile) before budget stop — third stop on Task 3. Rate/budget move: remainder → impl-sonnet (both co-author trailers).
+- 2026-11-24 07:40 Task 3 done: sonnet a81c2649 + 0e77dcde on top of terra's 4 commits (38 files +2808). Opus re-ran: identity 166 pass/51 gated skipped; admin customer+admin-http.e2e 67/67 (consumer). Review → reviewer-sol.
+- 2026-11-24 11:16 Task 3 review (Sol): NON_COMPLIANT, 2 Important (I1 duplicate ids dropped, I2 uppercase UUID lost) + M1 comment; rulings accept deviations 1,2,4. Fix round 1 → impl-sonnet. Owner: 'عندنا سوبا بيز للداتا بيز'.
+- 2026-11-24 11:22 Task 3 fix round 1 (sonnet): 976de01f. Scoped re-review by Opus (verbatim, small): approved; identity 170 pass / 52 gated skipped.
+- Opus acceptance Task 3: migration/model/consistency block, Phone/language/marketing_sms, copied tag helpers, adapters (required tx, FOR UPDATE, UUID spelling), validation aggregates, six use cases + controller + composition + exports, consent-projection cases, gated integration cases (run on CI db-integration). Task 3: complete (d932e7f6..976de01f).
+- Task 4 (customers admin API) → impl-sonnet (plan routing: even task).
+- 2026-11-24 11:36 Task 4 done (sonnet): 9827593f (5 files +1288). Opus re-ran post-commit: admin customer + admin-http.e2e 139/139 (sonnet: full @platform/admin 1583 pass). Review → reviewer-sol.
+- 2026-11-24 11:43 Task 4 review (Sol): SPEC COMPLIANT, QUALITY APPROVED, 2 Minor (export default-100 oracle seeds only 3; failed-annotations tested at helper not route) → parked for Phase 4.
+- Opus acceptance Task 4: 6 routes (POST create/profile/note/tags/marketing-consent, GET export-rows) spread before GET /customers (admin-routes:1712), structural zod, guards per method, detail DTO extended; 139/139 post-commit. Task 4: complete (9827593f).
+- Task 5 (customers UI) → impl-sonnet.
+- 2026-11-24 12:31 Task 5 done (sonnet): 47dd7627, 5028a085, 522a8c7c (38 files +4757). Opus re-ran post-commit: customers/middleware/navigation/i18n/orders 74 files 856/856. Review → reviewer-sol.
+- 2026-11-24 12:46 Task 5 review (Sol): NON_COMPLIANT, 2 Important (I1 export unreadable body → uncaught; I2 tag normalization/reconciliation), both reproduced. Accepted → fix round 1 → impl-sonnet.
+- 2026-11-24 12:58 Task 5 fix round 1 (sonnet): 6f01cd39 (+235). Opus re-ran: 72 files 809/809. Scoped re-review + ruling on non-duplicate-409 copy → reviewer-sol.
+- 2026-11-24 13:08 Task 5 re-review 1 (Sol): I1, I2 RESOLVED; ruling: non-duplicate 409 copy → Minor M1, parked. SPEC COMPLIANT, QUALITY APPROVED.
+- Opus acceptance Task 5: client + actions + revalidation, canEdit/canExport, create form, detail cards + dialogs, consent labels, export (caps, redirects, BOM/CRLF, guard), middleware, en/ar; 809/809. Task 5: complete (47dd7627..6f01cd39).
+- Phase 4: whole-branch review a8a8bf62..HEAD → reviewer-sol, with parked Minors: T1 test-harness unused accessControl; T4 export default-100 oracle + failed-annotations route test; T5 non-duplicate 409 localized copy.
+- 2026-11-24 13:25 Branch review (Sol): SPEC COMPLIANT, QUALITY APPROVED, 0 Critical/Important, 4 Minor (the parked M1-M4). media 116/4, identity 170/52, admin 195, admin-web 568, 4 tsc clean, consistency 75, consent 6. Phase 4 fix → impl-sonnet.
+- 2026-11-24 13:33 Phase 4 fix (sonnet): 836d3969 (M1-M3 test-only, M4 5 lines in createCustomerAction). Scoped re-review by Opus: approved; admin media/customer/e2e 177/177, admin-web customers 228/228, diff --check clean.
+- Wave 1b COMPLETE. Next: merge origin/main (33e9bbc2: wave 1a + effect override), push, PR, merge on green CI (owner standing go-ahead). Owner applies migration 20261124000000_customer_profile_tags on Supabase before release.
