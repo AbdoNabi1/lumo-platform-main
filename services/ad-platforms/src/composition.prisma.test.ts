@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { wireAdPlatforms } from "./composition";
 import { InMemoryCredentialVault } from "./infrastructure/in-memory-credential-vault";
 import { EnvelopeCredentialVault } from "./infrastructure/envelope-credential-vault";
-import { testEnvelopeVault } from "./testing/local-key-wrap-cipher";
+import { TEST_KEK_REF, testEnvelopeVault } from "./testing/local-key-wrap-cipher";
 
 beforeEach(() => {
   expect.hasAssertions();
@@ -118,10 +118,11 @@ describe("wireAdPlatforms — Prisma branch", () => {
     expect(Object.keys(JSON.parse(sealed) as object).sort()).toEqual([
       "alias",
       "ciphertext",
-      "kekRef",
       "v",
       "wrappedDek",
     ]);
+    expect(sealed).not.toContain("kekRef");
+    expect(sealed).not.toContain(TEST_KEK_REF);
     expect(await vault.open("t-1", "meta", sealed)).toBe(SECRET);
   });
 

@@ -1,5 +1,5 @@
-import type { ValidationError } from "@platform/utils";
-import { describe, expect, it } from "vitest";
+import type { Logger, ValidationError } from "@platform/utils";
+import { describe, expect, it, vi } from "vitest";
 import {
   GetLiveConnections,
   GetPublicAdPlatforms,
@@ -8,7 +8,8 @@ import {
   SaveConnection,
   type SaveConnectionInput,
 } from "../application/connections.use-cases";
-import { AD_PLATFORMS } from "../domain/connection";
+import type { CredentialVaultPort, DeliverySyncPort } from "../application/ports";
+import { type AdPlatform, AD_PLATFORMS } from "../domain/connection";
 import type { ConnectionRepository } from "../domain/connection-repository";
 import { InMemoryCredentialVault } from "../infrastructure/in-memory-credential-vault";
 
@@ -26,9 +27,15 @@ const clock = { now: () => NOW };
  * `beforeEach(expect.hasAssertions)` and cleanup. Rows use real UUIDs (the `id` column is a uuid).
  */
 export function describeConnectionUseCases(makeRepo: () => ConnectionRepository): void {
-  function setup() {
+  function setup(
+    options: {
+      vault?: CredentialVaultPort;
+      deliverySync?: DeliverySyncPort;
+      logger?: Logger;
+    } = {},
+  ) {
     const connections = makeRepo();
-    const vault = new InMemoryCredentialVault();
+    const vault = options.vault ?? new InMemoryCredentialVault();
     return {
       connections,
       vault,
@@ -39,6 +46,8 @@ export function describeConnectionUseCases(makeRepo: () => ConnectionRepository)
         clock,
         idGenerator: { generate: () => crypto.randomUUID() },
         credentialPolicy: "allow_stub",
+        deliverySync: options.deliverySync,
+        logger: options.logger,
       }),
       live: new GetLiveConnections({ connections, vault }),
       open: new OpenConnectionSecret({ connections, vault }),
@@ -254,6 +263,447 @@ export function describeConnectionUseCases(makeRepo: () => ConnectionRepository)
       );
       expect(own.secret.last4).toBe("4567");
       expect(value(await s.open.execute({ tenantId: "t-1", platform: "meta" }))).toBe(SECRET);
+    });
+
+    it("keeps the same platform independent per shop, each opening its own secret", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      const second = value(
+        await s.save.execute(input({ tenantId: "t-2", secret: "OTHERSECRET123456" })),
+      );
+      expect(second.version).toBe(1);
+      expect(value(await s.open.execute({ tenantId: "t-1", platform: "meta" }))).toBe(SECRET);
+      expect(value(await s.open.execute({ tenantId: "t-2", platform: "meta" }))).toBe(
+        "OTHERSECRET123456",
+      );
+    });
+
+    it("shows the public view of one shop only", async () => {
+      const s = setup();
+      value(await s.save.execute(input({ secret: "" })));
+      expect(value(await s.publicView.execute({ tenantId: "t-2" }))).toEqual({
+        meta: null,
+        tiktok: null,
+        snap: null,
+        ga4: null,
+        googleAds: null,
+      });
+    });
+  });
+
+  describe("SaveConnection: secrets, test event code and platforms", () => {
+    it("keeps the stored secret when the new one is empty or absent", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      const emptied = value(
+        await s.save.execute(input({ secret: "", enabled: false, expectedVersion: 1 })),
+      );
+      expect(emptied).toMatchObject({
+        enabled: false,
+        live: false,
+        complete: true,
+        secret: { configured: true, last4: "abcd" },
+        version: 2,
+      });
+      const absent = value(await s.save.execute(input({ secret: undefined, expectedVersion: 2 })));
+      expect(absent.secret).toEqual({ configured: true, last4: "abcd" });
+    });
+
+    it("replaces the secret and its last four characters, and the new one opens", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      const result = value(
+        await s.save.execute(input({ secret: "ZZZZ0000111122223333", expectedVersion: 1 })),
+      );
+      expect(result.secret).toEqual({ configured: true, last4: "3333" });
+      expect(value(await s.open.execute({ tenantId: "t-1", platform: "meta" }))).toBe(
+        "ZZZZ0000111122223333",
+      );
+    });
+
+    it("clears the secret on request", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      const result = value(
+        await s.save.execute(input({ secret: undefined, clearSecret: true, expectedVersion: 1 })),
+      );
+      expect(result).toMatchObject({
+        secret: { configured: false, last4: null },
+        complete: false,
+        live: false,
+        version: 2,
+      });
+    });
+
+    it("keeps, sets and removes the test event code", async () => {
+      const s = setup();
+      const first = value(await s.save.execute(input({ testEventCode: "TEST123" })));
+      expect(first.testEventCode).toBe("TEST123");
+      const kept = value(
+        await s.save.execute(input({ testEventCode: undefined, expectedVersion: 1 })),
+      );
+      expect(kept.testEventCode).toBe("TEST123");
+      const removed = value(await s.save.execute(input({ testEventCode: "", expectedVersion: 2 })));
+      expect(removed.testEventCode).toBeNull();
+      const again = value(
+        await s.save.execute(input({ testEventCode: "TEST9", expectedVersion: 3 })),
+      );
+      expect(again.testEventCode).toBe("TEST9");
+      const nulled = value(
+        await s.save.execute(input({ testEventCode: null, expectedVersion: 4 })),
+      );
+      expect(nulled.testEventCode).toBeNull();
+      expect((await s.connections.get("t-1", "meta"))?.props.testEventCode).toBeNull();
+    });
+
+    it("saves a disabled platform without a public configuration", async () => {
+      const s = setup();
+      const result = value(
+        await s.save.execute(input({ enabled: false, publicConfig: null, secret: undefined })),
+      );
+      expect(result).toMatchObject({
+        enabled: false,
+        publicConfig: null,
+        complete: false,
+        version: 1,
+      });
+    });
+
+    it("saves google_ads without a secret and reports it complete", async () => {
+      const s = setup();
+      const result = value(
+        await s.save.execute(
+          input({
+            platform: "google_ads",
+            publicConfig: { conversionId: "AW-123456789", labels: { lead: "abc_DEF-1" } },
+            secret: undefined,
+          }),
+        ),
+      );
+      expect(result).toEqual({
+        platform: "google_ads",
+        enabled: true,
+        publicConfig: {
+          platform: "google_ads",
+          conversionId: "AW-123456789",
+          labels: { lead: "abc_DEF-1" },
+        },
+        secret: { configured: false, last4: null },
+        testEventCode: null,
+        complete: true,
+        live: true,
+        version: 1,
+      });
+    });
+
+    it("answers CONCURRENCY on a stale or wrong expected version and stores nothing new", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      const stale = await s.save.execute(
+        input({ expectedVersion: 0, secret: "ZZZZ0000111122223333" }),
+      );
+      expect(stale.ok === false && stale.error.code).toBe("CONCURRENCY");
+      const ahead = await s.save.execute(input({ expectedVersion: 5 }));
+      expect(ahead.ok === false && ahead.error.code).toBe("CONCURRENCY");
+      const first = await s.connections.get("t-1", "meta");
+      expect(first?.props.version).toBe(1);
+      expect(first?.props.secretLast4).toBe("abcd");
+    });
+  });
+
+  describe("SaveConnection validation (nothing is written)", () => {
+    const table: readonly (readonly [string, Partial<SaveConnectionInput>, string])[] = [
+      ["unknown platform", { platform: "bing" as AdPlatform }, "platform"],
+      ["meta pixel", { publicConfig: { pixelId: "abc" } }, "publicConfig.pixelId"],
+      [
+        "tiktok lowercase code",
+        { platform: "tiktok", publicConfig: { pixelCode: "abcdefghij12" } },
+        "publicConfig.pixelCode",
+      ],
+      [
+        "snap non-uuid",
+        { platform: "snap", publicConfig: { pixelId: "not-a-uuid" } },
+        "publicConfig.pixelId",
+      ],
+      [
+        "ga4 UA id",
+        { platform: "ga4", publicConfig: { measurementId: "UA-1" } },
+        "publicConfig.measurementId",
+      ],
+      [
+        "google ads id",
+        { platform: "google_ads", publicConfig: { conversionId: "AW-12" }, secret: undefined },
+        "publicConfig.conversionId",
+      ],
+      [
+        "google ads bad label",
+        {
+          platform: "google_ads",
+          publicConfig: { conversionId: "AW-123456789", labels: { lead: "a b" } },
+          secret: undefined,
+        },
+        "publicConfig.labels.lead",
+      ],
+      [
+        "google ads with a secret",
+        { platform: "google_ads", publicConfig: { conversionId: "AW-123456789" } },
+        "secret",
+      ],
+      [
+        "snap with a test event code",
+        { platform: "snap", publicConfig: { pixelId: SNAP_ID }, testEventCode: "ABC" },
+        "testEventCode",
+      ],
+      ["bad test event code", { testEventCode: "bad code!" }, "testEventCode"],
+      ["short secret", { secret: "short" }, "secret"],
+      ["secret with a space", { secret: "EAAB 1234567890" }, "secret"],
+      ["secret with a quote", { secret: 'EAAB1234567890"' }, "secret"],
+      ["secret with a backslash", { secret: "EAAB1234567890\\" }, "secret"],
+      ["secret too long", { secret: "a".repeat(1025) }, "secret"],
+      ["secret with clearSecret", { clearSecret: true }, "clearSecret"],
+      ["enabled without publicConfig", { publicConfig: null }, "publicConfig"],
+    ];
+
+    it.each(table)("rejects %s", async (_name, over, field) => {
+      const s = setup();
+      const result = await s.save.execute(input(over));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe("VALIDATION");
+        expect((result.error as ValidationError).fields.map((issue) => issue.field)).toEqual([
+          field,
+        ]);
+      }
+      expect(await s.connections.list("t-1")).toEqual([]);
+    });
+
+    it("uses the amended message for a bad secret and never echoes it", async () => {
+      const s = setup();
+      const result = await s.save.execute(input({ secret: "bad secret value" }));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect((result.error as ValidationError).fields).toEqual([
+          {
+            field: "secret",
+            message: "must be 10–1024 characters using letters, digits and . _ ~ + / = : | -",
+          },
+        ]);
+        expect(result.error.message).not.toContain("bad secret value");
+      }
+    });
+
+    it.each([true, false])(
+      "rejects an undefined publicConfig as required when enabled is %s, with no write and no sync",
+      async (enabled) => {
+        const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+        const s = setup({ deliverySync: { sync } });
+        const result = await s.save.execute(
+          input({ enabled, publicConfig: undefined, secret: undefined }),
+        );
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("VALIDATION");
+          expect((result.error as ValidationError).fields).toEqual([
+            { field: "publicConfig", message: "is required" },
+          ]);
+        }
+        expect(await s.connections.list("t-1")).toEqual([]);
+        expect(sync).not.toHaveBeenCalled();
+      },
+    );
+
+    it("turns a rejected vault.seal into a generic error with no write and no sync", async () => {
+      const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+      const vault: CredentialVaultPort = {
+        backing: "real",
+        seal: () => Promise.reject(new Error(`seal TOKEN-LEAK-9f3c`)),
+        open: () => Promise.resolve(SECRET),
+      };
+      const s = setup({ vault, deliverySync: { sync } });
+      const result = await s.save.execute(input());
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toBe("Ad platform credentials could not be sealed");
+        expect(result.error.cause).toBeUndefined();
+      }
+      expect(await s.connections.list("t-1")).toEqual([]);
+      expect(sync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("delivery sync", () => {
+    it("calls sync once per successful save with the tenant id", async () => {
+      const sync = vi.fn<(tenantId: string) => Promise<void>>().mockResolvedValue(undefined);
+      const s = setup({ deliverySync: { sync } });
+      value(await s.save.execute(input()));
+      expect(sync).toHaveBeenCalledTimes(1);
+      expect(sync).toHaveBeenCalledWith("t-1");
+      await s.save.execute(input({ expectedVersion: 0 })); // stale → no sync
+      await s.save.execute(input({ secret: "short", expectedVersion: 1 })); // invalid → no sync
+      expect(sync).toHaveBeenCalledTimes(1);
+    });
+
+    it("still returns the saved view when sync throws, and logs no secret", async () => {
+      const warn = vi.fn();
+      const logger = { warn } as unknown as Logger;
+      const sync = vi
+        .fn<(tenantId: string) => Promise<void>>()
+        .mockRejectedValue(new Error(`down ${SECRET}`));
+      const s = setup({ deliverySync: { sync }, logger });
+      const result = value(await s.save.execute(input()));
+      expect(result.version).toBe(1);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(SECRET);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("down");
+    });
+
+    it("does not fail when sync throws and no logger is wired", async () => {
+      const sync = vi
+        .fn<(tenantId: string) => Promise<void>>()
+        .mockRejectedValue(new Error("down"));
+      const s = setup({ deliverySync: { sync } });
+      const result = await s.save.execute(input());
+      expect(result.ok).toBe(true);
+    });
+
+    it("survives a logger that throws while reporting a sync failure", async () => {
+      const logger = {
+        warn: () => {
+          throw new Error("logger down");
+        },
+      } as unknown as Logger;
+      const sync = vi.fn<(tenantId: string) => Promise<void>>().mockRejectedValue(new Error("x"));
+      const s = setup({ deliverySync: { sync }, logger });
+      const result = await s.save.execute(input());
+      expect(result.ok).toBe(true);
+    });
+  });
+
+  describe("internal reads (live connections and secrets)", () => {
+    it("returns the opened secret for live server platforms only", async () => {
+      const s = setup();
+      value(await s.save.execute(input({ testEventCode: "TEST1" })));
+      value(
+        await s.save.execute(
+          input({
+            platform: "ga4",
+            publicConfig: { measurementId: "G-ABC1234" },
+            secret: "gasecret0123456789",
+          }),
+        ),
+      );
+      value(
+        await s.save.execute(
+          input({
+            platform: "tiktok",
+            publicConfig: { pixelCode: "CABCDEFGHIJ1" },
+            secret: "tiktoksecret123456",
+            enabled: false,
+          }),
+        ),
+      );
+      value(
+        await s.save.execute(
+          input({ platform: "snap", publicConfig: { pixelId: SNAP_ID }, secret: undefined }),
+        ),
+      );
+      value(
+        await s.save.execute(
+          input({
+            platform: "google_ads",
+            publicConfig: { conversionId: "AW-123456789" },
+            secret: undefined,
+          }),
+        ),
+      );
+      expect(value(await s.live.execute({ tenantId: "t-1" }))).toEqual([
+        { platform: "meta", publicConfig: META, secret: SECRET, testEventCode: "TEST1" },
+        {
+          platform: "ga4",
+          publicConfig: { platform: "ga4", measurementId: "G-ABC1234" },
+          secret: "gasecret0123456789",
+          testEventCode: null,
+        },
+      ]);
+    });
+
+    it("opens one live secret and answers NOT_FOUND otherwise", async () => {
+      const s = setup();
+      value(await s.save.execute(input()));
+      value(
+        await s.save.execute(
+          input({
+            platform: "ga4",
+            publicConfig: { measurementId: "G-ABC1234" },
+            enabled: false,
+          }),
+        ),
+      );
+      expect(value(await s.open.execute({ tenantId: "t-1", platform: "meta" }))).toBe(SECRET);
+      const disabled = await s.open.execute({ tenantId: "t-1", platform: "ga4" });
+      expect(disabled.ok === false && disabled.error.code).toBe("NOT_FOUND");
+      const absent = await s.open.execute({ tenantId: "t-1", platform: "tiktok" });
+      expect(absent.ok === false && absent.error.code).toBe("NOT_FOUND");
+      const otherShop = await s.open.execute({ tenantId: "t-2", platform: "meta" });
+      expect(otherShop.ok === false && otherShop.error.code).toBe("NOT_FOUND");
+    });
+
+    it("returns a generic UNEXPECTED error, never the vault message, when a secret cannot be opened", async () => {
+      const broken: CredentialVaultPort = {
+        backing: "real",
+        seal: () => Promise.resolve("sealed"),
+        open: () => Promise.reject(new Error(`boom ${SECRET}`)),
+      };
+      const s = setup({ vault: broken });
+      value(await s.save.execute(input()));
+      const live = await s.live.execute({ tenantId: "t-1" });
+      const opened = await s.open.execute({ tenantId: "t-1", platform: "meta" });
+      for (const result of [live, opened]) {
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.error.code).toBe("UNEXPECTED");
+          expect(result.error.message).toBe("Ad platform credentials could not be opened");
+          expect(result.error.cause).toBeUndefined();
+        }
+      }
+    });
+  });
+
+  describe("public view (all platforms)", () => {
+    it("shows enabled public ids without needing a secret and hides disabled ones", async () => {
+      const s = setup();
+      value(await s.save.execute(input({ secret: undefined })));
+      value(
+        await s.save.execute(
+          input({
+            platform: "google_ads",
+            publicConfig: { conversionId: "AW-123456789", labels: { purchase: "p1" } },
+            secret: undefined,
+          }),
+        ),
+      );
+      value(
+        await s.save.execute(
+          input({
+            platform: "ga4",
+            publicConfig: { measurementId: "G-ABC1234" },
+            enabled: false,
+          }),
+        ),
+      );
+      value(
+        await s.save.execute(
+          input({ platform: "tiktok", publicConfig: { pixelCode: "CABCDEFGHIJ1" } }),
+        ),
+      );
+      value(await s.save.execute(input({ platform: "snap", publicConfig: { pixelId: SNAP_ID } })));
+      expect(value(await s.publicView.execute({ tenantId: "t-1" }))).toEqual({
+        meta: { pixelId: "123456789012345" },
+        tiktok: { pixelCode: "CABCDEFGHIJ1" },
+        snap: { pixelId: SNAP_ID },
+        ga4: null,
+        googleAds: { conversionId: "AW-123456789", labels: { purchase: "p1" } },
+      });
     });
   });
 }

@@ -78,7 +78,7 @@ function connectionOf(over: Partial<ConnectionProps> = {}): Connection {
     platform: "meta",
     enabled: true,
     publicConfig: { platform: "meta", pixelId: "123456789012345" },
-    sealedSecret: '{"v":1,"alias":"a","kekRef":"k","wrappedDek":"w","ciphertext":"c"}',
+    sealedSecret: '{"v":1,"alias":"a","wrappedDek":"w","ciphertext":"c"}',
     secretLast4: "abcd",
     testEventCode: "TEST1",
     version: 1,

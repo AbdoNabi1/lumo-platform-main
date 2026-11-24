@@ -28,16 +28,22 @@ export function isUniqueViolation(error: unknown): boolean {
 }
 
 const PLATFORM_INDEX = "ad_platform_connections_tenant_id_platform_key";
+const PLATFORM_COLUMNS: readonly string[] = ["tenant_id", "platform"];
 
 /**
- * A P2002 on the `(tenant_id, platform)` unique index only. A clash on any other constraint (the
- * primary key) is a bug and must surface, not be answered as "someone else saved first".
+ * A P2002 on the `(tenant_id, platform)` unique index only: `meta.target` must be exactly the column
+ * tuple `["tenant_id", "platform"]` (the index's column order, which is how Prisma reports it) or
+ * exactly the index name. A clash on anything else (the primary key, a partial or different tuple, a
+ * string that merely contains the name) is a bug and must surface, not be answered as "someone else
+ * saved first".
  */
 export function isPlatformKeyViolation(error: unknown): boolean {
   if (!isUniqueViolation(error)) return false;
   const target = (error as { meta?: { target?: unknown } }).meta?.target;
-  const parts: unknown[] = Array.isArray(target) ? target : [target];
-  return parts.some(
-    (part) => typeof part === "string" && (part === "platform" || part.includes(PLATFORM_INDEX)),
+  if (typeof target === "string") return target === PLATFORM_INDEX;
+  return (
+    Array.isArray(target) &&
+    target.length === PLATFORM_COLUMNS.length &&
+    PLATFORM_COLUMNS.every((column, i) => target[i] === column)
   );
 }

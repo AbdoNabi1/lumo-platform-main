@@ -508,14 +508,24 @@ function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
 /**
  * The real ad platform credential vault (Lead Site Part D1), built exactly like
  * `buildPaymentCredentialVault`: `@platform/secrets`' envelope encryption over `@platform/security`'s
- * `NodeCrypto`, the data key wrapped under a KEK derived from `kekRef`, under its own alias.
+ * `NodeCrypto`, the data key wrapped under a KEK derived from `kekRef`, under its own alias. Unlike
+ * payments, the stored row does NOT carry the key reference (with `NodeCrypto` it IS the key material):
+ * the vault resolves it from this same alias registry on open.
  */
 export function buildAdPlatformCredentialVault(kekRef: string): CredentialVaultPort {
+  const alias = "ad-platform-credentials";
   const aliases = new KeyAliasRegistry();
-  aliases.set("ad-platform-credentials", kekRef);
+  aliases.set(alias, kekRef);
   return new EnvelopeCredentialVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
-    "ad-platform-credentials",
+    alias,
+    (requested) => {
+      try {
+        return aliases.resolve(requested);
+      } catch {
+        return undefined;
+      }
+    },
   );
 }
 

@@ -129,11 +129,12 @@ describe("startApi() wires the ad platform credential vault into the admin API",
     expect(Object.keys(JSON.parse(stored) as object).sort()).toEqual([
       "alias",
       "ciphertext",
-      "kekRef",
       "v",
       "wrappedDek",
     ]);
     expect((JSON.parse(stored) as { alias: string }).alias).toBe("ad-platform-credentials");
+    expect(stored).not.toContain("kekRef");
+    expect(stored).not.toContain(KEK);
     expect(JSON.stringify(response.body)).not.toContain(SECRET);
   });
 

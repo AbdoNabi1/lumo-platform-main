@@ -64,8 +64,7 @@ function recordingPrisma(results: Partial<Record<string, unknown[]>> = {}) {
 const id = (n: number): string => `01930000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 const NOW = new Date("2026-11-23T10:00:00.000Z");
 const LATER = new Date("2026-11-24T10:00:00.000Z");
-const SEALED =
-  '{"v":1,"alias":"ad-platform-credentials","kekRef":"k","wrappedDek":"w","ciphertext":"c"}';
+const SEALED = '{"v":1,"alias":"ad-platform-credentials","wrappedDek":"w","ciphertext":"c"}';
 
 function propsOf(over: Partial<ConnectionProps> = {}): ConnectionProps {
   return {
@@ -196,12 +195,29 @@ describe("PrismaConnectionRepository.save (insert)", () => {
     }
   });
 
-  it("rethrows a P2002 on any other constraint (a primary-key clash is a bug, not a lost race)", async () => {
-    const { prisma } = recordingPrisma({ "adPlatformConnection.create": [p2002(["id"])] });
-    await expect(
-      new PrismaConnectionRepository({ prisma }).save("t-1", Connection.restore(propsOf()), null),
-    ).rejects.toThrow(/Unique constraint/);
-  });
+  it.each([
+    ["the primary key", ["id"]],
+    ["the platform column alone", ["platform"]],
+    ["the tenant column alone", ["tenant_id"]],
+    ["a different first column with platform", ["other", "platform"]],
+    ["the right columns reversed", ["platform", "tenant_id"]],
+    ["an extra column", ["tenant_id", "platform", "id"]],
+    [
+      "a string that merely contains the index name",
+      "x_ad_platform_connections_tenant_id_platform_key_y",
+    ],
+    ["the bare word platform", "platform"],
+    ["no target", undefined],
+    ["an empty target", []],
+  ])(
+    "rethrows a P2002 on %s (not the (tenant, platform) index: a bug, not a lost race)",
+    async (_name, target) => {
+      const { prisma } = recordingPrisma({ "adPlatformConnection.create": [p2002(target)] });
+      await expect(
+        new PrismaConnectionRepository({ prisma }).save("t-1", Connection.restore(propsOf()), null),
+      ).rejects.toThrow(/Unique constraint/);
+    },
+  );
 
   it("rethrows any non-unique error", async () => {
     const { prisma } = recordingPrisma({

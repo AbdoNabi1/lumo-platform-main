@@ -63,5 +63,6 @@ export function testEnvelopeVault(kekRef: string = TEST_KEK_REF): EnvelopeCreden
   return new EnvelopeCredentialVault(
     new EnvelopeCipher(new LocalKeyWrapCipher(), aliases),
     TEST_KEK_ALIAS,
+    (alias) => (alias === TEST_KEK_ALIAS ? kekRef : undefined),
   );
 }
