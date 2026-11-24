@@ -32,6 +32,14 @@ import {
   RevokeRoleAssignment,
 } from "./application/authorization.use-cases";
 import { ListPrincipalRoleKeys } from "./application/principal-roles.use-cases";
+import {
+  AcceptStaffInvitation,
+  ChangeStaffRole,
+  CreateStaffInvitation,
+  RenewStaffInvitation,
+  RevokeStaffInvitation,
+  SetStaffActive,
+} from "./application/staff-commands.use-cases";
 import { ListStaff, StaffAccess } from "./application/staff.use-cases";
 import {
   CheckAccess,
@@ -639,6 +647,12 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const listPrincipalRoleKeys = new ListPrincipalRoleKeys(securityDeps);
   const listStaff = new ListStaff(securityDeps);
   const staffAccess = new StaffAccess(securityDeps);
+  const changeStaffRole = new ChangeStaffRole(securityDeps);
+  const setStaffActive = new SetStaffActive(securityDeps);
+  const createStaffInvitation = new CreateStaffInvitation(securityDeps);
+  const renewStaffInvitation = new RenewStaffInvitation(securityDeps);
+  const revokeStaffInvitation = new RevokeStaffInvitation(securityDeps);
+  const acceptStaffInvitation = new AcceptStaffInvitation(securityDeps);
   const verifyAuditChain = new VerifyAuditChain(securityDeps);
   const registerAuthMethod = new RegisterAuthMethod(securityDeps);
   const authenticate = new Authenticate(securityDeps);
@@ -709,6 +723,12 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     listPrincipalRoleKeys,
     listStaff,
     staffAccess,
+    changeStaffRole,
+    setStaffActive,
+    createStaffInvitation,
+    renewStaffInvitation,
+    revokeStaffInvitation,
+    acceptStaffInvitation,
     verifyAuditChain,
     registerAuthMethod,
     authenticate,

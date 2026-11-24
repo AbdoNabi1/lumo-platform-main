@@ -52,6 +52,24 @@ export {
   type StaffAccessInput,
   type StaffAccessOutput,
 } from "./application/staff.use-cases";
+export {
+  AcceptStaffInvitation,
+  ChangeStaffRole,
+  CreateStaffInvitation,
+  RenewStaffInvitation,
+  RevokeStaffInvitation,
+  SetStaffActive,
+  normalizeStaffEmail,
+  type AcceptStaffInvitationInput,
+  type ChangeStaffRoleInput,
+  type CreateStaffInvitationInput,
+  type CreateStaffInvitationOutput,
+  type RenewStaffInvitationInput,
+  type RevokeStaffInvitationInput,
+  type RevokeStaffInvitationOutput,
+  type SetStaffActiveInput,
+  type SetStaffActiveStatus,
+} from "./application/staff-commands.use-cases";
 export { STAFF_IDENTIFIER_PREFIX } from "./application/staff-support";
 // Zero-trust access decision types — reused by the H-4 edge guard (decision stays in EvaluateAccess).
 export type { EvaluateAccessInput, AccessDecisionOutput } from "./application/access.use-cases";
