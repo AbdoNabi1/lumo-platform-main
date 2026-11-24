@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCustomerFixture, TENANT_A, TENANT_B } from "./customer-profile-test-fixture";
+import { buildCustomerFixture, TENANT_A, TENANT_B } from "../testing/customer-profile-fixture";
 import { SetCustomerTags } from "./set-customer-tags.use-case";
 
 async function setup() {

@@ -3,7 +3,7 @@ import { UniqueEntityId } from "@platform/domain";
 import { Customer } from "../domain/customer";
 import { Email } from "../domain/value-objects/email";
 import { InMemoryCustomerAnnotationRepository } from "../infrastructure/in-memory-customer-annotation-repository";
-import { buildCustomerFixture, TENANT_A, TENANT_B } from "./customer-profile-test-fixture";
+import { buildCustomerFixture, TENANT_A, TENANT_B } from "../testing/customer-profile-fixture";
 import { GetCustomerAnnotations } from "./get-customer-annotations.use-case";
 
 async function setup() {

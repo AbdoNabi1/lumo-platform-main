@@ -3,7 +3,7 @@ import { ConflictError, ValidationError } from "@platform/utils";
 import { sortTags } from "../domain/customer-annotations";
 import { ConsentScope } from "../domain/value-objects/consent-scope";
 import { CreateCustomer, type CreateCustomerInput } from "./create-customer.use-case";
-import { buildCustomerFixture, TENANT_A, TENANT_B } from "./customer-profile-test-fixture";
+import { buildCustomerFixture, TENANT_A, TENANT_B } from "../testing/customer-profile-fixture";
 
 function setup() {
   const fixture = buildCustomerFixture();

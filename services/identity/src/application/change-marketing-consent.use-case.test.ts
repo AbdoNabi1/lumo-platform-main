@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ValidationError } from "@platform/utils";
 import { ConsentScope } from "../domain/value-objects/consent-scope";
 import { ChangeMarketingConsent } from "./change-marketing-consent.use-case";
-import { buildCustomerFixture, TENANT_A, TENANT_B } from "./customer-profile-test-fixture";
+import { buildCustomerFixture, TENANT_A, TENANT_B } from "../testing/customer-profile-fixture";
 
 async function setup() {
   const fixture = buildCustomerFixture();

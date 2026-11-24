@@ -367,11 +367,13 @@ describe("CustomerTagsCard", () => {
       expect(await body().findByRole("status")).toHaveTextContent("Tags saved.");
       rerender(<CustomerTagsCard customerId={ID} tags={stored} canEdit t={en} />);
 
-      const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
-      expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual(
-        stored,
-      );
-      expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled();
+      await waitFor(() => {
+        const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
+        expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual(
+          stored,
+        );
+      });
+      await waitFor(() => expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled());
     },
   );
 
@@ -391,23 +393,25 @@ describe("CustomerTagsCard", () => {
     resolveAction(OK);
 
     expect(await body().findByRole("status")).toHaveTextContent("Tags saved.");
-    const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
-    expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual([
-      "a",
-      "z",
-    ]);
-    expect(await body().findByRole("button", { name: "Save tags" })).toBeDisabled();
+    await waitFor(() => {
+      const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
+      expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual([
+        "a",
+        "z",
+      ]);
+    });
+    await waitFor(() => expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled());
   });
 
-  it("starts the draft again from the stored tags the page re-renders with", () => {
+  it("starts the draft again from the stored tags the page re-renders with", async () => {
     const { rerender } = render(<CustomerTagsCard customerId={ID} tags={["a"]} canEdit t={en} />);
     fireEvent.change(body().getByLabelText("Add tags"), { target: { value: "b," } });
     expect(body().getByText("b")).toBeInTheDocument();
 
     rerender(<CustomerTagsCard customerId={ID} tags={["a", "z"]} canEdit t={en} />);
 
-    expect(body().queryByText("b")).toBeNull();
-    expect(body().getByText("z")).toBeInTheDocument();
+    await waitFor(() => expect(body().queryByText("b")).toBeNull());
+    expect(await body().findByText("z")).toBeInTheDocument();
   });
 
   it("renders in Arabic", () => {
@@ -519,7 +523,7 @@ describe("CustomerMarketingCard", () => {
     );
   });
 
-  it("follows the state the page re-renders with", () => {
+  it("follows the state the page re-renders with", async () => {
     const { rerender } = render(
       <CustomerMarketingCard
         customerId={ID}
@@ -538,7 +542,9 @@ describe("CustomerMarketingCard", () => {
       />,
     );
 
-    expect(body().getByRole("switch", { name: "Email marketing" })).toBeChecked();
+    await waitFor(() =>
+      expect(body().getByRole("switch", { name: "Email marketing" })).toBeChecked(),
+    );
   });
 
   it("says the switches record what staff enter, and makes no compliance claim", () => {
