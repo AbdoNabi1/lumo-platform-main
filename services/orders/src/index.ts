@@ -73,6 +73,7 @@ export type {
 } from "./application/ports";
 export { ORDERS_PUBLISHED_EVENTS } from "./infrastructure/order-event-translator";
 export { derivePaymentStatus, isOpenOrder } from "./domain/order-statuses";
+export { CANCELLED_EVENT_TYPE, REFUNDED_EVENT_TYPES } from "./domain/order-statuses";
 export {
   isSalesRangePreset,
   localDay,
