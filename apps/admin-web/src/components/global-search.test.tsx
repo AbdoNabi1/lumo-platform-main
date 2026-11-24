@@ -50,6 +50,23 @@ describe("GlobalSearch shares the sidebar's navigation (Shopify parity Wave 1a)"
     expect(options).not.toContain(en.nav.marketing);
   });
 
+  it("lists Segments right after Customers and selecting it navigates to /customers/segments (Wave 1c)", () => {
+    expect.hasAssertions();
+    render(<GlobalSearch t={en} />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(en.topbar.search) }));
+
+    const dialog = within(document.body).getByRole("dialog");
+    const options = within(dialog)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    const customers = options.indexOf(en.nav.customers);
+    expect(options.slice(customers, customers + 2)).toEqual([en.nav.customers, en.nav.segments]);
+
+    fireEvent.click(within(dialog).getByRole("option", { name: en.nav.segments }));
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith("/customers/segments");
+  });
+
   it("selecting Files navigates to /content/files", () => {
     expect.hasAssertions();
     render(<GlobalSearch t={en} />);

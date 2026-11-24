@@ -31,6 +31,7 @@ import {
   TagIcon,
   ToggleLeftIcon,
   UserIcon,
+  UsersRoundIcon,
   WarehouseIcon,
   WorkflowIcon,
   type LucideIcon,
@@ -113,7 +114,21 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     // Plan 2C-1: Pricing is off the menu — the variant on the product is the only price source.
     sectionIds: ["pricing"],
   },
-  { id: "customers", label: (t) => t.nav.customers, href: "/customers", Icon: UserIcon },
+  {
+    id: "customers",
+    label: (t) => t.nav.customers,
+    href: "/customers",
+    Icon: UserIcon,
+    // Shopify parity Wave 1c: Segments sit under Customers, as in Shopify.
+    children: [
+      {
+        id: "customers-segments",
+        label: (t) => t.nav.segments,
+        href: "/customers/segments",
+        Icon: UsersRoundIcon,
+      },
+    ],
+  },
   {
     id: "marketing",
     label: (t) => t.nav.growth,
