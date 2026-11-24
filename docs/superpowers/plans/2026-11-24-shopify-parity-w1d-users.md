@@ -1,8 +1,9 @@
 # Shopify parity — Wave 1d: Settings > Users and permissions (staff)
 
-`OPUS: PENDING · Sol: PENDING (round 1 partial: 7 blocking written before Sol's usage limit; all accepted; round 1 to be continued after the reset)`
+`OPUS: AGREED (round 2 amendments) · Sol: unavailable — replaced by Opus review per owner ruling`
 
-**Ruling (owner, 2026-11-24 ~21:35):** "don't wait for Sol" + "continue with Claude". Sol is out until 2026-11-29 12:43 (usage limit). Execution starts now on `impl-sonnet` (all tasks, rate-limit move from terra). Reviews run on Claude: a read-only Sonnet plan review of the whole amended plan in parallel with Task 1 checkpoint A, then a Sonnet review + Opus acceptance per task. Sol reviews the plan round and every task diff when it returns.
+**Ruling (owner, 2026-11-24 ~21:35):** "don't wait for Sol" + "continue with Claude". Sol is out until 2026-11-29 12:43 (usage limit). Execution starts now on `impl-sonnet` (all tasks, rate-limit move from terra).
+**Ruling (owner, 2026-11-24 ~21:45):** "don't wait for Sol; Opus plans and reviews, Sonnet implements". Opus completed plan review round 1 itself (`w1d/plan-review-opus-1.md`, findings O1-O6 → `Amendments round 2`), reviews every task, and runs the acceptance check. No merge hold for Sol.
 
 **Branch / worktree:** `morbeh/shopify-parity-w1d` in `F:/New folder/morbeh-shopify-parity-w1b` (dependencies installed), BASE `3b4dc994` (origin/main with Waves 1a, 1b, 1c).
 **Evidence:** `docs/superpowers/plans/w1d/survey-users.md` (fresh survey, file:line; §-numbers below refer to it). Conventions: the shipped Wave 1b/1c code (`apps/admin/src/http/customer-segment-routes.ts`, `apps/admin-web/src/app/customers/segments/*`, `apps/admin-web/src/app/settings/policies/*`).
@@ -16,7 +17,7 @@
 - D16 Settings label becomes Shopify's "Users and permissions" / "المستخدمون والصلاحيات".
 - D17 No staff display names in 1d (none exist, §1.1): the list shows the email.
 
-**Amendment precedence:** later round > earlier round > original task text; within a task a later block wins over an earlier one.
+**Amendment precedence:** round 2 (Opus review) > round 1 (Sol partial) > original task text; within a task a later block wins over an earlier one.
 
 **Implementers:** Task 1 `terra` (security service: migration, invitation model, staff read model, guarded use cases — run as checkpoints A/B/C), Task 2 `sonnet` (apps/admin + tenancy: staff controller, invitation orchestration, public accept routes, live staff access check, email), Task 3 `sonnet` (admin-web UI only).
 
@@ -146,6 +147,12 @@ _R3 — lock + actor re-check + last admin._ Port `StaffMutationLock` with `with
 
 _R7 — audit._ Every write records `recordAudit` with `principalRef` = target externalId and metadata `{ actor: <actorExternalId | "invitee">, target: <externalId>, action-specific fields }`; never tokens, hashes or passwords. Actions: `security.staff.invited`, `.invitation_renewed`, `.invitation_revoked`, `.invitation_accepted`, `.role_changed` (`{ from, to }`), `.deactivated`, `.reactivated`.
 
+**Amendments round 2 (binding) — Opus plan review, Task 1**
+
+- O1 (checkpoint B): add a security read for the live access check — `StaffAccess` use case + `SecurityController.staffAccess({ tenantId, principalExternalId })` → 200 `{ status: "active" | "suspended" | "disabled"; roleKeys: readonly string[] }` (principal via `PrincipalRepository.findByExternalId`, ACTIVE assignments via the principal's INTERNAL id), 404 when the principal does not exist in that tenant. Do NOT use `resolvePrincipal` (it takes a `subjectRef`, not the externalId). Tests: active admin → `{active, ["admin"]}`; owner → includes `"platform-admin"`; suspended; revoked assignment excluded; other tenant → 404.
+- O2 (checkpoint C): principals are created with `Principal.register(...)` and then `suspend(...)` BEFORE the first `save`, inside the same tx (no new factory needed). Every write calls `ensureStaffRoles` first, so assignments always reference defined roles (`admin|operator|viewer`).
+- O3 (checkpoint B/C): an invited target (pending invitation) IS a staff member for `ChangeStaffRole` (its pending assignment is replaced; allowed) and `ListStaff`; `SetStaffActive` on it stays BUSINESS_RULE "Revoke the invitation instead". A revoked invitee (principal `disabled`, no credential, no pending invitation) is not listed and is NOT_FOUND for every command.
+
 ---
 
 ### Task 2 — apps/admin + tenancy: staff controller, invitations end to end, live access check (implementer: sonnet)
@@ -230,6 +237,12 @@ _R4 — one live access control for BOTH guards._ `wireAdmin` builds ONE `LiveSt
 
 _R5 — owner-only resources._ `LiveStaffAccessControl` snapshot carries `roleKeys` (raw Security keys) as well as mapped token roles; for staff principals a permission whose resource (text before `:`) is `security`, `users`, `memberships` or `organizations` requires `roleKeys.includes("platform-admin")`, else `false`. Adversarial tests with an ACCEPTED invited admin's token: `POST /security/role-assignments` granting `platform-admin` to self → 403; revoking the owner's assignment → 403; `POST /security/principals/:owner/transitions` → 403; `POST /memberships` → 403; owner token on the same routes → unchanged behaviour; operator/viewer → 403 as before.
 
+**Amendments round 2 (binding) — Opus plan review, Task 2**
+
+- O1: `StaffAccessReader` is implemented with `security.staffAccess` (Task 1): 404 → `null`; status `active` → `active: true`; `roles` = `roleKeys` mapped through the exported `TOKEN_ROLE`; `roleKeys` kept raw for the owner-only rule.
+- O4: the owner-only rule never applies to `security:authenticate` (public sign-in routes) — exempt it explicitly and test that a request carrying a staff token on a public sign-in route behaves as before. The public principal is `kind: "customer"` (`packages/http/src/server.ts` `PUBLIC_IDENTITY`) and is untouched.
+- O5: `staffInviteEmail(link, storeName, ...)` is called with `storeName: null` in 1d (no store-name lookup); the template then omits the store name.
+
 ---
 
 ### Task 3 — admin-web: Settings > Users and permissions + accept-invite page (implementer: sonnet, UI-only)
@@ -253,6 +266,11 @@ _R5 — owner-only resources._ `LiveStaffAccessControl` snapshot carries `roleKe
 - `cd "F:/New folder/morbeh-shopify-parity-w1b" && export pnpm_config_verify_deps_before_run=false; node C:/Users/Abdo/AppData/Local/node/corepack/v1/pnpm/11.9.0/bin/pnpm.cjs --filter admin-web exec tsc --noEmit --incremental false`
 
 ---
+
+**Amendments round 2 (binding) — Opus plan review, Task 3**
+
+- O6: an invited admin (not the owner) now gets 403 from `security:*` routes (preamble R5). The admin-web Security console pages (`app/security/**`) must show an "Only the store owner can open this page." / "يمكن لمالك المتجر فقط فتح هذه الصفحة." state on a 403 from their loaders instead of a crash or a generic error, using the `status` on the GET error branch if present, else the existing error state. Test one representative security page with a mocked 403.
+- The table hides Change role / Deactivate for the owner and self rows, but the server is the authority: a 403/409 from any action is shown in the dialog (never assume success).
 
 ## Execution order
 
