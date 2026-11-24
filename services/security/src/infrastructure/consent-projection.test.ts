@@ -20,9 +20,10 @@ function event(
   scope: string,
   granted: boolean,
   occurredAt: string,
+  tenantId = "tenant-a",
 ): IntegrationEvent<ConsentChangedPayload> {
   return {
-    messageId: `${subject}-${occurredAt}`,
+    messageId: `${tenantId}-${subject}-${scope}-${occurredAt}`,
     type: "identity.customer.consent_changed",
     eventVersion: 1,
     aggregateId: subject,
@@ -30,7 +31,7 @@ function event(
     occurredAt,
     correlationId: "c",
     causationId: "c",
-    tenantId: "tenant-a",
+    tenantId,
     payload: { scope, granted },
     metadata: {},
   };
@@ -73,5 +74,47 @@ describe("consent projection (H-2)", () => {
     await expect(
       consumer.handle(event("", "marketing", true, "2026-07-18T00:00:00.000Z")),
     ).resolves.toBeUndefined();
+  });
+
+  it("projects marketing_sms grant and revoke independently of marketing", async () => {
+    expect.hasAssertions();
+    const store = new InMemoryConsentProjectionStore();
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
+    const port = new ProjectionConsentPort(store);
+
+    await consumer.handle(event("cust-1", "marketing", true, "2026-07-18T00:00:00.000Z"));
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(false);
+
+    await consumer.handle(event("cust-1", "marketing_sms", true, "2026-07-18T01:00:00.000Z"));
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(true);
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(true);
+
+    await consumer.handle(event("cust-1", "marketing_sms", false, "2026-07-18T02:00:00.000Z"));
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(false);
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(true);
+
+    await consumer.handle(event("cust-1", "marketing", false, "2026-07-18T03:00:00.000Z"));
+    await consumer.handle(event("cust-1", "marketing_sms", true, "2026-07-18T04:00:00.000Z"));
+    expect(await port.hasConsent("cust-1", "marketing", "tenant-a")).toBe(false);
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(true);
+  });
+
+  it("never lets tenant B read tenant A's marketing_sms grant", async () => {
+    expect.hasAssertions();
+    const store = new InMemoryConsentProjectionStore();
+    const consumer = new ConsentChangedConsumer({ store, logger: silent });
+    const port = new ProjectionConsentPort(store);
+
+    await consumer.handle(
+      event("cust-1", "marketing_sms", true, "2026-07-18T00:00:00.000Z", "tenant-a"),
+    );
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(true);
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-b")).toBe(false);
+
+    await consumer.handle(
+      event("cust-1", "marketing_sms", false, "2026-07-18T01:00:00.000Z", "tenant-b"),
+    );
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-a")).toBe(true);
+    expect(await port.hasConsent("cust-1", "marketing_sms", "tenant-b")).toBe(false);
   });
 });
