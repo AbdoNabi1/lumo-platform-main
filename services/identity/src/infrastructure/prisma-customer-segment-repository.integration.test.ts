@@ -53,13 +53,19 @@ describe.runIf(Boolean(url))("Prisma customer segments (integration)", () => {
     const a = (await segments.findById(first.id.toString(), tenantId))!;
     const b = (await segments.findById(first.id.toString(), tenantId))!;
     expect(a.version).toBe(1);
+    const winnerConditions = [{ field: "orders_count" as const, op: "gte" as const, value: 5 }];
     a.rename("winner", new Date());
+    a.replaceConditions(winnerConditions, new Date());
     expect(await unitOfWork.run((tx) => segments.save(a, tenantId, tx))).toBe(2);
     b.rename("loser", new Date());
+    b.replaceConditions([{ field: "orders_count", op: "eq", value: 0 }], new Date());
     await expect(unitOfWork.run((tx) => segments.save(b, tenantId, tx))).rejects.toBeInstanceOf(
       ConcurrencyError,
     );
-    expect((await segments.findById(first.id.toString(), tenantId))?.name).toBe("winner");
+    const afterLoss = (await segments.findById(first.id.toString(), tenantId))!;
+    expect(afterLoss.name).toBe("winner");
+    expect(afterLoss.conditions).toEqual(winnerConditions);
+    expect(afterLoss.version).toBe(2);
     await expect(
       unitOfWork.run((tx) => segments.save(make("WINNER"), tenantId, tx)),
     ).rejects.toBeInstanceOf(ConflictError);
