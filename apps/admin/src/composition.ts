@@ -221,6 +221,7 @@ import { PaymentsAdminController } from "./interfaces/payments.admin-controller"
 import { PlatformConsoleAdminController } from "./interfaces/platform-console.admin-controller";
 import { PricingAdminController } from "./interfaces/pricing.admin-controller";
 import { ProductsAdminController } from "./interfaces/products.admin-controller";
+import { CollectionsAdminController } from "./interfaces/collections.admin-controller";
 import { PromotionsAdminController } from "./interfaces/promotions.admin-controller";
 import { DiscountsAdminController } from "./interfaces/discounts/discounts.admin-controller";
 import { RecommendationsAdminController } from "./interfaces/recommendations.admin-controller";
@@ -593,6 +594,7 @@ export interface AdminWiringDeps {
 export interface WiredAdmin {
   /** Products screen → Catalog. */
   readonly products: ProductsAdminController;
+  readonly collections: CollectionsAdminController;
   /** Inventory screen → Inventory. */
   readonly inventory: InventoryAdminController;
   /** Orders screen → Orders. */
@@ -1513,6 +1515,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   });
 
   return {
+    collections: new CollectionsAdminController({
+      collections: catalog.collections,
+      products: catalog.products,
+      guard,
+    }),
     products: new ProductsAdminController({
       products: catalog.products,
       categories: catalog.categories,
