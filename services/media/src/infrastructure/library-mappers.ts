@@ -18,6 +18,7 @@ export interface MediaAssetRow {
   readonly folderRef: string | null;
   readonly status: string;
   readonly version: number;
+  readonly createdAt?: Date;
   readonly contentType?: string | null;
   readonly byteSize?: number | null;
   readonly width?: number | null;
@@ -64,6 +65,7 @@ export class MediaAssetMapper {
         ...(row.height != null ? { height: row.height } : {}),
         ...(row.alt != null ? { alt: row.alt } : {}),
       },
+      row.createdAt,
     );
   }
 

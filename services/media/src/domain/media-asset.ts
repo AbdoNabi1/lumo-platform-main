@@ -15,6 +15,7 @@ export interface ImageDetails {
 export const MAX_ALT_LENGTH = 512;
 
 interface MediaAssetProps {
+  readonly createdAt?: Date;
   readonly name: string;
   readonly storageKey: string;
   readonly folderRef?: string;
@@ -42,7 +43,14 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
     details: ImageDetails = {},
   ): MediaAsset {
     const asset = new MediaAsset(
-      { name, storageKey, folderRef, status: LibraryEntryStatus.active(), ...details },
+      {
+        name,
+        storageKey,
+        folderRef,
+        status: LibraryEntryStatus.active(),
+        ...details,
+        createdAt: occurredAt,
+      },
       id,
     );
     asset.raise("created", eventId, occurredAt);
@@ -57,8 +65,13 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
     version: number,
     folderRef?: string,
     details: ImageDetails = {},
+    createdAt?: Date,
   ): MediaAsset {
-    return new MediaAsset({ name, storageKey, folderRef, status, ...details }, id, version);
+    return new MediaAsset(
+      { name, storageKey, folderRef, status, ...details, createdAt },
+      id,
+      version,
+    );
   }
 
   /** Sets (or, with `undefined`, clears) the alt text. The caller trims and length-checks it. */
@@ -86,6 +99,10 @@ export class MediaAsset extends AggregateRoot<MediaAssetProps> {
         },
       ),
     );
+  }
+
+  get createdAt(): Date | undefined {
+    return this.props.createdAt;
   }
 
   get name(): string {

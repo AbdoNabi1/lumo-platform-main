@@ -5,12 +5,15 @@ import { Address } from "../domain/address";
 import { ConsentRecord } from "../domain/consent-record";
 import { Customer } from "../domain/customer";
 import { ConsentScope } from "../domain/value-objects/consent-scope";
+import { isCustomerLanguage } from "../domain/value-objects/customer-language";
 import { Email } from "../domain/value-objects/email";
 
 export interface CustomerRow {
   readonly id: string;
   readonly email: string;
   readonly name: string;
+  readonly phone: string | null;
+  readonly language: string | null;
   readonly isGuest: boolean;
   readonly emailVerifiedAt: Date | null;
   readonly version: number;
@@ -46,6 +49,8 @@ export class CustomerMapper {
     addresses: readonly AddressRow[],
     consents: readonly ConsentRow[],
   ): Customer {
+    if (row.language !== null && !isCustomerLanguage(row.language))
+      throw new UnexpectedError("Corrupt identity row: invalid language");
     return Customer.reconstitute(
       UniqueEntityId.from(row.id),
       must(Email.create(row.email), "email"),
@@ -67,6 +72,8 @@ export class CustomerMapper {
       row.version,
       row.isGuest,
       row.emailVerifiedAt,
+      row.phone,
+      row.language,
     );
   }
 
@@ -76,6 +83,8 @@ export class CustomerMapper {
       tenantId,
       email: customer.email.value,
       name: customer.name,
+      phone: customer.phone,
+      language: customer.language,
       isGuest: customer.isGuest,
       emailVerifiedAt: customer.emailVerifiedAt,
       version: 1,

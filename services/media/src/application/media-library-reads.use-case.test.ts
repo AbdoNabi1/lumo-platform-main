@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
+import { UniqueEntityId } from "@platform/domain";
+import { MediaAsset } from "../domain/media-asset";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { InMemoryOutboxStore, OutboxWriter, rootEventContext } from "@platform/messaging";
 import { GetFolder } from "./get-folder.use-case";
@@ -103,5 +105,40 @@ describe("Media Library read use-cases (Phase 4 T4.14)", () => {
     expect(missing.ok).toBe(false);
     if (missing.ok) return;
     expect(missing.error.code).toBe("NOT_FOUND");
+  });
+});
+
+describe("ListMediaAssets filters", () => {
+  it("passes filters, ordering, cursor and tenant to the repository", async () => {
+    const h = harness();
+    const ids = [1, 2, 3, 4].map((n) => `0190a000-0000-7000-8000-00000000000${n}`);
+    const assets = ids.map((id, i) =>
+      MediaAsset.create(
+        UniqueEntityId.from(id),
+        ["Beach.png", "logo.webp", "beach-2.jpg", "other.png"][i]!,
+        `media/${id}`,
+        id,
+        new Date(0),
+      ),
+    );
+    assets[1]!.archive(ids[1]!, new Date(0));
+    for (const asset of assets.slice(0, 3)) await h.mediaAssets.save(asset, "tenant-a");
+    await h.mediaAssets.save(assets[3]!, "tenant-b");
+    const useCase = new ListMediaAssets(h);
+    const list = async (query: Omit<Parameters<typeof useCase.execute>[0], "tenantId">) => {
+      const result = await useCase.execute({ ...query, tenantId: "tenant-a" });
+      if (!result.ok) throw result.error;
+      return result.value;
+    };
+    const getIds = (page: Awaited<ReturnType<typeof list>>) =>
+      page.items.map((a) => a.id.toString());
+    expect(getIds(await list({}))).toEqual(ids.slice(0, 3));
+    expect(getIds(await list({ status: "active" }))).toEqual([ids[0], ids[2]]);
+    expect(getIds(await list({ search: "BEACH" }))).toEqual([ids[0], ids[2]]);
+    expect(getIds(await list({ sort: "newest" }))).toEqual([ids[2], ids[1], ids[0]]);
+    const first = await list({ sort: "newest", first: 1 });
+    expect(getIds(first)).toEqual([ids[2]]);
+    expect(first.pageInfo.endCursor).toBe(ids[2]);
+    expect(getIds(await list({ sort: "newest", first: 1, after: ids[2]! }))).toEqual([ids[1]]);
   });
 });

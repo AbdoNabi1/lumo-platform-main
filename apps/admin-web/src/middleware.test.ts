@@ -268,6 +268,78 @@ describe("middleware role table for collections (Shopify parity Wave 1a)", () =>
   });
 });
 
+describe("middleware role table for Content > Files (Shopify parity Wave 1b)", () => {
+  it("lets a viewer open /content/files, with a query string or a trailing path", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/content/files", "/content/files?q=beach&view=list"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("still redirects a viewer from /content and /content/new to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/content", "/content/new"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toContain("/forbidden");
+    }
+  });
+
+  it("lets an operator open /content/files and /content/new", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    for (const path of ["/content/files", "/content/new"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+});
+
+describe("middleware role table for customers (Shopify parity Wave 1b)", () => {
+  const CUSTOMER_ID = "2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11";
+
+  it("lets a viewer open the list, a customer and the export route", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/customers",
+      "/customers?q=nour&exportError=failed",
+      `/customers/${CUSTOMER_ID}`,
+      "/customers/export?scope=all",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("redirects a viewer from /customers/new to /forbidden, with or without a query string", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/customers/new", "/customers/new?x=1"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toContain("/forbidden");
+    }
+  });
+
+  it("redirects an unknown role from /customers/new to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["guest"] } });
+    const response = await middleware(requestFor("/customers/new", "good.token"));
+    expect(response.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an operator and an admin open /customers/new", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "admin"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const response = await middleware(requestFor("/customers/new", "good.token"));
+      expect(response.headers.get("location"), role).toBeNull();
+    }
+  });
+});
+
 describe("middleware role table for the orders screens", () => {
   it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });

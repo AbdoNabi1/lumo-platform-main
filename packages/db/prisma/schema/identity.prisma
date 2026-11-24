@@ -8,6 +8,9 @@ model Customer {
   email     String // stored trimmed + lower-cased (domain `Email` VO)
   name      String
   isGuest   Boolean   @default(false) @map("is_guest") // created by guest checkout, not registration (WP-1, G-52)
+  phone     String?
+  language  String?
+  note      String?
   emailVerifiedAt DateTime? @map("email_verified_at") // set only on guest→account upgrade (G-72)
   version   Int       @default(0)
   createdAt DateTime  @default(now()) @map("created_at")
@@ -16,9 +19,24 @@ model Customer {
 
   addresses Address[]
   consents  ConsentRecord[]
+  tags      CustomerTag[]
 
   @@unique([tenantId, email])
   @@map("customers")
+  @@schema("identity")
+}
+
+model CustomerTag {
+  tenantId   String   @map("tenant_id")
+  customerId String   @map("customer_id") @db.Uuid
+  tag        String
+  tagKey     String   @map("tag_key")
+  createdAt  DateTime @default(now()) @map("created_at")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, tagKey])
+  @@index([tenantId, tagKey])
+  @@map("customer_tags")
   @@schema("identity")
 }
 
@@ -61,7 +79,7 @@ model ConsentRecord {
   id         String   @id @db.Uuid
   tenantId   String   @map("tenant_id")
   customerId String   @map("customer_id") @db.Uuid
-  scope      String // marketing | analytics | data_sharing (domain-enforced)
+  scope      String // marketing (email) | marketing_sms | analytics | data_sharing (domain-enforced)
   granted    Boolean
   occurredAt DateTime @map("occurred_at")
 

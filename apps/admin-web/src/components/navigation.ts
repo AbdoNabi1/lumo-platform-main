@@ -10,6 +10,7 @@ import {
   FolderTreeIcon,
   GiftIcon,
   HouseIcon,
+  ImageIcon,
   LandmarkIcon,
   LanguagesIcon,
   LayersIcon,
@@ -133,8 +134,14 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     label: (t) => t.nav.content,
     href: "/content",
     Icon: FileTextIcon,
-    // Shopify's Content lists Metaobjects, Files, Menus and Blog posts; Menus is the one that exists.
+    // Shopify's Content lists Metaobjects, Files, Menus and Blog posts; Files and Menus exist.
     children: [
+      {
+        id: "content-files",
+        label: (t) => t.nav.files,
+        href: "/content/files",
+        Icon: ImageIcon,
+      },
       {
         id: "online-store-navigation",
         label: (t) => t.nav.menus,

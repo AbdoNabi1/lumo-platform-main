@@ -11,6 +11,12 @@ const pageQuery = z.object({
   before: z.string().optional(),
 });
 
+const assetListQuery = pageQuery.extend({
+  search: z.string().trim().min(1).max(100).optional(),
+  status: z.enum(["active", "archived"]).optional(),
+  sort: z.enum(["newest", "oldest"]).optional(),
+});
+
 export interface FolderDto {
   readonly id: string;
   readonly name: string;
@@ -31,6 +37,9 @@ export interface MediaAssetDto {
   readonly id: string;
   readonly name: string;
   readonly storageKey: string;
+  readonly contentType: string | null;
+  readonly byteSize: number | null;
+  readonly createdAt: string | null;
   readonly folderRef: string | null;
   readonly status: string;
   /**
@@ -52,6 +61,9 @@ function toMediaAssetDto(asset: MediaAsset, image: LibraryImage | null = null): 
     id: asset.id.toString(),
     name: asset.name,
     storageKey: asset.storageKey,
+    contentType: asset.contentType ?? null,
+    byteSize: asset.byteSize ?? null,
+    createdAt: asset.createdAt?.toISOString() ?? null,
     folderRef: asset.folderRef ?? null,
     status: asset.status.value,
     image,
@@ -245,7 +257,7 @@ export function mediaLibraryRoutes(admin: WiredAdmin): readonly RouteDefinition[
       version: 1,
       permission: "media_library:read",
       summary: "List media assets (cursor pagination)",
-      schema: { querystring: pageQuery },
+      schema: { querystring: assetListQuery },
       handle: async ({ query, context }) => {
         const response = await admin.mediaLibrary.listMediaAssets(context.principal, {
           ...query,

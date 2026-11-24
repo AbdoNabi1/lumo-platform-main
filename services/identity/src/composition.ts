@@ -13,7 +13,10 @@ import {
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { AddAddress } from "./application/add-address.use-case";
 import { ChangeConsent } from "./application/change-consent.use-case";
+import { ChangeMarketingConsent } from "./application/change-marketing-consent.use-case";
 import { CompleteSignup } from "./application/complete-signup.use-case";
+import { CreateCustomer } from "./application/create-customer.use-case";
+import { GetCustomerAnnotations } from "./application/get-customer-annotations.use-case";
 import { GetCustomer } from "./application/get-customer.use-case";
 import { GetCustomerContacts } from "./application/get-customer-contacts.use-case";
 import { ListCustomers } from "./application/list-customers.use-case";
@@ -22,6 +25,9 @@ import { ArchiveOrganization, CreateOrganization } from "./application/organizat
 import { RegisterCustomer } from "./application/register-customer.use-case";
 import { RequestSignupLink } from "./application/request-signup-link.use-case";
 import { ResolveGuestCustomer } from "./application/resolve-guest-customer.use-case";
+import { SetCustomerNote } from "./application/set-customer-note.use-case";
+import { SetCustomerTags } from "./application/set-customer-tags.use-case";
+import { UpdateCustomerProfile } from "./application/update-customer-profile.use-case";
 import type { TokenPort } from "./application/token-port";
 import { CreateUser, DeactivateUser, RenameUser } from "./application/user.use-cases";
 import type {
@@ -29,6 +35,7 @@ import type {
   OrganizationRepository,
   UserRepository,
 } from "./domain/access-repositories";
+import type { CustomerAnnotationRepository } from "./domain/customer-annotations";
 import type { CustomerContactReader, CustomerRepository } from "./domain/customer-repository";
 import type { SignupTokenRepository } from "./domain/signup-token-repository";
 import { IdentityEventTranslator } from "./infrastructure/identity-event-translator";
@@ -37,6 +44,8 @@ import {
   InMemoryOrganizationRepository,
   InMemoryUserRepository,
 } from "./infrastructure/in-memory-access-repositories";
+import { InMemoryCustomerAnnotationRepository } from "./infrastructure/in-memory-customer-annotation-repository";
+import { PrismaCustomerAnnotationRepository } from "./infrastructure/prisma-customer-annotation-repository";
 import { InMemoryCustomerRepository } from "./infrastructure/in-memory-customer-repository";
 import { InMemorySignupTokenRepository } from "./infrastructure/in-memory-signup-token-repository";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
@@ -76,6 +85,7 @@ export interface WiredIdentity {
 
 interface IdentityRepos {
   readonly customers: CustomerRepository & CustomerContactReader;
+  readonly customerAnnotations: CustomerAnnotationRepository;
   readonly signupTokens: SignupTokenRepository;
   readonly users: UserRepository;
   readonly organizations: OrganizationRepository;
@@ -89,7 +99,14 @@ function buildControllers(
   deps: IdentityWiringDeps,
   tokenPort: TokenPort,
 ): { customers: CustomerController; access: AccessController } {
-  const { customers, signupTokens, users, organizations, memberships } = repos;
+  const {
+    customers,
+    customerAnnotations: annotations,
+    signupTokens,
+    users,
+    organizations,
+    memberships,
+  } = repos;
 
   const controller = new CustomerController({
     registerCustomer: new RegisterCustomer({
@@ -129,6 +146,23 @@ function buildControllers(
     getCustomer: new GetCustomer({ customers }),
     listCustomers: new ListCustomers({ customers }),
     getCustomerContacts: new GetCustomerContacts({ customers }),
+    createCustomer: new CreateCustomer({
+      customers,
+      annotations,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    updateCustomerProfile: new UpdateCustomerProfile({ customers, unitOfWork }),
+    setCustomerNote: new SetCustomerNote({ annotations, unitOfWork }),
+    setCustomerTags: new SetCustomerTags({ annotations, unitOfWork }),
+    changeMarketingConsent: new ChangeMarketingConsent({
+      customers,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    getCustomerAnnotations: new GetCustomerAnnotations({ annotations }),
   });
 
   const access = new AccessController({
@@ -201,6 +235,7 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
     const accessDeps = { prisma: deps.prisma, outbox, context };
     const repos: IdentityRepos = {
       customers: new PrismaCustomerRepository({ prisma: deps.prisma, outbox, context }),
+      customerAnnotations: new PrismaCustomerAnnotationRepository({ prisma: deps.prisma }),
       signupTokens: new PrismaSignupTokenRepository({ prisma: deps.prisma }),
       users: new PrismaUserRepository(accessDeps),
       organizations: new PrismaOrganizationRepository(accessDeps),
@@ -222,8 +257,10 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
   });
   const context = rootEventContext(deps.idGenerator);
 
+  const customers = new InMemoryCustomerRepository({ outbox: outboxWriter, context });
   const repos: IdentityRepos = {
-    customers: new InMemoryCustomerRepository({ outbox: outboxWriter, context }),
+    customers,
+    customerAnnotations: new InMemoryCustomerAnnotationRepository({ customers }),
     signupTokens: new InMemorySignupTokenRepository(),
     users: new InMemoryUserRepository({ outbox: outboxWriter, context }),
     organizations: new InMemoryOrganizationRepository({ outbox: outboxWriter, context }),

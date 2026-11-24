@@ -4,7 +4,11 @@ import { buildPaginatedPage, decodeCursor, normalizePageSize } from "@platform/r
 import type { CursorPage, Paginated } from "@platform/types";
 import { ConcurrencyError } from "@platform/utils";
 import type { Folder } from "../domain/folder";
-import type { FolderRepository, MediaAssetRepository } from "../domain/library-repositories";
+import type {
+  FolderRepository,
+  MediaAssetListQuery,
+  MediaAssetRepository,
+} from "../domain/library-repositories";
 import type { MediaAsset } from "../domain/media-asset";
 import { FolderMapper, MediaAssetMapper } from "./library-mappers";
 
@@ -143,13 +147,22 @@ export class PrismaMediaAssetRepository implements MediaAssetRepository {
     return rows.map((row) => MediaAssetMapper.toDomain(row));
   }
 
-  async list(page: CursorPage, tenantId: string, tx?: unknown): Promise<Paginated<MediaAsset>> {
+  async list(
+    page: MediaAssetListQuery,
+    tenantId: string,
+    tx?: unknown,
+  ): Promise<Paginated<MediaAsset>> {
     const after = page.after !== undefined ? decodeCursor(page.after) : undefined;
     const limit = normalizePageSize(page.first);
     const run = (client: TransactionClient) =>
       client.mediaAsset.findMany({
-        where: { tenantId, ...(after ? { id: { gt: after } } : {}) },
-        orderBy: { id: "asc" },
+        where: {
+          tenantId,
+          ...(page.status ? { status: page.status } : {}),
+          ...(page.search ? { name: { contains: page.search, mode: "insensitive" as const } } : {}),
+          ...(after ? { id: page.sort === "newest" ? { lt: after } : { gt: after } } : {}),
+        },
+        orderBy: { id: page.sort === "newest" ? "desc" : "asc" },
         take: limit + 1,
       });
     const rows =

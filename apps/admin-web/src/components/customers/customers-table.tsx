@@ -46,10 +46,12 @@ export function CustomersTable({
                 <Avatar className="size-7">
                   <AvatarFallback className="text-xs">{initialsOf(customer.name)}</AvatarFallback>
                 </Avatar>
-                {customer.name}
+                <bdi dir="auto">{customer.name}</bdi>
               </Link>
             </TableCell>
-            <TableCell className="text-muted-foreground">{customer.email}</TableCell>
+            <TableCell className="text-muted-foreground">
+              <bdi dir="auto">{customer.email}</bdi>
+            </TableCell>
           </TableRow>
         ))}
       </TableBody>

@@ -1,9 +1,14 @@
 import { ValidationError, ValueObject } from "@platform/domain";
 import { err, ok, type Result } from "@platform/types";
 
-export type ConsentScopeValue = "marketing" | "analytics" | "data_sharing";
+export type ConsentScopeValue = "marketing" | "marketing_sms" | "analytics" | "data_sharing";
 
-const ALLOWED: readonly ConsentScopeValue[] = ["marketing", "analytics", "data_sharing"];
+const ALLOWED: readonly ConsentScopeValue[] = [
+  "marketing",
+  "marketing_sms",
+  "analytics",
+  "data_sharing",
+];
 
 interface ConsentScopeProps {
   readonly value: ConsentScopeValue;

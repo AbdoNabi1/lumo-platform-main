@@ -8,14 +8,19 @@ import { AppShell } from "@/components/app-shell";
 import { CustomerAddressesCard } from "@/components/customers/customer-addresses-card";
 import { CustomerConsentCard } from "@/components/customers/customer-consent-card";
 import { CustomerIdentityTimelineCard } from "@/components/customers/customer-identity-timeline-card";
+import { CustomerMarketingCard } from "@/components/customers/customer-marketing-card";
+import { CustomerNoteCard } from "@/components/customers/customer-note-card";
 import {
   CustomerOrdersCard,
   CustomerOrdersCardSkeleton,
 } from "@/components/customers/customer-orders-card";
+import { CustomerOverviewCard } from "@/components/customers/customer-overview-card";
+import { CustomerTagsCard } from "@/components/customers/customer-tags-card";
 import { CustomerProfileCard } from "@/components/customers/customer-profile-card";
 import { fetchCustomerProfile, fetchIdentityTimeline } from "@/lib/api/customer-360";
 import { fetchCustomer } from "@/lib/api/customers";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { showPlatformTools } from "@/lib/platform-tools";
 
@@ -55,6 +60,10 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
   const t = dictionaryFor(locale);
   const user = await getCurrentUser();
   const { customerId } = await params;
+  // Operators and admins edit the profile, note, tags and marketing (the API enforces
+  // `customers:update` and `customers:change_consent`); a viewer or an unknown role only reads.
+  const role = highestRole((await readSession())?.roles ?? []);
+  const canEdit = role === "operator" || role === "admin";
 
   // The Customer 360 cards (identity resolution) are for the platform team, not the merchant.
   const withCustomer360 = showPlatformTools();
@@ -106,7 +115,7 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
         <div>
           <Button variant="ghost" size="sm" asChild className="-ms-2 mb-2">
             <Link href="/customers">
-              <ArrowLeftIcon aria-hidden="true" className="rtl:-scale-x-100" />
+              <ArrowLeftIcon aria-hidden="true" className="rtl:rotate-180" />
               {t.customerDetail.back}
             </Link>
           </Button>
@@ -116,10 +125,12 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
               <AvatarFallback>{initialsOf(customer.name)}</AvatarFallback>
             </Avatar>
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">{customer.name}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                <bdi dir="auto">{customer.name}</bdi>
+              </h1>
               <p className="text-muted-foreground mt-1 flex items-center gap-1.5 text-sm">
                 <MailIcon aria-hidden="true" className="size-4" />
-                {customer.email}
+                <bdi dir="auto">{customer.email}</bdi>
               </p>
             </div>
           </div>
@@ -127,12 +138,31 @@ export default async function CustomerDetailPage({ params }: CustomerDetailPageP
 
         <div className="grid gap-6 xl:grid-cols-3 [&>*]:min-w-0">
           <div className="flex flex-col gap-6 xl:col-span-2">
+            <CustomerOverviewCard customer={customer} canEdit={canEdit} t={t} />
             <Suspense fallback={<CustomerOrdersCardSkeleton t={t} />}>
               <CustomerOrdersCard customerId={customer.id} t={t} locale={locale} />
             </Suspense>
           </div>
 
           <div className="flex flex-col gap-6">
+            <CustomerNoteCard
+              customerId={customer.id}
+              note={customer.note}
+              canEdit={canEdit}
+              t={t}
+            />
+            <CustomerTagsCard
+              customerId={customer.id}
+              tags={customer.tags}
+              canEdit={canEdit}
+              t={t}
+            />
+            <CustomerMarketingCard
+              customerId={customer.id}
+              marketing={customer.marketing}
+              canEdit={canEdit}
+              t={t}
+            />
             <CustomerAddressesCard addresses={customer.addresses} t={t} />
             <CustomerConsentCard consents={customer.consents} t={t} locale={locale} />
           </div>
@@ -166,7 +196,7 @@ function StatePanel({
           <p role="note">{message}</p>
           <Button variant="outline" asChild>
             <Link href="/customers">
-              <ArrowLeftIcon aria-hidden="true" className="rtl:-scale-x-100" />
+              <ArrowLeftIcon aria-hidden="true" className="rtl:rotate-180" />
               {backLabel}
             </Link>
           </Button>
