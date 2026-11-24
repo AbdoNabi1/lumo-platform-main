@@ -364,6 +364,49 @@ describe("shipping.merchant_carrier_settings — migration history matches the P
     );
   });
 });
+describe("identity customer profile and tags (20261124000000)", () => {
+  const migration = join(migrationsDir, "20261124000000_customer_profile_tags", "migration.sql");
+
+  it("adds nullable customer profile columns and constrains language", () => {
+    const sql = readFileSync(migration, "utf-8");
+    for (const column of ["phone", "language", "note"]) {
+      expect(sql).toContain(`ALTER TABLE "identity"."customers" ADD COLUMN "${column}" TEXT;`);
+    }
+    expect(sql).toContain(`CHECK ("language" IS NULL OR "language" IN ('en','ar'))`);
+  });
+
+  it("defines customer tags with types, defaults, key, tenant index and cascading foreign key", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("identity", "customer_tags", sql)].sort()).toEqual([
+      "created_at",
+      "customer_id",
+      "tag",
+      "tag_key",
+      "tenant_id",
+    ]);
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL',
+      '"customer_id" UUID NOT NULL',
+      '"tag" TEXT NOT NULL',
+      '"tag_key" TEXT NOT NULL',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      'CONSTRAINT "customer_tags_pkey" PRIMARY KEY ("customer_id", "tag_key")',
+      'CREATE INDEX "customer_tags_tenant_id_tag_key_idx" ON "identity"."customer_tags"("tenant_id", "tag_key");',
+      'FOREIGN KEY ("customer_id") REFERENCES "identity"."customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on customer tags for reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "identity"."customer_tags" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "identity"."customer_tags" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain('CREATE POLICY tenant_isolation ON "identity"."customer_tags" FOR ALL');
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+});
+
 describe("orders schema — order archive (order operations Part 1)", () => {
   it("a migration adds orders.orders.archived_at", () => {
     const sql = readdirSync(migrationsDir, { withFileTypes: true })
