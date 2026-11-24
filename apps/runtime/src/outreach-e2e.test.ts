@@ -228,269 +228,277 @@ async function boot() {
   return { app, meta, outbox, post, webhook, published, send, stored };
 }
 
+// Seven HTTP steps over the composed runtime: ~1.5 s locally, ~6 s under CI coverage instrumentation,
+// past vitest's 5 s default. The bound is for the whole scenario, not a per-step budget.
+const E2E_TIMEOUT_MS = 30_000;
+
 describe("Outreach Part 1 end to end (runtime composition, signed webhooks, fake Meta fetch)", () => {
-  it("connect → sync → consented send → statuses → button reply → STOP → suppressed → disconnect", async () => {
-    expect.hasAssertions();
-    const { app, meta, post, webhook, published, send, stored } = await boot();
-    const now = Math.floor(Date.now() / 1000);
-    const statusFor = (id: string, status: string, ts: number) => ({
-      id,
-      status,
-      timestamp: String(ts),
-      recipient_id: digits(BUYER),
-    });
-    const wrap = (value: Record<string, unknown>) => ({
-      object: "whatsapp_business_account",
-      entry: [
-        {
-          id: WABA,
-          changes: [
-            {
-              field: "messages",
-              value: {
-                messaging_product: "whatsapp",
-                metadata: { display_phone_number: "201012345678", phone_number_id: PHONE },
-                ...value,
-              },
-            },
-          ],
-        },
-      ],
-    });
-
-    // 1. Connect (the five Meta calls) → connected, token never echoed, `connected` event with the tenant.
-    const connect = await post("/connect", {
-      code: "auth-code",
-      wabaId: WABA,
-      phoneNumberId: PHONE,
-    });
-    expect(connect.statusCode).toBe(200);
-    expect(connect.json<{ status: string; displayPhoneNumber: string }>()).toMatchObject({
-      status: "connected",
-      displayPhoneNumber: "+20 101 234 5678",
-    });
-    expect(connect.body).not.toContain("tok-e2e");
-    expect(meta.calls).toHaveLength(5);
-    const connected = published("outreach.whatsapp.connected");
-    expect(connected).toHaveLength(1);
-    expect(connected[0]).toMatchObject({
-      tenantId: SHOP,
-      aggregateType: "whatsapp_connection",
-      payload: { phoneNumberId: PHONE, wabaId: WABA },
-    });
-    const version = connect.json<{ version: number }>().version;
-
-    // 2. Sync templates → APPROVED cod_confirmation_ar (and an APPROVED marketing one).
-    const sync = await post("/templates/sync", undefined);
-    expect(sync.statusCode).toBe(200);
-    const synced = sync.json<Array<{ name: string; status: string; category: string }>>();
-    expect(synced.find((t) => t.name === "cod_confirmation_ar")).toMatchObject({
-      status: "APPROVED",
-      category: "UTILITY",
-    });
-    expect(synced.find((t) => t.name === "summer_offer_ar")).toMatchObject({
-      status: "APPROVED",
-      category: "MARKETING",
-    });
-
-    // 3. Utility consent granted by the admin attestation, then the template send is accepted.
-    const first = await send(BUYER, "cod_confirmation_ar", true);
-    expect(first.statusCode).toBe(200);
-    const accepted = first.json<{
-      outboundId: string;
-      status: string;
-      providerMessageId: string;
-    }>();
-    expect(accepted.status).toBe("accepted");
-    expect(accepted.providerMessageId).toBe("wamid.E2E1");
-    const dispatched = meta.dispatches();
-    expect(dispatched).toHaveLength(1);
-    expect(dispatched[0]?.body).toMatchObject({
-      messaging_product: "whatsapp",
-      to: digits(BUYER),
-      type: "template",
-      template: { name: "cod_confirmation_ar", language: { code: "ar" } },
-    });
-    const wamid = accepted.providerMessageId;
-
-    // A fresh unknown contact is suppressed: nothing is dispatched (the only provider call is the per-send
-    // template freshness read, which precedes the reservation by design — R2-B04).
-    const callsBefore = meta.calls.length;
-    const stranger = await send(STRANGER, "cod_confirmation_ar", false);
-    expect(stranger.statusCode).toBe(200);
-    expect(stranger.json<{ status: string; providerMessageId: string | null }>()).toMatchObject({
-      status: "suppressed",
-      providerMessageId: null,
-    });
-    expect(meta.dispatches()).toHaveLength(1);
-    expect(meta.calls.slice(callsBefore).map((c) => `${c.method} ${c.path}`)).toStrictEqual([
-      `GET /${COD_META_ID}`,
-    ]);
-
-    // 4. sent → delivered → read, each a validly signed delivery: the DELTA is exactly three events.
-    const statusEventsBefore = published("outreach.message.status_changed").length;
-    const times = { sent: now - 30, delivered: now - 20, read: now - 10 } as const;
-    for (const status of ["sent", "delivered", "read"] as const) {
-      const res = await webhook(wrap({ statuses: [statusFor(wamid, status, times[status])] }));
-      expect(res.statusCode).toBe(200);
-      expect(res.json()).toStrictEqual({ received: true });
-    }
-    const statusEvents = published("outreach.message.status_changed").slice(statusEventsBefore);
-    expect(statusEvents).toHaveLength(3);
-    expect(statusEvents.map((e) => [e.payload.from, e.payload.to])).toStrictEqual([
-      ["accepted", "sent"],
-      ["sent", "delivered"],
-      ["delivered", "read"],
-    ]);
-    for (const [index, status] of (["sent", "delivered", "read"] as const).entries()) {
-      expect(statusEvents[index]).toMatchObject({
-        tenantId: SHOP,
-        aggregateId: accepted.outboundId,
-        aggregateType: "outbound_message",
-        payload: {
-          outboundId: accepted.outboundId,
-          channel: "whatsapp",
-          providerMessageId: wamid,
-          providerOccurredAt: new Date(times[status] * 1000).toISOString(),
-        },
+  it(
+    "connect → sync → consented send → statuses → button reply → STOP → suppressed → disconnect",
+    async () => {
+      expect.hasAssertions();
+      const { app, meta, post, webhook, published, send, stored } = await boot();
+      const now = Math.floor(Date.now() / 1000);
+      const statusFor = (id: string, status: string, ts: number) => ({
+        id,
+        status,
+        timestamp: String(ts),
+        recipient_id: digits(BUYER),
       });
-    }
-    // The persisted outbound row (same store as the HTTP app) ends as `read`, still bound to the provider id.
-    const outboundRow = await stored().outbound.findById(SHOP, accepted.outboundId);
-    expect(outboundRow).toMatchObject({ status: "read", providerMessageId: wamid });
-    // The same signed delivery again is a no-op.
-    const replay = await webhook(wrap({ statuses: [statusFor(wamid, "read", times.read)] }));
-    expect(replay.statusCode).toBe(200);
-    expect(published("outreach.message.status_changed")).toHaveLength(statusEventsBefore + 3);
-
-    // 5. The buyer taps the template's quick-reply button (context = the sent wamid).
-    const inboundBefore = published("outreach.whatsapp.inbound_received").length;
-    const tap = await webhook(
-      wrap({
-        messages: [
+      const wrap = (value: Record<string, unknown>) => ({
+        object: "whatsapp_business_account",
+        entry: [
           {
-            id: "wamid.IN1",
-            from: digits(BUYER),
-            timestamp: String(now - 5),
-            type: "button",
-            button: { text: "تأكيد", payload: "btn:0" },
-            context: { id: wamid },
+            id: WABA,
+            changes: [
+              {
+                field: "messages",
+                value: {
+                  messaging_product: "whatsapp",
+                  metadata: { display_phone_number: "201012345678", phone_number_id: PHONE },
+                  ...value,
+                },
+              },
+            ],
           },
         ],
-      }),
-    );
-    expect(tap.statusCode).toBe(200);
-    const inbound = published("outreach.whatsapp.inbound_received").slice(inboundBefore);
-    expect(inbound).toHaveLength(1);
-    expect(inbound[0]).toMatchObject({
-      tenantId: SHOP,
-      aggregateType: "inbound_message",
-      payload: {
+      });
+
+      // 1. Connect (the five Meta calls) → connected, token never echoed, `connected` event with the tenant.
+      const connect = await post("/connect", {
+        code: "auth-code",
+        wabaId: WABA,
+        phoneNumberId: PHONE,
+      });
+      expect(connect.statusCode).toBe(200);
+      expect(connect.json<{ status: string; displayPhoneNumber: string }>()).toMatchObject({
+        status: "connected",
+        displayPhoneNumber: "+20 101 234 5678",
+      });
+      expect(connect.body).not.toContain("tok-e2e");
+      expect(meta.calls).toHaveLength(5);
+      const connected = published("outreach.whatsapp.connected");
+      expect(connected).toHaveLength(1);
+      expect(connected[0]).toMatchObject({
+        tenantId: SHOP,
+        aggregateType: "whatsapp_connection",
+        payload: { phoneNumberId: PHONE, wabaId: WABA },
+      });
+      const version = connect.json<{ version: number }>().version;
+
+      // 2. Sync templates → APPROVED cod_confirmation_ar (and an APPROVED marketing one).
+      const sync = await post("/templates/sync", undefined);
+      expect(sync.statusCode).toBe(200);
+      const synced = sync.json<Array<{ name: string; status: string; category: string }>>();
+      expect(synced.find((t) => t.name === "cod_confirmation_ar")).toMatchObject({
+        status: "APPROVED",
+        category: "UTILITY",
+      });
+      expect(synced.find((t) => t.name === "summer_offer_ar")).toMatchObject({
+        status: "APPROVED",
+        category: "MARKETING",
+      });
+
+      // 3. Utility consent granted by the admin attestation, then the template send is accepted.
+      const first = await send(BUYER, "cod_confirmation_ar", true);
+      expect(first.statusCode).toBe(200);
+      const accepted = first.json<{
+        outboundId: string;
+        status: string;
+        providerMessageId: string;
+      }>();
+      expect(accepted.status).toBe("accepted");
+      expect(accepted.providerMessageId).toBe("wamid.E2E1");
+      const dispatched = meta.dispatches();
+      expect(dispatched).toHaveLength(1);
+      expect(dispatched[0]?.body).toMatchObject({
+        messaging_product: "whatsapp",
+        to: digits(BUYER),
+        type: "template",
+        template: { name: "cod_confirmation_ar", language: { code: "ar" } },
+      });
+      const wamid = accepted.providerMessageId;
+
+      // A fresh unknown contact is suppressed: nothing is dispatched (the only provider call is the per-send
+      // template freshness read, which precedes the reservation by design — R2-B04).
+      const callsBefore = meta.calls.length;
+      const stranger = await send(STRANGER, "cod_confirmation_ar", false);
+      expect(stranger.statusCode).toBe(200);
+      expect(stranger.json<{ status: string; providerMessageId: string | null }>()).toMatchObject({
+        status: "suppressed",
+        providerMessageId: null,
+      });
+      expect(meta.dispatches()).toHaveLength(1);
+      expect(meta.calls.slice(callsBefore).map((c) => `${c.method} ${c.path}`)).toStrictEqual([
+        `GET /${COD_META_ID}`,
+      ]);
+
+      // 4. sent → delivered → read, each a validly signed delivery: the DELTA is exactly three events.
+      const statusEventsBefore = published("outreach.message.status_changed").length;
+      const times = { sent: now - 30, delivered: now - 20, read: now - 10 } as const;
+      for (const status of ["sent", "delivered", "read"] as const) {
+        const res = await webhook(wrap({ statuses: [statusFor(wamid, status, times[status])] }));
+        expect(res.statusCode).toBe(200);
+        expect(res.json()).toStrictEqual({ received: true });
+      }
+      const statusEvents = published("outreach.message.status_changed").slice(statusEventsBefore);
+      expect(statusEvents).toHaveLength(3);
+      expect(statusEvents.map((e) => [e.payload.from, e.payload.to])).toStrictEqual([
+        ["accepted", "sent"],
+        ["sent", "delivered"],
+        ["delivered", "read"],
+      ]);
+      for (const [index, status] of (["sent", "delivered", "read"] as const).entries()) {
+        expect(statusEvents[index]).toMatchObject({
+          tenantId: SHOP,
+          aggregateId: accepted.outboundId,
+          aggregateType: "outbound_message",
+          payload: {
+            outboundId: accepted.outboundId,
+            channel: "whatsapp",
+            providerMessageId: wamid,
+            providerOccurredAt: new Date(times[status] * 1000).toISOString(),
+          },
+        });
+      }
+      // The persisted outbound row (same store as the HTTP app) ends as `read`, still bound to the provider id.
+      const outboundRow = await stored().outbound.findById(SHOP, accepted.outboundId);
+      expect(outboundRow).toMatchObject({ status: "read", providerMessageId: wamid });
+      // The same signed delivery again is a no-op.
+      const replay = await webhook(wrap({ statuses: [statusFor(wamid, "read", times.read)] }));
+      expect(replay.statusCode).toBe(200);
+      expect(published("outreach.message.status_changed")).toHaveLength(statusEventsBefore + 3);
+
+      // 5. The buyer taps the template's quick-reply button (context = the sent wamid).
+      const inboundBefore = published("outreach.whatsapp.inbound_received").length;
+      const tap = await webhook(
+        wrap({
+          messages: [
+            {
+              id: "wamid.IN1",
+              from: digits(BUYER),
+              timestamp: String(now - 5),
+              type: "button",
+              button: { text: "تأكيد", payload: "btn:0" },
+              context: { id: wamid },
+            },
+          ],
+        }),
+      );
+      expect(tap.statusCode).toBe(200);
+      const inbound = published("outreach.whatsapp.inbound_received").slice(inboundBefore);
+      expect(inbound).toHaveLength(1);
+      expect(inbound[0]).toMatchObject({
+        tenantId: SHOP,
+        aggregateType: "inbound_message",
+        payload: {
+          providerMessageId: "wamid.IN1",
+          type: "button",
+          buttonPayload: "btn:0",
+          contextProviderMessageId: wamid,
+        },
+      });
+      expect(inbound[0]?.aggregateId).toBe(inbound[0]?.payload.inboundId);
+      // The persisted inbound row carries the button payload and the context (the outbound wamid).
+      const inboundRow = await stored().inbound.findByProviderMessageId(SHOP, "wamid.IN1");
+      expect(inboundRow).toMatchObject({
         providerMessageId: "wamid.IN1",
         type: "button",
         buttonPayload: "btn:0",
         contextProviderMessageId: wamid,
-      },
-    });
-    expect(inbound[0]?.aggregateId).toBe(inbound[0]?.payload.inboundId);
-    // The persisted inbound row carries the button payload and the context (the outbound wamid).
-    const inboundRow = await stored().inbound.findByProviderMessageId(SHOP, "wamid.IN1");
-    expect(inboundRow).toMatchObject({
-      providerMessageId: "wamid.IN1",
-      type: "button",
-      buttonPayload: "btn:0",
-      contextProviderMessageId: wamid,
-    });
-    // No message text travels in the event.
-    expect(JSON.stringify(inbound[0])).not.toContain("تأكيد");
+      });
+      // No message text travels in the event.
+      expect(JSON.stringify(inbound[0])).not.toContain("تأكيد");
 
-    // 6. The buyer writes "إلغاء" → consent revoked; later sends are suppressed with nothing dispatched.
-    const consentBefore = published("outreach.contact.consent_changed").length;
-    const stop = await webhook(
-      wrap({
-        messages: [
-          {
-            id: "wamid.IN2",
-            from: digits(BUYER),
-            timestamp: String(now - 2),
-            type: "text",
-            text: { body: "إلغاء" },
-          },
-        ],
-      }),
-    );
-    expect(stop.statusCode).toBe(200);
-    const revoked = published("outreach.contact.consent_changed").slice(consentBefore);
-    expect(
-      revoked.map((e) => [
-        e.payload.channel,
-        e.payload.purpose,
-        e.payload.action,
-        e.payload.source,
-      ]),
-    ).toStrictEqual([
-      ["whatsapp", "marketing", "revoke", "inbound_keyword"],
-      ["whatsapp", "transactional", "revoke", "inbound_keyword"],
-    ]);
-    expect(revoked.every((e) => e.tenantId === SHOP)).toBe(true);
+      // 6. The buyer writes "إلغاء" → consent revoked; later sends are suppressed with nothing dispatched.
+      const consentBefore = published("outreach.contact.consent_changed").length;
+      const stop = await webhook(
+        wrap({
+          messages: [
+            {
+              id: "wamid.IN2",
+              from: digits(BUYER),
+              timestamp: String(now - 2),
+              type: "text",
+              text: { body: "إلغاء" },
+            },
+          ],
+        }),
+      );
+      expect(stop.statusCode).toBe(200);
+      const revoked = published("outreach.contact.consent_changed").slice(consentBefore);
+      expect(
+        revoked.map((e) => [
+          e.payload.channel,
+          e.payload.purpose,
+          e.payload.action,
+          e.payload.source,
+        ]),
+      ).toStrictEqual([
+        ["whatsapp", "marketing", "revoke", "inbound_keyword"],
+        ["whatsapp", "transactional", "revoke", "inbound_keyword"],
+      ]);
+      expect(revoked.every((e) => e.tenantId === SHOP)).toBe(true);
 
-    const dispatchesBefore = meta.dispatches().length;
-    const marketing = await send(BUYER, "summer_offer_ar", false);
-    expect(marketing.json<{ status: string }>().status).toBe("suppressed");
-    // STOP also revoked the transactional grant, so even a UTILITY template (no re-attestation) is suppressed.
-    const utility = await send(BUYER, "cod_confirmation_ar", false);
-    expect(utility.json<{ status: string }>().status).toBe("suppressed");
-    expect(meta.dispatches()).toHaveLength(dispatchesBefore);
+      const dispatchesBefore = meta.dispatches().length;
+      const marketing = await send(BUYER, "summer_offer_ar", false);
+      expect(marketing.json<{ status: string }>().status).toBe("suppressed");
+      // STOP also revoked the transactional grant, so even a UTILITY template (no re-attestation) is suppressed.
+      const utility = await send(BUYER, "cod_confirmation_ar", false);
+      expect(utility.json<{ status: string }>().status).toBe("suppressed");
+      expect(meta.dispatches()).toHaveLength(dispatchesBefore);
 
-    // 7. Disconnect → a send is WHATSAPP_NOT_CONNECTED (409) with no provider call at all; the webhook for the
-    // released number is acknowledged and ignored.
-    const disconnect = await post("/disconnect", { expectedVersion: version });
-    expect(disconnect.statusCode).toBe(200);
-    expect(disconnect.json<{ status: string }>().status).toBe("disconnected");
-    const disconnected = published("outreach.whatsapp.disconnected");
-    expect(disconnected).toHaveLength(1);
-    expect(disconnected[0]).toMatchObject({
-      tenantId: SHOP,
-      payload: { wabaId: WABA, phoneNumberId: PHONE },
-    });
+      // 7. Disconnect → a send is WHATSAPP_NOT_CONNECTED (409) with no provider call at all; the webhook for the
+      // released number is acknowledged and ignored.
+      const disconnect = await post("/disconnect", { expectedVersion: version });
+      expect(disconnect.statusCode).toBe(200);
+      expect(disconnect.json<{ status: string }>().status).toBe("disconnected");
+      const disconnected = published("outreach.whatsapp.disconnected");
+      expect(disconnected).toHaveLength(1);
+      expect(disconnected[0]).toMatchObject({
+        tenantId: SHOP,
+        payload: { wabaId: WABA, phoneNumberId: PHONE },
+      });
 
-    const callsAtDisconnect = meta.calls.length;
-    const refused = await send(BUYER, "cod_confirmation_ar", true);
-    expect(refused.statusCode).toBe(409);
-    expect(refused.json()).toMatchObject({ code: "CONFLICT", message: "WHATSAPP_NOT_CONNECTED" });
-    expect(meta.calls).toHaveLength(callsAtDisconnect);
+      const callsAtDisconnect = meta.calls.length;
+      const refused = await send(BUYER, "cod_confirmation_ar", true);
+      expect(refused.statusCode).toBe(409);
+      expect(refused.json()).toMatchObject({ code: "CONFLICT", message: "WHATSAPP_NOT_CONNECTED" });
+      expect(meta.calls).toHaveLength(callsAtDisconnect);
 
-    const inboundAtDisconnect = published("outreach.whatsapp.inbound_received").length;
-    const late = await webhook(
-      wrap({
-        messages: [
-          {
-            id: "wamid.IN3",
-            from: digits(BUYER),
-            timestamp: String(now - 1),
-            type: "text",
-            text: { body: "hello" },
-          },
-        ],
-      }),
-    );
-    expect(late.statusCode).toBe(200);
-    expect(published("outreach.whatsapp.inbound_received")).toHaveLength(inboundAtDisconnect);
+      const inboundAtDisconnect = published("outreach.whatsapp.inbound_received").length;
+      const late = await webhook(
+        wrap({
+          messages: [
+            {
+              id: "wamid.IN3",
+              from: digits(BUYER),
+              timestamp: String(now - 1),
+              type: "text",
+              text: { body: "hello" },
+            },
+          ],
+        }),
+      );
+      expect(late.statusCode).toBe(200);
+      expect(published("outreach.whatsapp.inbound_received")).toHaveLength(inboundAtDisconnect);
 
-    // A wrongly signed delivery never reaches the use case (counted as a delta again: the sends above emitted their own).
-    const statusEventsAtForgery = published("outreach.message.status_changed").length;
-    const forged = await app.inject({
-      method: "POST",
-      url: "/api/v1/public/outreach/whatsapp/webhook",
-      headers: {
-        "content-type": "application/json",
-        "x-hub-signature-256": `sha256=${"0".repeat(64)}`,
-      },
-      payload: JSON.stringify(wrap({ statuses: [statusFor(wamid, "failed", now)] })),
-    });
-    expect(forged.statusCode).toBe(401);
-    expect(published("outreach.message.status_changed")).toHaveLength(statusEventsAtForgery);
-  });
+      // A wrongly signed delivery never reaches the use case (counted as a delta again: the sends above emitted their own).
+      const statusEventsAtForgery = published("outreach.message.status_changed").length;
+      const forged = await app.inject({
+        method: "POST",
+        url: "/api/v1/public/outreach/whatsapp/webhook",
+        headers: {
+          "content-type": "application/json",
+          "x-hub-signature-256": `sha256=${"0".repeat(64)}`,
+        },
+        payload: JSON.stringify(wrap({ statuses: [statusFor(wamid, "failed", now)] })),
+      });
+      expect(forged.statusCode).toBe(401);
+      expect(published("outreach.message.status_changed")).toHaveLength(statusEventsAtForgery);
+    },
+    E2E_TIMEOUT_MS,
+  );
 
   it("the transactional outbox is the platform's: every published type is a canonical .v1 outreach topic", async () => {
     expect.hasAssertions();
