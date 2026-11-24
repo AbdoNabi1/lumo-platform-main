@@ -199,3 +199,129 @@ export async function fetchLibraryImages(
     },
   };
 }
+
+/**
+ * One row of the Files page — `MediaAssetDto` of `apps/admin/src/http/media-library-routes.ts`
+ * (never the storage key). `image` is the resolved picture of an active image asset, else `null`.
+ */
+export interface MediaFileDto {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string;
+  readonly contentType: string | null;
+  readonly byteSize: number | null;
+  readonly createdAt: string | null;
+  readonly image: {
+    readonly url: string;
+    readonly alt: string | null;
+    readonly width: number | null;
+    readonly height: number | null;
+  } | null;
+}
+
+export interface MediaFilesPage {
+  readonly items: readonly MediaFileDto[];
+  readonly pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null };
+}
+
+const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
+
+function isMediaFileDto(value: unknown): value is MediaFileDto {
+  if (!isObj(value)) return false;
+  if (typeof value["id"] !== "string" || typeof value["name"] !== "string") return false;
+  if (typeof value["status"] !== "string") return false;
+  if (!isStrOrNull(value["contentType"]) || !isNumOrNull(value["byteSize"])) return false;
+  if (!isStrOrNull(value["createdAt"])) return false;
+  const image = value["image"];
+  if (image === null) return true;
+  return (
+    isObj(image) &&
+    typeof image["url"] === "string" &&
+    isStrOrNull(image["alt"]) &&
+    isNumOrNull(image["width"]) &&
+    isNumOrNull(image["height"])
+  );
+}
+
+/** Checks every field the Files page reads, so a malformed row is an error, not a render crash. */
+export function isMediaFilesPage(value: unknown): value is MediaFilesPage {
+  if (!isObj(value) || !Array.isArray(value["items"])) return false;
+  if (!value["items"].every(isMediaFileDto)) return false;
+  const info = value["pageInfo"];
+  return (
+    isObj(info) &&
+    typeof info["hasNextPage"] === "boolean" &&
+    (info["endCursor"] === null || typeof info["endCursor"] === "string")
+  );
+}
+
+const FILES_PAGE_SIZE = 50;
+
+/** Copies exactly the fields of {@link MediaFileDto}, dropping everything else the API sent. */
+function toMediaFile(row: MediaFileDto): MediaFileDto {
+  return {
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    contentType: row.contentType,
+    byteSize: row.byteSize,
+    createdAt: row.createdAt,
+    image:
+      row.image === null
+        ? null
+        : {
+            url: row.image.url,
+            alt: row.image.alt,
+            width: row.image.width,
+            height: row.image.height,
+          },
+  };
+}
+
+/**
+ * `GET /media/assets?status=active&…` (`media_library:read`) — the Files page's list. Always
+ * `status=active` (a deleted file is archived), 50 per page unless told otherwise.
+ */
+export async function fetchMediaFilesPage(input: {
+  readonly first?: number;
+  readonly after?: string;
+  readonly search?: string;
+  readonly sort?: "newest" | "oldest";
+}): Promise<ApiResult<MediaFilesPage>> {
+  const params = new URLSearchParams({
+    status: "active",
+    first: String(input.first ?? FILES_PAGE_SIZE),
+  });
+  if (input.after !== undefined && input.after !== "") params.set("after", input.after);
+  if (input.search !== undefined && input.search !== "") params.set("search", input.search);
+  if (input.sort !== undefined) params.set("sort", input.sort);
+  const result = await getAdminApi(`/api/v1/media/assets?${params}`, isMediaFilesPage);
+  if (result.outcome !== "ok") return result;
+  // The API row also carries `storageKey` and `folderRef`; neither belongs in the page's props.
+  return {
+    outcome: "ok",
+    data: {
+      items: result.data.items.map(toMediaFile),
+      pageInfo: {
+        hasNextPage: result.data.pageInfo.hasNextPage,
+        endCursor: result.data.pageInfo.endCursor,
+      },
+    },
+  };
+}
+
+function isArchivedDto(value: unknown): value is { readonly mediaAssetId: string } {
+  return isObj(value) && typeof value["mediaAssetId"] === "string";
+}
+
+/** `POST /media/assets/:id/archive` (`media_library:archive_asset`) — the Files page's "Delete file". */
+export function archiveMediaFile(
+  mediaAssetId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<{ readonly mediaAssetId: string }>> {
+  return mutateAdminApi(
+    `/api/v1/media/assets/${encodeURIComponent(mediaAssetId)}/archive`,
+    { method: "POST", idempotencyKey },
+    isArchivedDto,
+  );
+}

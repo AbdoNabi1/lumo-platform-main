@@ -170,7 +170,10 @@ describe("SidebarNav (Shopify layout)", () => {
   it("gives Content the Menus child and takes it out of Online Store's children", () => {
     expect.hasAssertions();
     const content = PRIMARY_NAV.find((item) => item.id === "content")!;
-    expect((content.children ?? []).map((child) => child.id)).toEqual(["online-store-navigation"]);
+    expect((content.children ?? []).map((child) => child.id)).toEqual([
+      "content-files",
+      "online-store-navigation",
+    ]);
     expect(isInSection(content, "online-store-navigation")).toBe(true);
     expect((ONLINE_STORE_NAV.children ?? []).map((child) => child.id)).not.toContain(
       "online-store-navigation",
@@ -206,11 +209,30 @@ describe("SidebarNav (Shopify layout)", () => {
     );
   });
 
-  it("names the Menus child القوائم in Arabic", () => {
+  it("names the Menus child القوائم in Arabic and the Files child الملفات", () => {
     expect.hasAssertions();
     const content = PRIMARY_NAV.find((item) => item.id === "content")!;
-    expect(content.children?.[0]?.label(ar)).toBe("القوائم");
-    expect(content.children?.[0]?.label(en)).toBe("Menus");
+    const menus = content.children?.find((child) => child.id === "online-store-navigation");
+    expect(menus?.label(ar)).toBe("القوائم");
+    expect(menus?.label(en)).toBe("Menus");
+    const files = content.children?.find((child) => child.id === "content-files");
+    expect(files?.href).toBe("/content/files");
+    expect(files?.label(ar)).toBe(ar.nav.files);
+    expect(files?.label(en)).toBe(en.nav.files);
+    expect(ar.nav.files).toBe("الملفات");
+    expect(en.nav.files).toBe("Files");
+  });
+
+  it("puts Files first under Content and marks it current on its own page", () => {
+    expect.hasAssertions();
+    const content = PRIMARY_NAV.find((item) => item.id === "content")!;
+    expect(content.children?.[0]?.id).toBe("content-files");
+    expect(isInSection(content, "content-files")).toBe(true);
+    renderNav("content-files");
+    const primary = screen.getByRole("navigation", { name: en.nav.primary });
+    const files = within(primary).getByRole("link", { name: en.nav.files });
+    expect(files).toHaveAttribute("href", "/content/files");
+    expect(files).toHaveAttribute("aria-current", "page");
   });
 
   it("lists the raw theme tokens under Platform tools", () => {

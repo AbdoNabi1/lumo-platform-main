@@ -268,6 +268,35 @@ describe("middleware role table for collections (Shopify parity Wave 1a)", () =>
   });
 });
 
+describe("middleware role table for Content > Files (Shopify parity Wave 1b)", () => {
+  it("lets a viewer open /content/files, with a query string or a trailing path", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/content/files", "/content/files?q=beach&view=list"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("still redirects a viewer from /content and /content/new to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/content", "/content/new"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toContain("/forbidden");
+    }
+  });
+
+  it("lets an operator open /content/files and /content/new", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    for (const path of ["/content/files", "/content/new"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+});
+
 describe("middleware role table for the orders screens", () => {
   it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });

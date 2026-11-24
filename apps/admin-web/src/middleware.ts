@@ -91,6 +91,9 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/discounts", "operator"],
   ["/promotions/new", "operator"],
   ["/promotions", "viewer"],
+  // Shopify parity Wave 1b: Files read for viewers (the API refuses their writes; the page hides
+  // those controls). Listed before `/content`, which stays operator-only (longest prefix wins).
+  ["/content/files", "viewer"],
   ["/content", "operator"],
   ["/pages/new", "operator"],
   ["/pages", "viewer"],
