@@ -95,15 +95,17 @@ export function SegmentEditor({
   const showPreview = !readOnly && (mode === "create" || conditionsKey !== savedKey);
 
   useEffect(() => {
-    if (!showPreview || conditions === null) {
+    // The key IS the conditions (serialized), so equal conditions never restart the debounce.
+    if (!showPreview || conditionsKey === null) {
       setPreview({ status: "idle" });
       setPreviewErrors({});
       return;
     }
+    const toPreview = JSON.parse(conditionsKey) as readonly SegmentCondition[];
     setPreview({ status: "loading" });
     const mine = (latestPreview.current += 1);
     const timer = setTimeout(() => {
-      void previewSegmentAction(conditions).then(
+      void previewSegmentAction(toPreview).then(
         (result) => {
           if (mine !== latestPreview.current) return; // a newer edit superseded this answer
           if (result.status === "ok") {
@@ -125,7 +127,6 @@ export function SegmentEditor({
       clearTimeout(timer);
       latestPreview.current += 1; // drop any answer still in flight for these conditions
     };
-    // `conditionsKey` stands for `conditions`: equal conditions must not restart the debounce.
   }, [conditionsKey, showPreview]);
 
   const serverErrors = state.status === "error" ? state.fieldErrors : {};
