@@ -340,6 +340,52 @@ describe("middleware role table for customers (Shopify parity Wave 1b)", () => {
   });
 });
 
+describe("middleware role table for customer segments (Shopify parity Wave 1c)", () => {
+  const SEGMENT_ID = "7c1f0f6e-5c3a-4a53-8c0a-3f4f3d7a0c11";
+
+  it("lets a viewer open the list, a custom segment and a default segment", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of [
+      "/customers/segments",
+      `/customers/segments/${SEGMENT_ID}`,
+      "/customers/segments/default:not_purchased",
+      "/customers/segments/default%3Anot_purchased?q=nour&after=abc",
+    ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("redirects a viewer and an unknown role from /customers/segments/new to /forbidden, with or without a query", async () => {
+    expect.hasAssertions();
+    for (const role of ["viewer", "guest"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      for (const path of [
+        "/customers/segments/new",
+        "/customers/segments/new?from=default%3Anot_purchased",
+      ]) {
+        const response = await middleware(requestFor(path, "good.token"));
+        expect(response.headers.get("location"), `${role} ${path}`).toContain("/forbidden");
+      }
+    }
+  });
+
+  it("lets an operator and an admin open /customers/segments/new, also as a duplicate", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "admin"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      for (const path of [
+        "/customers/segments/new",
+        "/customers/segments/new?from=default%3Anot_purchased",
+      ]) {
+        const response = await middleware(requestFor(path, "good.token"));
+        expect(response.headers.get("location"), `${role} ${path}`).toBeNull();
+      }
+    }
+  });
+});
+
 describe("middleware role table for the orders screens", () => {
   it("lets a viewer open drafts and a draft, but not the new-draft screen (orders Part 4)", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });

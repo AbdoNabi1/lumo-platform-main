@@ -44,6 +44,8 @@ import { contentRoutes } from "./content-routes";
 import { couponsRoutes } from "./coupons-routes";
 import { customer360Routes } from "./customer-360-routes";
 import { annotationsOfCustomer, customerRoutes, marketingOf } from "./customer-routes";
+import type { SegmentMembersPage } from "../infrastructure/cross-context/customer-segment-query";
+import { customerSegmentRoutes } from "./customer-segment-routes";
 import { experienceRoutes } from "./experience-routes";
 import { experimentationRoutes } from "./experimentation-routes";
 import { featureFlagsRoutes } from "./feature-flags-routes";
@@ -185,10 +187,14 @@ const listOrdersQuery = z.object({
   tag: tagFilterParam().optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
+/** The size of a `GET /customers` page when the caller gives no `first` (the repository's default). */
+const DEFAULT_CUSTOMER_PAGE_SIZE = 50;
 const listCustomersQuery = z.object({
   first: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).optional(),
   search: z.string().min(1).optional(),
+  /** Wave 1c: answer from this segment's live members (`default:*` or a custom segment id). */
+  segmentId: z.string().min(1).max(100).optional(),
 });
 
 /**
@@ -1710,6 +1716,8 @@ export function adminRoutes(
     // Wave 1b: registered before `GET /customers/:customerId` so `/customers/export-rows` is not
     // swallowed by the `:customerId` parameter.
     ...customerRoutes(admin),
+    // Wave 1c: `/customer-segments/preview` and `/store-currency` are registered before `:segmentId`.
+    ...customerSegmentRoutes(admin),
     defineRoute({
       method: "GET",
       path: "/customers",
@@ -1719,14 +1727,39 @@ export function adminRoutes(
       schema: { querystring: listCustomersQuery },
       // ADR-0014: ListCustomersInput now requires tenantId — sourced from the already-verified
       // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
-      handle: async ({ query, context }) =>
-        mapPage(
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const { segmentId, ...page } = query;
+        // Wave 1c: a segment filter is answered from the live segment query, in the same list shape.
+        if (segmentId !== undefined) {
+          const response = await admin.customerSegments.members(context.principal, {
+            tenantId: context.tenantId,
+            segmentId,
+            first: page.first ?? DEFAULT_CUSTOMER_PAGE_SIZE,
+            ...(page.after === undefined ? {} : { after: page.after }),
+            ...(page.search === undefined ? {} : { search: page.search }),
+          });
+          if (response.status !== 200) return response;
+          const members = response.body as SegmentMembersPage;
+          return {
+            status: 200,
+            body: {
+              items: members.items.map((member): CustomerListItemDto => ({
+                id: member.id,
+                name: member.name,
+                email: member.email,
+              })),
+              pageInfo: members.pageInfo,
+            },
+          };
+        }
+        return mapPage(
           await admin.customers.listCustomers(context.principal, {
-            ...query,
+            ...page,
             tenantId: context.tenantId,
           }),
           toCustomerListItemDto,
-        ),
+        );
+      },
     }),
     defineRoute({
       method: "GET",

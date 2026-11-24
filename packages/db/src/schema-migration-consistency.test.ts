@@ -364,6 +364,54 @@ describe("shipping.merchant_carrier_settings — migration history matches the P
     );
   });
 });
+describe("identity customer segments (20261125000000)", () => {
+  const migration = join(migrationsDir, "20261125000000_customer_segments", "migration.sql");
+
+  it("defines segment columns, types, defaults, key and indexes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("identity", "customer_segments", sql)].sort()).toEqual([
+      "conditions",
+      "created_at",
+      "created_by",
+      "id",
+      "name",
+      "name_key",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    for (const definition of [
+      '"id" UUID NOT NULL',
+      '"tenant_id" TEXT NOT NULL',
+      '"name" TEXT NOT NULL',
+      '"name_key" TEXT NOT NULL',
+      '"conditions" JSONB NOT NULL',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"created_by" TEXT',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      'CONSTRAINT "customer_segments_pkey" PRIMARY KEY ("id")',
+      'CREATE UNIQUE INDEX "customer_segments_tenant_id_name_key_key" ON "identity"."customer_segments"("tenant_id", "name_key");',
+      'CREATE INDEX "customer_segments_tenant_id_created_at_idx" ON "identity"."customer_segments"("tenant_id", "created_at");',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on segment reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "identity"."customer_segments" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "identity"."customer_segments" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "identity"."customer_segments";',
+    );
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "identity"."customer_segments" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+});
+
 describe("identity customer profile and tags (20261124000000)", () => {
   const migration = join(migrationsDir, "20261124000000_customer_profile_tags", "migration.sql");
 

@@ -188,6 +188,88 @@ describe("mutateAdminApi", () => {
   });
 });
 
+describe("getAdminApi error branch carries status and code (Wave 1c)", () => {
+  beforeEach(() => {
+    vi.stubEnv("RUNTIME_API_URL", "http://runtime.test");
+  });
+
+  it("503 + {code:UNAVAILABLE} -> error with status 503 and code UNAVAILABLE", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(503, { code: "UNAVAILABLE", message: "needs db" })),
+    );
+
+    const result = await getAdminApi("/api/v1/x", isRecord);
+
+    expect(result).toEqual({
+      outcome: "error",
+      message: "Admin API responded with status 503",
+      status: 503,
+      code: "UNAVAILABLE",
+    });
+  });
+
+  it("500 without a code -> status 500 and no code key", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(500, { message: "boom" })));
+
+    const result = await getAdminApi("/api/v1/x", isRecord);
+
+    expect(result).toEqual({
+      outcome: "error",
+      message: "Admin API responded with status 500",
+      status: 500,
+    });
+    expect(result).not.toHaveProperty("code");
+  });
+
+  it("a network failure carries neither status nor code", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("socket hang up")));
+
+    const result = await getAdminApi("/api/v1/x", isRecord);
+
+    expect(result).toEqual({ outcome: "error", message: "socket hang up" });
+    expect(result).not.toHaveProperty("status");
+    expect(result).not.toHaveProperty("code");
+  });
+
+  it("a malformed (non-JSON) error body keeps only the status", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("<html>bad gateway</html>", { status: 502 })),
+    );
+
+    const result = await getAdminApi("/api/v1/x", isRecord);
+
+    expect(result).toEqual({
+      outcome: "error",
+      message: "Admin API responded with status 502",
+      status: 502,
+    });
+  });
+
+  it("a non-string code is ignored", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(503, { code: 7 })));
+
+    const result = await getAdminApi("/api/v1/x", isRecord);
+
+    expect(result).toMatchObject({ outcome: "error", status: 503 });
+    expect(result).not.toHaveProperty("code");
+  });
+
+  it("401/403 and 404 keep their dedicated outcomes", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, {})));
+    expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({ outcome: "unauthorized" });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, {})));
+    expect(await getAdminApi("/api/v1/x", isRecord)).toEqual({ outcome: "not_found" });
+  });
+});
+
 describe("postAdminApiForBytes", () => {
   it("returns the response bytes on 200", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([37, 80, 68, 70])));

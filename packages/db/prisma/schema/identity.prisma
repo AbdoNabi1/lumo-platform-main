@@ -26,6 +26,23 @@ model Customer {
   @@schema("identity")
 }
 
+model CustomerSegment {
+  id         String   @id @db.Uuid
+  tenantId   String   @map("tenant_id")
+  name       String
+  nameKey    String   @map("name_key")
+  conditions Json
+  version    Int      @default(1)
+  createdBy  String?  @map("created_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, nameKey])
+  @@index([tenantId, createdAt])
+  @@map("customer_segments")
+  @@schema("identity")
+}
+
 model CustomerTag {
   tenantId   String   @map("tenant_id")
   customerId String   @map("customer_id") @db.Uuid

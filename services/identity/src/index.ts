@@ -1,3 +1,9 @@
+export * from "./domain/customer-segment";
+export type { CustomerSegmentRepository } from "./domain/customer-segment-repository";
+export * from "./application/customer-segment.use-cases";
+export * from "./interfaces/customer-segment.controller";
+export { InMemoryCustomerSegmentRepository } from "./infrastructure/in-memory-customer-segment-repository";
+export { PrismaCustomerSegmentRepository } from "./infrastructure/prisma-customer-segment-repository";
 export { wireIdentity } from "./composition";
 export type { IdentityWiringDeps, WiredIdentity } from "./composition";
 export { CustomerController } from "./interfaces/customer.controller";

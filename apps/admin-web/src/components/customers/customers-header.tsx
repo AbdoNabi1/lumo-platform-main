@@ -22,6 +22,10 @@ export function CustomersHeader({
   readonly t: Dictionary;
 }) {
   const searchParams = useSearchParams();
+  // The export has no segment parameter yet: under a selected segment it would hand out customers
+  // outside it, so it is not offered there (segment-aware export is a follow-up).
+  const segmentSelected = (searchParams.get("segment") ?? "") !== "";
+  const showExport = canExport && !segmentSelected;
 
   return (
     <header className="flex flex-wrap items-start justify-between gap-4">
@@ -29,9 +33,9 @@ export function CustomersHeader({
         <h1 className="text-2xl font-semibold tracking-tight">{t.customersPage.title}</h1>
         <p className="text-muted-foreground mt-1 text-sm">{t.customersPage.subtitle}</p>
       </div>
-      {(canExport || canEdit) && (
+      {(showExport || canEdit) && (
         <div className="flex flex-wrap items-center gap-2">
-          {canExport && <CustomersExportDialog search={searchParams.get("q") ?? ""} t={t} />}
+          {showExport && <CustomersExportDialog search={searchParams.get("q") ?? ""} t={t} />}
           {canEdit && (
             <Button asChild>
               <Link href="/customers/new">

@@ -86,6 +86,64 @@ describe("fetchCustomersPage (unchanged shape)", () => {
   });
 });
 
+describe("fetchCustomersPage with a segment (Shopify parity Wave 1c)", () => {
+  const page = {
+    items: [{ id: "c-1", name: "Nour", email: "n@example.com" }],
+    pageInfo: { hasNextPage: true, endCursor: "c-1" },
+  };
+
+  it("sends segmentId alongside first/after/search, encoded", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, page));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchCustomersPage({
+      first: 20,
+      after: "c-0",
+      search: "nour",
+      segmentId: "default:not_purchased",
+    });
+
+    expect(result).toEqual({ outcome: "ok", items: page.items, pageInfo: page.pageInfo });
+    expect((fetchMock.mock.calls[0] as [string])[0]).toBe(
+      "http://runtime.test/api/v1/customers?first=20&after=c-0&search=nour&segmentId=default%3Anot_purchased",
+    );
+  });
+
+  it("sends no segmentId when none is given", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, page));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchCustomersPage({ first: 20 });
+
+    expect((fetchMock.mock.calls[0] as [string])[0]).not.toContain("segmentId");
+  });
+
+  it("a 404 for a segment is not_found; without a segment it stays the old error", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, { code: "NOT_FOUND" })));
+    expect(await fetchCustomersPage({ segmentId: "gone" })).toEqual({ outcome: "not_found" });
+    expect(await fetchCustomersPage({})).toEqual({ outcome: "error", message: "Not found" });
+  });
+
+  it("503 + UNAVAILABLE with a segment is unavailable; any other failure is the generic error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(503, { code: "UNAVAILABLE", message: "needs db" })),
+    );
+    expect(await fetchCustomersPage({ segmentId: "s-1" })).toEqual({ outcome: "unavailable" });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(503, { message: "down" })));
+    expect(await fetchCustomersPage({ segmentId: "s-1" })).toMatchObject({ outcome: "error" });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(500, { code: "UNAVAILABLE" })));
+    expect(await fetchCustomersPage({ segmentId: "s-1" })).toMatchObject({ outcome: "error" });
+  });
+
+  it("403 is unauthorized with or without a segment", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, {})));
+    expect(await fetchCustomersPage({ segmentId: "s-1" })).toEqual({ outcome: "unauthorized" });
+  });
+});
+
 describe("fetchCustomer", () => {
   it("returns the extended detail DTO, encoding the id", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, detail));

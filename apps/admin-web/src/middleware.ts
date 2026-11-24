@@ -118,6 +118,9 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   // Shopify parity Wave 1b: adding a customer is operator work; the list and each customer read for
   // viewers (the API refuses their writes and the screens hide those controls).
   ["/customers/new", "operator"],
+  // Wave 1c: a new segment (and a duplicate, which opens it with `?from=`) is operator work; the
+  // list and each segment read for viewers (the API refuses their writes, the screens hide them).
+  ["/customers/segments/new", "operator"],
   ["/customers", "viewer"],
   ["/reviews/new", "operator"],
   ["/reviews", "viewer"],

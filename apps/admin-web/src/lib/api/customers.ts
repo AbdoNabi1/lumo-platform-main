@@ -29,6 +29,8 @@ export interface CustomersListQuery {
   readonly first?: number;
   readonly after?: string;
   readonly search?: string;
+  /** Wave 1c: list only the members of this segment (`default:*` or a custom segment id). */
+  readonly segmentId?: string;
 }
 
 export type FetchCustomersPageResult =
@@ -38,6 +40,10 @@ export type FetchCustomersPageResult =
       readonly pageInfo: CustomersPageInfo;
     }
   | { readonly outcome: "unauthorized" }
+  /** Only with `segmentId`: the segment does not exist (any more). */
+  | { readonly outcome: "not_found" }
+  /** Only with `segmentId`: 503 `UNAVAILABLE` — the store has no database for live segments. */
+  | { readonly outcome: "unavailable" }
   | { readonly outcome: "error"; readonly message: string };
 
 /** Fetches a filtered, cursor-paginated page of customers for the Customers list screen. */
@@ -48,6 +54,7 @@ export async function fetchCustomersPage(
   if (query.first !== undefined) params.set("first", String(query.first));
   if (query.after !== undefined) params.set("after", query.after);
   if (query.search !== undefined) params.set("search", query.search);
+  if (query.segmentId !== undefined) params.set("segmentId", query.segmentId);
 
   const result = await getAdminApi(`/api/v1/customers?${params.toString()}`, isCustomersPageDto);
   if (result.outcome === "ok") {
@@ -55,6 +62,12 @@ export async function fetchCustomersPage(
   }
   if (result.outcome === "unauthorized") {
     return { outcome: "unauthorized" };
+  }
+  if (query.segmentId !== undefined) {
+    if (result.outcome === "not_found") return { outcome: "not_found" };
+    if (result.outcome === "error" && result.status === 503 && result.code === "UNAVAILABLE") {
+      return { outcome: "unavailable" };
+    }
   }
   return {
     outcome: "error",

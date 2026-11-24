@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import {
@@ -86,6 +86,47 @@ describe("Collections in the sidebar (Shopify parity Wave 1a)", () => {
       "/collections",
     );
     expect(screen.getByRole("link", { name: en.nav.products })).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("Segments in the sidebar (Shopify parity Wave 1c)", () => {
+  it("gives Customers one child, Segments, at /customers/segments", () => {
+    expect.hasAssertions();
+    const customers = PRIMARY_NAV.find((item) => item.id === "customers")!;
+    expect(customers.href).toBe("/customers");
+    expect((customers.children ?? []).map((child) => child.id)).toEqual(["customers-segments"]);
+    const segments = customers.children?.[0];
+    expect(segments?.href).toBe("/customers/segments");
+    expect(segments?.label(en)).toBe("Segments");
+    expect(segments?.label(ar)).toBe(ar.nav.segments);
+    expect(isInSection(customers, "customers-segments")).toBe(true);
+  });
+
+  it("keeps Segments closed until a Customers page is current, then marks it current on its own page", () => {
+    expect.hasAssertions();
+    renderNav("dashboard");
+    expect(screen.queryByRole("link", { name: en.nav.segments })).toBeNull();
+    cleanup();
+
+    renderNav("customers-segments");
+    const primary = screen.getByRole("navigation", { name: en.nav.primary });
+    const segments = within(primary).getByRole("link", { name: en.nav.segments });
+    expect(segments).toHaveAttribute("href", "/customers/segments");
+    expect(segments).toHaveAttribute("aria-current", "page");
+    expect(within(primary).getByRole("link", { name: en.nav.customers })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("opens the section on the customers list, with Customers current", () => {
+    expect.hasAssertions();
+    renderNav("customers");
+    const primary = screen.getByRole("navigation", { name: en.nav.primary });
+    expect(within(primary).getByRole("link", { name: en.nav.customers })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(primary).getByRole("link", { name: en.nav.segments })).toBeInTheDocument();
   });
 });
 
