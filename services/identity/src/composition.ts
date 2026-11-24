@@ -1,3 +1,14 @@
+import {
+  CreateCustomerSegment,
+  DeleteCustomerSegment,
+  GetCustomerSegment,
+  ListCustomerSegments,
+  UpdateCustomerSegment,
+} from "./application/customer-segment.use-cases";
+import type { CustomerSegmentRepository } from "./domain/customer-segment-repository";
+import { InMemoryCustomerSegmentRepository } from "./infrastructure/in-memory-customer-segment-repository";
+import { PrismaCustomerSegmentRepository } from "./infrastructure/prisma-customer-segment-repository";
+import { CustomerSegmentController } from "./interfaces/customer-segment.controller";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { PrismaOutboxStore, PrismaUnitOfWork, type Database } from "@platform/db";
 import type { EventSerializer } from "@platform/domain-events";
@@ -77,6 +88,7 @@ export interface IdentityWiringDeps {
 
 export interface WiredIdentity {
   readonly customers: CustomerController;
+  readonly customerSegments: CustomerSegmentController;
   /** Users/Organizations/Memberships (Sprint 4.1, Option A) — additive to the Customer vertical. */
   readonly access: AccessController;
   readonly drainOutbox: () => Promise<number>;
@@ -84,6 +96,7 @@ export interface WiredIdentity {
 }
 
 interface IdentityRepos {
+  readonly customerSegments: CustomerSegmentRepository;
   readonly customers: CustomerRepository & CustomerContactReader;
   readonly customerAnnotations: CustomerAnnotationRepository;
   readonly signupTokens: SignupTokenRepository;
@@ -98,7 +111,11 @@ function buildControllers(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: IdentityWiringDeps,
   tokenPort: TokenPort,
-): { customers: CustomerController; access: AccessController } {
+): {
+  customers: CustomerController;
+  customerSegments: CustomerSegmentController;
+  access: AccessController;
+} {
   const {
     customers,
     customerAnnotations: annotations,
@@ -210,7 +227,20 @@ function buildControllers(
     }),
   });
 
-  return { customers: controller, access };
+  const segments = repos.customerSegments;
+  const customerSegments = new CustomerSegmentController({
+    listCustomerSegments: new ListCustomerSegments({ segments }),
+    getCustomerSegment: new GetCustomerSegment({ segments }),
+    createCustomerSegment: new CreateCustomerSegment({
+      segments,
+      unitOfWork,
+      clock: deps.clock,
+      idGenerator: deps.idGenerator,
+    }),
+    updateCustomerSegment: new UpdateCustomerSegment({ segments, unitOfWork, clock: deps.clock }),
+    deleteCustomerSegment: new DeleteCustomerSegment({ segments, unitOfWork }),
+  });
+  return { customers: controller, customerSegments, access };
 }
 
 /**
@@ -234,6 +264,7 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
     const context = rootEventContext(deps.idGenerator);
     const accessDeps = { prisma: deps.prisma, outbox, context };
     const repos: IdentityRepos = {
+      customerSegments: new PrismaCustomerSegmentRepository({ prisma: deps.prisma }),
       customers: new PrismaCustomerRepository({ prisma: deps.prisma, outbox, context }),
       customerAnnotations: new PrismaCustomerAnnotationRepository({ prisma: deps.prisma }),
       signupTokens: new PrismaSignupTokenRepository({ prisma: deps.prisma }),
@@ -259,6 +290,7 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
 
   const customers = new InMemoryCustomerRepository({ outbox: outboxWriter, context });
   const repos: IdentityRepos = {
+    customerSegments: new InMemoryCustomerSegmentRepository(),
     customers,
     customerAnnotations: new InMemoryCustomerAnnotationRepository({ customers }),
     signupTokens: new InMemorySignupTokenRepository(),
