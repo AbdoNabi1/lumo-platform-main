@@ -491,6 +491,26 @@ describe.runIf(Boolean(databaseUrl))("PrismaCustomerRepository (integration)", (
     ).toEqual([]);
   });
 
+  it("reads annotations under an uppercase or mixed-case spelling of the customer uuid", async () => {
+    const w = wire();
+    const annotations = new PrismaCustomerAnnotationRepository({ prisma: w.prisma });
+    const customerId = await savedCustomer(w);
+    await w.unitOfWork.run((tx) => annotations.setNote(customerId, "hello", w.tenantId, tx));
+    await w.unitOfWork.run((tx) =>
+      annotations.replaceTags(customerId, [tagOf("VIP")], w.tenantId, tx),
+    );
+    const upper = customerId.toUpperCase();
+    const mixed = customerId
+      .split("")
+      .map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c))
+      .join("");
+
+    const read = await annotations.annotationsOf([upper, mixed, customerId], w.tenantId);
+
+    for (const spelling of [upper, mixed, customerId])
+      expect(read.get(spelling)).toEqual({ note: "hello", tags: ["VIP"] });
+  });
+
   it("treats a soft-deleted customer, another tenant and a non-UUID id as missing", async () => {
     const w = wire();
     const other = wire();

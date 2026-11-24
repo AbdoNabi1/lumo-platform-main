@@ -79,7 +79,7 @@ model ConsentRecord {
   id         String   @id @db.Uuid
   tenantId   String   @map("tenant_id")
   customerId String   @map("customer_id") @db.Uuid
-  scope      String // marketing | analytics | data_sharing (domain-enforced)
+  scope      String // marketing (email) | marketing_sms | analytics | data_sharing (domain-enforced)
   granted    Boolean
   occurredAt DateTime @map("occurred_at")
 

@@ -41,4 +41,40 @@ describe("InMemoryCustomerAnnotationRepository", () => {
     expect((await repo.annotationsOf(["one"], "b")).size).toBe(0);
     expect(await repo.replaceTags("one", [], "a")).toEqual([]);
   });
+
+  it("keys results by every requested spelling of a uuid and keeps unknown/foreign/non-uuid ids absent", async () => {
+    expect.hasAssertions();
+    const lower = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const upper = lower.toUpperCase();
+    const mixed = "AaAaAaAa-BbBb-CcCc-DdDd-EeEeEeEeEeEe";
+    const email = Email.create("x@example.com");
+    if (!email.ok) throw new Error("fixture");
+    const customer = Customer.register(
+      UniqueEntityId.from(lower),
+      email.value,
+      "X",
+      "event",
+      new Date(0),
+    );
+    const repo = new InMemoryCustomerAnnotationRepository({
+      customers: {
+        findById: async (id, tenant) => (id === lower && tenant === "a" ? customer : null),
+      },
+    });
+    expect(await repo.setNote(upper, "n", "a")).toBe(true);
+    expect(await repo.replaceTags(mixed, [{ tag: "VIP", tagKey: "vip" }], "a")).toEqual(["VIP"]);
+
+    const read = await repo.annotationsOf(
+      [upper, mixed, lower, "not-a-uuid", "ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee"],
+      "a",
+    );
+
+    const expected = { note: "n", tags: ["VIP"] };
+    expect([...read]).toEqual([
+      [upper, expected],
+      [mixed, expected],
+      [lower, expected],
+    ]);
+    expect((await repo.annotationsOf([upper], "b")).size).toBe(0);
+  });
 });

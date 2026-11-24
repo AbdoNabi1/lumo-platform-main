@@ -37,4 +37,40 @@ describe("PrismaCustomerAnnotationRepository", () => {
     expect(await repo.replaceTags(id, [], "b", tx)).toBeNull();
     expect(tx.customerTag.deleteMany).toHaveBeenCalledTimes(1);
   });
+  it("populates the map under each requested uuid spelling and omits unmatched ids", async () => {
+    expect.hasAssertions();
+    const repo = new PrismaCustomerAnnotationRepository({ prisma: {} as Database });
+    const lower = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const upper = lower.toUpperCase();
+    const mixed = "AaAaAaAa-BbBb-CcCc-DdDd-EeEeEeEeEeEe";
+    const other = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const tx = {
+      customer: {
+        findMany: vi.fn().mockResolvedValue([{ id: lower, note: "n" }]),
+      },
+      customerTag: {
+        findMany: vi.fn().mockResolvedValue([
+          { customerId: lower, tag: "VIP" },
+          { customerId: lower, tag: "Cairo" },
+        ]),
+      },
+    };
+
+    const read = await repo.annotationsOf(
+      [upper, mixed, lower, other, "not-a-uuid", upper],
+      "a",
+      tx,
+    );
+
+    const expected = { note: "n", tags: ["Cairo", "VIP"] };
+    expect([...read]).toEqual([
+      [upper, expected],
+      [mixed, expected],
+      [lower, expected],
+    ]);
+    expect(tx.customer.findMany).toHaveBeenCalledWith({
+      where: { tenantId: "a", deletedAt: null, id: { in: [lower, other] } },
+      select: { id: true, note: true },
+    });
+  });
 });

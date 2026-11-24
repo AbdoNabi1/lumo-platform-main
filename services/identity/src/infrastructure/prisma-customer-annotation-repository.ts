@@ -15,8 +15,10 @@ export class PrismaCustomerAnnotationRepository implements CustomerAnnotationRep
     tenantId: string,
     tx?: unknown,
   ): Promise<ReadonlyMap<string, CustomerAnnotations>> {
-    const ids = [...new Set(customerIds)].filter((id) => UUID.test(id));
-    if (ids.length === 0) return new Map();
+    // Each ORIGINAL valid spelling is kept so the result is keyed exactly as requested.
+    const requested = [...new Set(customerIds)].filter((id) => UUID.test(id));
+    if (requested.length === 0) return new Map();
+    const ids = [...new Set(requested.map((id) => id.toLowerCase()))];
     const run = async (client: TransactionClient) => {
       const customers = await client.customer.findMany({
         where: { tenantId, deletedAt: null, id: { in: ids } },
@@ -29,14 +31,21 @@ export class PrismaCustomerAnnotationRepository implements CustomerAnnotationRep
           : await client.customerTag.findMany({
               where: { tenantId, customerId: { in: foundIds } },
             });
-      const result = new Map<string, CustomerAnnotations>();
-      for (const customer of customers)
-        result.set(customer.id, {
+      const byId = new Map<string, CustomerAnnotations>();
+      for (const customer of customers) {
+        const key = customer.id.toLowerCase();
+        byId.set(key, {
           note: customer.note,
           tags: sortTags(
-            tags.filter((tag) => tag.customerId === customer.id).map((tag) => tag.tag),
+            tags.filter((tag) => tag.customerId.toLowerCase() === key).map((tag) => tag.tag),
           ),
         });
+      }
+      const result = new Map<string, CustomerAnnotations>();
+      for (const id of requested) {
+        const found = byId.get(id.toLowerCase());
+        if (found !== undefined) result.set(id, found);
+      }
       return result;
     };
     return tx != null

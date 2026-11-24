@@ -24,7 +24,10 @@ export interface GetCustomerAnnotationsDeps {
   readonly annotations: CustomerAnnotationRepository;
 }
 
-/** The notes and tags of 1..250 customers in ONE read, in input order; unknown ids are omitted. */
+/**
+ * The notes and tags of 1..250 customers in ONE read, in input order (repeated ids repeat);
+ * unknown ids are omitted.
+ */
 export class GetCustomerAnnotations implements UseCase<
   GetCustomerAnnotationsInput,
   GetCustomerAnnotationsOutput,
@@ -55,7 +58,8 @@ export class GetCustomerAnnotations implements UseCase<
     const ids = [...new Set(input.customerIds)];
     const found = await this.deps.annotations.annotationsOf(ids, input.tenantId);
     const items: CustomerAnnotationsItem[] = [];
-    for (const customerId of ids) {
+    // The read is de-duplicated; the response is not: one item per requested id, in input order.
+    for (const customerId of input.customerIds) {
       const annotations = found.get(customerId);
       if (annotations !== undefined) {
         items.push({ customerId, note: annotations.note, tags: annotations.tags });
