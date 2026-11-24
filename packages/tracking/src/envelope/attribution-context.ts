@@ -94,6 +94,17 @@ export interface AttributionContext {
   readonly clickIds?: readonly CapturedClickId[];
   /** Meta's derived first-party cookies, carried separately from the raw `fbclid`. */
   readonly meta?: MetaBrowserIds;
+  /**
+   * First-party browser ids the server builders need beyond Meta's: TikTok `_ttp`, Snap `_scid`
+   * cookie, the GA4 client id (from the `_ga` cookie) and the GA4 session id (from the
+   * `_ga_<container>` cookie — never Morbeh's own session id).
+   */
+  readonly browserIds?: {
+    readonly ttp?: string;
+    readonly scid?: string;
+    readonly gaClientId?: string;
+    readonly gaSessionId?: string;
+  };
 
   /**
    * The consideration cycle this event belongs to (doc 17 §3). A conversion attributes against

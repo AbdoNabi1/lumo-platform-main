@@ -267,6 +267,7 @@ export type {
   AdapterRegistryPort,
   DestinationStatus,
   RoutingContext,
+  EndpointAuth,
 } from "./delivery/destination";
 export {
   DESTINATION_STATUS_TO_REGISTRY,
@@ -328,7 +329,7 @@ export type {
   DeliverInput,
   DeliveryResult,
 } from "./delivery/delivery-pipeline";
-export type { RenderOutcome } from "./delivery/delivery-pipeline";
+export type { RenderOutcome, RenderExtras } from "./delivery/delivery-pipeline";
 export {
   ZERO_METRICS,
   DELIVERY_GUARANTEES,
@@ -344,7 +345,28 @@ export type {
   CredentialResolverPort,
   HttpJsonAdapterDeps,
 } from "./delivery/adapters";
-export { HttpJsonAdapter, NoopAdapter, isRetryableStatus } from "./delivery/adapters";
+export {
+  HttpJsonAdapter,
+  NoopAdapter,
+  isRetryableStatus,
+  redactSecrets,
+} from "./delivery/adapters";
+
+// --- Delivery: per-vendor typed request builders (lead-site plan D1) -------
+export type { VendorBuilderKey, CanonicalEvent } from "./delivery/vendor-event-names";
+export {
+  VENDOR_BUILDER_KEYS,
+  isVendorBuilderKey,
+  MATCH_PLATFORM_OF,
+  CANONICAL_EVENTS,
+  VENDOR_EVENT_NAMES,
+  vendorEventName,
+  SITE_TYPE_EVENTS,
+} from "./delivery/vendor-event-names";
+export type { VendorEventInput } from "./delivery/vendor-event-input";
+export { vendorEventInputFrom, gaClientIdFromCookie } from "./delivery/vendor-event-input";
+export type { VendorTarget, BuildResult } from "./delivery/vendor-builders";
+export { buildVendorPayload } from "./delivery/vendor-builders";
 
 // --- Delivery: business payload vs transport envelope ---------------------
 export type {
@@ -363,6 +385,7 @@ export {
   SEED_DESTINATIONS,
   SEED_MAPPING_PROFILES,
   SEED_PROFILE_KEYS,
+  STANDARD_RETRY,
 } from "./delivery/platform-profiles";
 
 // --- Inspector: the immutable event record (canonical source of truth) ----

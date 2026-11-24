@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { Expr } from "@platform/expression";
 import { RetryPolicy } from "@platform/messaging";
 import type { RuleSet } from "@platform/rules";
@@ -27,8 +27,9 @@ import {
   deliver,
   deriveHealth,
   enforceDeliveryPreconditions,
+  renderPayload,
 } from "./delivery-pipeline";
-import { HttpJsonAdapter, isRetryableStatus } from "./adapters";
+import { HttpJsonAdapter, isRetryableStatus, redactSecrets } from "./adapters";
 import { SEED_DESTINATIONS, SEED_MAPPING_PROFILES, SEED_PROFILE_KEYS } from "./platform-profiles";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 
@@ -857,5 +858,296 @@ describe("destination health", () => {
       circuit: INITIAL_CIRCUIT,
     });
     expect(health.status).toBe("degraded");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lead-site plan D1, Task 3 — vendor auth styles, secret redaction, builder rendering
+// ---------------------------------------------------------------------------
+
+describe("http adapter: vendor auth styles", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const SECRET = "s3cret";
+  const sendInput: { url: string; headers: Record<string, string>; body?: string }[] = [];
+
+  function adapterFor(respond?: () => Promise<{ status: number; body?: Record<string, unknown> }>) {
+    sendInput.length = 0;
+    return new HttpJsonAdapter({
+      http: {
+        send: (input) => {
+          sendInput.push({ url: input.url, headers: { ...input.headers }, body: input.body });
+          return (respond ?? (() => Promise.resolve({ status: 200 })))();
+        },
+      },
+      credentials: { resolve: () => Promise.resolve(SECRET) },
+      now: () => 0,
+    });
+  }
+
+  function requestWith(
+    endpoint: Partial<DestinationDefinition["endpoint"]>,
+  ): Parameters<HttpJsonAdapter["send"]>[0] {
+    return {
+      destination: "meta.capi",
+      endpoint: Object.freeze({
+        url: "https://graph.test/v27.0/123/events",
+        method: "POST" as const,
+        credentialRef: "conn://t-1/meta",
+        timeoutMs: 1_000,
+        ...endpoint,
+      }),
+      payload: { data: [] },
+      dedupId: "d-1",
+      eventId: "e-1",
+    };
+  }
+
+  it("query auth appends the secret to the sent url only; the descriptor is untouched", async () => {
+    const request = requestWith({ auth: { kind: "query", param: "access_token" } });
+    await adapterFor().send(request);
+
+    expect(sendInput[0]?.url).toBe("https://graph.test/v27.0/123/events?access_token=s3cret");
+    expect(sendInput[0]?.headers.authorization).toBeUndefined();
+    expect(request.endpoint.url).toBe("https://graph.test/v27.0/123/events");
+    expect(request.endpoint.url).not.toContain("access_token");
+  });
+
+  it("query auth uses & when the url already has a query, and encodes the secret", async () => {
+    const odd = new HttpJsonAdapter({
+      http: {
+        send: (input) => {
+          sendInput.push({ url: input.url, headers: {} });
+          return Promise.resolve({ status: 200 });
+        },
+      },
+      credentials: { resolve: () => Promise.resolve("a+b/c=d:e|f") },
+      now: () => 0,
+    });
+    sendInput.length = 0;
+    await odd.send(
+      requestWith({
+        url: "https://ga.test/mp/collect?measurement_id=G-ABCD1234",
+        auth: { kind: "query", param: "api_secret" },
+      }),
+    );
+    expect(sendInput[0]?.url).toBe(
+      "https://ga.test/mp/collect?measurement_id=G-ABCD1234&api_secret=a%2Bb%2Fc%3Dd%3Ae%7Cf",
+    );
+  });
+
+  it("header auth sends the named header and no authorization header", async () => {
+    await adapterFor().send(requestWith({ auth: { kind: "header", name: "Access-Token" } }));
+
+    expect(sendInput[0]?.headers["Access-Token"]).toBe(SECRET);
+    expect(sendInput[0]?.headers.authorization).toBeUndefined();
+    expect(sendInput[0]?.url).toBe("https://graph.test/v27.0/123/events");
+  });
+
+  it.each([[undefined], [{ kind: "bearer" as const }]])(
+    "auth %j sends a bearer authorization header",
+    async (auth) => {
+      await adapterFor().send(requestWith(auth === undefined ? {} : { auth }));
+
+      expect(sendInput[0]?.headers.authorization).toBe("Bearer s3cret");
+      expect(sendInput[0]?.url).toBe("https://graph.test/v27.0/123/events");
+    },
+  );
+
+  it("an unresolved credential stays a permanent failure for every auth style", async () => {
+    const adapter = new HttpJsonAdapter({
+      http: { send: () => Promise.resolve({ status: 200 }) },
+      credentials: { resolve: () => Promise.resolve(null) },
+      now: () => 0,
+    });
+    for (const auth of [
+      { kind: "query" as const, param: "access_token" },
+      { kind: "header" as const, name: "Access-Token" },
+      { kind: "bearer" as const },
+    ]) {
+      expect(await adapter.send(requestWith({ auth }))).toMatchObject({
+        ok: false,
+        retryable: false,
+        error: "credential conn://t-1/meta unresolved",
+      });
+    }
+  });
+
+  it("redacts the secret from a thrown transport error", async () => {
+    const adapter = adapterFor(() =>
+      Promise.reject(new Error("socket hang up https://graph.test/e?access_token=s3cret")),
+    );
+    const response = await adapter.send(
+      requestWith({ auth: { kind: "query", param: "access_token" } }),
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      retryable: true,
+      error: "socket hang up https://graph.test/e?access_token=[redacted]",
+    });
+  });
+
+  it("redacts the secret from the vendor body", async () => {
+    const adapter = adapterFor(() =>
+      Promise.resolve({
+        status: 400,
+        body: { error: { message: "bad s3cret", urls: ["?access_token=s3cret"] }, s3cret: 1 },
+      }),
+    );
+    const response = await adapter.send(
+      requestWith({ auth: { kind: "header", name: "Access-Token" } }),
+    );
+
+    expect(response.vendorResponse).toEqual({
+      error: { message: "bad [redacted]", urls: ["?access_token=[redacted]"] },
+      "[redacted]": 1,
+    });
+    expect(JSON.stringify(response)).not.toContain("s3cret");
+  });
+
+  it("drops a vendor body nested deeper than 8 levels or larger than 16 KB (fail closed)", async () => {
+    let deep: Record<string, unknown> = { leaf: "s3cret" };
+    for (let i = 0; i < 9; i += 1) deep = { next: deep };
+    const tooDeep = await adapterFor(() => Promise.resolve({ status: 200, body: deep })).send(
+      requestWith({ auth: { kind: "bearer" } }),
+    );
+    expect(tooDeep.ok).toBe(true);
+    expect(tooDeep.vendorResponse).toBeUndefined();
+
+    const big = await adapterFor(() =>
+      Promise.resolve({ status: 200, body: { blob: "x".repeat(17 * 1024) } }),
+    ).send(requestWith({ auth: { kind: "bearer" } }));
+    expect(big.vendorResponse).toBeUndefined();
+
+    const fine = await adapterFor(() =>
+      Promise.resolve({ status: 200, body: { a: { b: { c: 1 } } } }),
+    ).send(requestWith({ auth: { kind: "bearer" } }));
+    expect(fine.vendorResponse).toEqual({ a: { b: { c: 1 } } });
+  });
+
+  it("leaves a vendor body untouched when no credential is involved", async () => {
+    const adapter = new HttpJsonAdapter({
+      http: {
+        send: () => Promise.resolve({ status: 200, body: { blob: "x".repeat(20 * 1024) } }),
+      },
+      now: () => 0,
+    });
+    const { credentialRef: _ref, ...noCredential } = requestWith({}).endpoint;
+    const response = await adapter.send({ ...requestWith({}), endpoint: noCredential });
+    expect((response.vendorResponse?.blob as string).length).toBe(20 * 1024);
+  });
+});
+
+describe("redactSecrets", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const token = "a+b/c=d:e|f";
+  const needles = [token, encodeURIComponent(token), JSON.stringify(token).slice(1, -1)];
+
+  it("walks decoded strings, array items, object keys and values", () => {
+    const value = {
+      [`k-${token}`]: `v-${token}`,
+      nested: [{ url: `https://x.test/?t=${encodeURIComponent(token)}` }, token, 7, null, true],
+    };
+    expect(redactSecrets(value, needles)).toEqual({
+      "k-[redacted]": "v-[redacted]",
+      nested: [{ url: "https://x.test/?t=[redacted]" }, "[redacted]", 7, null, true],
+    });
+  });
+
+  it("returns the value unchanged when there is nothing to redact", () => {
+    const value = { a: ["b"] };
+    expect(redactSecrets(value, [])).toBe(value);
+    expect(redactSecrets(value, [""])).toBe(value);
+  });
+});
+
+describe("renderPayload: vendor builders", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const profile: MappingProfile = {
+    key: "meta.capi.mapping",
+    version: 1,
+    destination: "meta.capi",
+    fields: [{ target: "event_name", source: "event.name", required: true }],
+  };
+  const deps = {
+    mappings: { resolve: (): MappingProfile => profile, resolveVersion: (): null => null },
+  };
+  const env = envelope({
+    eventName: "form_submitted",
+    context: {
+      page: { url: "https://clinic.example/offers" },
+      identity: { email: "sha256(x)", hashStatus: "sha256" },
+    },
+  });
+  const extras = { envelope: env, keys: { em: "hashed-em" } };
+  const builderDestination = destination({
+    builderKey: "meta.capi.v27",
+    vendorTarget: { id: "123456789012345" },
+  });
+
+  it("with a builderKey it returns the builder output and skips the mapper", () => {
+    const rendered = renderPayload(deps, builderDestination, toRoutingContext(env), extras);
+    expect(rendered).toEqual({
+      ok: true,
+      payload: {
+        data: [
+          {
+            event_name: "Lead",
+            event_time: Math.floor(env.eventTimestampMs / 1000),
+            event_id: "dedup-1",
+            action_source: "website",
+            event_source_url: "https://clinic.example/offers",
+            user_data: { em: ["hashed-em"] },
+            custom_data: { value: 1500, currency: "USD", order_id: "o-1" },
+          },
+        ],
+      },
+    });
+  });
+
+  it("without a builderKey it returns the mapper output, extras or not", () => {
+    const routing = toRoutingContext(env);
+    expect(renderPayload(deps, destination(), routing)).toEqual({
+      ok: true,
+      payload: { event_name: "form_submitted" },
+    });
+    expect(renderPayload(deps, destination(), routing, extras)).toEqual({
+      ok: true,
+      payload: { event_name: "form_submitted" },
+    });
+  });
+
+  it("translates every refusal into the mapping gate", () => {
+    const routing = toRoutingContext(env);
+    const { vendorTarget: _target, ...noTarget } = builderDestination;
+    expect(renderPayload(deps, noTarget, routing, extras)).toEqual({
+      ok: false,
+      failure: { gate: "mapping", detail: "vendor target missing" },
+    });
+    expect(renderPayload(deps, builderDestination, routing)).toEqual({
+      ok: false,
+      failure: { gate: "mapping", detail: "vendor builder input missing" },
+    });
+
+    const unsupported = envelope({ eventName: "page_viewed" });
+    expect(
+      renderPayload(
+        deps,
+        { ...builderDestination, builderKey: "tiktok.events.v1_3" },
+        toRoutingContext(unsupported),
+        { envelope: unsupported, keys: {} },
+      ),
+    ).toEqual({
+      ok: false,
+      failure: { gate: "mapping", detail: "event not supported by tiktok.events.v1_3" },
+    });
   });
 });

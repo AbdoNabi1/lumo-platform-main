@@ -55,6 +55,8 @@ import type { IdentityContext } from "../envelope/identity-context";
 import type { HashPort } from "../ids/dedup-id";
 import { hashIdentity } from "../pipeline/hashing";
 import { normalizeIdentity } from "../pipeline/normalization";
+import { platformMatchKeys, type PlatformMatchKeys } from "../pipeline/platform-identity";
+import { MATCH_PLATFORM_OF } from "../delivery/vendor-event-names";
 import type { AttributionSnapshot } from "../pipeline/attribution";
 import {
   buildEventRecord,
@@ -216,14 +218,14 @@ async function prepareIdentity(
   identity: IdentityContext,
   hasher: HashPort,
   defaultCountryCode?: string,
-): Promise<IdentityContext> {
-  if (identity.hashStatus !== "raw") return identity;
+): Promise<{ readonly identity: IdentityContext; readonly normalized: IdentityContext | null }> {
+  if (identity.hashStatus !== "raw") return { identity, normalized: null };
 
   const normalized = normalizeIdentity(
     identity,
     defaultCountryCode === undefined ? {} : { defaultCountryCode },
   );
-  return hashIdentity(normalized, hasher);
+  return { identity: await hashIdentity(normalized, hasher), normalized };
 }
 
 /**
@@ -243,9 +245,16 @@ export async function receiveAndDeliver(
   // --- Phase: normalize (+ PII hashing, which must happen before mapping) ---
   const rawIdentity = input.envelope.context.identity;
   let envelope = input.envelope;
+  // The normalized **raw** identity, kept only to derive each vendor destination's own match keys
+  // (each platform hashes differently). It never leaves this function: the record and the
+  // `isForwardable` guard keep seeing the shared hashed identity. Null when the block arrived
+  // already hashed — there is nothing left to re-derive per platform from a digest.
+  let normalizedIdentity: IdentityContext | null = null;
 
   if (rawIdentity !== undefined) {
-    const identity = await prepareIdentity(rawIdentity, deps.hasher, deps.defaultCountryCode);
+    const prepared = await prepareIdentity(rawIdentity, deps.hasher, deps.defaultCountryCode);
+    const identity = prepared.identity;
+    normalizedIdentity = prepared.normalized;
     envelope = {
       ...input.envelope,
       context: { ...input.envelope.context, identity },
@@ -274,8 +283,31 @@ export async function receiveAndDeliver(
   }[] = [];
   const renderFailures: { destination: DestinationKey; detail: string }[] = [];
 
+  // Match keys per destination platform, computed once per builder and reused when two routed
+  // destinations share one.
+  const keysByBuilder = new Map<string, PlatformMatchKeys>();
+
   for (const routed of input.routing.routed) {
-    const rendered = renderPayload(deps.delivery, routed.destination, routingContext);
+    const builderKey = routed.destination.builderKey;
+    let extras: { envelope: EnrichedEnvelope; keys: PlatformMatchKeys } | undefined;
+
+    if (builderKey !== undefined) {
+      let keys = keysByBuilder.get(builderKey);
+      if (keys === undefined) {
+        keys =
+          normalizedIdentity === null
+            ? {}
+            : await platformMatchKeys(
+                MATCH_PLATFORM_OF[builderKey],
+                normalizedIdentity,
+                deps.hasher,
+              );
+        keysByBuilder.set(builderKey, keys);
+      }
+      extras = { envelope, keys };
+    }
+
+    const rendered = renderPayload(deps.delivery, routed.destination, routingContext, extras);
 
     if (!rendered.ok) {
       // A destination whose payload cannot be built is recorded as blocked, not dropped silently.

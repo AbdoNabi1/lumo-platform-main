@@ -15,7 +15,7 @@ import { Expr } from "@platform/expression";
 import type { DestinationDefinition } from "./destination";
 import type { MappingProfile } from "./mapping";
 
-const STANDARD_RETRY = {
+export const STANDARD_RETRY = {
   maxAttempts: 5,
   baseDelayMs: 1_000,
   factor: 2,

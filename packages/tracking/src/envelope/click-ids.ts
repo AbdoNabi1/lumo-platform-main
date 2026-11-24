@@ -67,7 +67,9 @@ export const CLICK_ID_DEFINITIONS = {
     description: "Microsoft Advertising click id.",
   },
   scclid: {
-    param: "scclid",
+    // The canonical key stays `scclid` (stored, routed and mapped under that name); only the URL
+    // parameter Snap appends to a landing page is `ScCid`.
+    param: "ScCid",
     platform: "snapchat",
     ttlDays: 28,
     description: "Snapchat click id for Snap Conversions API.",

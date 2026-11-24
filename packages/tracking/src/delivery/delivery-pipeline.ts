@@ -27,6 +27,7 @@ import type { RetryPolicy } from "@platform/messaging";
 import { evaluateConsent } from "../envelope/consent";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import { isForwardable } from "../pipeline/hashing";
+import type { PlatformMatchKeys } from "../pipeline/platform-identity";
 import { validateDeduplication, validateEnvelope } from "../pipeline/validation";
 import {
   type AdapterRegistryPort,
@@ -36,6 +37,8 @@ import {
   type RoutingContext,
 } from "./destination";
 import { applyMapping, type MappingRegistryPort, type TransformRegistryPort } from "./mapping";
+import { buildVendorPayload } from "./vendor-builders";
+import { vendorEventInputFrom } from "./vendor-event-input";
 import {
   canAttempt,
   consumeToken,
@@ -217,6 +220,15 @@ export type RenderOutcome =
   | { readonly ok: false; readonly failure: EnforcementFailure };
 
 /**
+ * What a vendor builder needs beyond the routing context: the envelope itself and the match keys
+ * computed for **this** destination's platform. Absent for destinations that use the mapper.
+ */
+export interface RenderExtras {
+  readonly envelope: EnrichedEnvelope;
+  readonly keys: PlatformMatchKeys;
+}
+
+/**
  * The **Map** phase, extracted so it can run independently of transmission.
  *
  * Delivery used to map inline, which made "append the record before delivering" impossible: the
@@ -228,7 +240,29 @@ export function renderPayload(
   deps: Pick<DeliveryDeps, "mappings" | "transforms">,
   destination: DestinationDefinition,
   routingContext: RoutingContext,
+  extras?: RenderExtras,
 ): RenderOutcome {
+  // A destination that names a vendor builder never touches the generic mapper. Every refusal is
+  // translated into the existing `mapping` gate so the record/inspector see one vocabulary, and
+  // the builder's raw `{ ok: false }` shape never escapes this function.
+  if (destination.builderKey !== undefined) {
+    if (destination.vendorTarget === undefined) {
+      return { ok: false, failure: { gate: "mapping", detail: "vendor target missing" } };
+    }
+    if (extras === undefined) {
+      return { ok: false, failure: { gate: "mapping", detail: "vendor builder input missing" } };
+    }
+
+    const built = buildVendorPayload(
+      destination.builderKey,
+      vendorEventInputFrom(extras.envelope, extras.keys),
+      destination.vendorTarget,
+    );
+    return built.ok
+      ? { ok: true, payload: built.payload }
+      : { ok: false, failure: { gate: "mapping", detail: built.reason } };
+  }
+
   const profile = deps.mappings.resolve(destination.mappingProfileKey);
   if (profile === null) {
     return {
