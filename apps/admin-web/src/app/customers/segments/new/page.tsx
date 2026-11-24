@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
-import { AlertTriangleIcon, ArrowLeftIcon } from "lucide-react";
+import { AlertTriangleIcon, ArrowLeftIcon, LockIcon } from "lucide-react";
 import { Button } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { SegmentEditor } from "@/components/customers/segments/segment-editor";
@@ -11,6 +11,7 @@ import {
   type SegmentCondition,
 } from "@/lib/api/customer-segments";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { highestRole, readSession } from "@/lib/auth/session";
 import { decodeSegmentId, segmentDisplayName } from "@/lib/customers/segment-labels";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
@@ -31,11 +32,17 @@ export default async function NewSegmentPage({ searchParams }: NewSegmentPagePro
   const t = dictionaryFor(locale);
   const { from } = await searchParams;
   const sourceId = from === undefined || from === "" ? null : decodeSegmentId(from);
-  const [user, currency, source] = await Promise.all([
-    getCurrentUser(),
-    fetchSegmentStoreCurrency(),
-    sourceId === null ? Promise.resolve(null) : fetchCustomerSegment(sourceId),
-  ]);
+  const [user, session] = await Promise.all([getCurrentUser(), readSession()]);
+  // Page-level contract (G8): only operators and admins get the create editor, whatever the
+  // middleware already did. Nothing else is loaded for anyone else.
+  const role = highestRole(session?.roles ?? []);
+  const canEdit = role === "operator" || role === "admin";
+  const [currency, source] = canEdit
+    ? await Promise.all([
+        fetchSegmentStoreCurrency(),
+        sourceId === null ? Promise.resolve(null) : fetchCustomerSegment(sourceId),
+      ])
+    : [null, null];
 
   let initialName = "";
   let initialConditions: readonly SegmentCondition[] = [];
@@ -57,7 +64,12 @@ export default async function NewSegmentPage({ searchParams }: NewSegmentPagePro
           <h1 className="text-2xl font-semibold tracking-tight">{t.segments.newTitle}</h1>
           <p className="text-muted-foreground mt-1 text-sm">{t.segments.newSubtitle}</p>
         </div>
-        {currency.outcome === "ok" ? (
+        {!canEdit || currency === null ? (
+          <SegmentStatePanel
+            icon={<LockIcon aria-hidden="true" className="size-5" />}
+            message={t.segments.createNotAllowed}
+          />
+        ) : currency.outcome === "ok" ? (
           <SegmentEditor
             t={t}
             locale={locale}

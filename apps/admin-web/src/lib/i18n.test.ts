@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { DEFAULT_LOCALE, dictionaryFor, directionFor, isLocale, LOCALES } from "./i18n";
@@ -9,6 +9,10 @@ import { DEFAULT_LOCALE, dictionaryFor, directionFor, isLocale, LOCALES } from "
  * was copied across without being translated, and a direction that stops following the
  * locale.
  */
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
 
 type Leaf = readonly [path: string, value: string];
 

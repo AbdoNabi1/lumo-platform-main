@@ -86,6 +86,53 @@ beforeEach(() => {
   api.fetchSegmentStoreCurrency.mockReset();
   api.fetchSegmentStoreCurrency.mockResolvedValue({ outcome: "ok", data: { currency: "KWD" } });
   api.fetchCustomerSegment.mockReset();
+  mocks.readSession.mockReset();
+  mocks.readSession.mockResolvedValue({ roles: ["operator"] });
+});
+
+describe("NewSegmentPage role gate (I2: page-level canEdit per G8)", () => {
+  it.each([["operator"], ["admin"], ["viewer", "operator"]])(
+    "roles %s get the create editor",
+    async (...roles) => {
+      mocks.readSession.mockResolvedValue({ roles });
+
+      await show();
+
+      expect(screen.getByTestId("editor")).toHaveAttribute("data-readonly", "false");
+      expect(within(document.body).queryByText(en.segments.createNotAllowed)).toBeNull();
+    },
+  );
+
+  it.each([
+    ["a viewer", { roles: ["viewer"] }],
+    ["an unknown role", { roles: ["guest"] }],
+    ["an empty role list", { roles: [] }],
+    ["no session", null],
+  ])(
+    "%s gets no editor and nothing loaded for it, only the localized refusal",
+    async (_name, session) => {
+      mocks.readSession.mockResolvedValue(session);
+
+      await show({ from: "s-1" });
+
+      expect(screen.queryByTestId("editor")).toBeNull();
+      expect(within(document.body).getByText(en.segments.createNotAllowed)).toBeVisible();
+      expect(within(document.body).queryByRole("button")).toBeNull();
+      expect(within(document.body).queryByRole("textbox")).toBeNull();
+      expect(api.fetchSegmentStoreCurrency).not.toHaveBeenCalled();
+      expect(api.fetchCustomerSegment).not.toHaveBeenCalled();
+    },
+  );
+
+  it("the refusal is localized in Arabic", async () => {
+    mocks.cookieLocale.value = "ar";
+    mocks.readSession.mockResolvedValue({ roles: ["viewer"] });
+
+    await show();
+
+    expect(within(document.body).getByText(ar.segments.createNotAllowed)).toBeVisible();
+    expect(screen.queryByTestId("editor")).toBeNull();
+  });
 });
 
 describe("NewSegmentPage", () => {

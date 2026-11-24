@@ -57,7 +57,8 @@ export default async function CustomersPage({ searchParams }: CustomersPageProps
   // `customers:export`); a viewer or an unknown role gets neither button.
   const role = highestRole((await readSession())?.roles ?? []);
   const canEdit = role === "operator" || role === "admin";
-  const canExport = canEdit;
+  // The export ignores a segment, so it is withheld while one is selected (follow-up: segment-aware CSV).
+  const canExport = canEdit && !params.segment;
   const exportError = (["too_many", "failed"] as const).find(
     (error) => error === params.exportError,
   );

@@ -1,5 +1,10 @@
 import type { SegmentCondition, SegmentField } from "@/lib/api/customer-segments";
-import { currencyExponent, fromMinorUnits, normalizeDigits } from "@/lib/products/money";
+import {
+  currencyExponent,
+  fromMinorUnits,
+  normalizeDigits,
+  toMinorUnits,
+} from "@/lib/products/money";
 import { mergeTags } from "./tags";
 
 /**
@@ -160,12 +165,11 @@ function moneyToMinor(
   if (normalized === "") return { error: "required" };
   const match = /^(\d+)(?:\.(\d+))?$/.exec(normalized);
   if (match === null) return { error: "invalidAmount" };
-  const whole = match[1] ?? "0";
   const fraction = match[2] ?? "";
-  const exponent = currencyExponent(currency);
-  if (fraction.length > exponent) return { error: "tooManyDecimals" };
-  const minor = Number(whole + fraction.padEnd(exponent, "0"));
-  return Number.isSafeInteger(minor) ? { minor } : { error: "invalidAmount" };
+  if (fraction.length > currencyExponent(currency)) return { error: "tooManyDecimals" };
+  // The shared helper does the string arithmetic (never `Number(text) * 100`).
+  const minor = toMinorUnits(normalized, currency);
+  return minor === null ? { error: "invalidAmount" } : { minor };
 }
 
 export function conditionFromDraft(draft: ConditionDraft, currency: string): DraftResult {

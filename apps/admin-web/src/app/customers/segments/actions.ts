@@ -45,6 +45,9 @@ const PREVIEW_SIZE = 10;
 const DUPLICATE_NAME = "A segment with this name already exists";
 const STALE = "This segment was changed by someone else";
 const READ_ONLY = "Default segments can't be changed";
+/** The 100-segment cap: a business rule (409 `BUSINESS_RULE`) that retrying cannot clear. */
+const LIMIT = "A store can have at most 100 segments";
+const BUSINESS_RULE = "BUSINESS_RULE";
 
 async function dictionary(): Promise<Dictionary> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -71,7 +74,10 @@ function formStateOf(result: MutationResult<unknown>, t: Dictionary): SegmentFor
     if (result.message === READ_ONLY) {
       return { status: "error", message: t.segments.errors.readOnly, fieldErrors: {} };
     }
-    // Any other 409 (the 100-segment limit, an in-flight Idempotency-Key): the locale's "try again".
+    if (result.message === LIMIT && result.code === BUSINESS_RULE) {
+      return { status: "error", message: t.segments.errors.limit, fieldErrors: {} };
+    }
+    // Any other 409 (an in-flight Idempotency-Key, an unrecognised rule): the locale's "try again".
     return { status: "error", message: t.formErrors.conflict, fieldErrors: {} };
   }
   return toFormState(result, t.formErrors);

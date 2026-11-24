@@ -5230,6 +5230,7 @@ export const en = {
     notFound: "This segment no longer exists",
     back: "Back to segments",
     currencyError: "Couldn't load the store currency",
+    createNotAllowed: "You need operator access to create segments.",
     newTitle: "Create segment",
     newSubtitle: "Name the segment and choose who belongs in it.",
     copyOf: "Copy of {name}",
@@ -5338,6 +5339,8 @@ export const en = {
       duplicateName: "A segment with this name already exists.",
       stale: "This segment was changed by someone else. Reload to see the latest version.",
       readOnly: "Default segments can't be changed.",
+      limit:
+        "You've reached the limit of 100 segments. Delete a custom segment you no longer need, then try again.",
     },
   },
   /** Generic, form-agnostic messages `toFormState` (`lib/api/mutation.ts`) renders from a `MutationResult`. Every write form shares these. */

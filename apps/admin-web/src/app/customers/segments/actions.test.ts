@@ -103,10 +103,60 @@ describe("createSegmentAction", () => {
     });
   });
 
-  it("any other 409 (the 100-segment limit, an in-flight key) -> the generic conflict copy", async () => {
+  it("409 BUSINESS_RULE 'A store can have at most 100 segments' -> the dedicated limit message, and still revalidates", async () => {
     api.createCustomerSegment.mockResolvedValue({
       outcome: "conflict",
       message: "A store can have at most 100 segments",
+      code: "BUSINESS_RULE",
+    });
+
+    expect(await createSegmentAction({ name: "VIP", conditions: CONDITIONS })).toEqual({
+      status: "error",
+      message: en.segments.errors.limit,
+      fieldErrors: {},
+    });
+    expect(en.segments.errors.limit).not.toBe(en.formErrors.conflict);
+    expect(en.segments.errors.limit).toContain("100");
+    expect(revalidatePath.mock.calls.map(([path]) => path)).toEqual(["/customers/segments"]);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("the limit message is localized in Arabic", async () => {
+    cookieLocale.value = "ar";
+    api.createCustomerSegment.mockResolvedValue({
+      outcome: "conflict",
+      message: "A store can have at most 100 segments",
+      code: "BUSINESS_RULE",
+    });
+
+    expect(await createSegmentAction({ name: "VIP", conditions: CONDITIONS })).toEqual({
+      status: "error",
+      message: ar.segments.errors.limit,
+      fieldErrors: {},
+    });
+    expect(ar.segments.errors.limit).not.toBe(en.segments.errors.limit);
+    expect(ar.segments.errors.limit).toContain("100");
+  });
+
+  it.each([
+    [
+      "the limit text without the BUSINESS_RULE code",
+      "A store can have at most 100 segments",
+      undefined,
+    ],
+    ["the limit text under another code", "A store can have at most 100 segments", "CONFLICT"],
+    [
+      "a near-miss of the limit text (no substring matching)",
+      "A store can have at most 100 segments.",
+      "BUSINESS_RULE",
+    ],
+    ["an in-flight Idempotency-Key", "A request with this key is already in progress", undefined],
+    ["an unknown business rule", "Something else", "BUSINESS_RULE"],
+  ])("any other 409 (%s) -> the generic conflict copy", async (_name, message, code) => {
+    api.createCustomerSegment.mockResolvedValue({
+      outcome: "conflict",
+      message,
+      ...(code === undefined ? {} : { code }),
     });
 
     expect(await createSegmentAction({ name: "VIP", conditions: CONDITIONS })).toEqual({

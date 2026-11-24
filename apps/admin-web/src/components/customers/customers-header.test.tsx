@@ -55,6 +55,17 @@ describe("CustomersHeader", () => {
     expect(body().queryByRole("link", { name: "Add customer" })).toBeNull();
   });
 
+  it("with a ?segment= in the URL the Export button is withheld even when canExport is true (the export ignores segments)", async () => {
+    nav.search = "segment=default%3Anot_purchased&q=nour";
+    render(<CustomersHeader canEdit canExport t={en} />);
+
+    await waitFor(() =>
+      expect(body().getByRole("link", { name: "Add customer" })).toBeInTheDocument(),
+    );
+    expect(body().queryByRole("button", { name: "Export" })).toBeNull();
+    expect(body().queryByRole("dialog")).toBeNull();
+  });
+
   it("renders in Arabic", () => {
     render(<CustomersHeader canEdit canExport t={ar} />);
 

@@ -69,6 +69,29 @@ describe("CustomersPage", () => {
     expect(props).toMatchObject({ canEdit: true, canExport: true });
   });
 
+  it.each(["operator", "admin"])(
+    "%s loses canExport (not canEdit) while a segment is selected",
+    async (role) => {
+      mocks.readSession.mockResolvedValue({ roles: [role] });
+
+      for (const params of [
+        { segment: "default:not_purchased" },
+        { segment: "s-1", q: "amira" },
+      ] as Record<string, string>[]) {
+        expect((await headerProps(params)).props).toMatchObject({
+          canEdit: true,
+          canExport: false,
+        });
+      }
+      // Clearing the segment restores it.
+      expect((await headerProps({ q: "amira" })).props).toMatchObject({
+        canEdit: true,
+        canExport: true,
+      });
+      expect((await headerProps({ segment: "" })).props).toMatchObject({ canExport: true });
+    },
+  );
+
   it("a viewer gets neither", async () => {
     mocks.readSession.mockResolvedValue({ roles: ["viewer"] });
 
