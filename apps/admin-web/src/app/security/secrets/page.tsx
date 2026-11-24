@@ -23,6 +23,7 @@ import {
   ScheduleCredentialRotationForm,
 } from "@/components/security/secrets-actions";
 import { fetchSecretExplorer, getCredentialLineage } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -105,7 +106,7 @@ async function SecretExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securitySecretsPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securitySecretsPage.unauthorized)}
       />
     );
   }
@@ -182,7 +183,7 @@ async function CredentialLineageResult({
 }) {
   const result = await getCredentialLineage(credentialId);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;

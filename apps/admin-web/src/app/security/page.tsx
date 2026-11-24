@@ -11,6 +11,7 @@ import {
   type SecurityDashboardDto,
   type TrustCenterDto,
 } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -64,7 +65,7 @@ async function DashboardCard({
       <StateCard
         title={t.securityOverviewPage.dashboardTitle}
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityOverviewPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityOverviewPage.unauthorized)}
       />
     );
   }
@@ -128,7 +129,7 @@ async function TrustCenterCard({
       <StateCard
         title={t.securityOverviewPage.trustCenterTitle}
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityOverviewPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityOverviewPage.unauthorized)}
       />
     );
   }
@@ -203,7 +204,7 @@ async function AnalyticsCard({ t }: { readonly t: Dictionary }) {
       <StateCard
         title={t.securityOverviewPage.analyticsTitle}
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityOverviewPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityOverviewPage.unauthorized)}
       />
     );
   }

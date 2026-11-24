@@ -35,6 +35,7 @@ import {
   resolveOrganization,
   resolvePrincipal,
 } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -248,7 +249,7 @@ async function IdentityOverviewSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityIdentityPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityIdentityPage.unauthorized)}
       />
     );
   }
@@ -330,7 +331,7 @@ async function MachineIdentitySection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityIdentityPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityIdentityPage.unauthorized)}
       />
     );
   }
@@ -409,7 +410,7 @@ async function ResolvePrincipalResult({
 }) {
   const result = await resolvePrincipal(subjectRef);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
@@ -475,7 +476,7 @@ async function ResolveMembershipResult({
 }) {
   const result = await resolveMembership(userId);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
@@ -506,7 +507,7 @@ async function ResolveOrganizationResult({
 }) {
   const result = await resolveOrganization(organizationId);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
@@ -529,7 +530,7 @@ async function ResolveMachineIdentityResult({
 }) {
   const result = await resolveMachineIdentity(externalId);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "not_found") return <ResultPanel message={t.securityLookup.notFound} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
@@ -557,7 +558,7 @@ async function CheckConsentResult({
 }) {
   const result = await checkConsent(subjectRef, purpose);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (

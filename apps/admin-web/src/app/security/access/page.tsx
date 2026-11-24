@@ -42,6 +42,7 @@ import {
   fetchRegistryExplorer,
 } from "@/lib/api/security";
 import { getCurrentUser } from "@/lib/auth/current-user";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -284,7 +285,7 @@ async function PermissionExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAccessPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAccessPage.unauthorized)}
       />
     );
   }
@@ -384,7 +385,7 @@ async function PolicyExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAccessPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAccessPage.unauthorized)}
       />
     );
   }
@@ -480,7 +481,7 @@ async function RegistryExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAccessPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAccessPage.unauthorized)}
       />
     );
   }

@@ -25,6 +25,7 @@ import {
   RegisterComplianceRuleForm,
 } from "@/components/security/audit-actions";
 import { fetchAuditExplorer, fetchIncidentExplorer, verifyAuditChain } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -125,7 +126,7 @@ async function VerifyAuditChainSection({
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAuditPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAuditPage.unauthorized)}
       />
     );
   }
@@ -177,7 +178,7 @@ async function AuditExplorerSection({
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAuditPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAuditPage.unauthorized)}
       />
     );
   }
@@ -250,7 +251,7 @@ async function IncidentExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAuditPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAuditPage.unauthorized)}
       />
     );
   }
