@@ -135,6 +135,11 @@ import {
   CheckoutShippingQuoteAdapter,
   CheckoutTaxCalculationAdapter,
 } from "./infrastructure/cross-context/checkout-shipping-tax.adapters";
+import {
+  PrismaCustomerSegmentQuery,
+  UnavailableCustomerSegmentQuery,
+  type CustomerSegmentQuery,
+} from "./infrastructure/cross-context/customer-segment-query";
 import { InventoryValidationAdapter } from "./infrastructure/cross-context/inventory-validation.adapter";
 import {
   mediaImageRefs,
@@ -189,6 +194,7 @@ import { ContentAdminController } from "./interfaces/content.admin-controller";
 import { CouponsAdminController } from "./interfaces/coupons.admin-controller";
 import { Customer360AdminController } from "./interfaces/customer-360.admin-controller";
 import { CustomersAdminController } from "./interfaces/customers.admin-controller";
+import { CustomerSegmentsAdminController } from "./interfaces/customer-segments.admin-controller";
 import { ExperienceAdminController } from "./interfaces/experience.admin-controller";
 import { ExperimentationAdminController } from "./interfaces/experimentation.admin-controller";
 import { FeatureFlagsAdminController } from "./interfaces/feature-flags.admin-controller";
@@ -296,6 +302,11 @@ export interface AdminWiringDeps {
    * their own yet and are unaffected either way — this does not add one for them.
    */
   readonly prisma?: Database;
+  /**
+   * Wave 1c: the live membership read behind Customers > Segments. Absent ⇒ the Prisma adapter when
+   * `prisma` is set, else the explicit "unavailable" one (503) — never an empty list.
+   */
+  readonly customerSegmentQuery?: CustomerSegmentQuery;
   /** Required alongside `prisma` (ADR-0008) by every context that reads it. */
   readonly tenantId?: string;
   /**
@@ -536,6 +547,8 @@ export interface WiredAdmin {
   readonly draftOrders: DraftOrdersAdminController;
   /** Customers screen → Identity. */
   readonly customers: CustomersAdminController;
+  /** Customers > Segments screen → Identity's definitions + the live membership query (Wave 1c). */
+  readonly customerSegments: CustomerSegmentsAdminController;
   /**
    * Customer 360 screen → Customer-360's read side (Sprint S1 — Customer-360's first
    * admin-transport wiring). Read-only, no outbox exposed beyond a no-op drain (in-memory slice
@@ -1396,6 +1409,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     staffAuth,
   });
 
+  const tenancyAdmin = new TenancyAdminController({ tenancy: tenancy.tenancy, guard });
   return {
     collections: new CollectionsAdminController({
       collections: catalog.collections,
@@ -1421,6 +1435,21 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     draftOrders: new DraftOrdersAdminController({ orders: orders.orders, guard }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
+    customerSegments: new CustomerSegmentsAdminController({
+      segments: identity.customerSegments,
+      query:
+        deps.customerSegmentQuery ??
+        (deps.prisma === undefined
+          ? new UnavailableCustomerSegmentQuery()
+          : new PrismaCustomerSegmentQuery({ prisma: deps.prisma })),
+      // A closure, not the controller: the multi-tenant boot check walks the graph for construction-time
+      // tenant ids and exempts only the root `tenancy` (ADR-0014 8f).
+      tenancy: {
+        getStoreRegion: (principal, tenantId) => tenancyAdmin.getStoreRegion(principal, tenantId),
+      },
+      guard,
+      clock: deps.clock,
+    }),
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
       guard,
@@ -1527,7 +1556,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     mediaImages: mediaLibrary.images,
-    tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
+    tenancy: tenancyAdmin,
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
     shopDomains: async (tenantId) => {
