@@ -52,3 +52,26 @@ export {
   PrismaMembershipRepository,
 } from "./infrastructure/prisma-access-repositories";
 export { IDENTITY_PUBLISHED_EVENTS } from "./infrastructure/identity-event-translator";
+
+export { Phone } from "./domain/value-objects/phone";
+export {
+  isCustomerLanguage,
+  type CustomerLanguage,
+} from "./domain/value-objects/customer-language";
+export {
+  MAX_TAG_LENGTH,
+  MAX_TAGS_PER_CUSTOMER,
+  MAX_NOTE_LENGTH,
+  normalizeTag,
+  tagKeyOf,
+  parseTags,
+  normalizeNote,
+  sortTags,
+  compareText,
+  characterCount,
+  type CustomerTag,
+  type CustomerAnnotations,
+  type CustomerAnnotationRepository,
+} from "./domain/customer-annotations";
+export { InMemoryCustomerAnnotationRepository } from "./infrastructure/in-memory-customer-annotation-repository";
+export { PrismaCustomerAnnotationRepository } from "./infrastructure/prisma-customer-annotation-repository";

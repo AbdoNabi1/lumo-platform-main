@@ -29,6 +29,7 @@ import type {
   OrganizationRepository,
   UserRepository,
 } from "./domain/access-repositories";
+import type { CustomerAnnotationRepository } from "./domain/customer-annotations";
 import type { CustomerContactReader, CustomerRepository } from "./domain/customer-repository";
 import type { SignupTokenRepository } from "./domain/signup-token-repository";
 import { IdentityEventTranslator } from "./infrastructure/identity-event-translator";
@@ -37,6 +38,8 @@ import {
   InMemoryOrganizationRepository,
   InMemoryUserRepository,
 } from "./infrastructure/in-memory-access-repositories";
+import { InMemoryCustomerAnnotationRepository } from "./infrastructure/in-memory-customer-annotation-repository";
+import { PrismaCustomerAnnotationRepository } from "./infrastructure/prisma-customer-annotation-repository";
 import { InMemoryCustomerRepository } from "./infrastructure/in-memory-customer-repository";
 import { InMemorySignupTokenRepository } from "./infrastructure/in-memory-signup-token-repository";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
@@ -76,6 +79,7 @@ export interface WiredIdentity {
 
 interface IdentityRepos {
   readonly customers: CustomerRepository & CustomerContactReader;
+  readonly customerAnnotations: CustomerAnnotationRepository;
   readonly signupTokens: SignupTokenRepository;
   readonly users: UserRepository;
   readonly organizations: OrganizationRepository;
@@ -201,6 +205,7 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
     const accessDeps = { prisma: deps.prisma, outbox, context };
     const repos: IdentityRepos = {
       customers: new PrismaCustomerRepository({ prisma: deps.prisma, outbox, context }),
+      customerAnnotations: new PrismaCustomerAnnotationRepository({ prisma: deps.prisma }),
       signupTokens: new PrismaSignupTokenRepository({ prisma: deps.prisma }),
       users: new PrismaUserRepository(accessDeps),
       organizations: new PrismaOrganizationRepository(accessDeps),
@@ -222,8 +227,10 @@ export function wireIdentity(deps: IdentityWiringDeps): WiredIdentity {
   });
   const context = rootEventContext(deps.idGenerator);
 
+  const customers = new InMemoryCustomerRepository({ outbox: outboxWriter, context });
   const repos: IdentityRepos = {
-    customers: new InMemoryCustomerRepository({ outbox: outboxWriter, context }),
+    customers,
+    customerAnnotations: new InMemoryCustomerAnnotationRepository({ customers }),
     signupTokens: new InMemorySignupTokenRepository(),
     users: new InMemoryUserRepository({ outbox: outboxWriter, context }),
     organizations: new InMemoryOrganizationRepository({ outbox: outboxWriter, context }),
