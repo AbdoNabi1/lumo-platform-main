@@ -18,7 +18,7 @@ import {
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
-import { resolveEmailWiring } from "./email-wiring";
+import { resolveEmailWiring, staffInviteDelivery } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -659,6 +659,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
     // request endpoint still answers 202 and sends nothing.
     emailSender: email.emailSender,
+    // Wave 1d: staff invitations go only through a REAL delivery (Resend) and need ADMIN_PUBLIC_URL;
+    // otherwise inviting answers 503 NOT_CONFIGURED before anything is written.
+    ...staffInviteDelivery(email, runtime.config),
     ...(runtime.config.ADMIN_PUBLIC_URL === undefined
       ? {}
       : { adminPublicUrl: runtime.config.ADMIN_PUBLIC_URL }),
