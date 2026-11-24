@@ -156,10 +156,9 @@ describe("middleware", () => {
   });
 
   it("Online Store → Navigation: viewers read menus; a new menu needs an operator (Part 2)", async () => {
-    const { ONLINE_STORE_NAV } = await import("@/components/navigation");
-    expect((ONLINE_STORE_NAV.children ?? []).map((c) => c.href)).toContain(
-      "/online-store/navigation",
-    );
+    // Menus moved under Content in the sidebar (Wave 1a); the route and its role did not change.
+    const content = PRIMARY_NAV.find((item) => item.id === "content");
+    expect((content?.children ?? []).map((c) => c.href)).toContain("/online-store/navigation");
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     for (const path of ["/online-store/navigation", "/online-store/navigation/main-menu"]) {
       expect((await middleware(requestFor(path, "good.token"))).headers.get("location")).toBeNull();
@@ -188,6 +187,83 @@ describe("middleware", () => {
   it("/forbidden itself is reachable by any authenticated session regardless of role", async () => {
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
     const response = await middleware(requestFor("/forbidden", "good.token"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+});
+
+describe("middleware role table for the Settings sub-navigation (Shopify parity Wave 1a)", () => {
+  it("redirects a viewer from /settings/checkout to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    const response = await middleware(requestFor("/settings/checkout", "good.token"));
+    expect(response.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an admin open /settings/checkout", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    const response = await middleware(requestFor("/settings/checkout", "good.token"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("keeps every coming-soon placeholder admin-only", async () => {
+    expect.hasAssertions();
+    const placeholders = [
+      "users",
+      "checkout",
+      "customer-accounts",
+      "markets",
+      "apps",
+      "customer-events",
+      "notifications",
+      "custom-data",
+      "customer-privacy",
+    ];
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    for (const section of placeholders) {
+      const response = await middleware(requestFor(`/settings/${section}`, "good.token"));
+      expect(response.headers.get("location"), section).toContain("/forbidden");
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    for (const section of placeholders) {
+      const response = await middleware(requestFor(`/settings/${section}`, "good.token"));
+      expect(response.headers.get("location"), section).toBeNull();
+    }
+  });
+
+  it("lets a viewer still open /online-store/navigation and /locales", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/online-store/navigation", "/locales"]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+});
+
+describe("middleware role table for collections (Shopify parity Wave 1a)", () => {
+  const COLLECTION_ID = "2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11";
+
+  it("lets a viewer open the collections list and a collection", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/collections", `/collections/${COLLECTION_ID}`]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("redirects a viewer from /collections/new to /forbidden", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    const response = await middleware(requestFor("/collections/new", "good.token"));
+    expect(response.headers.get("location")).toContain("/forbidden");
+  });
+
+  it("lets an operator open /collections/new", async () => {
+    expect.hasAssertions();
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
+    const response = await middleware(requestFor("/collections/new", "good.token"));
     expect(response.headers.get("location")).toBeNull();
   });
 });

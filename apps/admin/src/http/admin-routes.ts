@@ -37,6 +37,7 @@ import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
 import { cartRoutes } from "./cart-routes";
+import { collectionsRoutes } from "./collections-routes";
 import { checkoutRoutes } from "./checkout-routes";
 import { componentsRoutes } from "./components-routes";
 import { contentRoutes } from "./content-routes";
@@ -2232,6 +2233,7 @@ export function adminRoutes(
     ...salesAnalyticsRoutes(admin),
     ...automationRoutes(admin),
     ...cartRoutes(admin),
+    ...collectionsRoutes(admin),
     ...checkoutRoutes(admin),
     ...paymentsRoutes(admin),
     ...paymentsWebhookRoutes(admin),
