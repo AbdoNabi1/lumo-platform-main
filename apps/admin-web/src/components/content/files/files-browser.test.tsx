@@ -309,4 +309,75 @@ describe("dismissing the confirmation while the delete is in flight", () => {
     expect(body().queryByRole("dialog", { name: "Delete file?" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^B\.png/, hidden: true })).toBeNull();
   });
+
+  it("pending Escape racing success preserves the inner handoff", async () => {
+    await mount([file("A.png"), file("B.png"), file("C.png")]);
+    let settle!: (value: unknown) => void;
+    actions.archiveFileAction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const details = await openDetails("B.png");
+    const confirm = await openConfirm(details);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete file" }));
+    await within(confirm).findByRole("button", { name: "Deleting…" });
+    const focus = recordFocus();
+    await act(async () => {
+      escape(confirm);
+      settle({ status: "success" });
+    });
+    await refresh("id-B.png");
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(tile("C.png")).toHaveFocus());
+    focus.stop();
+    expect(focus.history.find((entry) => entry.label === "Delete file")).toEqual({
+      label: "Delete file",
+      dialogs: 1,
+    });
+  });
+
+  it("pending Cancel racing success preserves the inner handoff", async () => {
+    await mount([file("A.png"), file("B.png"), file("C.png")]);
+    const settle = hold();
+    const details = await openDetails("B.png");
+    const confirm = await openConfirm(details);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete file" }));
+    await within(confirm).findByRole("button", { name: "Deleting…" });
+    const focus = recordFocus();
+    await act(async () => {
+      fireEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+      settle({ status: "success" });
+    });
+    await refresh("id-B.png");
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(tile("C.png")).toHaveFocus());
+    focus.stop();
+    expect(focus.history.find((entry) => entry.label === "Delete file")).toEqual({
+      label: "Delete file",
+      dialogs: 1,
+    });
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it("pending Escape racing an error does not reopen; focus is on Delete and details stays open", async () => {
+    await mount([file("A.png"), file("B.png")]);
+    const settle = hold();
+    const details = await openDetails("B.png");
+    const confirm = await openConfirm(details);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Delete file" }));
+    await within(confirm).findByRole("button", { name: "Deleting…" });
+    await act(async () => {
+      escape(confirm);
+      settle({ status: "error", message: "Couldn't delete it.", fieldErrors: {} });
+    });
+    await waitFor(() => expect(body().queryByRole("dialog", { name: "Delete file?" })).toBeNull());
+    await waitFor(() =>
+      expect(within(details).getByRole("button", { name: "Delete file" })).toHaveFocus(),
+    );
+    expect(await within(details).findByRole("alert")).toHaveTextContent("Couldn't delete it.");
+    expect(body().getByRole("dialog", { name: "B.png" })).toBeInTheDocument();
+    expect(body().queryByRole("dialog", { name: "Delete file?" })).toBeNull();
+  });
 });

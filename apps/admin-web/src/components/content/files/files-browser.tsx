@@ -82,6 +82,12 @@ export function FilesBrowser({
   const inFlight = useRef(new Set<string>());
   const archived = useRef(new Set<string>());
   const closeDetailsAfterHandoff = useRef(false);
+  /**
+   * The confirmation's lifecycle, separate from whether it is "open": it is `closing` from the
+   * moment its dismissal is requested until its own close-autofocus has put focus back on the
+   * (still mounted) Delete button. A success that lands in that window must wait for the handoff.
+   */
+  const confirmPhase = useRef<"open" | "closing" | "closed">("closed");
   const deleteTrigger = useRef<HTMLButtonElement>(null);
 
   const showDetails = useCallback((value: boolean) => {
@@ -89,6 +95,8 @@ export function FilesBrowser({
     setDetailsOpen(value);
   }, []);
   const showConfirm = useCallback((value: boolean) => {
+    if (value) confirmPhase.current = "open";
+    else if (live.current.confirm) confirmPhase.current = "closing";
     live.current.confirm = value;
     setConfirmOpen(value);
   }, []);
@@ -103,6 +111,7 @@ export function FilesBrowser({
       };
       live.current.selection = next;
       closeDetailsAfterHandoff.current = false;
+      confirmPhase.current = "closed";
       setSelection(next);
       setDeleteError(null);
       showConfirm(false);
@@ -120,6 +129,10 @@ export function FilesBrowser({
       if (live.current.confirm) {
         closeDetailsAfterHandoff.current = true;
         showConfirm(false);
+      } else if (confirmPhase.current === "closing" && live.current.details) {
+        // Dismissal was requested but its close-autofocus has not run yet: let that same
+        // confirmation hand focus to Delete first; it closes the details dialog afterwards.
+        closeDetailsAfterHandoff.current = true;
       } else if (live.current.details) {
         showDetails(false);
       }
@@ -161,6 +174,7 @@ export function FilesBrowser({
     (event: Event) => {
       event.preventDefault();
       deleteTrigger.current?.focus();
+      if (confirmPhase.current === "closing") confirmPhase.current = "closed";
       if (closeDetailsAfterHandoff.current) {
         closeDetailsAfterHandoff.current = false;
         showDetails(false);
