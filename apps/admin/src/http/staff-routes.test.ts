@@ -553,11 +553,12 @@ describe("POST /staff/invitations", () => {
         bare.app,
       );
       expect(res.statusCode).toBe(503);
+      // The same flat envelope every other admin error uses (no nested `error` wrapper).
       expect(res.json()).toEqual({
-        error: {
-          code: "NOT_CONFIGURED",
-          message: "Email isn't set up, so invitations can't be sent",
-        },
+        code: "NOT_CONFIGURED",
+        message: "Email isn't set up, so invitations can't be sent",
+        retryable: false,
+        fields: [],
       });
       const list = await get(store.token, "/staff", bare.app);
       expect((list.json() as { items: StaffItem[] }).items.map((i) => i.email)).toEqual([
@@ -872,6 +873,41 @@ describe("failures while inviting give the directory entry back", () => {
       (await post(alpha.token, "/staff/invitations", { email, role: "viewer" })).statusCode,
     ).toBe(201);
   });
+
+  it.each([
+    ["throws", "throw" as const],
+    ["answers 500", "500" as const],
+  ])(
+    "createStaffInvitation %s while a same-store row already held the email: that row is put back, not released",
+    async (_n, mode) => {
+      const email = uniqueEmail("restore");
+      // First failure leaves a same-store directory row behind (the release fails too).
+      faults.createInvitation = "500";
+      faults.release = "throw";
+      expect(
+        (await post(alpha.token, "/staff/invitations", { email, role: "viewer" })).statusCode,
+      ).toBe(500);
+      const leftover = await tenancyRef?.findStaffDirectoryEntry(email);
+      expect(leftover).toMatchObject({ shopId: alpha.tenantId });
+
+      // The retry takes the row over (new owner id), fails to create, and must restore the OLD row.
+      const releases = releaseSpy.mock.calls.length;
+      faults.createInvitation = mode;
+      const res = await post(alpha.token, "/staff/invitations", { email, role: "viewer" });
+      expect(res.statusCode).toBe(500);
+      expect(await tenancyRef?.findStaffDirectoryEntry(email)).toEqual(leftover);
+      expect(releaseSpy.mock.calls.length).toBe(releases);
+      expect(await itemFor(alpha.token, email)).toBeUndefined();
+      expect(sender.countFor(email)).toBe(0);
+
+      // Nothing was lost: the next invite still recovers it.
+      const ok = await post(alpha.token, "/staff/invitations", { email, role: "viewer" });
+      expect(ok.statusCode).toBe(201);
+      expect(await tenancyRef?.findStaffDirectoryEntry(email)).toMatchObject({
+        ownerExternalId: (ok.json() as { principalExternalId: string }).principalExternalId,
+      });
+    },
+  );
 });
 
 describe("role changes and deactivation bite on EXISTING tokens (D13, both guards)", () => {

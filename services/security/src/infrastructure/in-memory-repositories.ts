@@ -79,13 +79,15 @@ export class InMemoryPrincipalRepository
   async listAll(tenantId: string): Promise<readonly Principal[]> {
     return this.byId.values(tenantId);
   }
-  async listSummaries(tenantId: string): Promise<readonly PrincipalSummary[]> {
-    return this.byId.values(tenantId).map((p) => ({
-      id: p.id.toString(),
-      externalId: p.externalId,
-      status: p.status,
-      createdAt: new Date(this.createdAt.get(tenantId, p.id.toString()) ?? 0),
-    }));
+  listSummaries(tenantId: string): Promise<readonly PrincipalSummary[]> {
+    return Promise.resolve(
+      this.byId.values(tenantId).map((p) => ({
+        id: p.id.toString(),
+        externalId: p.externalId,
+        status: p.status,
+        createdAt: new Date(this.createdAt.get(tenantId, p.id.toString()) ?? 0),
+      })),
+    );
   }
 }
 
@@ -144,7 +146,7 @@ export class InMemorySessionRepository implements SessionRepository {
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId).filter((s) => s.principalRef === principalRef);
   }
-  async lastEstablishedByPrincipals(
+  lastEstablishedByPrincipals(
     tenantId: string,
     principalRefs: readonly string[],
   ): Promise<ReadonlyMap<string, Date>> {
@@ -156,7 +158,7 @@ export class InMemorySessionRepository implements SessionRepository {
       if (seen === undefined || session.establishedAt.getTime() > seen.getTime())
         latest.set(session.principalRef, new Date(session.establishedAt));
     }
-    return latest;
+    return Promise.resolve(latest);
   }
   async listAll(tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId);
@@ -210,14 +212,16 @@ export class InMemoryRoleAssignmentRepository implements RoleAssignmentRepositor
   ): Promise<readonly RoleAssignment[]> {
     return this.byId.values(tenantId).filter((a) => a.principalRef === principalRef);
   }
-  async listActiveByTenant(
+  listActiveByTenant(
     tenantId: string,
     now: Date,
   ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]> {
-    return this.byId
-      .values(tenantId)
-      .filter((a) => a.isActiveAt(now))
-      .map((a) => ({ principalRef: a.principalRef, roleKey: a.roleKey }));
+    return Promise.resolve(
+      this.byId
+        .values(tenantId)
+        .filter((a) => a.isActiveAt(now))
+        .map((a) => ({ principalRef: a.principalRef, roleKey: a.roleKey })),
+    );
   }
 }
 

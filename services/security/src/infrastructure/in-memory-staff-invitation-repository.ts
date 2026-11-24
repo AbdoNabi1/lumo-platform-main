@@ -23,6 +23,15 @@ interface Snapshot {
   readonly updatedAt: Date;
 }
 
+/** Runs a synchronous body and surfaces a throw as a rejected promise, like an `async` method. */
+function settle<T>(body: () => T): Promise<T> {
+  try {
+    return Promise.resolve(body());
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
 const copy = (date: Date | null): Date | null => (date === null ? null : new Date(date));
 
 function hydrate(s: Snapshot): StaffInvitation {
@@ -49,7 +58,11 @@ function hydrate(s: Snapshot): StaffInvitation {
 export class InMemoryStaffInvitationRepository implements StaffInvitationRepository {
   private readonly rows = new Map<string, Snapshot>();
 
-  async save(invitation: StaffInvitation, _tx?: unknown): Promise<number> {
+  save(invitation: StaffInvitation, _tx?: unknown): Promise<number> {
+    return settle(() => this.saveNow(invitation));
+  }
+
+  private saveNow(invitation: StaffInvitation): number {
     const id = invitation.id.toString().toLowerCase();
     const tenantId = invitation.tenantId;
     const existing = this.rows.get(id);
@@ -95,37 +108,40 @@ export class InMemoryStaffInvitationRepository implements StaffInvitationReposit
     return version;
   }
 
-  async findById(tenantId: string, id: string, _tx?: unknown): Promise<StaffInvitation | null> {
-    if (!UUID.test(id)) return null;
+  findById(tenantId: string, id: string, _tx?: unknown): Promise<StaffInvitation | null> {
+    if (!UUID.test(id)) return Promise.resolve(null);
     const row = this.rows.get(id.toLowerCase());
-    return row !== undefined && row.tenantId === tenantId ? hydrate(row) : null;
+    return Promise.resolve(row !== undefined && row.tenantId === tenantId ? hydrate(row) : null);
   }
 
-  async findPendingByEmail(
+  findPendingByEmail(
     tenantId: string,
     email: string,
     _tx?: unknown,
   ): Promise<StaffInvitation | null> {
     for (const row of this.rows.values())
       if (row.tenantId === tenantId && row.email === email && row.status === "pending")
-        return hydrate(row);
-    return null;
+        return Promise.resolve(hydrate(row));
+    return Promise.resolve(null);
   }
 
-  async findByTokenHash(
+  findByTokenHash(
     tenantId: string,
     tokenHash: string,
     _tx?: unknown,
   ): Promise<StaffInvitation | null> {
     for (const row of this.rows.values())
-      if (row.tenantId === tenantId && row.tokenHash === tokenHash) return hydrate(row);
-    return null;
+      if (row.tenantId === tenantId && row.tokenHash === tokenHash)
+        return Promise.resolve(hydrate(row));
+    return Promise.resolve(null);
   }
 
-  async listPending(tenantId: string, _tx?: unknown): Promise<readonly StaffInvitation[]> {
-    return [...this.rows.values()]
-      .filter((row) => row.tenantId === tenantId && row.status === "pending")
-      .sort((a, b) => (a.email < b.email ? -1 : a.email > b.email ? 1 : 0))
-      .map(hydrate);
+  listPending(tenantId: string, _tx?: unknown): Promise<readonly StaffInvitation[]> {
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter((row) => row.tenantId === tenantId && row.status === "pending")
+        .sort((a, b) => (a.email < b.email ? -1 : a.email > b.email ? 1 : 0))
+        .map(hydrate),
+    );
   }
 }

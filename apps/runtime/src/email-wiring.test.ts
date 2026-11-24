@@ -118,11 +118,9 @@ describe("staff invitation delivery capability (Wave 1d, R1)", () => {
         role: "viewer",
       });
       expect(res.status).toBe(503);
-      expect(res.body).toEqual({
-        error: {
-          code: "NOT_CONFIGURED",
-          message: "Email isn't set up, so invitations can't be sent",
-        },
+      expect(res.body).toMatchObject({
+        code: "NOT_CONFIGURED",
+        message: "Email isn't set up, so invitations can't be sent",
       });
       const list = await admin.staff.list(owner, "t-1");
       expect((list.body as { items: { email: string }[] }).items.map((i) => i.email)).toEqual([]);

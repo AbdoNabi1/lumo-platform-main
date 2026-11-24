@@ -8,8 +8,9 @@ import {
 } from "@platform/security";
 import type { Result } from "@platform/types";
 import {
+  AppError,
   ConflictError,
-  type DomainError,
+  DomainError,
   ValidationError,
   logger,
   toErrorEnvelope,
@@ -53,34 +54,35 @@ export interface StaffAdminControllerDeps {
   readonly liveAccess: LiveStaffAccessControl;
 }
 
+/** A failure with a fixed wire code that the client may retry (an email that bounced, say). */
+class RetryableStaffError extends DomainError {
+  readonly retryable = true;
+}
+
 const INVITATION_INVALID: AdminResponse = {
   status: 410,
-  body: {
-    code: "INVITATION_INVALID",
-    message: "This invitation link is invalid or has expired",
-    retryable: false,
-    fields: [],
-  },
+  body: toErrorEnvelope(
+    new AppError("This invitation link is invalid or has expired", { code: "INVITATION_INVALID" }),
+  ),
 };
 
 const NOT_CONFIGURED: AdminResponse = {
   status: 503,
-  body: {
-    error: {
-      code: "NOT_CONFIGURED",
-      message: "Email isn't set up, so invitations can't be sent",
-    },
-  },
+  body: toErrorEnvelope(
+    new AppError("Email isn't set up, so invitations can't be sent", { code: "NOT_CONFIGURED" }),
+  ),
 };
 
 const EMAIL_FAILED: AdminResponse = {
   status: 502,
-  body: {
-    code: "EMAIL_FAILED",
-    message: "The invitation was saved but the email couldn't be sent. Use Resend.",
-    retryable: true,
-    fields: [],
-  },
+  body: toErrorEnvelope(
+    new RetryableStaffError(
+      "The invitation was saved but the email couldn't be sent. Use Resend.",
+      {
+        code: "EMAIL_FAILED",
+      },
+    ),
+  ),
 };
 
 const ROLE_LABELS: Readonly<Record<StaffRole, { readonly en: string; readonly ar: string }>> = {
