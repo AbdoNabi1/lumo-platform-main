@@ -30,7 +30,11 @@ const DEFAULT_TENANT_ID = "tenant-local";
 
 export type ApiResult<T> =
   | { readonly outcome: "ok"; readonly data: T }
-  | { readonly outcome: "unauthorized" }
+  | {
+      readonly outcome: "unauthorized";
+      /** 403 when the API answered "signed in, but not allowed" (the owner-only screens say so); absent for a 401. */
+      readonly status?: number;
+    }
   | { readonly outcome: "not_found" }
   | {
       readonly outcome: "error";
@@ -137,8 +141,11 @@ export async function getAdminApi<T>(
     };
   }
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
     return { outcome: "unauthorized" };
+  }
+  if (response.status === 403) {
+    return { outcome: "unauthorized", status: 403 };
   }
   if (response.status === 404) {
     return { outcome: "not_found" };
