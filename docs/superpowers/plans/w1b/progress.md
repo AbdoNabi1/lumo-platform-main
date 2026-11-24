@@ -47,3 +47,5 @@
 - 2026-11-24 13:25 Branch review (Sol): SPEC COMPLIANT, QUALITY APPROVED, 0 Critical/Important, 4 Minor (the parked M1-M4). media 116/4, identity 170/52, admin 195, admin-web 568, 4 tsc clean, consistency 75, consent 6. Phase 4 fix → impl-sonnet.
 - 2026-11-24 13:33 Phase 4 fix (sonnet): 836d3969 (M1-M3 test-only, M4 5 lines in createCustomerAction). Scoped re-review by Opus: approved; admin media/customer/e2e 177/177, admin-web customers 228/228, diff --check clean.
 - Wave 1b COMPLETE. Next: merge origin/main (33e9bbc2: wave 1a + effect override), push, PR, merge on green CI (owner standing go-ahead). Owner applies migration 20261124000000_customer_profile_tags on Supabase before release.
+- 2026-11-24 PR #17 CI: db-integration PASS (new customer gated suites green on Postgres), audit/secrets/trivy pass. FAIL: arch (identity application fixture imports @platform/messaging) and 1 admin-web test (tags card toBeDisabled, CI-only timing). Fix → impl-sonnet.
+- 2026-11-24 PR #17 CI all 13 green → merged into main (match-head ea010210). Wave 1b live on main. Owner must apply 20261124000000_customer_profile_tags on Supabase before deploying.
