@@ -16,8 +16,12 @@ const PLATFORM = "platform";
 const NOW = new Date("2026-10-16T00:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
 const clock: Clock = { now: () => NOW };
-/** Any principal: the default access control allows every action, these reads are only assertions. */
-const operator: Principal = { id: "operator", kind: "staff", roles: [], tenantId: PLATFORM };
+/**
+ * Any principal: the default access control allows every action, these reads are only assertions. A
+ * `service` caller on purpose: with native sign-in wired, a `staff` principal is looked up live in Security
+ * (Wave 1d) and this fixture person does not exist there.
+ */
+const operator: Principal = { id: "operator", kind: "service", roles: [], tenantId: PLATFORM };
 
 function issuer() {
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });

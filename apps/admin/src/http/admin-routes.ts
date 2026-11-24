@@ -46,6 +46,7 @@ import { customer360Routes } from "./customer-360-routes";
 import { annotationsOfCustomer, customerRoutes, marketingOf } from "./customer-routes";
 import type { SegmentMembersPage } from "../infrastructure/cross-context/customer-segment-query";
 import { customerSegmentRoutes } from "./customer-segment-routes";
+import { staffRoutes } from "./staff-routes";
 import { experienceRoutes } from "./experience-routes";
 import { experimentationRoutes } from "./experimentation-routes";
 import { featureFlagsRoutes } from "./feature-flags-routes";
@@ -1718,6 +1719,8 @@ export function adminRoutes(
     ...customerRoutes(admin),
     // Wave 1c: `/customer-segments/preview` and `/store-currency` are registered before `:segmentId`.
     ...customerSegmentRoutes(admin),
+    // Wave 1d: Settings > Users and permissions (`/staff/invitations/...` before `/staff/:principalExternalId/...`).
+    ...staffRoutes(admin),
     defineRoute({
       method: "GET",
       path: "/customers",

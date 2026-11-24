@@ -176,6 +176,11 @@ import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email
 import type { AdminResponse } from "./interfaces/admin-response";
 import { AccessAdminController } from "./interfaces/access.admin-controller";
 import { AdminGuard } from "./interfaces/admin-guard";
+import {
+  LiveStaffAccessControl,
+  securityStaffAccessReader,
+} from "./interfaces/live-staff-access-control";
+import { StaffAdminController } from "./interfaces/staff.admin-controller";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
@@ -373,6 +378,13 @@ export interface AdminWiringDeps {
   readonly staffTokenIssuer?: NativeTokenIssuer;
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
+  /**
+   * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
+   * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
+   * apart from `emailSender` on purpose: that one may be the logging fallback (reset requests still answer
+   * 202 there), which must never pretend an invitation was delivered.
+   */
+  readonly staffInviteEmailSender?: EmailSender;
   /** Plan 1C: public origin of admin-web, used to build the reset link (e.g. https://admin.example.com). */
   readonly adminPublicUrl?: string;
   /** Plan 1C: where reset tokens live; passed straight through to `wireSecurity(deps)`. Absent ⇒ in-memory. */
@@ -549,6 +561,14 @@ export interface WiredAdmin {
   readonly customers: CustomersAdminController;
   /** Customers > Segments screen → Identity's definitions + the live membership query (Wave 1c). */
   readonly customerSegments: CustomerSegmentsAdminController;
+  /** Settings > Users and permissions → Security's staff use cases + the store directory (Wave 1d). */
+  readonly staff: StaffAdminController;
+  /**
+   * Wave 1d (D13): the ONE access control both guards use — this facade's `AdminGuard` and the HTTP
+   * transport's — so a deactivation or role change bites on every route within 30 seconds, or at once on
+   * the instance that made it (`StaffAdminController` invalidates it).
+   */
+  readonly liveAccessControl: LiveStaffAccessControl;
   /**
    * Customer 360 screen → Customer-360's read side (Sprint S1 — Customer-360's first
    * admin-transport wiring). Read-only, no outbox exposed beyond a no-op drain (in-memory slice
@@ -1237,9 +1257,16 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const licensing = deps.licensing ?? wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
-  const accessControl = deps.accessControl ?? new AllowAllAccessControl();
+  const liveAccessControl = new LiveStaffAccessControl({
+    inner: deps.accessControl ?? new AllowAllAccessControl(),
+    reader: securityStaffAccessReader(security.security),
+    clock: deps.clock,
+    // Live only under native sign-in (`staffTokenIssuer`): Security's tables are the staff source of truth
+    // there. With an external IdP (Ory/Keto) staff live in the IdP and a Security lookup would lock them out.
+    enabled: deps.staffTokenIssuer !== undefined,
+  });
   const auditTrail = deps.auditTrail ?? new InMemoryAuditTrail();
-  const guard = new AdminGuard({ accessControl, auditTrail, clock: deps.clock });
+  const guard = new AdminGuard({ accessControl: liveAccessControl, auditTrail, clock: deps.clock });
   const carrierOrders = new CarrierOrderAdapter({
     orders: orders.orders,
     payments: payments.payments,
@@ -1450,6 +1477,29 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
       clock: deps.clock,
     }),
+    staff: new StaffAdminController({
+      security: security.security,
+      // Closures, not the tenancy controller: the multi-tenant boot check walks the composed graph for
+      // construction-time tenant ids and exempts only the root `tenancy` (ADR-0014 8f).
+      directory: {
+        find: async (email) => {
+          const entry = await tenancy.tenancy.findStaffDirectoryEntry(email);
+          return entry === null
+            ? null
+            : { shopId: entry.shopId, ownerExternalId: entry.ownerExternalId };
+        },
+        reserve: (input) => tenancy.tenancy.reserveStaffEmail(input),
+        release: (input) => tenancy.tenancy.releaseStaffEmail(input),
+      },
+      ...(deps.staffInviteEmailSender === undefined
+        ? {}
+        : { staffInviteEmailSender: deps.staffInviteEmailSender }),
+      ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
+      guard,
+      clock: deps.clock,
+      liveAccess: liveAccessControl,
+    }),
+    liveAccessControl,
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
       guard,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
@@ -20,6 +21,12 @@ const staffResetCompleteBody = z
   .object({ token: z.string().min(1).max(256), password: z.string().min(1).max(256) })
   .strict();
 
+const staffInviteAcceptBody = z
+  .object({ token: z.string().min(1).max(512), password: z.string().max(256) })
+  .strict();
+
+const STAFF_INVITE_ACCEPT_LIMIT = 10;
+const STAFF_INVITE_ACCEPT_WINDOW_MS = 15 * 60 * 1000;
 const STAFF_RESET_REQUEST_LIMIT = 5;
 const STAFF_RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
 const STAFF_RESET_COMPLETE_LIMIT = 10;
@@ -126,6 +133,34 @@ export function publicStaffAuthRoutes(
           }
         }
         return admin.staffAuth.completePasswordReset({
+          tenantId: context.tenantId,
+          token: body.token,
+          password: body.password,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/invitations/accept",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: accept a staff invitation by choosing a password (uniform 410 for any bad link)",
+      schema: { body: staffInviteAcceptBody },
+      handle: async ({ body, context }) => {
+        if (rateLimiter !== undefined) {
+          // Bucketed by a hash of the token: the token itself never reaches the limiter or its logs.
+          const decision = await rateLimiter.consume(
+            `rl:${context.tenantId}:staff-invite-accept:${createHash("sha256").update(body.token).digest("hex")}`,
+            STAFF_INVITE_ACCEPT_LIMIT,
+            STAFF_INVITE_ACCEPT_WINDOW_MS,
+          );
+          if (!decision.allowed) {
+            return rateLimited(decision.retryAfterMs, "Too many invitation attempts");
+          }
+        }
+        return admin.staff.acceptInvitation({
           tenantId: context.tenantId,
           token: body.token,
           password: body.password,

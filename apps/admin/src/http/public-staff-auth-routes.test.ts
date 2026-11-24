@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator, RateLimiter } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
@@ -199,5 +199,64 @@ describe("staff sign-in (Plan 1B-2)", () => {
     // Another address has its own bucket, and the limiter never says whether the account exists.
     const other = await call(login, { email: "nobody@example.test", password: "fake-password-1" });
     expect(other.status).toBe(401);
+  });
+});
+
+const INVITE_ACCEPT = "/public/auth/staff/invitations/accept";
+
+describe("staff invitation accept route (Wave 1d)", () => {
+  it("is public, authenticated by the link alone, and NOT idempotent", async () => {
+    const { routes } = await setup();
+    const route = find(routes, "POST", INVITE_ACCEPT);
+    expect(route.public).toBe(true);
+    expect(route.permission).toBe("security:authenticate");
+    expect(route.idempotent).not.toBe(true);
+  });
+
+  it("checks structure only: token 1..512, password at most 256, no unknown keys (a short password is Security's 422)", async () => {
+    const { routes } = await setup();
+    const schema = find(routes, "POST", INVITE_ACCEPT).schema.body!;
+    expect(schema.safeParse({ token: "t", password: "short" }).success).toBe(true);
+    expect(schema.safeParse({ token: "", password: "x" }).success).toBe(false);
+    expect(schema.safeParse({ token: "t".repeat(513), password: "x" }).success).toBe(false);
+    expect(schema.safeParse({ token: "t", password: "p".repeat(257) }).success).toBe(false);
+    expect(schema.safeParse({ token: "t", password: "x", store: "s" }).success).toBe(false);
+  });
+
+  it("answers the uniform 410 for any unknown link and a 422 on field password for a weak one", async () => {
+    const { routes } = await setup();
+    const route = find(routes, "POST", INVITE_ACCEPT);
+    const gone = await call(route, { token: "nope", password: "a-long-enough-password" });
+    expect(gone.status).toBe(410);
+    expect(gone.body).toMatchObject({
+      code: "INVITATION_INVALID",
+      message: "This invitation link is invalid or has expired",
+    });
+    const weak = await call(route, { token: "nope", password: "short" });
+    expect(weak.status).toBe(422);
+    expect(JSON.stringify((weak.body as { fields: unknown }).fields)).toContain("password");
+  });
+
+  it("is limited to 10 per 15 minutes per token HASH: the bucket carries a sha256, never the token", async () => {
+    const limiter = new CountingRateLimiter();
+    const { routes } = await setup(true, limiter);
+    const route = find(routes, "POST", INVITE_ACCEPT);
+    const token = "secret-invitation-token-value";
+    for (let i = 0; i < 10; i += 1) {
+      expect((await call(route, { token, password: "a-long-enough-password" })).status).toBe(410);
+    }
+    const refused = await call(route, { token, password: "a-long-enough-password" });
+    expect(refused.status).toBe(429);
+    expect(refused.body).toMatchObject({ code: "RATE_LIMITED", retryable: true });
+    expect(refused.headers?.["retry-after"]).toBeDefined();
+    const hash = createHash("sha256").update(token).digest("hex");
+    expect(new Set(limiter.keys)).toEqual(
+      new Set([`rl:tenant-local:staff-invite-accept:${hash}|10|900000`]),
+    );
+    expect(limiter.keys.join("\n")).not.toContain(token);
+    // Another token has its own bucket.
+    expect(
+      (await call(route, { token: "another", password: "a-long-enough-password" })).status,
+    ).toBe(410);
   });
 });
