@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { Badge, Button, Input } from "@platform/ui";
-import { mergeTags, splitTags } from "@/lib/customers/tags";
+import { mergeTags, splitTags, tagKeyOf } from "@/lib/customers/tags";
 import type { Dictionary } from "@/messages/en";
 
 /**
@@ -93,7 +93,7 @@ export function CustomerTagsEditor({
       {tags.length > 0 && (
         <ul aria-label={k.tagsAdded} className="flex flex-wrap gap-1.5">
           {tags.map((tag) => (
-            <li key={tag.toLowerCase()}>
+            <li key={tagKeyOf(tag)}>
               <Badge variant="neutral" className="gap-1 pe-1 ps-2">
                 <bdi dir="auto">{tag}</bdi>
                 <button

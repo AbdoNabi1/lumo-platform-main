@@ -121,4 +121,16 @@ describe("collectCustomerExportRows", () => {
 
     expect(await collectCustomerExportRows(fetchPage, {})).toEqual({ outcome: "error" });
   });
+
+  it("a rejected page read fails the whole export, first or after good pages", async () => {
+    const first = vi.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
+    expect(await collectCustomerExportRows(first, {})).toEqual({ outcome: "error" });
+
+    const later = vi
+      .fn()
+      .mockResolvedValueOnce(ok(100, "c-1"))
+      .mockRejectedValueOnce(new TypeError("terminated"));
+    expect(await collectCustomerExportRows(later, {})).toEqual({ outcome: "error" });
+    expect(later).toHaveBeenCalledTimes(2);
+  });
 });

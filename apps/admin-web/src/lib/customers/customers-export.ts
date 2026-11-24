@@ -32,7 +32,7 @@ export type CollectedCustomerExport =
 /**
  * Reads every page of the plan, 100 at a time, refusing to go past {@link CUSTOMER_EXPORT_ROW_CAP}
  * rows or {@link MAX_CUSTOMER_EXPORT_REQUESTS} calls. Any page that fails (or promises a next page
- * without a cursor) fails the whole export — a partial file is never produced.
+ * without a cursor, or whose read rejects) fails the whole export — a partial file is never produced.
  */
 export async function collectCustomerExportRows(
   fetchPage: (query: {
@@ -46,11 +46,18 @@ export async function collectCustomerExportRows(
   const rows: CustomerExportRowDto[] = [];
   let after: string | undefined;
   for (let request = 0; request < MAX_CUSTOMER_EXPORT_REQUESTS; request += 1) {
-    const page = await fetchPage({
-      first: CUSTOMER_EXPORT_PAGE_SIZE,
-      ...(plan.search === undefined ? {} : { search: plan.search }),
-      ...(after === undefined ? {} : { after }),
-    });
+    let page: ApiResult<CustomerExportPage>;
+    try {
+      page = await fetchPage({
+        first: CUSTOMER_EXPORT_PAGE_SIZE,
+        ...(plan.search === undefined ? {} : { search: plan.search }),
+        ...(after === undefined ? {} : { after }),
+      });
+    } catch {
+      // The shared GET helper parses the body outside its network catch, so a truncated or
+      // non-JSON 200 (or a failed body read) rejects; that is a failed page, never a partial file.
+      return { outcome: "error" };
+    }
     if (page.outcome !== "ok") return { outcome: "error" };
     rows.push(...page.data.items);
     if (rows.length > cap) return { outcome: "too_many" };

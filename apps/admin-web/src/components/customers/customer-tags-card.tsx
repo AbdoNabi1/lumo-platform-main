@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { CheckIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Label } from "@platform/ui";
 import { setCustomerTagsAction } from "@/app/customers/actions";
@@ -35,6 +35,12 @@ export function CustomerTagsCard({
   >(null);
   const savedKey = tags.join("\u0000");
 
+  // The latest stored set, readable from the save continuation (which closes over old props).
+  const latest = useRef({ tags, savedKey });
+  useEffect(() => {
+    latest.current = { tags, savedKey };
+  }, [tags, savedKey]);
+
   // The page re-renders with the stored set after a save; start the draft from it (state adjusted
   // while rendering, the documented alternative to an effect that copies props into state).
   const [seenKey, setSeenKey] = useState(savedKey);
@@ -48,6 +54,7 @@ export function CustomerTagsCard({
 
   function save(): void {
     setOutcome(null);
+    const startedFrom = savedKey;
     startSaving(async () => {
       try {
         const state = await setCustomerTagsAction(customerId, effective);
@@ -55,7 +62,14 @@ export function CustomerTagsCard({
           setOutcome({ kind: "error", message: state.fieldErrors["tags"] ?? state.message });
           return;
         }
-        setDraft(effective);
+        // Reconcile to what was stored. Identity normalizes exactly as the editor does, so the
+        // canonical set is the submitted one up to order; prefer the page's own spelling when it
+        // already agrees. If the page refreshed to a different set while the save ran, that set
+        // already replaced the draft — never write the submitted draft over it.
+        const current = latest.current;
+        if (current.savedKey === startedFrom) {
+          setDraft(sameTags(effective, current.tags) ? [...current.tags] : effective);
+        }
         setPending("");
         setEditorKey((key) => key + 1);
         setOutcome({ kind: "saved" });

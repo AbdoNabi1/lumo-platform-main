@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mergeTags, sameTags, splitTags } from "./tags";
+import { mergeTags, normalizeTag, sameTags, splitTags, tagKeyOf } from "./tags";
 
 beforeEach(() => {
   expect.hasAssertions();
@@ -34,5 +34,27 @@ describe("sameTags", () => {
   it("notices an added, removed or different tag", () => {
     expect(sameTags(["VIP"], ["VIP", "Cairo"])).toBe(false);
     expect(sameTags(["VIP", "Cairo"], ["VIP", "Giza"])).toBe(false);
+  });
+});
+
+describe("Identity-aligned normalisation", () => {
+  it("normalizes to NFC, collapses internal whitespace and trims", () => {
+    expect(normalizeTag("  new 	  tag ")).toBe("new tag");
+    expect(normalizeTag("café")).toBe("café");
+    expect(tagKeyOf("New  TAG")).toBe("new tag");
+  });
+
+  it("splitTags returns the normalized spelling", () => {
+    expect(splitTags("new  tag, café")).toEqual(["new tag", "café"]);
+  });
+
+  it("mergeTags and sameTags treat spacing and NFC variants as the same tag", () => {
+    expect(mergeTags(["new tag", "café"], ["new  tag", "café", "gold"])).toEqual([
+      "new tag",
+      "café",
+      "gold",
+    ]);
+    expect(sameTags(["new  tag"], ["New Tag"])).toBe(true);
+    expect(sameTags(["café"], ["café"])).toBe(true);
   });
 });

@@ -347,6 +347,58 @@ describe("CustomerTagsCard", () => {
     expect(body().queryByRole("status")).toBeNull();
   });
 
+  it.each([
+    ["extra internal spaces", "new  tag", ["new tag"]],
+    ["an NFC-equivalent spelling", "café", ["café"]],
+  ])(
+    "%s of a saved tag is one canonical chip, and Save is disabled after the refresh",
+    async (_label, typed, existing) => {
+      actions.setCustomerTagsAction.mockResolvedValue(OK);
+      const stored = [...existing, "gold"];
+      const { rerender } = render(
+        <CustomerTagsCard customerId={ID} tags={existing} canEdit t={en} />,
+      );
+      fireEvent.change(body().getByLabelText("Add tags"), {
+        target: { value: `${typed}, gold,` },
+      });
+      fireEvent.click(body().getByRole("button", { name: "Save tags" }));
+
+      await waitFor(() => expect(actions.setCustomerTagsAction).toHaveBeenCalledWith(ID, stored));
+      expect(await body().findByRole("status")).toHaveTextContent("Tags saved.");
+      rerender(<CustomerTagsCard customerId={ID} tags={stored} canEdit t={en} />);
+
+      const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
+      expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual(
+        stored,
+      );
+      expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled();
+    },
+  );
+
+  it("a changed canonical set that arrives before the action resolves is not overwritten", async () => {
+    let resolveAction: (value: typeof OK) => void = () => undefined;
+    actions.setCustomerTagsAction.mockReturnValue(
+      new Promise<typeof OK>((resolve) => {
+        resolveAction = resolve;
+      }),
+    );
+    const { rerender } = render(<CustomerTagsCard customerId={ID} tags={["a"]} canEdit t={en} />);
+    fireEvent.change(body().getByLabelText("Add tags"), { target: { value: "b," } });
+    fireEvent.click(body().getByRole("button", { name: "Save tags" }));
+    await waitFor(() => expect(actions.setCustomerTagsAction).toHaveBeenCalledWith(ID, ["a", "b"]));
+
+    rerender(<CustomerTagsCard customerId={ID} tags={["a", "z"]} canEdit t={en} />);
+    resolveAction(OK);
+
+    expect(await body().findByRole("status")).toHaveTextContent("Tags saved.");
+    const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
+    expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual([
+      "a",
+      "z",
+    ]);
+    expect(await body().findByRole("button", { name: "Save tags" })).toBeDisabled();
+  });
+
   it("starts the draft again from the stored tags the page re-renders with", () => {
     const { rerender } = render(<CustomerTagsCard customerId={ID} tags={["a"]} canEdit t={en} />);
     fireEvent.change(body().getByLabelText("Add tags"), { target: { value: "b," } });
