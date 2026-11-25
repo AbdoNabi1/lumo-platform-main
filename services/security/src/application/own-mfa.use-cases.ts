@@ -6,7 +6,7 @@ import { MfaEnrollment } from "../domain/mfa-enrollment";
 import type { Principal } from "../domain/principal";
 import { recordAudit, type OwnMfaDeps } from "./deps";
 import { normalizeMfaCode, TOTP_CODE_SHAPE } from "./mfa-login.use-cases";
-import { runStaffCommand } from "./staff-support";
+import { isTwoStepRequired, runStaffCommand } from "./staff-support";
 
 /*
  * Wave 1e — a signed-in staff member's own two-step verification (authenticator app + backup codes).
@@ -47,21 +47,6 @@ async function listEnrollments(
 ): Promise<readonly MfaEnrollment[]> {
   const all = await deps.mfaEnrollments.listByPrincipal(principal.id.toString(), tenantId, tx);
   return all.filter((e) => e.method === "totp");
-}
-
-/** Does the store require two-step for everyone? (The baseline profile is keyed `tenantRef = tenantId`.) */
-async function policyRequired(
-  deps: OwnMfaDeps,
-  tenantId: string,
-  principal: Principal,
-  tx?: unknown,
-): Promise<boolean> {
-  const profile = await deps.tenantProfiles.findByTenant(
-    principal.tenantRef ?? tenantId,
-    tenantId,
-    tx,
-  );
-  return profile?.mfaRequired ?? false;
 }
 
 async function auditOwn(
@@ -140,7 +125,7 @@ export class GetOwnTwoStep implements UseCase<GetOwnTwoStepInput, OwnTwoStepStat
       enabled: active !== undefined,
       activatedAt: active?.activatedAt?.toISOString() ?? null,
       backupCodesLeft: active?.remainingBackupCodes ?? 0,
-      policyRequired: await policyRequired(deps, input.tenantId, principal),
+      policyRequired: await isTwoStepRequired(deps, input.tenantId),
     });
   }
 }
@@ -330,7 +315,7 @@ export class DisableOwnTwoStep implements UseCase<
     const { tenantId } = input;
     return runStaffCommand(deps, tenantId, async (tx) => {
       const principal = await loadActivePrincipal(deps, tenantId, input.principalExternalId, tx);
-      if (await policyRequired(deps, tenantId, principal, tx))
+      if (await isTwoStepRequired(deps, tenantId, tx))
         throw new BusinessRuleError(
           "Your store requires two-step verification, so it can't be turned off",
         );

@@ -44,6 +44,16 @@ import type {
   StartOwnTwoStep,
   StartOwnTwoStepInput,
 } from "../application/own-mfa.use-cases";
+import {
+  type ListStaffActivity,
+  type ListStaffActivityInput,
+} from "../application/staff-activity.use-cases";
+import {
+  type GetStaffSecurityPolicy,
+  type GetStaffSecurityPolicyInput,
+  type SetRequireTwoStep,
+  type SetRequireTwoStepInput,
+} from "../application/staff-policy.use-cases";
 import type {
   CheckAccess,
   CheckAccessInput,
@@ -281,6 +291,10 @@ export interface SecurityControllerDeps {
   readonly decideMfa: DecideMfa;
   /** Wave 1e — the code step of a staff sign-in and the staff member's own two-step verification. */
   readonly verifyMfaLogin: VerifyMfaLogin;
+  /** Wave 1e — the store-wide "require two-step" policy and the staff activity list. */
+  readonly getStaffSecurityPolicy: GetStaffSecurityPolicy;
+  readonly setRequireTwoStep: SetRequireTwoStep;
+  readonly listStaffActivity: ListStaffActivity;
   readonly getOwnTwoStep: GetOwnTwoStep;
   readonly startOwnTwoStep: StartOwnTwoStep;
   readonly confirmOwnTwoStep: ConfirmOwnTwoStep;
@@ -431,6 +445,18 @@ export class SecurityController {
   /** Wave 1d: the staff list — 200 `{ items: StaffMemberView[] }`. */
   async listStaff(input: ListStaffInput): Promise<ControllerResponse> {
     return present(await this.deps.listStaff.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ requireTwoStep, codeStepAvailable, activeStaff, enrolledActiveStaff, notEnrolled, pendingInvitations }`. */
+  async getStaffSecurityPolicy(input: GetStaffSecurityPolicyInput): Promise<ControllerResponse> {
+    return present(await this.deps.getStaffSecurityPolicy.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ requireTwoStep }`; 409 with the exact refusal message; 403 when the actor is no longer an admin. */
+  async setRequireTwoStep(input: SetRequireTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.setRequireTwoStep.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ items, nextCursor }`, newest first; 422 for a malformed cursor or limit. */
+  async listStaffActivity(input: ListStaffActivityInput): Promise<ControllerResponse> {
+    return present(await this.deps.listStaffActivity.execute(input), 200);
   }
   /** Wave 1d: a principal's live status + active role keys — 200, or 404 when it does not exist in the tenant. */
   async staffAccess(input: StaffAccessInput): Promise<ControllerResponse> {

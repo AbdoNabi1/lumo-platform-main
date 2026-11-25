@@ -46,6 +46,10 @@ export class ListStaff implements UseCase<ListStaffInput, ListStaffOutput, Domai
       tenantId,
       entries.map((e) => e.principal.id),
     );
+    const enrolled = await this.deps.mfaEnrollments.listActiveByPrincipals(
+      tenantId,
+      entries.map((e) => e.principal.id),
+    );
     const items: StaffMemberView[] = [];
     for (const entry of entries) {
       const role = roleOf(entry);
@@ -60,6 +64,7 @@ export class ListStaff implements UseCase<ListStaffInput, ListStaffOutput, Domai
         isSelf: entry.principal.externalId === input.actorExternalId,
         addedAt: entry.principal.createdAt.toISOString(),
         lastSignInAt: lastAt === undefined ? null : lastAt.toISOString(),
+        twoStep: enrolled.has(entry.principal.id),
         invitation:
           entry.invitation === null
             ? null

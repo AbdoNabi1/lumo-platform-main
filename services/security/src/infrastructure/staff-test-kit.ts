@@ -83,7 +83,11 @@ export function buildStaffKit(options: StaffKitOptions = {}) {
   const auditLedger = new InMemoryAuditLedgerRepository();
   const staffInvitations = new InMemoryStaffInvitationRepository();
   const staffCredentials = new InMemoryPasswordCredentialStore();
+  const mfaEnrollments = new InMemoryMfaEnrollmentRepository(rd);
+  const tenantProfiles = new InMemoryTenantSecurityProfileRepository(rd);
   const deps: StaffDeps = {
+    mfaEnrollments,
+    tenantProfiles,
     principals,
     principalReader: principals,
     assignments,
@@ -103,9 +107,6 @@ export function buildStaffKit(options: StaffKitOptions = {}) {
     clock,
     telemetry: new InMemorySecurityTelemetry(),
   };
-
-  const mfaEnrollments = new InMemoryMfaEnrollmentRepository(rd);
-  const tenantProfiles = new InMemoryTenantSecurityProfileRepository(rd);
 
   /** The Wave 1e two-step slice: the staff slice + enrolments, profiles, crypto and the given totp provider. */
   function mfaDeps(provider: MfaProviderPort): OwnMfaDeps {

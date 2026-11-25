@@ -166,6 +166,9 @@ export type StaffDeps = AuditDeps &
     | "staffCredentials"
     | "passwordHasher"
     | "unitOfWork"
+    // Wave 1e: the two-step column of the staff list and the store-wide "require two-step" policy.
+    | "mfaEnrollments"
+    | "tenantProfiles"
   >;
 
 /** The slice of {@link SecurityDeps} the Wave 1e sign-in code check needs (staff lock + one unit of work). */

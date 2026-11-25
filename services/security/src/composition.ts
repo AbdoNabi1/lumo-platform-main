@@ -95,6 +95,8 @@ import {
   VerifyMfaEnrollment,
 } from "./application/mfa.use-cases";
 import { VerifyMfaLogin } from "./application/mfa-login.use-cases";
+import { GetStaffSecurityPolicy, SetRequireTwoStep } from "./application/staff-policy.use-cases";
+import { ListStaffActivity } from "./application/staff-activity.use-cases";
 import {
   ConfirmOwnTwoStep,
   DisableOwnTwoStep,
@@ -679,6 +681,9 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const revokeMfa = new RevokeMfa(securityDeps);
   const decideMfa = new DecideMfa(securityDeps);
   const verifyMfaLogin = new VerifyMfaLogin(securityDeps);
+  const getStaffSecurityPolicy = new GetStaffSecurityPolicy(securityDeps);
+  const setRequireTwoStep = new SetRequireTwoStep(securityDeps);
+  const listStaffActivity = new ListStaffActivity(securityDeps);
   const getOwnTwoStep = new GetOwnTwoStep(securityDeps);
   const startOwnTwoStep = new StartOwnTwoStep(securityDeps, {
     mfaConfigured: deps.mfaConfigured ?? false,
@@ -763,6 +768,9 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     revokeMfa,
     decideMfa,
     verifyMfaLogin,
+    getStaffSecurityPolicy,
+    setRequireTwoStep,
+    listStaffActivity,
     getOwnTwoStep,
     startOwnTwoStep,
     confirmOwnTwoStep,
