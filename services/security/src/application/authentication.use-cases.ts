@@ -160,11 +160,13 @@ export class Authenticate implements UseCase<
       );
       deviceTrusted = existing !== null && existing.isTrusted;
     }
-    // The baseline profile is keyed `tenantRef = tenantId`; the bootstrap owner has no `tenantRef`.
-    const profile = await this.deps.tenantProfiles.findByTenant(
-      principal.tenantRef ?? input.tenantId,
-      input.tenantId,
-    );
+    // Staff-only fallback: customers also have a null tenantRef and must never inherit the staff policy.
+    const profileRef =
+      principal.tenantRef ?? (input.requireEnrolledFactor === true ? input.tenantId : null);
+    const profile =
+      profileRef !== null
+        ? await this.deps.tenantProfiles.findByTenant(profileRef, input.tenantId)
+        : null;
     const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
       principal.id.toString(),
       input.tenantId,

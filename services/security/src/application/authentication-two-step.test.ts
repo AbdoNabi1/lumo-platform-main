@@ -194,7 +194,7 @@ describe("Authenticate requireEnrolledFactor", () => {
   });
 });
 
-describe("tenant policy profile lookup (tenantRef ?? tenantId)", () => {
+describe("tenant policy profile lookup (staff-only tenantRef ?? tenantId)", () => {
   async function bootstrapOwner(ctx: ReturnType<typeof build>) {
     const owner = Principal.register(
       ctx.kit.id(),
@@ -241,7 +241,33 @@ describe("tenant policy profile lookup (tenantRef ?? tenantId)", () => {
     expect(out.mfaRequirement).toBe("required");
   });
 
-  it("DecideMfa reads the same profile for the bootstrap owner", async () => {
+  it("customer (tenantRef null, no staff flag) signs in with the policy on: session, not required", async () => {
+    const ctx = build();
+    const customer = Principal.register(
+      ctx.kit.id(),
+      { externalId: "c-1", kind: "human", displayName: "cust@x.com", subjectRef: "c-1" },
+      ctx.kit.deps.idGenerator.generate(),
+      ctx.kit.clock.now(),
+    );
+    expect(customer.tenantRef).toBeNull();
+    await ctx.kit.principals.save(customer, T);
+    ctx.provider.register("customer:cust@x.com", PASSWORD, "c-1");
+    await setPolicy(ctx.kit, true);
+
+    const result = await ctx.authenticate.execute({
+      tenantId: T,
+      method: "password",
+      identifier: "customer:cust@x.com",
+      credential: PASSWORD,
+    });
+    const out = outcome(result);
+
+    expect(out.authenticated).toBe(true);
+    expect(out.sessionId).not.toBeNull();
+    expect(out.mfaRequirement).not.toBe("required");
+  });
+
+  it("DecideMfa for a null-tenantRef principal is not required by the staff policy", async () => {
     const ctx = build();
     await bootstrapOwner(ctx);
     await setPolicy(ctx.kit, true);
@@ -252,6 +278,6 @@ describe("tenant policy profile lookup (tenantRef ?? tenantId)", () => {
       riskBand: "low",
     });
 
-    expect(decided.ok && decided.value.requirement).toBe("required");
+    expect(decided.ok && decided.value.requirement).not.toBe("required");
   });
 });

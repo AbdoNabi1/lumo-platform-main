@@ -68,11 +68,10 @@ export class EvaluateCompliance implements UseCase<
       return err(new NotFoundError(`No compliance rule pack registered for "${input.framework}"`));
 
     const tenantRef = input.tenantRef ?? null;
-    // The baseline profile is keyed `tenantRef = tenantId`, so a null scope reads the tenant's own.
-    const profile = await this.deps.tenantProfiles.findByTenant(
-      tenantRef ?? input.tenantId,
-      input.tenantId,
-    );
+    const profile =
+      tenantRef !== null
+        ? await this.deps.tenantProfiles.findByTenant(tenantRef, input.tenantId)
+        : null;
     const auditRecords = await this.deps.auditLedger.list(tenantRef, input.tenantId);
     const auditChainValid = this.deps.auditChain.verify(auditRecords).valid;
     const attest = input.attestations ?? {};
