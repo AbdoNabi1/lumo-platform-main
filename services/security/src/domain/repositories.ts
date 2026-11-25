@@ -146,6 +146,15 @@ export interface MfaEnrollmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly MfaEnrollment[]>;
+  /**
+   * The ACTIVE `totp` enrolment of each given principal, keyed by the principal's INTERNAL id
+   * (`principalRef`). Principals without one are absent from the map.
+   */
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, MfaEnrollment>>;
 }
 
 /** Persists machine-identity governance profiles (keyed by principalRef). Same-tx outbox (P2.0-C §14). */
@@ -212,6 +221,21 @@ export interface AuditLedgerRepository {
   append(record: AuditRecord, tenantId: string, tx?: unknown): Promise<void>;
   tail(tenantRef: string | null, tenantId: string, tx?: unknown): Promise<AuditRecord | null>;
   list(tenantRef: string | null, tenantId: string, tx?: unknown): Promise<readonly AuditRecord[]>;
+  /**
+   * Wave 1e activity reader: ONE page of a tenant's records, across EVERY ledger scope
+   * (`tenant_scope` is ignored — it is the hash chain's bucket, not a filter). Newest first by
+   * `occurredAt desc, id desc`; `before` is an exclusive keyset cursor; never re-verifies chains.
+   * `principalRefs`, when given, keeps only those refs (an empty list matches nothing).
+   */
+  listForTenant(input: ListAuditForTenantInput, tx?: unknown): Promise<readonly AuditRecord[]>;
+}
+
+export interface ListAuditForTenantInput {
+  readonly tenantId: string;
+  readonly actions: readonly string[];
+  readonly principalRefs?: readonly string[];
+  readonly before?: { readonly occurredAt: string; readonly id: string };
+  readonly limit: number;
 }
 
 /**

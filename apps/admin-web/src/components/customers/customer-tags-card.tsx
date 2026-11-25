@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { CheckIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Label } from "@platform/ui";
 import { setCustomerTagsAction } from "@/app/customers/actions";
@@ -29,15 +29,21 @@ export function CustomerTagsCard({
   const [draft, setDraft] = useState<string[]>([...tags]);
   const [pending, setPending] = useState("");
   const [editorKey, setEditorKey] = useState(0);
-  const [isSaving, startSaving] = useTransition();
+  // Plain state, not a transition: a transition's pending flag clears in its own later render, so
+  // the "Saved" note and a "Saving…" button could be on screen together. Here the note, the new
+  // draft and the re-enabled Save button all land in one commit.
+  const [isSaving, setIsSaving] = useState(false);
   const [outcome, setOutcome] = useState<
     { readonly kind: "saved" } | { readonly kind: "error"; readonly message: string } | null
   >(null);
   const savedKey = tags.join("\u0000");
 
   // The latest stored set, readable from the save continuation (which closes over old props).
+  // Updated in a layout effect so it is current the moment a refreshed set commits; a passive
+  // effect could still be queued when the action resolves and the continuation would read the
+  // set from before the refresh.
   const latest = useRef({ tags, savedKey });
-  useEffect(() => {
+  useLayoutEffect(() => {
     latest.current = { tags, savedKey };
   }, [tags, savedKey]);
 
@@ -55,7 +61,8 @@ export function CustomerTagsCard({
   function save(): void {
     setOutcome(null);
     const startedFrom = savedKey;
-    startSaving(async () => {
+    setIsSaving(true);
+    void (async () => {
       try {
         const state = await setCustomerTagsAction(customerId, effective);
         if (state.status === "error") {
@@ -75,8 +82,10 @@ export function CustomerTagsCard({
         setOutcome({ kind: "saved" });
       } catch {
         setOutcome({ kind: "error", message: t.formErrors.unexpected });
+      } finally {
+        setIsSaving(false);
       }
-    });
+    })();
   }
 
   return (

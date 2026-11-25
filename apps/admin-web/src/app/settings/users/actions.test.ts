@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   revokeStaffInvitation: vi.fn(),
   changeStaffRole: vi.fn(),
   setStaffActive: vi.fn(),
+  setRequireTwoStep: vi.fn(),
 }));
 const revalidatePath = vi.hoisted(() => vi.fn());
 const cookieLocale = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -30,6 +31,7 @@ const {
   inviteStaffAction,
   resendInvitationAction,
   revokeInvitationAction,
+  setRequireTwoStepAction,
   setStaffActiveAction,
 } = await import("./actions");
 
@@ -273,5 +275,100 @@ describe("what each action asks the API for", () => {
     expect(api.revokeStaffInvitation.mock.calls[0]?.slice(0, 2)).toEqual(["inv-9", 5]);
     expect(api.setStaffActive.mock.calls[0]?.slice(0, 2)).toEqual(["p-9", true]);
     expect(api.changeStaffRole.mock.calls[0]?.slice(0, 2)).toEqual(["p-9", "viewer"]);
+  });
+});
+
+describe("setRequireTwoStepAction (Wave 1e)", () => {
+  const ACTIVITY = "/settings/users/activity";
+
+  it("sends the flag with a fresh Idempotency-Key and revalidates the page AND the activity page", async () => {
+    api.setRequireTwoStep.mockResolvedValue({ outcome: "ok", data: { requireTwoStep: true } });
+    expect(await setRequireTwoStepAction(true)).toEqual({ status: "success" });
+    await setRequireTwoStepAction(false);
+    expect(api.setRequireTwoStep.mock.calls[0]?.[0]).toBe(true);
+    expect(api.setRequireTwoStep.mock.calls[1]?.[0]).toBe(false);
+    const keys = api.setRequireTwoStep.mock.calls.map((call) => call[1] as string);
+    expect(keys[0]).toMatch(UUID);
+    expect(new Set(keys).size).toBe(2);
+    expect(revalidatePath).toHaveBeenCalledWith(PAGE);
+    expect(revalidatePath).toHaveBeenCalledWith(ACTIVITY);
+  });
+
+  it.each([
+    ["Two-step sign-in isn't available on this server yet", en.usersPolicy.errors.unavailable],
+    ["Turn on two-step verification for your own account first", en.usersPolicy.errors.selfFirst],
+    ["Everyone needs two-step verification turned on first", en.usersPolicy.errors.everyoneFirst],
+    ["Revoke or wait for pending invitations first", en.usersPolicy.errors.pendingInvitations],
+  ])("maps the exact 409 %j and still revalidates", async (message, expected) => {
+    api.setRequireTwoStep.mockResolvedValue({ outcome: "conflict", message });
+    expect(await setRequireTwoStepAction(true)).toEqual({
+      status: "error",
+      message: expected,
+      fieldErrors: {},
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(PAGE);
+    expect(revalidatePath).toHaveBeenCalledWith(ACTIVITY);
+  });
+
+  it("reads the Arabic mapping from the locale cookie", async () => {
+    cookieLocale.value = "ar";
+    api.setRequireTwoStep.mockResolvedValue({
+      outcome: "conflict",
+      message: "Everyone needs two-step verification turned on first",
+    });
+    expect(await setRequireTwoStepAction(true)).toMatchObject({
+      message: ar.usersPolicy.errors.everyoneFirst,
+    });
+  });
+
+  it("an unknown 409 is the generic try-again, never the raw text", async () => {
+    api.setRequireTwoStep.mockResolvedValue({ outcome: "conflict", message: "Some new sentence" });
+    expect(await setRequireTwoStepAction(true)).toMatchObject({ message: en.formErrors.conflict });
+  });
+
+  it.each(failures)(
+    "revalidates after %s too, and reports it in the locale",
+    async (_name, result, message) => {
+      api.setRequireTwoStep.mockResolvedValue(result);
+      expect(await setRequireTwoStepAction(true)).toMatchObject({ status: "error", message });
+      expect(revalidatePath).toHaveBeenCalledWith(PAGE);
+      expect(revalidatePath).toHaveBeenCalledWith(ACTIVITY);
+    },
+  );
+
+  it("refuses a non-boolean without calling the API", async () => {
+    expect(await setRequireTwoStepAction("yes" as unknown as boolean)).toMatchObject({
+      status: "error",
+      message: en.formErrors.invalid,
+    });
+    expect(api.setRequireTwoStep).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("the 1d staff commands under the two-step policy (Wave 1e)", () => {
+  it("map the 'requires two-step' refusals of inviting and reactivating to the locale", async () => {
+    api.inviteStaff.mockResolvedValue({
+      outcome: "conflict",
+      message: "Your store requires two-step verification. Turn that off before inviting people",
+    });
+    expect(await inviteStaffAction({ email: "sam@example.com", role: "viewer" })).toMatchObject({
+      message: en.users.errors.requiresTwoStepInvite,
+    });
+    api.setStaffActive.mockResolvedValue({
+      outcome: "conflict",
+      message:
+        "Your store requires two-step verification. Turn that off before reactivating people",
+    });
+    cookieLocale.value = "ar";
+    expect(await setStaffActiveAction("p-1", true)).toMatchObject({
+      message: ar.users.errors.requiresTwoStepReactivate,
+    });
+  });
+
+  it("every write also refreshes the activity page", async () => {
+    api.changeStaffRole.mockResolvedValue({ outcome: "ok", data: {} });
+    await changeStaffRoleAction("p-1", "admin");
+    expect(revalidatePath).toHaveBeenCalledWith("/settings/users/activity");
   });
 });

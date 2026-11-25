@@ -5,6 +5,7 @@
  * resolves the store from the account). Passwords and reset tokens are only ever sent in a POST body:
  * never in a URL we build, never logged.
  */
+import { readMfaChallenge } from "./mfa-challenge";
 import type { ExchangeResult } from "./native";
 
 export type SignupCountry = "EG" | "SA" | "AE";
@@ -146,7 +147,7 @@ export async function exchangeMerchantPassword(input: {
     // The runtime passes the staff MFA response through as `{ error: { code }, mfaRequirement }`;
     // a flat `{ code }` envelope is accepted too.
     return hasCode(reply.body, "MFA_REQUIRED")
-      ? { ok: false, reason: "mfa" }
+      ? { ok: false, reason: "mfa", ...readMfaChallenge(reply.body) }
       : { ok: false, reason: "unavailable" };
   }
   // Single mode (no platform tenant): merchant sign-in does not exist on this deployment.

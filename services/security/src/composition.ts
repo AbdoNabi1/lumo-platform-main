@@ -94,6 +94,16 @@ import {
   RevokeMfa,
   VerifyMfaEnrollment,
 } from "./application/mfa.use-cases";
+import { VerifyMfaLogin } from "./application/mfa-login.use-cases";
+import { GetStaffSecurityPolicy, SetRequireTwoStep } from "./application/staff-policy.use-cases";
+import { ListStaffActivity } from "./application/staff-activity.use-cases";
+import {
+  ConfirmOwnTwoStep,
+  DisableOwnTwoStep,
+  GetOwnTwoStep,
+  RegenerateOwnBackupCodes,
+  StartOwnTwoStep,
+} from "./application/own-mfa.use-cases";
 import {
   ArchivePolicy,
   DefinePolicy,
@@ -270,6 +280,11 @@ export interface SecurityWiringDeps {
    * responsible for refusing to boot outside `local` without a real one injected here.
    */
   readonly mfaProviders?: MfaProviderResolver;
+  /**
+   * Wave 1e: true only when the injected totp provider is the real one AND its key is configured
+   * (`apps/runtime` decides). Gates `StartOwnTwoStep` (503 `NOT_CONFIGURED`); absent ⇒ false.
+   */
+  readonly mfaConfigured?: boolean;
   /**
    * Plan 1B-1: the production `"password"` provider (HashedPasswordAuthProvider over Postgres).
    * Absent ⇒ the in-memory reference provider, exactly as before this field existed.
@@ -665,6 +680,17 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const generateBackupCodes = new GenerateBackupCodes(securityDeps);
   const revokeMfa = new RevokeMfa(securityDeps);
   const decideMfa = new DecideMfa(securityDeps);
+  const verifyMfaLogin = new VerifyMfaLogin(securityDeps);
+  const getStaffSecurityPolicy = new GetStaffSecurityPolicy(securityDeps);
+  const setRequireTwoStep = new SetRequireTwoStep(securityDeps);
+  const listStaffActivity = new ListStaffActivity(securityDeps);
+  const getOwnTwoStep = new GetOwnTwoStep(securityDeps);
+  const startOwnTwoStep = new StartOwnTwoStep(securityDeps, {
+    mfaConfigured: deps.mfaConfigured ?? false,
+  });
+  const confirmOwnTwoStep = new ConfirmOwnTwoStep(securityDeps);
+  const regenerateOwnBackupCodes = new RegenerateOwnBackupCodes(securityDeps);
+  const disableOwnTwoStep = new DisableOwnTwoStep(securityDeps);
   const evaluateRisk = new EvaluateRisk(securityDeps);
   const scheduleCredentialRotation = new ScheduleCredentialRotation(securityDeps);
   const rotateDueCredentials = new RotateDueCredentials(securityDeps);
@@ -741,6 +767,15 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     generateBackupCodes,
     revokeMfa,
     decideMfa,
+    verifyMfaLogin,
+    getStaffSecurityPolicy,
+    setRequireTwoStep,
+    listStaffActivity,
+    getOwnTwoStep,
+    startOwnTwoStep,
+    confirmOwnTwoStep,
+    regenerateOwnBackupCodes,
+    disableOwnTwoStep,
     evaluateRisk,
     revokeAllSessions,
     scheduleCredentialRotation,

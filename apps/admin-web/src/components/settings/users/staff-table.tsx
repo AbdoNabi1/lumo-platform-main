@@ -46,6 +46,7 @@ export function StaffTable({
           <TableHead>{k.columns.email}</TableHead>
           <TableHead>{k.columns.role}</TableHead>
           <TableHead>{k.columns.status}</TableHead>
+          <TableHead>{k.columns.twoStep}</TableHead>
           <TableHead>{k.columns.lastSignedIn}</TableHead>
           <TableHead>
             <span className="sr-only">{k.columns.actions}</span>
@@ -68,6 +69,11 @@ export function StaffTable({
             </TableCell>
             <TableCell>
               <Badge variant={STATUS_VARIANT[member.status]}>{k.statuses[member.status]}</Badge>
+            </TableCell>
+            <TableCell>
+              <Badge variant={member.twoStep ? "success" : "neutral"}>
+                {member.twoStep ? k.twoStepBadge.on : k.twoStepBadge.off}
+              </Badge>
             </TableCell>
             <TableCell className="text-muted-foreground">
               {formatLastSignedIn(member.lastSignInAt, nowIso, locale, t)}

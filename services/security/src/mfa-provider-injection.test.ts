@@ -36,6 +36,9 @@ class FakeTotpProvider implements MfaProviderPort {
   async verify(input: { readonly code: string }): Promise<boolean> {
     return input.code === this.validCode;
   }
+  async verifyStep(input: { readonly code: string }): Promise<number | null> {
+    return input.code === this.validCode ? 1 : null;
+  }
 }
 
 class SingleMethodResolver implements MfaProviderResolver {

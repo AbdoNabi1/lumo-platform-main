@@ -52,6 +52,11 @@ export interface StaffAdminControllerDeps {
   readonly guard: AdminGuard;
   readonly clock: Clock;
   readonly liveAccess: LiveStaffAccessControl;
+  /**
+   * Wave 1e: the sign-in code step is live (a token issuer AND the real TOTP provider with its key).
+   * Without it "require two-step" can't be turned on and the policy read says so.
+   */
+  readonly codeStepAvailable: boolean;
 }
 
 /** A failure with a fixed wire code that the client may retry (an email that bounced, say). */
@@ -115,6 +120,47 @@ export class StaffAdminController {
       tenantId,
       actorExternalId: principal.id,
       now: this.deps.clock.now(),
+    });
+  }
+
+  /** Wave 1e: the store's two-step policy and what stands in the way of turning it on. */
+  async securityPolicy(principal: Principal, tenantId: string): Promise<AdminResponse> {
+    const denied = await this.deps.guard.ensure(principal, "staff:read_policy");
+    if (denied) return denied;
+    return this.deps.security.getStaffSecurityPolicy({
+      tenantId,
+      codeStepAvailable: this.deps.codeStepAvailable,
+    });
+  }
+
+  async setRequireTwoStep(
+    principal: Principal,
+    tenantId: string,
+    enabled: boolean,
+  ): Promise<AdminResponse> {
+    const denied = await this.deps.guard.ensure(principal, "staff:set_policy");
+    if (denied) return denied;
+    return this.deps.security.setRequireTwoStep({
+      tenantId,
+      actorExternalId: principal.id,
+      enabled,
+      codeStepAvailable: this.deps.codeStepAvailable,
+    });
+  }
+
+  /** Wave 1e: who did what (sign-ins, invitations, role and two-step changes), newest first, paged. */
+  async activity(
+    principal: Principal,
+    tenantId: string,
+    query: { readonly member?: string; readonly cursor?: string; readonly limit?: number },
+  ): Promise<AdminResponse> {
+    const denied = await this.deps.guard.ensure(principal, "staff:read_activity");
+    if (denied) return denied;
+    return this.deps.security.listStaffActivity({
+      tenantId,
+      ...(query.member === undefined ? {} : { memberExternalId: query.member }),
+      ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+      ...(query.limit === undefined ? {} : { limit: query.limit }),
     });
   }
 

@@ -317,12 +317,14 @@ export const MfaEnrollmentMapper = {
     backupCodeHashes: [...m.backupCodeHashes],
     deviceRef: m.deviceRef,
     activatedAt: m.activatedAt,
+    lastUsedStep: m.lastUsedStep,
     createdAtDomain: m.createdAt,
   }),
   toUpdate: (m: MfaEnrollment) => ({
     status: m.status,
     backupCodeHashes: [...m.backupCodeHashes],
     activatedAt: m.activatedAt,
+    lastUsedStep: m.lastUsedStep,
   }),
   toDomain: (r: {
     id: string;
@@ -333,6 +335,7 @@ export const MfaEnrollmentMapper = {
     backupCodeHashes: unknown;
     deviceRef: string | null;
     activatedAt: Date | null;
+    lastUsedStep: number | null;
     createdAtDomain: Date;
     version: number;
   }): MfaEnrollment =>
@@ -345,6 +348,7 @@ export const MfaEnrollmentMapper = {
       deviceRef: r.deviceRef,
       createdAt: r.createdAtDomain,
       activatedAt: r.activatedAt,
+      lastUsedStep: r.lastUsedStep,
       version: r.version,
     }),
 };

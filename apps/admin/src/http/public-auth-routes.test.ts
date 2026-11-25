@@ -377,6 +377,22 @@ describe("POST /public/auth/login", () => {
     expect(session.expiresAt).toBe("2026-08-31T01:00:00.000Z");
   });
 
+  it("still signs a storefront customer in after the staff two-step policy is switched on", async () => {
+    await register(h.admin);
+    const configured = await h.security.security.configureTenantSecurity({
+      tenantId: "tenant-local",
+      tenantRef: "tenant-local",
+      config: { mfaRequired: true },
+    });
+    expect(configured.status).toBe(200);
+    expect((configured.body as { mfaRequired: boolean }).mfaRequired).toBe(true);
+
+    const response = await login(h.admin);
+
+    expect(response.status).toBe(200);
+    expect((response.body as { sessionId: string }).sessionId).toBeTruthy();
+  });
+
   it("returns an OPAQUE session id — never a JWT, never the customerRef itself", async () => {
     const registered = await register(h.admin);
     const { customerRef } = registered.body as { customerRef: string };

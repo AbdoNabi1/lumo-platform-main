@@ -14,6 +14,7 @@ import type { Principal } from "../domain/principal";
 import type {
   AiGovernanceProfileRepository,
   AuditLedgerRepository,
+  ListAuditForTenantInput,
   CredentialRepository,
   DelegationRepository,
   DeviceDirectory,
@@ -325,6 +326,18 @@ export class InMemoryMfaEnrollmentRepository implements MfaEnrollmentRepository 
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly MfaEnrollment[]> {
     return this.byId.values(tenantId).filter((e) => e.principalRef === principalRef);
   }
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, MfaEnrollment>> {
+    const wanted = new Set(principalRefs);
+    const byPrincipal = new Map<string, MfaEnrollment>();
+    for (const e of this.byId.values(tenantId)) {
+      if (e.status === "active" && e.method === "totp" && wanted.has(e.principalRef))
+        byPrincipal.set(e.principalRef, e);
+    }
+    return Promise.resolve(byPrincipal);
+  }
 }
 
 /** In-memory `MachineIdentityProfileRepository` — keyed by principalRef; enumerable for the explorer. */
@@ -447,5 +460,33 @@ export class InMemoryAuditLedgerRepository implements AuditLedgerRepository {
   }
   async list(tenantRef: string | null, tenantId: string): Promise<readonly AuditRecord[]> {
     return [...this.bucket(tenantId, tenantRef)];
+  }
+  listForTenant(input: ListAuditForTenantInput): Promise<readonly AuditRecord[]> {
+    const actions = new Set(input.actions);
+    const refs = input.principalRefs === undefined ? null : new Set(input.principalRefs);
+    const { before } = input;
+    const rows = this.byTenant
+      .values(input.tenantId)
+      .flat()
+      .filter(
+        (r) =>
+          actions.has(r.content.action) &&
+          (refs === null || refs.has(r.content.principalRef)) &&
+          (before === undefined ||
+            r.content.occurredAt < before.occurredAt ||
+            (r.content.occurredAt === before.occurredAt && r.id < before.id)),
+      )
+      .sort((a, b) =>
+        a.content.occurredAt === b.content.occurredAt
+          ? a.id < b.id
+            ? 1
+            : a.id > b.id
+              ? -1
+              : 0
+          : a.content.occurredAt < b.content.occurredAt
+            ? 1
+            : -1,
+      );
+    return Promise.resolve(rows.slice(0, Math.max(0, input.limit)));
   }
 }

@@ -17,6 +17,8 @@ interface MfaEnrollmentProps {
   readonly deviceRef: string | null;
   readonly createdAt: Date;
   activatedAt: Date | null;
+  /** TOTP time-step counter of the last accepted code (replay guard); null = none used yet. */
+  lastUsedStep: number | null;
 }
 
 /**
@@ -50,6 +52,7 @@ export class MfaEnrollment extends AggregateRoot<MfaEnrollmentProps> {
         deviceRef: input.deviceRef ?? null,
         createdAt: occurredAt,
         activatedAt: null,
+        lastUsedStep: null,
       },
       id,
     );
@@ -89,6 +92,16 @@ export class MfaEnrollment extends AggregateRoot<MfaEnrollmentProps> {
     return true;
   }
 
+  /**
+   * Accepts a TOTP time-step once. Returns false (and changes nothing) when this step, or an older one,
+   * was already used — a code can never be replayed, nor can an older code be accepted after a newer one.
+   */
+  acceptStep(step: number): boolean {
+    if (this.props.lastUsedStep !== null && step <= this.props.lastUsedStep) return false;
+    this.props.lastUsedStep = step;
+    return true;
+  }
+
   revoke(eventId: string, occurredAt: Date): void {
     if (this.props.status === "revoked") return;
     this.props.status = "revoked";
@@ -116,6 +129,9 @@ export class MfaEnrollment extends AggregateRoot<MfaEnrollmentProps> {
   /** The non-reversible backup-code hashes (persistence/read; never plaintext codes). */
   get backupCodeHashes(): readonly string[] {
     return this.props.backupCodeHashes;
+  }
+  get lastUsedStep(): number | null {
+    return this.props.lastUsedStep;
   }
   get activatedAt(): Date | null {
     return this.props.activatedAt;

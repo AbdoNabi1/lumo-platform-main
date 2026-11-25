@@ -932,3 +932,39 @@ describe("online_store content — column types, defaults and keys (Project 4 Pa
     });
   }
 });
+
+describe("security mfa last used step (20261127000000)", () => {
+  const migration = join(migrationsDir, "20261127000000_mfa_last_used_step", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+
+  it("adds exactly one column to security.mfa_enrollments", () => {
+    expect([...columnsEverAddedTo("security", "mfa_enrollments", readSql())]).toEqual([
+      "last_used_step",
+    ]);
+  });
+
+  it("adds last_used_step as a nullable INTEGER with no default", () => {
+    const statement =
+      /ALTER TABLE "security"\."mfa_enrollments" ADD COLUMN "last_used_step"([^;]*);/.exec(
+        readSql(),
+      );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("INTEGER");
+  });
+
+  it("is purely additive", () => {
+    const sql = readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    expect(sql).not.toMatch(/\bDROP\b|\bUPDATE\b|\bDELETE\b|\bNOT NULL\b|\bDEFAULT\b/);
+  });
+
+  it("matches the Prisma model field", () => {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "security.prisma"),
+      "utf-8",
+    );
+    expect(schema).toMatch(/lastUsedStep\s+Int\?\s+@map\("last_used_step"\)/);
+  });
+});

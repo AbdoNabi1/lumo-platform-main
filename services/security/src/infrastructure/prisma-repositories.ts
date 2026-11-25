@@ -20,6 +20,7 @@ import type { TenantSecurityProfile } from "../domain/tenant-security-profile";
 import type {
   AiGovernanceProfileRepository,
   AuditLedgerRepository,
+  ListAuditForTenantInput,
   CredentialRepository,
   DelegationRepository,
   DeviceDirectory,
@@ -447,6 +448,27 @@ export class PrismaMfaEnrollmentRepository
       }),
     );
     return rows.map(M.MfaEnrollmentMapper.toDomain);
+  }
+  async listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, MfaEnrollment>> {
+    if (principalRefs.length === 0) return new Map();
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityMfaEnrollment.findMany({
+        where: {
+          tenantId,
+          principalRef: { in: [...principalRefs] },
+          status: "active",
+          method: "totp",
+        },
+        orderBy: { createdAtDomain: "asc" },
+      }),
+    );
+    const byPrincipal = new Map<string, MfaEnrollment>();
+    for (const row of rows) byPrincipal.set(row.principalRef, M.MfaEnrollmentMapper.toDomain(row));
+    return byPrincipal;
   }
 }
 
@@ -914,6 +936,37 @@ export class PrismaAuditLedgerRepository
       c.securityAuditRecord.findMany({
         where: { tenantId, tenantScope: tenantRef },
         orderBy: { sequence: "asc" },
+      }),
+    );
+    return rows.map(M.AuditRecordMapper.toDomain);
+  }
+  async listForTenant(
+    input: ListAuditForTenantInput,
+    tx?: unknown,
+  ): Promise<readonly AuditRecord[]> {
+    const { tenantId, before } = input;
+    if (input.actions.length === 0 || input.principalRefs?.length === 0 || input.limit <= 0)
+      return [];
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityAuditRecord.findMany({
+        // `tenantScope` is deliberately absent: it names the hash chain bucket, not a filter.
+        where: {
+          tenantId,
+          action: { in: [...input.actions] },
+          ...(input.principalRefs === undefined
+            ? {}
+            : { principalRef: { in: [...input.principalRefs] } }),
+          ...(before === undefined
+            ? {}
+            : {
+                OR: [
+                  { occurredAt: { lt: before.occurredAt } },
+                  { occurredAt: before.occurredAt, id: { lt: before.id } },
+                ],
+              }),
+        },
+        orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
+        take: input.limit,
       }),
     );
     return rows.map(M.AuditRecordMapper.toDomain);

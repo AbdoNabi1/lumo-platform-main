@@ -17,6 +17,7 @@ import {
   adminsAfterChange,
   ensureStaffRoles,
   highestStaffRole,
+  isTwoStepRequired,
   loadStaffDirectory,
   requireActiveStaffAdmin,
   runStaffCommand,
@@ -32,6 +33,7 @@ import {
  */
 
 const NO_LONGER_VALID = "This invitation is no longer valid";
+const POLICY_ON = "Your store requires two-step verification.";
 const FIXED_ROLE_KEYS: readonly string[] = STAFF_ROLES;
 
 const invalid = (field: string, summary: string, message = summary): ValidationError =>
@@ -264,6 +266,8 @@ export class SetStaffActive implements UseCase<
     return runStaffCommand(deps, tenantId, async (tx) => {
       const now = deps.clock.now();
       await requireActiveStaffAdmin(deps, tenantId, input.actorExternalId, now, tx);
+      if (input.active && (await isTwoStepRequired(deps, tenantId, tx)))
+        throw new BusinessRuleError(`${POLICY_ON} Turn that off before reactivating people`);
       const directory = await loadStaffDirectory(deps, tenantId, now, tx);
       const target = directory.staff.get(input.targetExternalId);
       if (target === undefined) throw new NotFoundError("Staff member not found");
@@ -347,6 +351,8 @@ export class CreateStaffInvitation implements UseCase<
       const tokenHash = requireNonBlank("tokenHash", input.tokenHash);
       const principalExternalId = requireNonBlank("principalExternalId", input.principalExternalId);
       await requireActiveStaffAdmin(deps, tenantId, input.actorExternalId, now, tx);
+      if (await isTwoStepRequired(deps, tenantId, tx))
+        throw new BusinessRuleError(`${POLICY_ON} Turn that off before inviting people`);
 
       const identifier = staffIdentifier(email);
       if ((await deps.staffCredentials.find(tenantId, identifier)) !== null)
@@ -629,6 +635,11 @@ export class AcceptStaffInvitation implements UseCase<
       );
       if (principal === null || principal.status !== "suspended")
         throw new BusinessRuleError(NO_LONGER_VALID);
+      // The invitee would be locked out at the first sign-in (no code step to enrol at): refuse.
+      if (await isTwoStepRequired(deps, tenantId, tx))
+        throw new BusinessRuleError(
+          "This invitation can't be accepted while the store requires two-step verification. Ask the store admin.",
+        );
 
       // ── first write: the credential, so a failure leaves everything else untouched ──
       await deps.staffCredentials.save(

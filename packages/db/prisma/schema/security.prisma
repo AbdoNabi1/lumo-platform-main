@@ -112,6 +112,7 @@ model SecurityMfaEnrollment {
   backupCodeHashes Json      @default("[]") @map("backup_code_hashes")
   deviceRef        String?   @map("device_ref")
   activatedAt      DateTime? @map("activated_at")
+  lastUsedStep     Int?      @map("last_used_step") // TOTP step of the last accepted code (replay guard)
   createdAtDomain  DateTime  @map("created_at_domain")
   version          Int       @default(0)
   createdAt        DateTime  @default(now()) @map("created_at")

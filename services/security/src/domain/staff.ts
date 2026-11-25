@@ -23,6 +23,8 @@ export interface StaffMemberView {
   readonly addedAt: string;
   /** max(security.sessions.established_at) for the principal, ISO. */
   readonly lastSignInAt: string | null;
+  /** The member has an ACTIVE authenticator-app (totp) enrolment right now. Invitees: false. */
+  readonly twoStep: boolean;
   /** Pending (including expired) invitation only. */
   readonly invitation: {
     readonly id: string;

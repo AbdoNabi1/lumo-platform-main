@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { AlertTriangleIcon, PlusIcon, XIcon } from "lucide-react";
 import { Button } from "@platform/ui";
@@ -12,6 +13,7 @@ import {
   type StaffActionState,
 } from "@/app/settings/users/actions";
 import type { StaffMemberView, StaffRole } from "@/lib/staff/roles";
+import type { StaffSecurityPolicy } from "@/lib/staff/two-step";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { ChangeRoleForm } from "./change-role-form";
@@ -19,6 +21,7 @@ import { InviteStaffForm } from "./invite-staff-form";
 import { DialogError, StaffDialog, StaffDialogFooter } from "./staff-dialog";
 import type { RowAction } from "./staff-row-actions";
 import { StaffTable } from "./staff-table";
+import { TwoStepPolicyCard } from "./two-step-policy-card";
 import { WithEmail } from "./with-email";
 
 type DialogKind = "invite" | "role" | "deactivate" | "revoke";
@@ -53,11 +56,14 @@ const targetKey = (target: Target | null): string | null =>
  */
 export function StaffPanel({
   members,
+  policy,
   t,
   locale,
   nowIso,
 }: {
   readonly members: readonly StaffMemberView[];
+  /** The store's two-step policy; `null` when it could not be loaded (the card says so). */
+  readonly policy: StaffSecurityPolicy | null;
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly nowIso: string;
@@ -294,10 +300,15 @@ export function StaffPanel({
           <h1 className="text-2xl font-semibold tracking-tight">{k.title}</h1>
           <p className="text-muted-foreground mt-1 text-sm">{k.subtitle}</p>
         </div>
-        <Button ref={addButton} type="button" onClick={() => open({ kind: "invite", id: null })}>
-          <PlusIcon aria-hidden="true" />
-          {k.addStaff}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline">
+            <Link href="/settings/users/activity">{k.viewActivity}</Link>
+          </Button>
+          <Button ref={addButton} type="button" onClick={() => open({ kind: "invite", id: null })}>
+            <PlusIcon aria-hidden="true" />
+            {k.addStaff}
+          </Button>
+        </div>
       </header>
 
       {undelivered !== null && (
@@ -355,6 +366,8 @@ export function StaffPanel({
           </button>
         </div>
       )}
+
+      <TwoStepPolicyCard policy={policy} members={members} t={t} />
 
       <StaffTable
         members={members}

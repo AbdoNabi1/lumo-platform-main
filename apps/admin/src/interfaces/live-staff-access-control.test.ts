@@ -235,6 +235,35 @@ describe("owner-only resources (R5)", () => {
     expect(await control.authorize(staff(["admin"]), "staff:invite")).toBe(true);
   });
 
+  it("the Wave 1e staff:* policy and activity permissions are NOT owner-only: an invited admin passes, operator and viewer do not", async () => {
+    reader.snapshots.set("t-1/m-1", active(["admin"], ["admin"]));
+    reader.snapshots.set("t-1/op", active(["operator"]));
+    reader.snapshots.set("t-1/vw", active(["viewer"]));
+    const control = live(new RoleTableAccessControl());
+    for (const permission of ["staff:read_policy", "staff:set_policy", "staff:read_activity"]) {
+      expect([permission, await control.authorize(staff(["admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await control.authorize(staff(["operator"], "op"), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await control.authorize(staff(["viewer"], "vw"), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+    }
+    // Self-service two-step is `account:update_self`, held by every active member.
+    for (const [id, role] of [
+      ["m-1", "admin"],
+      ["op", "operator"],
+      ["vw", "viewer"],
+    ] as const) {
+      expect(await control.authorize(staff([role], id), "account:update_self")).toBe(true);
+    }
+  });
+
   it("the owner (platform-admin) keeps today's behaviour on the same resources", async () => {
     reader.snapshots.set("t-1/o-1", active(["admin"], ["platform-admin"]));
     const control = live(new RoleTableAccessControl());

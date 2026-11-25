@@ -16,7 +16,10 @@ import type { AdminResponse } from "../interfaces/admin-response";
 import { publicMerchantRoutes } from "./public-merchant-routes";
 
 const PLATFORM = "platform";
-const clock: Clock = { now: () => new Date("2026-10-16T00:00:00.000Z") };
+const START_MS = Date.parse("2026-10-16T00:00:00.000Z");
+/** Fixed unless a test moves it (the code step needs a later TOTP step for a second code). */
+const clockState = { ms: START_MS };
+const clock: Clock = { now: () => new Date(clockState.ms) };
 
 /** A fixed-window counter, enough to exercise the route's limiter wiring. */
 class CountingRateLimiter implements RateLimiter {
@@ -104,6 +107,7 @@ async function setup() {
     platformStoreDomain: "morbeh.test",
     platformTenantId: PLATFORM,
     defaultPlanKey: "basic",
+    mfaConfigured: true,
   });
   await seedPlan(licensing, "basic");
   return { admin, sender };
@@ -606,4 +610,119 @@ describe("merchant invitation accept route (Wave 1d)", () => {
     );
     expect(limiter.keys.join("\n")).not.toContain(token);
   });
+});
+
+const VERIFY = "/public/auth/merchant/login/verify";
+const CODE = "123456";
+
+const tokenClaims = (token: string): Record<string, unknown> =>
+  JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as Record<
+    string,
+    unknown
+  >;
+
+describe("merchant login code step (Wave 1e)", () => {
+  it("is a public, non-idempotent platform-tenant route with a strict body", async () => {
+    const { admin } = await setup();
+    const route = find(publicMerchantRoutes(admin, { platformTenantId: PLATFORM }), "POST", VERIFY);
+    expect(route.public).toBe(true);
+    expect(route.permission).toBe("security:authenticate");
+    expect(route.idempotent).not.toBe(true);
+    const schema = route.schema.body!;
+    expect(schema.safeParse({ challenge: "c", code: "1" }).success).toBe(true);
+    expect(schema.safeParse({ challenge: "c", code: "1", store: "s" }).success).toBe(false);
+    expect(schema.safeParse({ challenge: "c".repeat(4097), code: "1" }).success).toBe(false);
+  });
+
+  it("is refused on any tenant but the platform's (403) and 503 without a platform tenant, before any challenge is read", async () => {
+    const { admin } = await setup();
+    const body = { challenge: "whatever", code: CODE };
+    const other = await call(
+      find(publicMerchantRoutes(admin, { platformTenantId: PLATFORM }), "POST", VERIFY),
+      body,
+      { tenantId: "shop-x" },
+    );
+    expect(other.status).toBe(403);
+    expect(other.body).toMatchObject({ code: "FORBIDDEN" });
+    const single = await call(
+      find(publicMerchantRoutes(admin, { platformTenantId: undefined }), "POST", VERIFY),
+      body,
+    );
+    expect(single.status).toBe(503);
+    expect(single.body).toMatchObject({ code: "SIGNUP_UNAVAILABLE" });
+  });
+
+  it("a garbage challenge is 401 CHALLENGE_EXPIRED", async () => {
+    const { admin } = await setup();
+    const route = find(publicMerchantRoutes(admin, { platformTenantId: PLATFORM }), "POST", VERIFY);
+    const res = await call(route, { challenge: "garbage", code: CODE });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({
+      error: { code: "CHALLENGE_EXPIRED", message: "Your sign-in expired. Start again." },
+    });
+  });
+
+  it("an enrolled merchant: login is 403 + challenge; verify gives the STORE's token; the challenge works once", async () => {
+    const { admin } = await setup();
+    const limiter = new CountingRateLimiter();
+    const routes = publicMerchantRoutes(admin, {
+      platformTenantId: PLATFORM,
+      rateLimiter: limiter,
+    });
+    const signup = await call(find(routes, "POST", SIGNUP), nour);
+    expect(signup.status).toBe(201);
+    const storeToken = signup.body.accessToken as string;
+    const { sub, tenant_id: storeId } = tokenClaims(storeToken) as {
+      sub: string;
+      tenant_id: string;
+    };
+
+    const security = admin.securityWiring.security;
+    const started = await security.startOwnTwoStep({
+      tenantId: storeId,
+      principalExternalId: sub,
+      email: "owner@nour.test",
+    });
+    expect(started.status).toBe(201);
+    const confirmed = await security.confirmOwnTwoStep({
+      tenantId: storeId,
+      principalExternalId: sub,
+      enrollmentId: (started.body as { enrollmentId: string }).enrollmentId,
+      code: CODE,
+      now: clock.now(),
+    });
+    expect(confirmed.status).toBe(200);
+    clockState.ms += 31_000;
+    try {
+      const login = await call(find(routes, "POST", LOGIN), {
+        email: "owner@nour.test",
+        password: "correct-horse-1",
+      });
+      expect(login.status).toBe(403);
+      expect(login.body.error).toMatchObject({ code: "MFA_REQUIRED" });
+      const challenge = login.body.challenge as string;
+      expect(tokenClaims(challenge).tenant_id).toBe(storeId);
+      expect(login.body.accessToken).toBeUndefined();
+
+      const verify = find(routes, "POST", VERIFY);
+      const wrong = await call(verify, { challenge, code: "000000" });
+      expect(wrong.status).toBe(401);
+      expect(wrong.body).toEqual({
+        error: { code: "INVALID_CODE", message: "That code didn't work. Try again." },
+      });
+      const ok = await call(verify, { challenge, code: CODE });
+      expect(ok.status).toBe(200);
+      const claims = tokenClaims(ok.body.accessToken as string);
+      expect(claims).toMatchObject({ sub, tenant_id: storeId });
+      expect(claims.roles).toEqual(["admin"]);
+      // The limiter saw the store-scoped member bucket and the one-use challenge bucket.
+      expect(limiter.keys).toContain(`rl:${storeId}:staff-mfa:${sub}|6|600000`);
+      clockState.ms += 31_000;
+      const reused = await call(verify, { challenge, code: CODE });
+      expect(reused.status).toBe(401);
+      expect(reused.body).toMatchObject({ error: { code: "CHALLENGE_EXPIRED" } });
+    } finally {
+      clockState.ms = START_MS;
+    }
+  }, 30_000);
 });

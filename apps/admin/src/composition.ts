@@ -376,6 +376,12 @@ export interface AdminWiringDeps {
   readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
   /** Plan 1B-2: the platform's own token issuer; absent ⇒ staff login/JWKS answer 503. */
   readonly staffTokenIssuer?: NativeTokenIssuer;
+  /**
+   * Wave 1e: true only when the injected totp provider is the real one AND `MFA_TOTP_KEY` is set
+   * (`apps/runtime` decides). Passed straight through to `wireSecurity(deps)` (gates starting a
+   * setup) and, with `staffTokenIssuer`, decides the "code step is available" capability. Absent ⇒ false.
+   */
+  readonly mfaConfigured?: boolean;
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
   /**
@@ -1417,6 +1423,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     security: security.security,
     ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
     sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+    clock: deps.clock,
     ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
     ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
     ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
@@ -1498,6 +1505,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
       clock: deps.clock,
       liveAccess: liveAccessControl,
+      codeStepAvailable: deps.staffTokenIssuer !== undefined && deps.mfaConfigured === true,
     }),
     liveAccessControl,
     customer360: new Customer360AdminController({

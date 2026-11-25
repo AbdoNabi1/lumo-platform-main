@@ -1,6 +1,7 @@
 import { isDomainError, UniqueEntityId } from "@platform/domain";
 import { err, ok, type Result } from "@platform/types";
 import { AuthorizationError, type DomainError } from "@platform/utils";
+import type { Principal } from "../domain/principal";
 import type { PrincipalSummary } from "../domain/repositories";
 import { Role } from "../domain/role";
 import { OWNER_ROLE_KEY, STAFF_ROLES, type StaffRole } from "../domain/staff";
@@ -152,7 +153,7 @@ export async function requireActiveStaffAdmin(
   actorExternalId: string,
   now: Date,
   tx: unknown,
-): Promise<void> {
+): Promise<Principal> {
   const denied = new AuthorizationError("You don't have permission to manage staff");
   const actor = await deps.principals.findByExternalId(actorExternalId, tenantId, tx);
   if (actor === null || !actor.isActive) throw denied;
@@ -161,6 +162,22 @@ export async function requireActiveStaffAdmin(
     (a) => a.isActiveAt(now) && (a.roleKey === OWNER_ROLE_KEY || a.roleKey === "admin"),
   );
   if (!holds) throw denied;
+  return actor;
+}
+
+/**
+ * Wave 1e — the store's "require two-step verification for everyone" flag: the SINGLE source every
+ * reader uses (policy GET/SET, the 1d invite / accept / reactivate refusals, the own turn-off
+ * refusal). It lives on the tenant profile keyed `tenantRef = tenantId` and binds STAFF only (through
+ * `Authenticate.requireEnrolledFactor`); storefront customers never read it. A missing profile = off.
+ */
+export async function isTwoStepRequired(
+  deps: Pick<StaffDeps, "tenantProfiles">,
+  tenantId: string,
+  tx?: unknown,
+): Promise<boolean> {
+  const profile = await deps.tenantProfiles.findByTenant(tenantId, tenantId, tx);
+  return profile?.mfaRequired ?? false;
 }
 
 const ROLE_NAMES: Readonly<Record<StaffRole, string>> = {

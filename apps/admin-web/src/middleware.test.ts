@@ -466,3 +466,43 @@ describe("middleware role table for the orders screens", () => {
     }
   });
 });
+
+describe("middleware — Wave 1e two-step routes", () => {
+  it.each(["/login/verify", "/login/verify?error=code", "/auth/native-login/verify"])(
+    "%s is public: the code step happens before there is a session",
+    async (path) => {
+      expect.hasAssertions();
+      const response = await middleware(requestFor(path));
+      expect(response.headers.get("location")).toBeNull();
+      expect(jwtVerifyMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["viewer", "operator", "admin"])(
+    "/account/security is reachable by a %s",
+    async (role) => {
+      expect.hasAssertions();
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const response = await middleware(requestFor("/account/security", "good.token"));
+      expect(response.headers.get("location")).toBeNull();
+    },
+  );
+
+  it("/account/security without a session goes to sign-in, not to the page", async () => {
+    expect.hasAssertions();
+    const response = await middleware(requestFor("/account/security"));
+    expect(response.headers.get("location")).toContain("/oauth2/auth");
+  });
+
+  it("/settings/users/activity is admin-only: operator and viewer go to /forbidden", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "viewer"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const response = await middleware(requestFor("/settings/users/activity", "good.token"));
+      expect(response.headers.get("location"), role).toContain("/forbidden");
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    const allowed = await middleware(requestFor("/settings/users/activity", "good.token"));
+    expect(allowed.headers.get("location")).toBeNull();
+  });
+});

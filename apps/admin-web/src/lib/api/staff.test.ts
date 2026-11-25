@@ -13,10 +13,13 @@ vi.mock("jose", () => ({
 const {
   changeStaffRole,
   fetchStaff,
+  fetchStaffActivity,
+  fetchStaffSecurityPolicy,
   inviteStaff,
   isStaffMemberView,
   resendStaffInvitation,
   revokeStaffInvitation,
+  setRequireTwoStep,
   setStaffActive,
 } = await import("./staff");
 
@@ -36,6 +39,7 @@ const owner = {
   isSelf: true,
   addedAt: "2026-11-01T10:00:00.000Z",
   lastSignInAt: "2026-11-24T08:00:00.000Z",
+  twoStep: true,
   invitation: null,
 };
 const invited = {
@@ -47,6 +51,7 @@ const invited = {
   isSelf: false,
   addedAt: "2026-11-23T10:00:00.000Z",
   lastSignInAt: null,
+  twoStep: false,
   invitation: {
     id: "9d0a0000-0000-4000-8000-000000000009",
     expiresAt: "2026-11-30T10:00:00.000Z",
@@ -237,5 +242,145 @@ describe("staff writes", () => {
   it("refuses a success body of the wrong shape", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { role: "root" })));
     expect((await changeStaffRole("p", "admin", "k")).outcome).toBe("error");
+  });
+});
+
+describe("isStaffMemberView — twoStep (Wave 1e)", () => {
+  it.each([
+    ["a missing twoStep", (({ twoStep: _unused, ...rest }) => rest)(owner)],
+    ["a non-boolean twoStep", { ...owner, twoStep: "yes" }],
+  ])("rejects %s", (_name, value) => {
+    expect(isStaffMemberView(value)).toBe(false);
+  });
+
+  it("accepts both values", () => {
+    expect(isStaffMemberView({ ...owner, twoStep: false })).toBe(true);
+    expect(isStaffMemberView({ ...owner, twoStep: true })).toBe(true);
+  });
+});
+
+describe("fetchStaffSecurityPolicy", () => {
+  const policy = {
+    requireTwoStep: false,
+    codeStepAvailable: true,
+    activeStaff: 3,
+    enrolledActiveStaff: 2,
+    notEnrolled: [{ principalExternalId: "p-3", email: "mona@example.com" }],
+    pendingInvitations: 1,
+  };
+
+  it("GETs /staff/security-policy and validates the exact shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, policy));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchStaffSecurityPolicy()).toEqual({ outcome: "ok", data: policy });
+    expect(lastCall(fetchMock)[0]).toBe("http://runtime.test/api/v1/staff/security-policy");
+  });
+
+  it.each([
+    ["a missing count", { ...policy, activeStaff: undefined }],
+    ["a negative count", { ...policy, pendingInvitations: -1 }],
+    ["a malformed notEnrolled entry", { ...policy, notEnrolled: [{ email: "x" }] }],
+    ["a string flag", { ...policy, requireTwoStep: "on" }],
+  ])("rejects %s", async (_name, body) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
+    expect((await fetchStaffSecurityPolicy()).outcome).toBe("error");
+  });
+
+  it("reports a 403 as unauthorized with status 403", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, {})));
+    expect(await fetchStaffSecurityPolicy()).toEqual({ outcome: "unauthorized", status: 403 });
+  });
+});
+
+describe("setRequireTwoStep", () => {
+  it("POSTs { requireTwoStep } with the Idempotency-Key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { requireTwoStep: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await setRequireTwoStep(true, "key-1")).toEqual({
+      outcome: "ok",
+      data: { requireTwoStep: true },
+    });
+    const [url, init] = lastCall(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/staff/security-policy");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ requireTwoStep: true });
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-1");
+  });
+
+  it("carries the exact 409 message through", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(409, {
+            code: "BUSINESS_RULE",
+            message: "Everyone needs two-step verification turned on first",
+          }),
+        ),
+    );
+    expect(await setRequireTwoStep(true, "k")).toMatchObject({
+      outcome: "conflict",
+      message: "Everyone needs two-step verification turned on first",
+    });
+  });
+});
+
+describe("fetchStaffActivity", () => {
+  const page = {
+    items: [
+      {
+        id: "a-1",
+        at: "2026-11-24T12:00:00.000Z",
+        kind: "role_changed",
+        actorEmail: "sam@example.com",
+        subjectEmail: "mona@example.com",
+        detail: { from: "operator", to: "viewer" },
+      },
+    ],
+    nextCursor: "abc_DEF-123",
+  };
+
+  it("GETs /staff/activity with no query string by default", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, page));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchStaffActivity()).toEqual({ outcome: "ok", data: page });
+    expect(lastCall(fetchMock)[0]).toBe("http://runtime.test/api/v1/staff/activity");
+  });
+
+  it("sends member, cursor and limit as query parameters, encoded", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchStaffActivity({ member: "p 1&x", cursor: "abc_DEF-123", limit: 25 });
+    const url = new URL(lastCall(fetchMock)[0]);
+    expect(url.pathname).toBe("/api/v1/staff/activity");
+    expect(url.searchParams.get("member")).toBe("p 1&x");
+    expect(url.searchParams.get("cursor")).toBe("abc_DEF-123");
+    expect(url.searchParams.get("limit")).toBe("25");
+  });
+
+  it("leaves out an empty member or cursor", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { items: [], nextCursor: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchStaffActivity({ member: "", cursor: "" });
+    expect(lastCall(fetchMock)[0]).toBe("http://runtime.test/api/v1/staff/activity");
+  });
+
+  it.each([
+    ["an unknown kind", { ...page, items: [{ ...page.items[0], kind: "exploded" }] }],
+    ["a missing detail", { ...page, items: [{ ...page.items[0], detail: undefined }] }],
+    ["a non-string cursor", { ...page, nextCursor: 5 }],
+    [
+      "a detail with a number role",
+      { ...page, items: [{ ...page.items[0], detail: { from: 3 } }] },
+    ],
+  ])("rejects %s", async (_name, body) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
+    expect((await fetchStaffActivity()).outcome).toBe("error");
+  });
+
+  it("reports a 403 as unauthorized with status 403 (the page says who may open it)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, {})));
+    expect(await fetchStaffActivity()).toEqual({ outcome: "unauthorized", status: 403 });
   });
 });

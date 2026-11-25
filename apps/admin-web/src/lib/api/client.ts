@@ -59,7 +59,11 @@ export interface FieldIssue {
  */
 export type MutationResult<T> =
   | { readonly outcome: "ok"; readonly data: T }
-  | { readonly outcome: "unauthorized" }
+  | {
+      readonly outcome: "unauthorized";
+      /** The reply's error code, only when the caller asked for it (`readCodeOn401`). */
+      readonly code?: string;
+    }
   | { readonly outcome: "forbidden" }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "conflict"; readonly message: string; readonly code?: string }
@@ -158,7 +162,12 @@ export async function getAdminApi<T>(
   }
   if (!response.ok) {
     const envelope: unknown = await response.json().catch(() => null);
-    const code = (envelope as { readonly code?: unknown } | null)?.code;
+    const shape = envelope as {
+      readonly code?: unknown;
+      readonly error?: { readonly code?: unknown } | null;
+    } | null;
+    // The flat `{ code }` envelope or the nested `{ error: { code } }` one.
+    const code = shape?.code ?? shape?.error?.code;
     return {
       outcome: "error",
       message: `Admin API responded with status ${response.status}`,
@@ -205,6 +214,12 @@ export async function mutateAdminApi<T>(
     readonly body?: unknown;
     readonly idempotencyKey?: string;
     readonly timeoutMs?: number;
+    /**
+     * Report the reply's error `code` on a 401. Off by default: a 401 normally means "signed out",
+     * but a route whose own refusal is a 401 (Wave 1e: `INVALID_PASSWORD` on turning two-step off)
+     * needs the caller to tell the two apart.
+     */
+    readonly readCodeOn401?: boolean;
   },
   isValid: (value: unknown) => value is T,
 ): Promise<MutationResult<T>> {
@@ -238,15 +253,22 @@ export async function mutateAdminApi<T>(
 
   const parsed: unknown = await response.json().catch(() => null);
 
-  if (response.status === 401) return { outcome: "unauthorized" };
-  if (response.status === 403) return { outcome: "forbidden" };
-  if (response.status === 404) return { outcome: "not_found" };
   const envelope = parsed as {
     readonly message?: unknown;
     readonly code?: unknown;
     readonly fields?: unknown;
+    readonly error?: { readonly code?: unknown } | null;
   } | null;
-  const code = typeof envelope?.code === "string" ? { code: envelope.code } : {};
+  // Two envelope shapes exist: the flat `{ code, message }` and the nested `{ error: { code, message } }`.
+  const rawCode = envelope?.code ?? envelope?.error?.code;
+  const code = typeof rawCode === "string" ? { code: rawCode } : {};
+  if (response.status === 401) {
+    return init.readCodeOn401 === true
+      ? { outcome: "unauthorized", ...code }
+      : { outcome: "unauthorized" };
+  }
+  if (response.status === 403) return { outcome: "forbidden" };
+  if (response.status === 404) return { outcome: "not_found" };
   if (response.status === 409) {
     return {
       outcome: "conflict",

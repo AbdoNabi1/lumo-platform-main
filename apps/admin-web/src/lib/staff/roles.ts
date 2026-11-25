@@ -34,6 +34,8 @@ export interface StaffMemberView {
   readonly isSelf: boolean;
   readonly addedAt: string;
   readonly lastSignInAt: string | null;
+  /** Wave 1e: the member has an active two-step (authenticator app) enrolment. */
+  readonly twoStep: boolean;
   /** A pending (or expired-pending) invitation; `null` once accepted, revoked or never sent. */
   readonly invitation: StaffInvitationView | null;
 }

@@ -1,4 +1,5 @@
 import { requireProdEnv } from "@/lib/env";
+import { readMfaChallenge, type MfaChallenge } from "./mfa-challenge";
 
 /** Plan 1B-2: native staff sign-in helpers (no Ory). Pure, so they are testable without Next. */
 
@@ -25,7 +26,9 @@ export function jwksFetchHeaders(): Record<string, string> {
 
 export type ExchangeResult =
   | { readonly ok: true; readonly token: string; readonly expiresIn: number }
-  | { readonly ok: false; readonly reason: "invalid" | "mfa" | "unavailable" };
+  | { readonly ok: false; readonly reason: "invalid" | "unavailable" }
+  /** Wave 1e: a code is needed. `challenge` is present only when the member has two-step on. */
+  | ({ readonly ok: false; readonly reason: "mfa" } & MfaChallenge);
 
 export async function exchangePassword(input: {
   readonly runtimeUrl: string;
@@ -43,7 +46,10 @@ export async function exchangePassword(input: {
       cache: "no-store",
     });
     if (response.status === 401) return { ok: false, reason: "invalid" };
-    if (response.status === 403) return { ok: false, reason: "mfa" };
+    if (response.status === 403) {
+      const body: unknown = await response.json().catch(() => null);
+      return { ok: false, reason: "mfa", ...readMfaChallenge(body) };
+    }
     if (!response.ok) return { ok: false, reason: "unavailable" };
     const body = (await response.json()) as { accessToken?: unknown; expiresIn?: unknown };
     if (typeof body.accessToken !== "string" || typeof body.expiresIn !== "number") {

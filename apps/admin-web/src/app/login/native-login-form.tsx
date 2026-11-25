@@ -5,7 +5,8 @@ import { BrandMark } from "@/components/brand-mark";
 /** Plan 1B-2: the plain email/password form shown when AUTH_MODE=native (no Ory, no Kratos flow). */
 const ERROR_TEXT: Readonly<Record<string, string>> = {
   invalid: "Email or password is incorrect / الإيميل أو كلمة السر غلط",
-  mfa: "Two-step verification is required / مطلوب تحقق بخطوتين",
+  mfa: "Your store requires two-step verification. Ask your store admin. / متجرك بيطلب التحقق بخطوتين. اطلب من مدير المتجر.",
+  expired: "Your sign-in expired. Start again. / انتهت صلاحية تسجيل الدخول. ابدأ من تاني.",
   unavailable: "Sign-in is temporarily unavailable / الدخول غير متاح مؤقتاً",
 };
 
