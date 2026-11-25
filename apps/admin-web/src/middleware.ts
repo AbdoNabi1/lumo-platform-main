@@ -152,6 +152,8 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/pricing", "operator"],
   ["/analytics", "viewer"],
   ["/account/password", "viewer"],
+  // Wave 1e: every role protects its own account with two-step verification.
+  ["/account/security", "viewer"],
   ["/", "viewer"],
 ];
 

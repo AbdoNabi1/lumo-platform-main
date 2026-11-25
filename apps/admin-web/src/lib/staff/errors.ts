@@ -1,4 +1,5 @@
 import type { Dictionary } from "@/messages/en";
+import { requiresTwoStepConflict } from "./two-step";
 
 /**
  * The server's exact, user-facing 409 sentences (Security's staff commands and the staff controller),
@@ -24,5 +25,5 @@ const CONFLICT_KEYS: Readonly<Record<string, keyof Dictionary["users"]["errors"]
 /** The locale's text for a 409 `message`, or `null` when this is not one of the known sentences. */
 export function staffConflictMessage(message: string, t: Dictionary): string | null {
   const key = CONFLICT_KEYS[message];
-  return key === undefined ? null : t.users.errors[key];
+  return key === undefined ? requiresTwoStepConflict(message, t) : t.users.errors[key];
 }

@@ -390,3 +390,103 @@ describe("session tenant", () => {
     expect(await currentTenantRef()).toBe("shop-a");
   });
 });
+
+describe("two error envelopes, and the opt-in 401 code (Wave 1e)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  it("a plain 401 stays exactly `unauthorized`, whatever the body says", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(401, { code: "INVALID_PASSWORD", message: "no" })),
+    );
+    expect(await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord)).toEqual({
+      outcome: "unauthorized",
+    });
+  });
+
+  it("readCodeOn401 reports the flat code, and the nested one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(401, { code: "INVALID_PASSWORD" })),
+    );
+    expect(
+      await mutateAdminApi("/api/v1/x", { method: "POST", readCodeOn401: true }, isRecord),
+    ).toEqual({ outcome: "unauthorized", code: "INVALID_PASSWORD" });
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(jsonResponse(401, { error: { code: "INVALID_CODE", message: "x" } })),
+    );
+    expect(
+      await mutateAdminApi("/api/v1/x", { method: "POST", readCodeOn401: true }, isRecord),
+    ).toEqual({ outcome: "unauthorized", code: "INVALID_CODE" });
+  });
+
+  it("readCodeOn401 on a 401 with no usable code adds no code key", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { code: 7 })));
+    const result = await mutateAdminApi(
+      "/api/v1/x",
+      { method: "POST", readCodeOn401: true },
+      isRecord,
+    );
+    expect(result).toEqual({ outcome: "unauthorized" });
+  });
+
+  it("a flat code still wins over a nested one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse(409, { code: "FLAT", message: "m", error: { code: "NESTED" } }),
+        ),
+    );
+    expect(await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord)).toEqual({
+      outcome: "conflict",
+      message: "m",
+      code: "FLAT",
+    });
+  });
+
+  it("a nested code is read on 409, 422 and other errors", async () => {
+    for (const [status, outcome] of [
+      [409, "conflict"],
+      [422, "invalid"],
+      [503, "error"],
+    ] as const) {
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn()
+          .mockResolvedValue(jsonResponse(status, { error: { code: "NESTED", message: "m" } })),
+      );
+      expect(await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord)).toMatchObject({
+        outcome,
+        code: "NESTED",
+      });
+    }
+  });
+
+  it("getAdminApi reads a nested code too, and 403/404 are untouched", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(503, { error: { code: "NOT_CONFIGURED" } })),
+    );
+    expect(await getAdminApi("/api/v1/x", isRecord)).toMatchObject({
+      outcome: "error",
+      status: 503,
+      code: "NOT_CONFIGURED",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(403, { error: { code: "X" } })));
+    expect(await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord)).toEqual({
+      outcome: "forbidden",
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(404, { error: { code: "X" } })));
+    expect(await mutateAdminApi("/api/v1/x", { method: "POST" }, isRecord)).toEqual({
+      outcome: "not_found",
+    });
+  });
+});
