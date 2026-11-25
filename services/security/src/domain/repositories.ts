@@ -146,6 +146,15 @@ export interface MfaEnrollmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly MfaEnrollment[]>;
+  /**
+   * The ACTIVE `totp` enrolment of each given principal, keyed by the principal's INTERNAL id
+   * (`principalRef`). Principals without one are absent from the map.
+   */
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, MfaEnrollment>>;
 }
 
 /** Persists machine-identity governance profiles (keyed by principalRef). Same-tx outbox (P2.0-C §14). */

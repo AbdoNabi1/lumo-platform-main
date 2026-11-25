@@ -325,6 +325,18 @@ export class InMemoryMfaEnrollmentRepository implements MfaEnrollmentRepository 
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly MfaEnrollment[]> {
     return this.byId.values(tenantId).filter((e) => e.principalRef === principalRef);
   }
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, MfaEnrollment>> {
+    const wanted = new Set(principalRefs);
+    const byPrincipal = new Map<string, MfaEnrollment>();
+    for (const e of this.byId.values(tenantId)) {
+      if (e.status === "active" && e.method === "totp" && wanted.has(e.principalRef))
+        byPrincipal.set(e.principalRef, e);
+    }
+    return Promise.resolve(byPrincipal);
+  }
 }
 
 /** In-memory `MachineIdentityProfileRepository` — keyed by principalRef; enumerable for the explorer. */

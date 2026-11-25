@@ -448,6 +448,27 @@ export class PrismaMfaEnrollmentRepository
     );
     return rows.map(M.MfaEnrollmentMapper.toDomain);
   }
+  async listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, MfaEnrollment>> {
+    if (principalRefs.length === 0) return new Map();
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityMfaEnrollment.findMany({
+        where: {
+          tenantId,
+          principalRef: { in: [...principalRefs] },
+          status: "active",
+          method: "totp",
+        },
+        orderBy: { createdAtDomain: "asc" },
+      }),
+    );
+    const byPrincipal = new Map<string, MfaEnrollment>();
+    for (const row of rows) byPrincipal.set(row.principalRef, M.MfaEnrollmentMapper.toDomain(row));
+    return byPrincipal;
+  }
 }
 
 // ── Role + assignment ────────────────────────────────────────────────────────────────────────────

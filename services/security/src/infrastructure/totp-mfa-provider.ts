@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Clock } from "@platform/contracts";
 import type { CryptoPort, MfaProviderPort } from "../application/auth-ports";
 import type { MfaMethodKind } from "../domain/value-objects/auth-method";
@@ -7,6 +7,7 @@ import { base32Decode, base32Encode, totp } from "./totp";
 /** Legacy constant — local/tests only. Production passes `keyRef` from MFA_TOTP_KEY (G-87). */
 const LEGACY_KEY_REF = "security.mfa.totp";
 const ISSUER = "Morbeh";
+const PERIOD_SECONDS = 30;
 const STEP_TOLERANCE = 1; // ± one 30s period, absorbing clock drift between client and server.
 
 /**
@@ -33,16 +34,18 @@ export class TotpMfaProvider implements MfaProviderPort {
     this.keyRef = options.keyRef ?? LEGACY_KEY_REF;
   }
 
-  async enroll(input: {
-    readonly principalRef: string;
-  }): Promise<{ readonly secretRef: string; readonly provisioningUri: string }> {
+  async enroll(input: { readonly principalRef: string; readonly accountLabel: string }): Promise<{
+    readonly secretRef: string;
+    readonly provisioningUri: string;
+    readonly manualKey: string;
+  }> {
     const secret = randomBytes(20);
     const base32Secret = base32Encode(secret);
     const secretRef = await this.crypto.encrypt(base32Secret, this.keyRef);
     const provisioningUri =
-      `otpauth://totp/${encodeURIComponent(ISSUER)}:${encodeURIComponent(input.principalRef)}` +
+      `otpauth://totp/${encodeURIComponent(ISSUER)}:${encodeURIComponent(input.accountLabel)}` +
       `?secret=${base32Secret}&issuer=${encodeURIComponent(ISSUER)}&algorithm=SHA1&digits=6&period=30`;
-    return { secretRef, provisioningUri };
+    return { secretRef, provisioningUri, manualKey: base32Secret };
   }
 
   async issueChallenge(input: {
@@ -57,23 +60,38 @@ export class TotpMfaProvider implements MfaProviderPort {
     readonly secretRef: string | null;
     readonly code: string;
   }): Promise<boolean> {
-    if (input.secretRef === null) return false;
+    return (await this.verifyStep(input)) !== null;
+  }
+
+  async verifyStep(input: {
+    readonly secretRef: string | null;
+    readonly code: string;
+    readonly at?: Date;
+  }): Promise<number | null> {
+    if (input.secretRef === null || !/^\d{6}$/.test(input.code)) return null;
     let base32Secret: string;
     try {
       base32Secret = await this.crypto.decrypt(input.secretRef, this.keyRef);
     } catch {
-      return false;
+      return null;
     }
     let secretBytes: Buffer;
     try {
       secretBytes = base32Decode(base32Secret);
     } catch {
-      return false;
+      return null;
     }
-    const nowSeconds = Math.floor(this.clock.now().getTime() / 1000);
-    for (let step = -STEP_TOLERANCE; step <= STEP_TOLERANCE; step += 1) {
-      if (totp(secretBytes, nowSeconds + step * 30) === input.code) return true;
+    const submitted = Buffer.from(input.code, "utf8");
+    const nowSeconds = Math.floor((input.at ?? this.clock.now()).getTime() / 1000);
+    const currentStep = Math.floor(nowSeconds / PERIOD_SECONDS);
+    let matched: number | null = null;
+    // Always compute every candidate (no early exit) so timing does not reveal which step matched.
+    for (let offset = -STEP_TOLERANCE; offset <= STEP_TOLERANCE; offset += 1) {
+      const step = currentStep + offset;
+      const expected = Buffer.from(totp(secretBytes, step * PERIOD_SECONDS), "utf8");
+      if (expected.length === submitted.length && timingSafeEqual(expected, submitted))
+        matched = step;
     }
-    return false;
+    return matched;
   }
 }

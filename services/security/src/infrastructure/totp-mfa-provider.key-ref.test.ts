@@ -11,7 +11,7 @@ describe("TotpMfaProvider keyRef (G-87)", () => {
   it("encrypts the secret under the configured key, not the source-code constant", async () => {
     const crypto = new NodeCrypto();
     const provider = new TotpMfaProvider(crypto, clock, { keyRef: KEY_A });
-    const { secretRef } = await provider.enroll({ principalRef: "p-1" });
+    const { secretRef } = await provider.enroll({ principalRef: "p-1", accountLabel: "a@b.co" });
     await expect(crypto.decrypt(secretRef, KEY_A)).resolves.toMatch(/^[A-Z2-7]+$/);
     await expect(crypto.decrypt(secretRef, KEY_B)).rejects.toThrow();
     await expect(crypto.decrypt(secretRef, "security.mfa.totp")).rejects.toThrow();
