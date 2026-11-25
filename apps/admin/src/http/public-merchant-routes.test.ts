@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { NativeTokenIssuer } from "@platform/auth";
 import type { Clock, IdGenerator, RateLimiter } from "@platform/contracts";
@@ -524,5 +524,86 @@ describe("merchant password reset", () => {
     expect(
       (await call(complete, { store: "", token: "t", password: "long-enough-1" })).status,
     ).toBe(400);
+  });
+});
+
+const INVITE_ACCEPT = "/public/auth/merchant/invitations/accept";
+
+describe("merchant invitation accept route (Wave 1d)", () => {
+  it("is public and NOT idempotent; the store is required and the body strict", async () => {
+    const { admin } = await setup();
+    const route = find(
+      publicMerchantRoutes(admin, { platformTenantId: PLATFORM }),
+      "POST",
+      INVITE_ACCEPT,
+    );
+    expect(route.public).toBe(true);
+    expect(route.permission).toBe("security:authenticate");
+    expect(route.idempotent).not.toBe(true);
+    const schema = route.schema.body!;
+    expect(schema.safeParse({ store: "s", token: "t", password: "short" }).success).toBe(true);
+    expect(schema.safeParse({ token: "t", password: "x" }).success).toBe(false);
+    expect(schema.safeParse({ store: "", token: "t", password: "x" }).success).toBe(false);
+    expect(schema.safeParse({ store: "s".repeat(201), token: "t", password: "x" }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ store: "s", token: "t".repeat(513), password: "x" }).success).toBe(
+      false,
+    );
+    expect(schema.safeParse({ store: "s", token: "t", password: "x", extra: 1 }).success).toBe(
+      false,
+    );
+  });
+
+  it("is refused on any tenant but the platform's (403) and 503 without a platform tenant", async () => {
+    const { admin } = await setup();
+    const body = { store: "shop-1", token: "t", password: "a-long-enough-password" };
+    const gated = find(
+      publicMerchantRoutes(admin, { platformTenantId: PLATFORM }),
+      "POST",
+      INVITE_ACCEPT,
+    );
+    expect((await call(gated, body, { tenantId: "some-store" })).status).toBe(403);
+    const single = find(publicMerchantRoutes(admin, {}), "POST", INVITE_ACCEPT);
+    expect((await call(single, body)).status).toBe(503);
+  });
+
+  it("acts on the store in the body: the uniform 410 for an unknown link, 422 for a weak password", async () => {
+    const { admin } = await setup();
+    const route = find(
+      publicMerchantRoutes(admin, { platformTenantId: PLATFORM }),
+      "POST",
+      INVITE_ACCEPT,
+    );
+    const gone = await call(route, {
+      store: "no-such-store",
+      token: "nope",
+      password: "a-long-enough-password",
+    });
+    expect(gone.status).toBe(410);
+    expect(gone.body).toMatchObject({ code: "INVITATION_INVALID" });
+    expect(
+      (await call(route, { store: "no-such-store", token: "nope", password: "short" })).status,
+    ).toBe(422);
+  });
+
+  it("is limited to 10 per 15 minutes per store and token HASH, never keyed by the token itself", async () => {
+    const { admin } = await setup();
+    const limiter = new CountingRateLimiter();
+    const route = find(
+      publicMerchantRoutes(admin, { rateLimiter: limiter, platformTenantId: PLATFORM }),
+      "POST",
+      INVITE_ACCEPT,
+    );
+    const token = "another-secret-token";
+    const body = { store: "shop-1", token, password: "a-long-enough-password" };
+    for (let i = 0; i < 10; i += 1) expect((await call(route, body)).status).toBe(410);
+    const refused = await call(route, body);
+    expect(refused.status).toBe(429);
+    const hash = createHash("sha256").update(token).digest("hex");
+    expect(new Set(limiter.keys)).toEqual(
+      new Set([`rl:shop-1:staff-invite-accept:${hash}|10|900000`]),
+    );
+    expect(limiter.keys.join("\n")).not.toContain(token);
   });
 });

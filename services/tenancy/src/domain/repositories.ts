@@ -53,4 +53,9 @@ export interface StaffDirectoryRepository {
   create(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
   /** Updates an EXISTING row (e.g. activation); never creates one. */
   save(entry: StaffDirectoryEntry, tx?: unknown): Promise<void>;
+  /**
+   * Deletes the row only when email, shop AND owner all match `entry` (a compare-and-delete);
+   * returns whether a row was removed.
+   */
+  delete(entry: StaffDirectoryEntry, tx?: unknown): Promise<boolean>;
 }

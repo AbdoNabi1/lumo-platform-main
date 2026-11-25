@@ -22,6 +22,7 @@ import {
   SuspendAiIdentityForm,
 } from "@/components/security/ai-governance-actions";
 import { fetchAiGovernanceExplorer } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -86,7 +87,7 @@ async function AiGovernanceSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securityAiGovernancePage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securityAiGovernancePage.unauthorized)}
       />
     );
   }

@@ -61,6 +61,7 @@ interface LoginPageProps {
     readonly return_to?: string;
     readonly reset?: string;
     readonly signup?: string;
+    readonly invited?: string;
   }>;
 }
 
@@ -72,6 +73,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     return_to: returnTo,
     reset,
     signup,
+    invited,
   } = await searchParams;
 
   // Plan 1B-2: native mode is a plain email/password form — no Hydra challenge, no Kratos flow.
@@ -82,6 +84,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         returnTo={returnTo}
         reset={reset}
         signup={signup}
+        invited={invited}
         signupEnabled={signupEnabled()}
       />
     );

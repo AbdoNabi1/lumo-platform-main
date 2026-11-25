@@ -47,6 +47,11 @@ export class HashedPasswordAuthProvider implements AuthenticationProviderPort, P
     return this.deps.store;
   }
 
+  /** Wave 1d: the SAME hasher, so a password set through the invitation flow verifies at sign-in. */
+  get passwordHasher(): Pick<PasswordHasher, "hash"> {
+    return this.deps.hasher;
+  }
+
   async setPassword(input: {
     readonly tenantId: string;
     readonly identifier: string;

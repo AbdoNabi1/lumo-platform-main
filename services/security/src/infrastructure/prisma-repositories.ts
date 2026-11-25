@@ -30,7 +30,9 @@ import type {
   PolicyRegistry,
   PolicyRepository,
   PrincipalDirectory,
+  PrincipalReader,
   PrincipalRepository,
+  PrincipalSummary,
   RelationTupleRepository,
   RoleAssignmentRepository,
   RoleRegistry,
@@ -103,7 +105,7 @@ abstract class BasePrismaRepository {
 // ── Principal ─────────────────────────────────────────────────────────────────────────────────────
 export class PrismaPrincipalRepository
   extends BasePrismaRepository
-  implements PrincipalRepository, PrincipalDirectory
+  implements PrincipalRepository, PrincipalDirectory, PrincipalReader
 {
   async save(principal: Principal, tenantId: string, tx?: unknown): Promise<void> {
     const client = requireTx(tx);
@@ -166,6 +168,16 @@ export class PrismaPrincipalRepository
       }),
     );
     return rows.map(M.PrincipalMapper.toDomain);
+  }
+  async listSummaries(tenantId: string, tx?: unknown): Promise<readonly PrincipalSummary[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityPrincipal.findMany({
+        where: { tenantId },
+        select: { id: true, externalId: true, status: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      }),
+    );
+    return rows.map(M.PrincipalMapper.toSummary);
   }
 }
 
@@ -292,6 +304,26 @@ export class PrismaSessionRepository extends BasePrismaRepository implements Ses
       }),
     );
     return rows.map(M.SessionMapper.toDomain);
+  }
+  async lastEstablishedByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, Date>> {
+    if (principalRefs.length === 0) return new Map();
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securitySession.groupBy({
+        by: ["principalRef"],
+        where: { tenantId, principalRef: { in: [...principalRefs] } },
+        _max: { establishedAt: true },
+      }),
+    );
+    const latest = new Map<string, Date>();
+    for (const row of rows) {
+      const at = row._max.establishedAt;
+      if (at !== null) latest.set(row.principalRef, at);
+    }
+    return latest;
   }
   async listAll(tenantId: string, tx?: unknown): Promise<readonly Session[]> {
     const rows = await this.read(tenantId, tx, (c) =>
@@ -517,6 +549,23 @@ export class PrismaRoleAssignmentRepository
       }),
     );
     return rows.map(M.RoleAssignmentMapper.toDomain);
+  }
+  async listActiveByTenant(
+    tenantId: string,
+    now: Date,
+    tx?: unknown,
+  ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]> {
+    const rows = await this.read(tenantId, tx, (c) =>
+      c.securityRoleAssignment.findMany({
+        where: {
+          tenantId,
+          status: "active",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        select: { principalRef: true, roleKey: true },
+      }),
+    );
+    return rows.map((r) => ({ principalRef: r.principalRef, roleKey: r.roleKey }));
   }
 }
 

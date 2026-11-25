@@ -10,7 +10,7 @@ const EXPECTED = [
   ["general", "General", "/settings/general"],
   ["plan", "Plan", "/settings/billing"],
   ["billing", "Billing", "/settings/billing"],
-  ["users", "Users", "/settings/users"],
+  ["users", "Users and permissions", "/settings/users"],
   ["payments", "Payments", "/settings/payments"],
   ["checkout", "Checkout", "/settings/checkout"],
   ["customer-accounts", "Customer accounts", "/settings/customer-accounts"],
@@ -29,7 +29,6 @@ const EXPECTED = [
 ] as const;
 
 const UNAVAILABLE = [
-  "users",
   "checkout",
   "customer-accounts",
   "markets",

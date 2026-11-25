@@ -73,6 +73,16 @@ describe("middleware", () => {
     },
   );
 
+  it.each(["/accept-invite", "/accept-invite/submit"])(
+    "%s is public: an invited person has no session yet",
+    async (path) => {
+      expect.hasAssertions();
+      const response = await middleware(requestFor(path));
+      expect(response.headers.get("location")).toBeNull();
+      expect(jwtVerifyMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("the dependency-free health probe bypasses the auth gate", async () => {
     const response = await middleware(requestFor("/api/healthz"));
     expect(response.headers.get("location")).toBeNull();
@@ -209,7 +219,6 @@ describe("middleware role table for the Settings sub-navigation (Shopify parity 
   it("keeps every coming-soon placeholder admin-only", async () => {
     expect.hasAssertions();
     const placeholders = [
-      "users",
       "checkout",
       "customer-accounts",
       "markets",
@@ -229,6 +238,20 @@ describe("middleware role table for the Settings sub-navigation (Shopify parity 
       const response = await middleware(requestFor(`/settings/${section}`, "good.token"));
       expect(response.headers.get("location"), section).toBeNull();
     }
+  });
+
+  it("Users and permissions is a real page now but stays admin-only: operator and viewer go to /forbidden", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "viewer"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      for (const path of ["/settings/users", "/settings/users/anything"]) {
+        const response = await middleware(requestFor(path, "good.token"));
+        expect(response.headers.get("location"), `${role} ${path}`).toContain("/forbidden");
+      }
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    const allowed = await middleware(requestFor("/settings/users", "good.token"));
+    expect(allowed.headers.get("location")).toBeNull();
   });
 
   it("lets a viewer still open /online-store/navigation and /locales", async () => {

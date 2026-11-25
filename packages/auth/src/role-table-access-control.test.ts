@@ -38,6 +38,33 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(customer, "account:update_self")).toBe(false);
   });
 
+  it("staff:* (Users and permissions) is admin-only: admin and platform-admin allowed, operator and viewer denied", async () => {
+    for (const permission of [
+      "staff:read",
+      "staff:invite",
+      "staff:change_role",
+      "staff:deactivate",
+    ]) {
+      expect([permission, await acl.authorize(who(["admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["platform-admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["operator"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who(["viewer"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who([]), permission)]).toEqual([permission, false]);
+    }
+  });
+
   it("admin and platform-admin can do everything", async () => {
     expect(await acl.authorize(who(["admin"]), "security:manage")).toBe(true);
     expect(await acl.authorize(who(["platform-admin"]), "finance:create")).toBe(true);

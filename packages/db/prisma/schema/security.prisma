@@ -444,3 +444,27 @@ model SecurityPasswordResetToken {
   @@map("password_reset_tokens")
   @@schema("security")
 }
+
+/// Wave 1d — staff invitations. Only SHA-256(token) is stored (`tokenHash`, globally unique); the token
+/// lives in the invitation email alone. Expiry is computed from `expiresAt` (no `expired` status).
+/// The "one pending invitation per (tenant, email)" rule is a PARTIAL unique index that exists only in
+/// SQL (`staff_invitations_one_pending_per_email` ... WHERE "status" = 'pending'); Prisma cannot express it.
+model SecurityStaffInvitation {
+  id                  String    @id @db.Uuid
+  tenantId            String    @map("tenant_id")
+  email               String // trimmed + lower-cased
+  principalExternalId String    @map("principal_external_id")
+  roleKey             String    @map("role_key") // admin | operator | viewer
+  invitedBy           String    @map("invited_by")
+  tokenHash           String    @unique @map("token_hash")
+  status              String // pending | accepted | revoked
+  expiresAt           DateTime  @map("expires_at")
+  acceptedAt          DateTime? @map("accepted_at")
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([tenantId, status])
+  @@map("staff_invitations")
+  @@schema("security")
+}

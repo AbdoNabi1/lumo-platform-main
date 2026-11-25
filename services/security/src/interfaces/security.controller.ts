@@ -104,6 +104,26 @@ import type {
   RegisterPolicyFragment,
   RegisterPolicyFragmentInput,
 } from "../application/registry.use-cases";
+import type {
+  AcceptStaffInvitation,
+  AcceptStaffInvitationInput,
+  ChangeStaffRole,
+  ChangeStaffRoleInput,
+  CreateStaffInvitation,
+  CreateStaffInvitationInput,
+  RenewStaffInvitation,
+  RenewStaffInvitationInput,
+  RevokeStaffInvitation,
+  RevokeStaffInvitationInput,
+  SetStaffActive,
+  SetStaffActiveInput,
+} from "../application/staff-commands.use-cases";
+import type {
+  ListStaff,
+  ListStaffInput,
+  StaffAccess,
+  StaffAccessInput,
+} from "../application/staff.use-cases";
 import type { EvaluateRisk, EvaluateRiskInput } from "../application/risk.use-cases";
 import type { RevokeAllSessions, RevokeAllSessionsInput } from "../application/session.use-cases";
 import type {
@@ -224,6 +244,15 @@ export interface SecurityControllerDeps {
   readonly evaluateAccess: EvaluateAccess;
   /** Plan 1B-2 — the role keys a principal holds now (staff token minting). */
   readonly listPrincipalRoleKeys: ListPrincipalRoleKeys;
+  /** Wave 1d — the store's staff (Users and permissions) and the live access check's read. */
+  readonly listStaff: ListStaff;
+  readonly staffAccess: StaffAccess;
+  readonly changeStaffRole: ChangeStaffRole;
+  readonly setStaffActive: SetStaffActive;
+  readonly createStaffInvitation: CreateStaffInvitation;
+  readonly renewStaffInvitation: RenewStaffInvitation;
+  readonly revokeStaffInvitation: RevokeStaffInvitation;
+  readonly acceptStaffInvitation: AcceptStaffInvitation;
   readonly verifyAuditChain: VerifyAuditChain;
   // P2.0-B — authentication, MFA, device, risk
   readonly registerAuthMethod: RegisterAuthMethod;
@@ -378,6 +407,38 @@ export class SecurityController {
   }
   async listPrincipalRoleKeys(input: ListPrincipalRoleKeysInput): Promise<ControllerResponse> {
     return present(await this.deps.listPrincipalRoleKeys.execute(input), 200);
+  }
+  /** Wave 1d: the staff list — 200 `{ items: StaffMemberView[] }`. */
+  async listStaff(input: ListStaffInput): Promise<ControllerResponse> {
+    return present(await this.deps.listStaff.execute(input), 200);
+  }
+  /** Wave 1d: a principal's live status + active role keys — 200, or 404 when it does not exist in the tenant. */
+  async staffAccess(input: StaffAccessInput): Promise<ControllerResponse> {
+    return present(await this.deps.staffAccess.execute(input), 200);
+  }
+  /** Wave 1d: 200 `{ role }`; 403 when the actor is no longer an admin; 404 / 409 per the rules. */
+  async changeStaffRole(input: ChangeStaffRoleInput): Promise<ControllerResponse> {
+    return present(await this.deps.changeStaffRole.execute(input), 200);
+  }
+  /** Wave 1d: 200 `{ status: "active" | "deactivated" }`. */
+  async setStaffActive(input: SetStaffActiveInput): Promise<ControllerResponse> {
+    return present(await this.deps.setStaffActive.execute(input), 200);
+  }
+  /** Wave 1d: 201 `{ invitationId, principalExternalId, identifier }` — no credential, no password. */
+  async createStaffInvitation(input: CreateStaffInvitationInput): Promise<ControllerResponse> {
+    return present(await this.deps.createStaffInvitation.execute(input), 201);
+  }
+  /** Wave 1d: 200 `{ invitationId, version, email }` — the previous link dies at once. */
+  async renewStaffInvitation(input: RenewStaffInvitationInput): Promise<ControllerResponse> {
+    return present(await this.deps.renewStaffInvitation.execute(input), 200);
+  }
+  /** Wave 1d: 200 `{ invitationId, email, principalExternalId }`. */
+  async revokeStaffInvitation(input: RevokeStaffInvitationInput): Promise<ControllerResponse> {
+    return present(await this.deps.revokeStaffInvitation.execute(input), 200);
+  }
+  /** Wave 1d (public): 200 `{ principalExternalId, email }`; the password is usable only after this commits. */
+  async acceptStaffInvitation(input: AcceptStaffInvitationInput): Promise<ControllerResponse> {
+    return present(await this.deps.acceptStaffInvitation.execute(input), 200);
   }
   async verifyAuditChain(input: VerifyAuditChainInput): Promise<ControllerResponse> {
     return present(await this.deps.verifyAuditChain.execute(input), 200);

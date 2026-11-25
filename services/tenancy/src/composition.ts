@@ -28,6 +28,8 @@ import {
   ActivateDirectoryEntry,
   FindStaffDirectoryEntry,
   RecordPendingOwner,
+  ReleaseStaffEmail,
+  ReserveStaffEmail,
 } from "./application/staff-directory.use-cases";
 import {
   GetPublicStore,
@@ -171,6 +173,14 @@ function buildController(
       unitOfWork,
     }),
     findStaffDirectoryEntry: new FindStaffDirectoryEntry({ staffDirectory: repos.staffDirectory }),
+    reserveStaffEmail: new ReserveStaffEmail({
+      staffDirectory: repos.staffDirectory,
+      unitOfWork,
+    }),
+    releaseStaffEmail: new ReleaseStaffEmail({
+      staffDirectory: repos.staffDirectory,
+      unitOfWork,
+    }),
     slugTaken: async (slug) => (await repos.tenants.findBySlug(slug)) !== null,
   });
 }

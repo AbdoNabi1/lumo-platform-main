@@ -82,6 +82,103 @@ export class ActivateDirectoryEntry implements UseCase<
   }
 }
 
+export interface ReserveStaffEmailInput extends StaffDirectoryEntryInput {
+  /**
+   * A leftover row of THIS shop held for another owner (a release that failed earlier) is taken
+   * over instead of refused. A row of another shop is never touched.
+   */
+  readonly replaceSameShop?: boolean;
+}
+
+/**
+ * Wave 1d: reserves `email` for `shopId` while a teammate is invited. The row is inserted `active`
+ * (no credential exists until the invitation is accepted, so merchant sign-in still answers 401 and
+ * a merchant reset sends nothing). Everything is compared and written in ONE tenancy UoW; `create`
+ * stays the race-proof guard. A row of another shop is a `ConflictError`.
+ */
+export class ReserveStaffEmail implements UseCase<
+  ReserveStaffEmailInput,
+  StaffDirectoryEntryView,
+  DomainError
+> {
+  private readonly deps: StaffDirectoryDeps;
+
+  constructor(deps: StaffDirectoryDeps) {
+    this.deps = deps;
+  }
+
+  async execute(
+    input: ReserveStaffEmailInput,
+  ): Promise<Result<StaffDirectoryEntryView, DomainError>> {
+    const wanted = StaffDirectoryEntry.createActive(input);
+    if (!wanted.ok) return err(wanted.error);
+    const row = wanted.value;
+    return this.deps.unitOfWork.run<Result<StaffDirectoryEntryView, DomainError>>(async (tx) => {
+      // Two passes: a lost insert race re-reads once, so the loser is judged against the winner's row.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const existing = await this.deps.staffDirectory.findByEmail(row.email, tx);
+        if (existing === null) {
+          try {
+            await this.deps.staffDirectory.create(row, tx);
+            return ok(toStaffDirectoryEntryView(row));
+          } catch (error) {
+            if (error instanceof ConflictError && attempt === 0) continue;
+            if (error instanceof ConflictError) return err(error);
+            throw error;
+          }
+        }
+        if (existing.shopId !== row.shopId) {
+          return err(new ConflictError("Email already has a store"));
+        }
+        if (existing.ownerExternalId === row.ownerExternalId) {
+          return ok(toStaffDirectoryEntryView(existing));
+        }
+        if (input.replaceSameShop !== true) {
+          return err(new ConflictError("Email already has a store"));
+        }
+        const replaced = existing.withOwner(row.ownerExternalId);
+        await this.deps.staffDirectory.save(replaced, tx);
+        return ok(toStaffDirectoryEntryView(replaced));
+      }
+      return err(new ConflictError("Email already has a store"));
+    });
+  }
+}
+
+/** Wave 1d: removes the reservation only when email, shop and owner all match; anything else is a no-op. */
+export class ReleaseStaffEmail implements UseCase<
+  StaffDirectoryEntryInput,
+  { readonly released: boolean },
+  DomainError
+> {
+  private readonly deps: StaffDirectoryDeps;
+
+  constructor(deps: StaffDirectoryDeps) {
+    this.deps = deps;
+  }
+
+  async execute(
+    input: StaffDirectoryEntryInput,
+  ): Promise<Result<{ readonly released: boolean }, DomainError>> {
+    const target = StaffDirectoryEntry.create(input);
+    if (!target.ok) return ok({ released: false });
+    return this.deps.unitOfWork.run<Result<{ readonly released: boolean }, DomainError>>(
+      async (tx) => {
+        const existing = await this.deps.staffDirectory.findByEmail(target.value.email, tx);
+        if (
+          existing === null ||
+          existing.shopId !== target.value.shopId ||
+          existing.ownerExternalId !== target.value.ownerExternalId
+        ) {
+          return ok({ released: false });
+        }
+        const released = await this.deps.staffDirectory.delete(existing, tx);
+        return ok({ released });
+      },
+    );
+  }
+}
+
 export class FindStaffDirectoryEntry {
   private readonly deps: Pick<StaffDirectoryDeps, "staffDirectory">;
 

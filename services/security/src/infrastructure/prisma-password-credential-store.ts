@@ -1,5 +1,11 @@
-import { runInTenantTransaction, runReadScoped, type Database } from "@platform/db";
+import {
+  runInTenantTransaction,
+  runReadScoped,
+  type Database,
+  type TransactionClient,
+} from "@platform/db";
 import type {
+  PasswordCredentialOwner,
   PasswordCredentialRecord,
   PasswordCredentialStore,
 } from "../application/password-credentials";
@@ -34,6 +40,23 @@ export class PrismaPasswordCredentialStore implements PasswordCredentialStore {
         };
   }
 
+  async listByPrefix(
+    tenantId: string,
+    prefix: string,
+  ): Promise<readonly PasswordCredentialOwner[]> {
+    const rows = await runReadScoped(this.prisma, tenantId, (client) =>
+      client.securityPasswordCredential.findMany({
+        where: { tenantId, identifier: { startsWith: prefix } },
+        select: { identifier: true, principalExternalId: true },
+        orderBy: { identifier: "asc" },
+      }),
+    );
+    return rows.map((r) => ({
+      identifier: r.identifier,
+      principalExternalId: r.principalExternalId,
+    }));
+  }
+
   async findByPrincipal(
     tenantId: string,
     principalExternalId: string,
@@ -53,13 +76,16 @@ export class PrismaPasswordCredentialStore implements PasswordCredentialStore {
         };
   }
 
-  async save(input: {
-    readonly tenantId: string;
-    readonly identifier: string;
-    readonly principalExternalId: string;
-    readonly passwordHash: string;
-  }): Promise<void> {
-    await runInTenantTransaction(this.prisma, input.tenantId, (client) =>
+  async save(
+    input: {
+      readonly tenantId: string;
+      readonly identifier: string;
+      readonly principalExternalId: string;
+      readonly passwordHash: string;
+    },
+    tx?: unknown,
+  ): Promise<void> {
+    const upsert = (client: TransactionClient) =>
       client.securityPasswordCredential.upsert({
         where: { tenantId_identifier: { tenantId: input.tenantId, identifier: input.identifier } },
         create: { id: crypto.randomUUID(), ...input },
@@ -70,8 +96,13 @@ export class PrismaPasswordCredentialStore implements PasswordCredentialStore {
           lockedUntil: null,
           version: { increment: 1 },
         },
-      }),
-    );
+      });
+    // With the unit of work's transaction the write joins the caller's atomic command.
+    if (tx !== undefined && tx !== null) {
+      await upsert(tx as TransactionClient);
+      return;
+    }
+    await runInTenantTransaction(this.prisma, input.tenantId, upsert);
   }
 
   async incrementFailures(tenantId: string, identifier: string): Promise<number> {

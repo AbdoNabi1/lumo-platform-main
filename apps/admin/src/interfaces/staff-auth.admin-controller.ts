@@ -18,7 +18,7 @@ export function staffIdentifier(email: string): string {
 }
 
 /** Security's baseline owner role and the dashboard's three roles (packages/auth RoleTableAccessControl). */
-const TOKEN_ROLE: Readonly<Record<string, string>> = {
+export const TOKEN_ROLE: Readonly<Record<string, string>> = {
   "platform-admin": "admin",
   admin: "admin",
   operator: "operator",

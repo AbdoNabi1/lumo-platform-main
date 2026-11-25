@@ -24,7 +24,9 @@ import type {
   PolicyRegistry,
   PolicyRepository,
   PrincipalDirectory,
+  PrincipalReader,
   PrincipalRepository,
+  PrincipalSummary,
   RelationTupleRepository,
   RoleAssignmentRepository,
   RoleRegistry,
@@ -43,19 +45,24 @@ export interface InMemorySecurityRepositoryDeps {
 }
 
 /** In-memory `PrincipalRepository` — indexes by id + externalId; writes events to the outbox on save. */
-export class InMemoryPrincipalRepository implements PrincipalRepository, PrincipalDirectory {
+export class InMemoryPrincipalRepository
+  implements PrincipalRepository, PrincipalDirectory, PrincipalReader
+{
   private readonly byId = new ScopedMap<Principal>();
   private readonly byExternalId = new ScopedMap<Principal>();
+  /** When the row first reached the store (the `registered` event's time) — the Prisma `created_at`. */
+  private readonly createdAt = new ScopedMap<Date>();
   constructor(private readonly deps: InMemorySecurityRepositoryDeps) {}
 
   async save(principal: Principal, tenantId: string, tx?: unknown): Promise<void> {
-    this.byId.set(tenantId, principal.id.toString(), principal);
+    const id = principal.id.toString();
+    const events = principal.pullDomainEvents();
+    if (this.createdAt.get(tenantId, id) === undefined) {
+      this.createdAt.set(tenantId, id, new Date(events[0]?.occurredAt ?? Date.now()));
+    }
+    this.byId.set(tenantId, id, principal);
     this.byExternalId.set(tenantId, principal.externalId, principal);
-    await this.deps.outbox.write(
-      principal.pullDomainEvents(),
-      { ...this.deps.context, tenantId },
-      tx,
-    );
+    await this.deps.outbox.write(events, { ...this.deps.context, tenantId }, tx);
   }
   async findById(id: string, tenantId: string): Promise<Principal | null> {
     return this.byId.get(tenantId, id) ?? null;
@@ -71,6 +78,16 @@ export class InMemoryPrincipalRepository implements PrincipalRepository, Princip
   }
   async listAll(tenantId: string): Promise<readonly Principal[]> {
     return this.byId.values(tenantId);
+  }
+  listSummaries(tenantId: string): Promise<readonly PrincipalSummary[]> {
+    return Promise.resolve(
+      this.byId.values(tenantId).map((p) => ({
+        id: p.id.toString(),
+        externalId: p.externalId,
+        status: p.status,
+        createdAt: new Date(this.createdAt.get(tenantId, p.id.toString()) ?? 0),
+      })),
+    );
   }
 }
 
@@ -129,6 +146,20 @@ export class InMemorySessionRepository implements SessionRepository {
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId).filter((s) => s.principalRef === principalRef);
   }
+  lastEstablishedByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, Date>> {
+    const wanted = new Set(principalRefs);
+    const latest = new Map<string, Date>();
+    for (const session of this.byId.values(tenantId)) {
+      if (!wanted.has(session.principalRef)) continue;
+      const seen = latest.get(session.principalRef);
+      if (seen === undefined || session.establishedAt.getTime() > seen.getTime())
+        latest.set(session.principalRef, new Date(session.establishedAt));
+    }
+    return Promise.resolve(latest);
+  }
   async listAll(tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId);
   }
@@ -180,6 +211,17 @@ export class InMemoryRoleAssignmentRepository implements RoleAssignmentRepositor
     tenantId: string,
   ): Promise<readonly RoleAssignment[]> {
     return this.byId.values(tenantId).filter((a) => a.principalRef === principalRef);
+  }
+  listActiveByTenant(
+    tenantId: string,
+    now: Date,
+  ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]> {
+    return Promise.resolve(
+      this.byId
+        .values(tenantId)
+        .filter((a) => a.isActiveAt(now))
+        .map((a) => ({ principalRef: a.principalRef, roleKey: a.roleKey })),
+    );
   }
 }
 

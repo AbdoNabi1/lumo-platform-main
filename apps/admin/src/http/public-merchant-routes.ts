@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { defineRoute, type RequestContext, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
@@ -38,7 +39,17 @@ const resetCompleteBody = z
   })
   .strict();
 
+const inviteAcceptBody = z
+  .object({
+    store: z.string().min(1).max(200),
+    token: z.string().min(1).max(512),
+    password: z.string().max(256),
+  })
+  .strict();
+
 const HOUR_MS = 60 * 60 * 1000;
+const INVITE_ACCEPT_LIMIT = 10;
+const INVITE_ACCEPT_WINDOW_MS = 15 * 60 * 1000;
 const SIGNUP_IP_LIMIT = 5;
 const SIGNUP_EMAIL_LIMIT = 3;
 const LOGIN_LIMIT = 10;
@@ -275,6 +286,33 @@ export function publicMerchantRoutes(
         const refused = gate(context);
         if (refused !== null) return refused;
         return admin.staffAuth.completePasswordReset({
+          tenantId: body.store,
+          token: body.token,
+          password: body.password,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/invitations/accept",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: accept a staff invitation from the merchant sign-in page (store in the body)",
+      schema: { body: inviteAcceptBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // Bucketed by a hash of the token (and the store it names), never by the token itself.
+        const spent = await limited(
+          `rl:${body.store}:staff-invite-accept:${createHash("sha256").update(body.token).digest("hex")}`,
+          INVITE_ACCEPT_LIMIT,
+          INVITE_ACCEPT_WINDOW_MS,
+          "Too many invitation attempts",
+        );
+        if (spent !== null) return spent;
+        return admin.staff.acceptInvitation({
           tenantId: body.store,
           token: body.token,
           password: body.password,

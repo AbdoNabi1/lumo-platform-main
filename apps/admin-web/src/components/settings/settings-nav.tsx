@@ -26,7 +26,7 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     href: "/settings/billing",
     available: true,
   },
-  { id: "users", label: (t) => t.settingsNav.users, href: "/settings/users", available: false },
+  { id: "users", label: (t) => t.settingsNav.users, href: "/settings/users", available: true },
   {
     id: "payments",
     label: (t) => t.settingsNav.payments,

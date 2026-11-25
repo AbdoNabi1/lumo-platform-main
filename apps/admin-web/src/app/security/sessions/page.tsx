@@ -42,6 +42,7 @@ import {
   fetchSessionExplorer,
   introspectSession,
 } from "@/lib/api/security";
+import { ownerOnlyOr } from "@/lib/security/owner-only";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 
@@ -259,7 +260,7 @@ async function SessionExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securitySessionsPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securitySessionsPage.unauthorized)}
       />
     );
   }
@@ -344,7 +345,7 @@ async function DeviceExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securitySessionsPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securitySessionsPage.unauthorized)}
       />
     );
   }
@@ -439,7 +440,7 @@ async function RiskExplorerSection({ t }: { readonly t: Dictionary }) {
     return (
       <StatePanel
         icon={<LockIcon aria-hidden="true" className="size-5" />}
-        message={t.securitySessionsPage.unauthorized}
+        message={ownerOnlyOr(result, t, t.securitySessionsPage.unauthorized)}
       />
     );
   }
@@ -508,7 +509,7 @@ async function IntrospectSessionResult({
 }) {
   const result = await introspectSession(sessionId);
   if (result.outcome === "unauthorized")
-    return <ResultPanel message={t.securityLookup.unauthorized} />;
+    return <ResultPanel message={ownerOnlyOr(result, t, t.securityLookup.unauthorized)} />;
   if (result.outcome === "error") return <ResultPanel message={t.securityLookup.error} />;
   const { data } = result;
   return (
