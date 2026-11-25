@@ -84,6 +84,12 @@ export interface AuthenticateInput {
   readonly rememberDevice?: boolean;
   /** Set when a fresh MFA factor has already been verified in this flow (satisfies step-up/required). */
   readonly mfaSatisfied?: boolean;
+  /**
+   * Staff sign-in only (Wave 1e): when true and the principal has an ACTIVE enrolment, no session is
+   * created unless `mfaSatisfied` — whatever the risk or policy engine says (requirement `required`).
+   * Default false, so customers' sign-in is unchanged.
+   */
+  readonly requireEnrolledFactor?: boolean;
   readonly sessionTtlSeconds?: number;
   readonly metadata?: Readonly<Record<string, string>>;
 }
@@ -93,6 +99,8 @@ export interface AuthenticationOutcome {
   readonly principalExternalId: string | null;
   readonly sessionId: string | null;
   readonly mfaRequirement: MfaRequirement;
+  /** True when the principal has an active totp enrolment (lets the caller offer the code step). */
+  readonly hasActiveEnrollment: boolean;
   readonly riskScore: number;
   readonly riskBand: RiskBand;
   readonly reason?: string;
@@ -152,10 +160,11 @@ export class Authenticate implements UseCase<
       );
       deviceTrusted = existing !== null && existing.isTrusted;
     }
-    const profile =
-      principal.tenantRef !== null
-        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef, input.tenantId)
-        : null;
+    // The baseline profile is keyed `tenantRef = tenantId`; the bootstrap owner has no `tenantRef`.
+    const profile = await this.deps.tenantProfiles.findByTenant(
+      principal.tenantRef ?? input.tenantId,
+      input.tenantId,
+    );
     const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
       principal.id.toString(),
       input.tenantId,
@@ -168,8 +177,15 @@ export class Authenticate implements UseCase<
       riskBand: risk.band,
       sensitiveAction: input.sensitiveAction ?? false,
     });
+    const hasActiveEnrollment = enrollments.some((e) => e.isActive);
+    const requirement: MfaRequirement =
+      input.requireEnrolledFactor === true &&
+      hasActiveEnrollment &&
+      (mfa.requirement === "none" || mfa.requirement === "optional")
+        ? "required"
+        : mfa.requirement;
     const mfaSatisfied =
-      input.mfaSatisfied === true || mfa.requirement === "none" || mfa.requirement === "optional";
+      input.mfaSatisfied === true || requirement === "none" || requirement === "optional";
 
     const refreshFingerprint = await this.deps.crypto.randomToken(24);
     return this.deps.unitOfWork.run<Result<AuthenticationOutcome, DomainError>>(async (tx) => {
@@ -222,14 +238,15 @@ export class Authenticate implements UseCase<
         action: "security.auth.succeeded",
         decision: "allow",
         tenantRef: principal.tenantRef,
-        metadata: { method: input.method, risk: String(risk.score), mfa: mfa.requirement },
+        metadata: { method: input.method, risk: String(risk.score), mfa: requirement },
       });
 
       return ok({
         authenticated: true,
         principalExternalId: principal.externalId,
         sessionId,
-        mfaRequirement: mfa.requirement,
+        mfaRequirement: requirement,
+        hasActiveEnrollment,
         riskScore: risk.score,
         riskBand: risk.band,
       });
@@ -308,6 +325,7 @@ export class Authenticate implements UseCase<
         principalExternalId: null,
         sessionId: null,
         mfaRequirement: "none",
+        hasActiveEnrollment: false,
         riskScore: risk.score,
         riskBand: risk.band,
         reason,

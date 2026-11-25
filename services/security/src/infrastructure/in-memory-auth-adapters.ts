@@ -133,8 +133,15 @@ export class InMemoryTotpMfaProvider implements MfaProviderPort {
   async enroll(input: {
     principalRef: string;
     accountLabel: string;
-  }): Promise<{ secretRef: string; manualKey: string }> {
-    return { secretRef: `totp:${input.principalRef}`, manualKey: "IN-MEMORY-KEY" };
+  }): Promise<{ secretRef: string; manualKey: string; provisioningUri: string }> {
+    const manualKey = "IN-MEMORY-KEY";
+    return {
+      secretRef: `totp:${input.principalRef}`,
+      manualKey,
+      provisioningUri:
+        `otpauth://totp/Morbeh:${encodeURIComponent(input.accountLabel)}` +
+        `?secret=${manualKey}&issuer=Morbeh&algorithm=SHA1&digits=6&period=30`,
+    };
   }
   async issueChallenge(): Promise<{ challengeRef: string }> {
     return { challengeRef: `chal_${Date.now()}` };

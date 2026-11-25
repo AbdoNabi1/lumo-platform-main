@@ -232,10 +232,10 @@ export class DecideMfa implements UseCase<DecideMfaInput, MfaDecision, DomainErr
       input.tenantId,
     );
     if (principal === null) return err(new NotFoundError("Principal not found"));
-    const profile =
-      principal.tenantRef !== null
-        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef, input.tenantId)
-        : null;
+    const profile = await this.deps.tenantProfiles.findByTenant(
+      principal.tenantRef ?? input.tenantId,
+      input.tenantId,
+    );
     const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
       principal.id.toString(),
       input.tenantId,

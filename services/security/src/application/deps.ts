@@ -168,6 +168,13 @@ export type StaffDeps = AuditDeps &
     | "unitOfWork"
   >;
 
+/** The slice of {@link SecurityDeps} the Wave 1e sign-in code check needs (staff lock + one unit of work). */
+export type MfaLoginDeps = StaffDeps &
+  Pick<SecurityDeps, "mfaEnrollments" | "mfaProviders" | "crypto">;
+
+/** The slice the Wave 1e own two-step use cases need (adds the tenant profile for the policy flag). */
+export type OwnMfaDeps = MfaLoginDeps & Pick<SecurityDeps, "tenantProfiles">;
+
 export interface AuditAppendInput {
   /** ADR-0014 (WP-10, T10.3): the row/scope tenant — distinct from `tenantRef`, the audit chain's own scope (null ⇒ platform chain). */
   readonly tenantId: string;

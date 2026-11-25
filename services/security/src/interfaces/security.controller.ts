@@ -31,6 +31,19 @@ import type {
   VerifyMfaEnrollment,
   VerifyMfaInput,
 } from "../application/mfa.use-cases";
+import type { VerifyMfaLogin, VerifyMfaLoginInput } from "../application/mfa-login.use-cases";
+import type {
+  ConfirmOwnTwoStep,
+  ConfirmOwnTwoStepInput,
+  DisableOwnTwoStep,
+  DisableOwnTwoStepInput,
+  GetOwnTwoStep,
+  GetOwnTwoStepInput,
+  RegenerateOwnBackupCodes,
+  RegenerateOwnBackupCodesInput,
+  StartOwnTwoStep,
+  StartOwnTwoStepInput,
+} from "../application/own-mfa.use-cases";
 import type {
   CheckAccess,
   CheckAccessInput,
@@ -266,6 +279,13 @@ export interface SecurityControllerDeps {
   readonly generateBackupCodes: GenerateBackupCodes;
   readonly revokeMfa: RevokeMfa;
   readonly decideMfa: DecideMfa;
+  /** Wave 1e — the code step of a staff sign-in and the staff member's own two-step verification. */
+  readonly verifyMfaLogin: VerifyMfaLogin;
+  readonly getOwnTwoStep: GetOwnTwoStep;
+  readonly startOwnTwoStep: StartOwnTwoStep;
+  readonly confirmOwnTwoStep: ConfirmOwnTwoStep;
+  readonly regenerateOwnBackupCodes: RegenerateOwnBackupCodes;
+  readonly disableOwnTwoStep: DisableOwnTwoStep;
   readonly evaluateRisk: EvaluateRisk;
   readonly revokeAllSessions: RevokeAllSessions;
   // P2.0-C — secret rotation, machine identity, ABAC/ReBAC
@@ -477,6 +497,31 @@ export class SecurityController {
   }
   async decideMfa(input: DecideMfaInput): Promise<ControllerResponse> {
     return present(await this.deps.decideMfa.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ principalExternalId, method }`, or ONE 401 for every wrong/unusable code. */
+  async verifyMfaLogin(input: VerifyMfaLoginInput): Promise<ControllerResponse> {
+    return present(await this.deps.verifyMfaLogin.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ enabled, activatedAt, backupCodesLeft, policyRequired }`. */
+  async getOwnTwoStep(input: GetOwnTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.getOwnTwoStep.execute(input), 200);
+  }
+  /** Wave 1e: 201 `{ enrollmentId, manualKey, provisioningUri }` (secret shown once); 409 when already on. */
+  async startOwnTwoStep(input: StartOwnTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.startOwnTwoStep.execute(input), 201);
+  }
+  /** Wave 1e: 200 `{ backupCodes }` (shown once); 409 on a wrong code; 404 for another principal's enrolment. */
+  async confirmOwnTwoStep(input: ConfirmOwnTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.confirmOwnTwoStep.execute(input), 200);
+  }
+  async regenerateOwnBackupCodes(
+    input: RegenerateOwnBackupCodesInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.regenerateOwnBackupCodes.execute(input), 200);
+  }
+  /** Wave 1e: 200 `{ enabled: false }`; 409 when the store requires two-step or it is not on. */
+  async disableOwnTwoStep(input: DisableOwnTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.disableOwnTwoStep.execute(input), 200);
   }
   async evaluateRisk(input: EvaluateRiskInput): Promise<ControllerResponse> {
     return present(await this.deps.evaluateRisk.execute(input), 200);

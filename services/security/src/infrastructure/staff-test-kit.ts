@@ -6,21 +6,25 @@ import { Principal } from "../domain/principal";
 import type { StaffMutationLock } from "../domain/repositories";
 import { RoleAssignment } from "../domain/role-assignment";
 import { Session } from "../domain/session";
+import type { MfaProviderPort } from "../application/auth-ports";
+import { MapMfaProviderResolver, NodeCrypto } from "./in-memory-auth-adapters";
 import { InMemoryPasswordCredentialStore } from "./in-memory-password-credential-store";
 import { InMemorySecurityTelemetry } from "./in-memory-adapters";
 import {
   InMemoryAuditLedgerRepository,
+  InMemoryMfaEnrollmentRepository,
   InMemoryPrincipalRepository,
   InMemoryRoleAssignmentRepository,
   InMemoryRoleRepository,
   InMemorySessionRepository,
+  InMemoryTenantSecurityProfileRepository,
 } from "./in-memory-repositories";
 import { InMemoryStaffInvitationRepository } from "./in-memory-staff-invitation-repository";
 import { InMemoryStaffMutationLock } from "./in-memory-staff-mutation-lock";
 import { InMemoryUnitOfWork } from "./in-memory-unit-of-work";
 import { SecurityEventTranslator } from "./security-event-translator";
 import { AuditChain } from "../domain/audit-chain";
-import type { StaffDeps } from "../application/deps";
+import type { OwnMfaDeps, StaffDeps } from "../application/deps";
 
 /** A clock tests advance by hand. */
 export class TestClock implements Clock {
@@ -99,6 +103,20 @@ export function buildStaffKit(options: StaffKitOptions = {}) {
     clock,
     telemetry: new InMemorySecurityTelemetry(),
   };
+
+  const mfaEnrollments = new InMemoryMfaEnrollmentRepository(rd);
+  const tenantProfiles = new InMemoryTenantSecurityProfileRepository(rd);
+
+  /** The Wave 1e two-step slice: the staff slice + enrolments, profiles, crypto and the given totp provider. */
+  function mfaDeps(provider: MfaProviderPort): OwnMfaDeps {
+    return {
+      ...deps,
+      mfaEnrollments,
+      tenantProfiles,
+      crypto: new NodeCrypto(),
+      mfaProviders: new MapMfaProviderResolver([provider]),
+    };
+  }
 
   const id = (): UniqueEntityId => UniqueEntityId.from(idGenerator.generate());
 
@@ -237,6 +255,9 @@ export function buildStaffKit(options: StaffKitOptions = {}) {
     staffInvitations,
     staffCredentials,
     sessions,
+    mfaEnrollments,
+    tenantProfiles,
+    mfaDeps,
   };
 }
 
