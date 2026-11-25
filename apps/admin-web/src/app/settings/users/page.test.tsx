@@ -6,6 +6,7 @@ import { en } from "@/messages/en";
 
 const mocks = vi.hoisted(() => ({
   fetchStaff: vi.fn(),
+  fetchStaffSecurityPolicy: vi.fn(),
   locale: { value: undefined as string | undefined },
 }));
 vi.mock("next/headers", () => ({
@@ -14,7 +15,10 @@ vi.mock("next/headers", () => ({
       get: () => (mocks.locale.value === undefined ? undefined : { value: mocks.locale.value }),
     }),
 }));
-vi.mock("@/lib/api/staff", () => ({ fetchStaff: mocks.fetchStaff }));
+vi.mock("@/lib/api/staff", () => ({
+  fetchStaff: mocks.fetchStaff,
+  fetchStaffSecurityPolicy: mocks.fetchStaffSecurityPolicy,
+}));
 vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: async () => ({ name: "Staff" }) }));
 vi.mock("@/components/app-shell", () => ({
   AppShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -25,6 +29,7 @@ vi.mock("@/app/settings/users/actions", () => ({
   revokeInvitationAction: vi.fn(),
   changeStaffRoleAction: vi.fn(),
   setStaffActiveAction: vi.fn(),
+  setRequireTwoStepAction: vi.fn(),
 }));
 const { default: UsersPage } = await import("./page");
 
@@ -37,7 +42,16 @@ const OWNER = {
   isSelf: false,
   addedAt: "2026-11-01T10:00:00.000Z",
   lastSignInAt: null,
+  twoStep: true,
   invitation: null,
+};
+const POLICY = {
+  requireTwoStep: false,
+  codeStepAvailable: true,
+  activeStaff: 2,
+  enrolledActiveStaff: 1,
+  notEnrolled: [{ principalExternalId: "pid-me", email: "me@shop.example" }],
+  pendingInvitations: 0,
 };
 const ME = {
   ...OWNER,
@@ -52,6 +66,8 @@ beforeEach(() => {
   expect.hasAssertions();
   cleanup();
   mocks.fetchStaff.mockReset();
+  mocks.fetchStaffSecurityPolicy.mockReset();
+  mocks.fetchStaffSecurityPolicy.mockResolvedValue({ outcome: "ok", data: POLICY });
   mocks.locale.value = undefined;
 });
 

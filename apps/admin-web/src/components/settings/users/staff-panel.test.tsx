@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StaffMemberView } from "@/lib/staff/roles";
+import type { StaffSecurityPolicy } from "@/lib/staff/two-step";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 
@@ -10,6 +11,7 @@ const actions = vi.hoisted(() => ({
   revokeInvitationAction: vi.fn(),
   changeStaffRoleAction: vi.fn(),
   setStaffActiveAction: vi.fn(),
+  setRequireTwoStepAction: vi.fn(),
 }));
 vi.mock("@/app/settings/users/actions", () => actions);
 
@@ -18,6 +20,14 @@ const { StaffPanel } = await import("./staff-panel");
 const body = () => within(document.body);
 const NOW = "2026-11-24T12:00:00.000Z";
 const SUCCESS = { status: "success" } as const;
+const POLICY: StaffSecurityPolicy = {
+  requireTwoStep: false,
+  codeStepAvailable: true,
+  activeStaff: 3,
+  enrolledActiveStaff: 0,
+  notEnrolled: [],
+  pendingInvitations: 0,
+};
 
 function member(
   overrides: Partial<StaffMemberView> & { email: string; principalExternalId: string },
@@ -29,6 +39,7 @@ function member(
     isSelf: false,
     addedAt: "2026-11-01T10:00:00.000Z",
     lastSignInAt: null,
+    twoStep: false,
     invitation: null,
     ...overrides,
   };
@@ -92,7 +103,7 @@ function panel(
   t: Dictionary = en,
   locale: "en" | "ar" = "en",
 ): Props {
-  return { members, t, locale, nowIso: NOW };
+  return { members, policy: POLICY, t, locale, nowIso: NOW };
 }
 
 function mount(
@@ -734,5 +745,51 @@ describe("resend and revoke", () => {
       await waitFor(() => expect(rowButton("bob@shop.example")).toHaveFocus());
       expect(document.body).not.toHaveFocus();
     });
+  });
+});
+
+describe("two-step (Wave 1e)", () => {
+  it("shows a 2-step column with On and Off badges from twoStep", () => {
+    mount([
+      member({ principalExternalId: "pid-on", email: "on@shop.example", twoStep: true }),
+      member({ principalExternalId: "pid-off", email: "off@shop.example", twoStep: false }),
+    ]);
+    expect(
+      screen.getByRole("columnheader", { name: en.users.columns.twoStep }),
+    ).toBeInTheDocument();
+    const onRow = screen.getByText("on@shop.example").closest("tr") as HTMLElement;
+    const offRow = screen.getByText("off@shop.example").closest("tr") as HTMLElement;
+    expect(within(onRow).getByText(en.users.twoStepBadge.on)).toBeInTheDocument();
+    expect(within(offRow).getByText(en.users.twoStepBadge.off)).toBeInTheDocument();
+  });
+
+  it("renders the column in Arabic", () => {
+    mount(
+      [member({ principalExternalId: "pid-on", email: "on@shop.example", twoStep: true })],
+      ar,
+      "ar",
+    );
+    expect(
+      screen.getByRole("columnheader", { name: ar.users.columns.twoStep }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(ar.users.twoStepBadge.on)).toBeInTheDocument();
+  });
+
+  it("links to the activity page from the header", () => {
+    mount();
+    expect(screen.getByRole("link", { name: en.users.viewActivity })).toHaveAttribute(
+      "href",
+      "/settings/users/activity",
+    );
+  });
+
+  it("renders the policy card above the table", () => {
+    mount();
+    expect(
+      screen.getByRole("switch", { name: new RegExp(en.usersPolicy.switchLabel) }),
+    ).toBeInTheDocument();
+    const card = screen.getByRole("switch").closest("div") as HTMLElement;
+    const table = screen.getByRole("table");
+    expect(card.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

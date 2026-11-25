@@ -8,6 +8,7 @@ import {
   inviteStaff,
   resendStaffInvitation,
   revokeStaffInvitation,
+  setRequireTwoStep,
   setStaffActive,
   type StaffRole,
 } from "@/lib/api/staff";
@@ -15,6 +16,7 @@ import type { MutationResult } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { staffConflictMessage } from "@/lib/staff/errors";
+import { policyConflict } from "@/lib/staff/two-step";
 import type { Dictionary } from "@/messages/en";
 
 /**
@@ -40,6 +42,13 @@ export type StaffActionState =
     };
 
 const PAGE_PATH = "/settings/users";
+/** Every change here also writes a row the activity page lists (and turning two-step on or off shows on the table). */
+const ACTIVITY_PATH = "/settings/users/activity";
+
+function revalidateUsers(): void {
+  revalidatePath(PAGE_PATH);
+  revalidatePath(ACTIVITY_PATH);
+}
 
 async function dictionary(): Promise<Dictionary> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -112,7 +121,7 @@ export async function inviteStaffAction(input: {
     );
   }
   const result = await inviteStaff({ email, role: input.role }, newIdempotencyKey());
-  revalidatePath(PAGE_PATH);
+  revalidateUsers();
   return stateOf(result, t);
 }
 
@@ -124,7 +133,7 @@ export async function resendInvitationAction(
   const t = await dictionary();
   if (!isId(invitationId) || !isVersion(expectedVersion)) return failure(t.formErrors.invalid);
   const result = await resendStaffInvitation(invitationId, expectedVersion, newIdempotencyKey());
-  revalidatePath(PAGE_PATH);
+  revalidateUsers();
   return stateOf(result, t);
 }
 
@@ -136,7 +145,7 @@ export async function revokeInvitationAction(
   const t = await dictionary();
   if (!isId(invitationId) || !isVersion(expectedVersion)) return failure(t.formErrors.invalid);
   const result = await revokeStaffInvitation(invitationId, expectedVersion, newIdempotencyKey());
-  revalidatePath(PAGE_PATH);
+  revalidateUsers();
   return stateOf(result, t);
 }
 
@@ -148,7 +157,7 @@ export async function changeStaffRoleAction(
   const t = await dictionary();
   if (!isId(principalExternalId) || !isRole(role)) return failure(t.formErrors.invalid);
   const result = await changeStaffRole(principalExternalId, role, newIdempotencyKey());
-  revalidatePath(PAGE_PATH);
+  revalidateUsers();
   return stateOf(result, t);
 }
 
@@ -161,6 +170,26 @@ export async function setStaffActiveAction(
   if (!isId(principalExternalId) || typeof active !== "boolean")
     return failure(t.formErrors.invalid);
   const result = await setStaffActive(principalExternalId, active, newIdempotencyKey());
-  revalidatePath(PAGE_PATH);
+  revalidateUsers();
+  return stateOf(result, t);
+}
+
+/**
+ * Requires two-step verification for everyone (or stops requiring it). The server decides whether
+ * enabling is allowed and refuses with one of its exact sentences, mapped here; an unknown 409 is the
+ * generic "try again", never raw text.
+ */
+export async function setRequireTwoStepAction(enabled: boolean): Promise<StaffActionState> {
+  const t = await dictionary();
+  if (typeof enabled !== "boolean") return failure(t.formErrors.invalid);
+  const result = await setRequireTwoStep(enabled, newIdempotencyKey());
+  revalidateUsers();
+  if (result.outcome === "conflict") {
+    return failure(
+      policyConflict(result.message, t) ??
+        staffConflictMessage(result.message, t) ??
+        t.formErrors.conflict,
+    );
+  }
   return stateOf(result, t);
 }

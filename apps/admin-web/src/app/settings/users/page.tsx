@@ -4,7 +4,7 @@ import { Card, CardContent } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
 import { SettingsFrame } from "@/components/settings/settings-frame";
 import { StaffPanel } from "@/components/settings/users/staff-panel";
-import { fetchStaff } from "@/lib/api/staff";
+import { fetchStaff, fetchStaffSecurityPolicy } from "@/lib/api/staff";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
@@ -18,7 +18,11 @@ export default async function UsersPage() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
   const t = dictionaryFor(locale);
-  const [user, staff] = await Promise.all([getCurrentUser(), fetchStaff()]);
+  const [user, staff, policy] = await Promise.all([
+    getCurrentUser(),
+    fetchStaff(),
+    fetchStaffSecurityPolicy(),
+  ]);
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
@@ -27,6 +31,7 @@ export default async function UsersPage() {
           {staff.outcome === "ok" ? (
             <StaffPanel
               members={staff.data.items}
+              policy={policy.outcome === "ok" ? policy.data : null}
               t={t}
               locale={locale}
               nowIso={new Date().toISOString()}

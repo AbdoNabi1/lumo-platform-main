@@ -7,11 +7,18 @@ import {
   type StaffRole,
   type StaffStatus,
 } from "@/lib/staff/roles";
+import {
+  ACTIVITY_KINDS,
+  type StaffActivityItem,
+  type StaffActivityPage,
+  type StaffSecurityPolicy,
+} from "@/lib/staff/two-step";
 
 // The vocabulary lives in `@/lib/staff/roles` (client-safe); re-exported so server callers keep
 // their imports.
 export { STAFF_ROLES };
 export type { StaffInvitationView, StaffMemberView, StaffRole, StaffStatus };
+export type { StaffActivityItem, StaffActivityPage, StaffSecurityPolicy };
 
 /**
  * Shopify parity Wave 1d — Settings > Users and permissions. Wire types mirror `apps/admin`'s
@@ -59,6 +66,7 @@ export function isStaffMemberView(value: unknown): value is StaffMemberView {
     typeof value["isSelf"] === "boolean" &&
     typeof value["addedAt"] === "string" &&
     isNullableString(value["lastSignInAt"]) &&
+    typeof value["twoStep"] === "boolean" &&
     (value["invitation"] === null || isInvitation(value["invitation"]))
   );
 }
@@ -99,6 +107,64 @@ function isRoleChanged(value: unknown): value is { readonly role: StaffRole } {
 
 function isActiveChanged(value: unknown): value is { readonly status: "active" | "deactivated" } {
   return isRecord(value) && (value["status"] === "active" || value["status"] === "deactivated");
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/** True for exactly the policy shape `GET /staff/security-policy` produces. */
+export function isStaffSecurityPolicy(value: unknown): value is StaffSecurityPolicy {
+  return (
+    isRecord(value) &&
+    typeof value["requireTwoStep"] === "boolean" &&
+    typeof value["codeStepAvailable"] === "boolean" &&
+    isCount(value["activeStaff"]) &&
+    isCount(value["enrolledActiveStaff"]) &&
+    Array.isArray(value["notEnrolled"]) &&
+    value["notEnrolled"].every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry["principalExternalId"] === "string" &&
+        typeof entry["email"] === "string",
+    ) &&
+    isCount(value["pendingInvitations"])
+  );
+}
+
+function isActivityDetail(value: unknown): value is StaffActivityItem["detail"] {
+  return (
+    isRecord(value) &&
+    (value["from"] === undefined || typeof value["from"] === "string") &&
+    (value["to"] === undefined || typeof value["to"] === "string") &&
+    (value["enabled"] === undefined || typeof value["enabled"] === "boolean")
+  );
+}
+
+function isActivityItem(value: unknown): value is StaffActivityItem {
+  return (
+    isRecord(value) &&
+    typeof value["id"] === "string" &&
+    typeof value["at"] === "string" &&
+    typeof value["kind"] === "string" &&
+    (ACTIVITY_KINDS as readonly string[]).includes(value["kind"]) &&
+    isNullableString(value["actorEmail"]) &&
+    isNullableString(value["subjectEmail"]) &&
+    isActivityDetail(value["detail"])
+  );
+}
+
+function isActivityPage(value: unknown): value is StaffActivityPage {
+  return (
+    isRecord(value) &&
+    Array.isArray(value["items"]) &&
+    value["items"].every(isActivityItem) &&
+    isNullableString(value["nextCursor"])
+  );
+}
+
+function isPolicyChanged(value: unknown): value is { readonly requireTwoStep: boolean } {
+  return isRecord(value) && typeof value["requireTwoStep"] === "boolean";
 }
 
 const invitationPath = (invitationId: string): string =>
@@ -177,4 +243,45 @@ export function setStaffActive(
     { method: "POST", body: { active }, idempotencyKey },
     isActiveChanged,
   );
+}
+
+/** `GET /staff/security-policy` (`staff:read_policy`, admin) — the policy, whether it can be turned on, and who still has no two-step. */
+export function fetchStaffSecurityPolicy(): Promise<ApiResult<StaffSecurityPolicy>> {
+  return getAdminApi("/api/v1/staff/security-policy", isStaffSecurityPolicy, {
+    reportForbidden: true,
+  });
+}
+
+/**
+ * `POST /staff/security-policy` (`staff:set_policy`, idempotent) — require two-step for everyone, or stop.
+ * 409 with one of Security's exact sentences when enabling is refused (mapped in `@/lib/staff/two-step`).
+ */
+export function setRequireTwoStep(
+  requireTwoStep: boolean,
+  idempotencyKey: string,
+): Promise<MutationResult<{ requireTwoStep: boolean }>> {
+  return mutateAdminApi(
+    "/api/v1/staff/security-policy",
+    { method: "POST", body: { requireTwoStep }, idempotencyKey },
+    isPolicyChanged,
+  );
+}
+
+/**
+ * `GET /staff/activity` (`staff:read_activity`, admin) — newest first, `limit` 1..50 (server default 25).
+ * `cursor` is the previous page's opaque `nextCursor`; `member` filters to one person (principalExternalId).
+ */
+export function fetchStaffActivity(
+  query: {
+    readonly member?: string;
+    readonly cursor?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<ApiResult<StaffActivityPage>> {
+  const params = new URLSearchParams();
+  if (query.member !== undefined && query.member.length > 0) params.set("member", query.member);
+  if (query.cursor !== undefined && query.cursor.length > 0) params.set("cursor", query.cursor);
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
+  const suffix = params.toString() === "" ? "" : `?${params.toString()}`;
+  return getAdminApi(`/api/v1/staff/activity${suffix}`, isActivityPage, { reportForbidden: true });
 }
