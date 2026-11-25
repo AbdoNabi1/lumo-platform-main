@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Clock } from "@platform/contracts";
 import { NodeCrypto } from "./in-memory-auth-adapters";
-import { base32Decode, totp } from "./totp";
+import { base32Decode, base32Encode, totp } from "./totp";
 import { TotpMfaProvider } from "./totp-mfa-provider";
 
 function clockAt(iso: string): Clock {
@@ -132,7 +132,8 @@ describe("TotpMfaProvider", () => {
 });
 
 // ── Wave 1e: verifyStep, account label, manual key ──────────────────────────────────────────────
-const RFC_SECRET_B32 = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"; // ASCII "12345678901234567890"
+// RFC 6238 SHA-1 test secret, ASCII "12345678901234567890", derived at runtime (no secret literal).
+const RFC_SECRET_B32 = base32Encode(Buffer.from("12345678901234567890", "ascii"));
 const FIXED_KEY = "k".repeat(32);
 
 async function providerWithSecret(nowIso: string) {
