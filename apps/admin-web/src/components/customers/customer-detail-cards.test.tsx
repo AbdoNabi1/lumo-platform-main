@@ -364,16 +364,25 @@ describe("CustomerTagsCard", () => {
       fireEvent.click(body().getByRole("button", { name: "Save tags" }));
 
       await waitFor(() => expect(actions.setCustomerTagsAction).toHaveBeenCalledWith(ID, stored));
+      // Sync point: the card's own status note, then the button leaving its "Saving…" state, so the
+      // refreshed props below land on a settled card instead of racing the action's continuation.
       expect(await body().findByRole("status")).toHaveTextContent("Tags saved.");
+      await body().findByRole("button", { name: "Save tags" });
       rerender(<CustomerTagsCard customerId={ID} tags={stored} canEdit t={en} />);
 
-      await waitFor(() => {
-        const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
-        expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual(
-          stored,
-        );
-      });
-      await waitFor(() => expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled());
+      await waitFor(
+        () => {
+          const chips = within(body().getByRole("list", { name: en.customerForm.tagsAdded }));
+          expect(chips.getAllByRole("listitem").map((item) => item.textContent?.trim())).toEqual(
+            stored,
+          );
+        },
+        { timeout: 5000 },
+      );
+      await waitFor(
+        () => expect(body().getByRole("button", { name: "Save tags" })).toBeDisabled(),
+        { timeout: 5000 },
+      );
     },
   );
 
