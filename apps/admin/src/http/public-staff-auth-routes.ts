@@ -4,6 +4,7 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./rate-limited-response";
+import { finishStaffLogin, loginVerifyBody } from "./staff-login-verify";
 import {
   staffIdentifier,
   STAFF_IDENTIFIER_PREFIX,
@@ -86,6 +87,25 @@ export function publicStaffAuthRoutes(
           password: body.password,
         });
       },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/login/verify",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish a staff sign-in with the code from the authenticator app (or a backup code)",
+      schema: { body: loginVerifyBody },
+      // NOT idempotent: a replayed success would hand a second caller the first caller's token. The
+      // tenant is the signed challenge's; it must equal the request's (else the challenge is "expired").
+      handle: ({ body, context }) =>
+        finishStaffLogin({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
     }),
     defineRoute({
       method: "POST",

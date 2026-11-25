@@ -65,6 +65,41 @@ describe("RoleTableAccessControl", () => {
     }
   });
 
+  it("the Wave 1e policy and activity permissions are admin-only; every staff role may set up its own two-step", async () => {
+    for (const permission of ["staff:read_policy", "staff:set_policy", "staff:read_activity"]) {
+      expect([permission, await acl.authorize(who(["admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["platform-admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["operator"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who(["viewer"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who([]), permission)]).toEqual([permission, false]);
+    }
+    // Self-service two-step rides on `account:update_self`: all three roles, never a customer.
+    for (const role of ["admin", "operator", "viewer"]) {
+      expect(await acl.authorize(who([role]), "account:update_self")).toBe(true);
+    }
+    const customer: Principal = { id: "c", kind: "customer", roles: ["viewer"], tenantId: "t" };
+    for (const permission of [
+      "account:update_self",
+      "staff:read_policy",
+      "staff:set_policy",
+      "staff:read_activity",
+    ]) {
+      expect([permission, await acl.authorize(customer, permission)]).toEqual([permission, false]);
+    }
+  });
+
   it("admin and platform-admin can do everything", async () => {
     expect(await acl.authorize(who(["admin"]), "security:manage")).toBe(true);
     expect(await acl.authorize(who(["platform-admin"]), "finance:create")).toBe(true);

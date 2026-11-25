@@ -6,6 +6,7 @@ import { loadRuntimeConfig } from "./config";
 import {
   buildPaymentCapturedRuntime,
   buildRuntimeCore,
+  isMfaConfigured,
   PrismaPaymentsPortAdapter,
   PrismaPaymentVerificationAdapter,
   PrismaRefundVerificationAdapter,
@@ -22,7 +23,12 @@ import {
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
-import { TotpMfaProvider } from "@platform/security";
+import {
+  InMemoryTotpMfaProvider,
+  MapMfaProviderResolver,
+  NodeCrypto,
+  TotpMfaProvider,
+} from "@platform/security";
 import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
@@ -177,6 +183,32 @@ describe("composition root (lazy clients — graph builds without any Docker run
   it("resolves a real TotpMfaProvider unconditionally (C2-4) — no external credentials needed, unlike Stripe/S3", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     expect(core.mfaProviders.get("totp")).toBeInstanceOf(TotpMfaProvider);
+  });
+
+  it("mfaConfigured (Wave 1e) is true only with the real TotpMfaProvider AND MFA_TOTP_KEY", () => {
+    const withoutKey = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(withoutKey.mfaProviders.get("totp")).toBeInstanceOf(TotpMfaProvider);
+    expect(withoutKey.mfaConfigured).toBe(false);
+
+    const withKey = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, MFA_TOTP_KEY: "k".repeat(32) }),
+    );
+    expect(withKey.mfaConfigured).toBe(true);
+  });
+
+  it("isMfaConfigured refuses the in-memory reference provider even when the key is set", () => {
+    const key = { MFA_TOTP_KEY: "k".repeat(32) };
+    const reference = new MapMfaProviderResolver([new InMemoryTotpMfaProvider()]);
+    expect(isMfaConfigured(reference, key)).toBe(false);
+    const real = new MapMfaProviderResolver([
+      new TotpMfaProvider(
+        new NodeCrypto(),
+        { now: () => new Date() },
+        { keyRef: key.MFA_TOTP_KEY },
+      ),
+    ]);
+    expect(isMfaConfigured(real, key)).toBe(true);
+    expect(isMfaConfigured(real, { MFA_TOTP_KEY: undefined })).toBe(false);
   });
 
   it("resolves paymentProvider=undefined when no Stripe config is present (C2-2) — unchanged prior behavior", () => {

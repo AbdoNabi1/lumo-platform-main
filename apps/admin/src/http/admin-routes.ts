@@ -2364,7 +2364,7 @@ export function adminRoutes(
         ? {}
         : { platformTenantId: options.platformTenantId }),
     }),
-    ...staffAccountRoutes(admin),
+    ...staffAccountRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),

@@ -12,6 +12,13 @@ const inviteBody = z.object({ email: z.string().max(320), role: roleSchema }).st
 const versionBody = z.object({ expectedVersion: z.number().int().min(1) }).strict();
 const roleBody = z.object({ role: roleSchema }).strict();
 const activeBody = z.object({ active: z.boolean() }).strict();
+const policyBody = z.object({ requireTwoStep: z.boolean() }).strict();
+// `limit` 1..50 like Security's own check; a malformed `cursor` is Security's 422 on field `cursor`.
+const activityQuery = z.object({
+  member: z.string().min(1).max(200).optional(),
+  cursor: z.string().min(1).max(500).optional(),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+});
 
 /**
  * Wave 1d — Settings > Users and permissions. Spread next to `customerSegmentRoutes` in `admin-routes.ts`.
@@ -30,6 +37,37 @@ export function staffRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
         "List the store's staff: owner first, then by email (invited and deactivated included)",
       schema: {},
       handle: ({ context }) => admin.staff.list(context.principal, context.tenantId),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/staff/security-policy",
+      version: 1,
+      permission: "staff:read_policy",
+      summary:
+        "The store's two-step policy, whether it can be turned on, and who still has no two-step",
+      schema: {},
+      handle: ({ context }) => admin.staff.securityPolicy(context.principal, context.tenantId),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/staff/security-policy",
+      version: 1,
+      permission: "staff:set_policy",
+      idempotent: true,
+      summary: "Require two-step verification for every staff member (or stop requiring it)",
+      schema: { body: policyBody },
+      handle: ({ body, context }) =>
+        admin.staff.setRequireTwoStep(context.principal, context.tenantId, body.requireTwoStep),
+    }),
+    defineRoute({
+      method: "GET",
+      path: "/staff/activity",
+      version: 1,
+      permission: "staff:read_activity",
+      summary: "Staff activity (sign-ins, invitations, role and two-step changes), newest first",
+      schema: { querystring: activityQuery },
+      handle: ({ query, context }) =>
+        admin.staff.activity(context.principal, context.tenantId, query),
     }),
     defineRoute({
       method: "POST",

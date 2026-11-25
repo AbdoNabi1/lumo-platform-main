@@ -213,12 +213,27 @@ export interface RuntimeCore {
    */
   readonly mfaProviders: MfaProviderResolver;
   /**
+   * Wave 1e: two-step verification can really be set up and used. The totp provider is the real
+   * `TotpMfaProvider` AND `MFA_TOTP_KEY` is set (without a key secrets would sit under the legacy
+   * constant key). Threaded into the admin wiring: gates starting a setup and, with the token
+   * issuer, the sign-in code step.
+   */
+  readonly mfaConfigured: boolean;
+  /**
    * G-72: dispatches the two signup-related emails (complete-account / already-registered). Always
    * `LoggingSignupEmailAdapter` today — no real provider is wired anywhere in this composition (D4:
    * "the user's choice", not in scope). `apps/runtime/src/api.ts` refuses to boot outside `local`
    * while this is still that logging adapter.
    */
   readonly signupEmail: SignupEmailPort;
+}
+
+/** Wave 1e: true only for the real TOTP provider together with its encryption key. */
+export function isMfaConfigured(
+  mfaProviders: MfaProviderResolver,
+  config: Pick<RuntimeConfig, "MFA_TOTP_KEY">,
+): boolean {
+  return mfaProviders.get("totp") instanceof TotpMfaProvider && config.MFA_TOTP_KEY !== undefined;
 }
 
 export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
@@ -461,6 +476,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     licensing,
     platformTenantId,
     mfaProviders,
+    mfaConfigured: isMfaConfigured(mfaProviders, config),
     signupEmail: new LoggingSignupEmailAdapter(),
   };
 }

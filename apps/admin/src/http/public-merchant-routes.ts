@@ -14,6 +14,7 @@ import {
 } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./public-staff-auth-routes";
+import { finishStaffLogin, loginVerifyBody } from "./staff-login-verify";
 
 const signupBody = z
   .object({
@@ -241,6 +242,26 @@ export function publicMerchantRoutes(
           );
         }
         return INVALID_CREDENTIALS;
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/verify",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary: "Public: finish a merchant sign-in with the code from the authenticator app",
+      schema: { body: loginVerifyBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // The challenge names the store (signed when the merchant's password was right): no tenant
+        // check against the request, which is the platform tenant by the gate above.
+        return await finishStaffLogin({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
       },
     }),
     defineRoute({

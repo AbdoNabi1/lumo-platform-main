@@ -562,6 +562,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // offline stubs (also the default whenever `prisma` is present — stated here so it cannot drift).
     realShippingAndTax: true,
     mfaProviders: runtime.mfaProviders,
+    mfaConfigured: runtime.mfaConfigured,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,
     clock: runtime.clock,
