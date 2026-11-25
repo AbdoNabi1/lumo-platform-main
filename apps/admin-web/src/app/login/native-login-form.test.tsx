@@ -51,3 +51,23 @@ describe("NativeLoginForm sign-up entry", () => {
     expect(screen.getByRole("status").textContent).toMatch(/Your store is ready/);
   });
 });
+
+describe("NativeLoginForm two-step messages (Wave 1e)", () => {
+  it("says the store requires two-step verification on ?error=mfa, in English and Arabic", () => {
+    expect.hasAssertions();
+    render(<NativeLoginForm error="mfa" returnTo={undefined} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain(
+      "Your store requires two-step verification. Ask your store admin.",
+    );
+    expect(alert.textContent).toMatch(/[\u0600-\u06FF]/);
+  });
+
+  it("says the sign-in expired on ?error=expired, in English and Arabic", () => {
+    expect.hasAssertions();
+    render(<NativeLoginForm error="expired" returnTo={undefined} />);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Your sign-in expired. Start again.");
+    expect(alert.textContent).toMatch(/[\u0600-\u06FF]/);
+  });
+});

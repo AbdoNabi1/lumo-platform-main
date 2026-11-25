@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exchangePassword, jwksFetchHeaders, nativeTenantId } from "./native";
 
 const ok = (status: number, body: unknown): typeof fetch =>
@@ -70,5 +70,57 @@ describe("tenant for native sign-in", () => {
     expect(nativeTenantId()).toBe("tenant-local");
     vi.stubEnv("APP_ENV", "production");
     expect(() => nativeTenantId()).toThrow(/TENANT_DEFAULT_ID/);
+  });
+});
+
+describe("exchangePassword — the code step (Wave 1e)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  it("carries the challenge and its lifetime from a 403 for a member with two-step on", async () => {
+    const body = {
+      error: { code: "MFA_REQUIRED", message: "Enter the code from your authenticator app" },
+      mfaRequirement: "required",
+      challenge: "signed.challenge.jwt",
+      challengeExpiresIn: 300,
+    };
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, body) })).toEqual({
+      ok: false,
+      reason: "mfa",
+      challenge: "signed.challenge.jwt",
+      challengeExpiresIn: 300,
+    });
+  });
+
+  it("is a plain mfa result (no challenge keys) when the 403 carries none", async () => {
+    const result = await exchangePassword({
+      ...base,
+      fetchImpl: ok(403, { error: { code: "MFA_REQUIRED" }, mfaRequirement: "required" }),
+    });
+    expect(result).toEqual({ ok: false, reason: "mfa" });
+    expect("challenge" in result).toBe(false);
+  });
+
+  it("ignores a challenge that is not a non-empty string, and caps a huge lifetime", async () => {
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, { challenge: 7 }) })).toEqual({
+      ok: false,
+      reason: "mfa",
+    });
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, { challenge: "" }) })).toEqual({
+      ok: false,
+      reason: "mfa",
+    });
+    expect(
+      await exchangePassword({
+        ...base,
+        fetchImpl: ok(403, { challenge: "c", challengeExpiresIn: 99999 }),
+      }),
+    ).toEqual({ ok: false, reason: "mfa", challenge: "c", challengeExpiresIn: 600 });
+  });
+
+  it("survives a 403 whose body is not JSON", async () => {
+    const fetchImpl = (async () => new Response("<html>", { status: 403 })) as typeof fetch;
+    expect(await exchangePassword({ ...base, fetchImpl })).toEqual({ ok: false, reason: "mfa" });
   });
 });

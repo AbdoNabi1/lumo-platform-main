@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { exchangeMerchantPassword } from "@/lib/auth/merchant";
 import { exchangePassword, isNativeAuth, nativeTenantId } from "@/lib/auth/native";
+import { setMfaCookies, type MfaVia } from "@/lib/auth/mfa-cookies";
 import { safeReturnTo } from "@/lib/auth/safe-return-to";
 import { setSessionCookie } from "@/lib/auth/session-cookie";
 import { requireProdEnv } from "@/lib/env";
@@ -32,12 +33,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // `disabled` merchant directory (single mode) is not an outage: the staff result alone decides.
   const merchant = await exchangeMerchantPassword(credentials);
   if (merchant.ok) return signedIn(merchant, returnTo, origin);
-  if (merchant.reason === "mfa") return signInFailed("mfa", returnTo, origin);
+  if (merchant.reason === "mfa") return codeStep(merchant, "merchant", returnTo, origin);
   const staff = await exchangePassword(credentials);
   if (staff.ok) return signedIn(staff, returnTo, origin);
-  if (staff.reason === "mfa") return signInFailed("mfa", returnTo, origin);
+  if (staff.reason === "mfa") return codeStep(staff, "staff", returnTo, origin);
   const unavailable = merchant.reason === "unavailable" || staff.reason === "unavailable";
   return signInFailed(unavailable ? "unavailable" : "invalid", returnTo, origin);
+}
+
+/**
+ * Wave 1e: the password was right but the member has two-step on. The signed challenge goes into an
+ * httpOnly cookie (plus which path issued it) and the browser is sent to the code step; the challenge
+ * is never in the Location, a log or a page. A 403 without a challenge (the store requires two-step
+ * and this person has none) goes back to the form with `?error=mfa`.
+ */
+function codeStep(
+  result: { readonly challenge?: string; readonly challengeExpiresIn?: number },
+  via: MfaVia,
+  returnTo: string,
+  origin: string,
+): NextResponse {
+  if (result.challenge === undefined) return signInFailed("mfa", returnTo, origin);
+  const next = new URL("/login/verify", origin);
+  if (returnTo !== "/") next.searchParams.set("return_to", returnTo);
+  const response = NextResponse.redirect(next, 303);
+  response.headers.set("cache-control", "no-store");
+  return setMfaCookies(response, {
+    challenge: result.challenge,
+    via,
+    expiresIn: result.challengeExpiresIn ?? 300,
+  });
 }
 
 function signInFailed(reason: string, returnTo: string, origin: string): NextResponse {

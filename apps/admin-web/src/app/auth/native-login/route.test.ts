@@ -118,3 +118,76 @@ describe("POST /auth/native-login", () => {
     );
   });
 });
+
+describe("POST /auth/native-login — the code step (Wave 1e)", () => {
+  const CHALLENGE = "eyJhbGciOiJFUzI1NiJ9.challenge.signature";
+
+  it("stores the challenge in an httpOnly cookie, remembers the staff path and goes to /login/verify", async () => {
+    merchantMock.mockResolvedValue({ ok: false, reason: "invalid" });
+    staffMock.mockResolvedValue({
+      ok: false,
+      reason: "mfa",
+      challenge: CHALLENGE,
+      challengeExpiresIn: 300,
+    });
+    const response = await POST(loginRequest());
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/login/verify`);
+    expect(response.headers.get("location")).not.toContain(CHALLENGE);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    const challenge = response.cookies.get("morbeh_mfa_challenge");
+    expect(challenge).toMatchObject({
+      value: CHALLENGE,
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 300,
+    });
+    expect(response.cookies.get("morbeh_mfa_via")).toMatchObject({
+      value: "staff",
+      httpOnly: true,
+      secure: true,
+      sameSite: "lax",
+      path: "/",
+      maxAge: 300,
+    });
+    expect(response.cookies.get(SESSION_COOKIE)).toBeUndefined();
+  });
+
+  it("remembers the merchant path when the store directory asked for the code", async () => {
+    merchantMock.mockResolvedValue({
+      ok: false,
+      reason: "mfa",
+      challenge: CHALLENGE,
+      challengeExpiresIn: 120,
+    });
+    const response = await POST(loginRequest());
+    expect(response.cookies.get("morbeh_mfa_via")?.value).toBe("merchant");
+    expect(response.cookies.get("morbeh_mfa_challenge")?.maxAge).toBe(120);
+    expect(staffMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a safe return_to in the Location (never the challenge) and defaults the lifetime to 300 s", async () => {
+    merchantMock.mockResolvedValue({ ok: false, reason: "mfa", challenge: CHALLENGE });
+    const response = await POST(loginRequest({ return_to: "/orders" }));
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/login/verify?return_to=%2Forders`);
+    expect(response.cookies.get("morbeh_mfa_challenge")?.maxAge).toBe(300);
+  });
+
+  it("drops an unsafe return_to", async () => {
+    merchantMock.mockResolvedValue({ ok: false, reason: "mfa", challenge: CHALLENGE });
+    const response = await POST(loginRequest({ return_to: "https://evil.example/x" }));
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/login/verify`);
+  });
+
+  it("goes back to the form with ?error=mfa and sets no cookie when the 403 has no challenge", async () => {
+    merchantMock.mockResolvedValue({ ok: false, reason: "invalid" });
+    staffMock.mockResolvedValue({ ok: false, reason: "mfa" });
+    const response = await POST(loginRequest());
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/login?error=mfa`);
+    expect(response.cookies.get("morbeh_mfa_challenge")).toBeUndefined();
+    expect(response.cookies.get("morbeh_mfa_via")).toBeUndefined();
+  });
+});
