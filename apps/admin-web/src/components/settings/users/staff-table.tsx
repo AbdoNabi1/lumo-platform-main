@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge, Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@platform/ui";
-import type { StaffMemberView, StaffStatus } from "@/lib/api/staff";
+import type { StaffMemberView, StaffStatus } from "@/lib/staff/roles";
 import type { Locale } from "@/lib/i18n";
 import { formatLastSignedIn } from "@/lib/staff/last-signed-in";
 import type { Dictionary } from "@/messages/en";

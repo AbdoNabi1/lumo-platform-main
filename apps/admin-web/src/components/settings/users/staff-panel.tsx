@@ -11,7 +11,7 @@ import {
   setStaffActiveAction,
   type StaffActionState,
 } from "@/app/settings/users/actions";
-import type { StaffMemberView, StaffRole } from "@/lib/api/staff";
+import type { StaffMemberView, StaffRole } from "@/lib/staff/roles";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import { ChangeRoleForm } from "./change-role-form";

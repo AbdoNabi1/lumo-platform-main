@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { StaffMemberView } from "@/lib/api/staff";
+import type { StaffMemberView } from "@/lib/staff/roles";
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 

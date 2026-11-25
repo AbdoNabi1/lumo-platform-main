@@ -1,4 +1,17 @@
 import { getAdminApi, mutateAdminApi, type ApiResult, type MutationResult } from "./client";
+import {
+  STAFF_ROLES,
+  STAFF_STATUSES,
+  type StaffInvitationView,
+  type StaffMemberView,
+  type StaffRole,
+  type StaffStatus,
+} from "@/lib/staff/roles";
+
+// The vocabulary lives in `@/lib/staff/roles` (client-safe); re-exported so server callers keep
+// their imports.
+export { STAFF_ROLES };
+export type { StaffInvitationView, StaffMemberView, StaffRole, StaffStatus };
 
 /**
  * Shopify parity Wave 1d — Settings > Users and permissions. Wire types mirror `apps/admin`'s
@@ -9,39 +22,6 @@ import { getAdminApi, mutateAdminApi, type ApiResult, type MutationResult } from
  * No secret ever travels here: the invitation link exists only in the email body, so none of these
  * shapes carries a token, a hash or a password.
  */
-
-export type StaffRole = "admin" | "operator" | "viewer";
-export const STAFF_ROLES: readonly StaffRole[] = ["admin", "operator", "viewer"];
-export type StaffStatus = "active" | "invited" | "invitation_expired" | "deactivated";
-
-const STAFF_STATUSES: readonly string[] = [
-  "active",
-  "invited",
-  "invitation_expired",
-  "deactivated",
-];
-
-export interface StaffInvitationView {
-  readonly id: string;
-  readonly expiresAt: string;
-  readonly version: number;
-}
-
-export interface StaffMemberView {
-  readonly principalExternalId: string;
-  /** The sign-in email (the credential identifier without its `staff:` prefix). */
-  readonly email: string;
-  /** `owner` = holds the store-owner role, which wins over any other. */
-  readonly role: StaffRole | "owner";
-  readonly status: StaffStatus;
-  readonly isOwner: boolean;
-  /** True for the signed-in member's own row. */
-  readonly isSelf: boolean;
-  readonly addedAt: string;
-  readonly lastSignInAt: string | null;
-  /** A pending (or expired-pending) invitation; `null` once accepted, revoked or never sent. */
-  readonly invitation: StaffInvitationView | null;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

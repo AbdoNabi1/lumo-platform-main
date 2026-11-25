@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import type { StaffRole } from "@/lib/api/staff";
+import type { StaffRole } from "@/lib/staff/roles";
 import type { Dictionary } from "@/messages/en";
 import { RoleChoice } from "./role-choice";
 import { DialogError, StaffDialogFooter } from "./staff-dialog";

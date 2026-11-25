@@ -1,6 +1,6 @@
 "use client";
 
-import { STAFF_ROLES, type StaffRole } from "@/lib/api/staff";
+import { STAFF_ROLES, type StaffRole } from "@/lib/staff/roles";
 import type { Dictionary } from "@/messages/en";
 
 /**

@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@platform/ui";
-import type { StaffMemberView } from "@/lib/api/staff";
+import type { StaffMemberView } from "@/lib/staff/roles";
 import type { Dictionary } from "@/messages/en";
 
 export type RowAction = "role" | "deactivate" | "reactivate" | "resend" | "revoke";
