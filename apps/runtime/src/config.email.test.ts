@@ -41,6 +41,21 @@ describe("email config (Plan 1C)", () => {
     ).toThrow(/EMAIL_CREDENTIALS_KEK_REF/);
   });
 
+  it("EMAIL_SMTP_ENABLED (Wave 2b2 Task 3) is a boolean from a string and defaults to off", () => {
+    const flag = (value?: string) =>
+      loadRuntimeConfig({
+        ...base,
+        APP_ENV: "local",
+        ...(value === undefined ? {} : { EMAIL_SMTP_ENABLED: value }),
+      }).EMAIL_SMTP_ENABLED;
+    expect(flag()).toBe(false);
+    expect(flag("false")).toBe(false);
+    expect(flag("")).toBe(false);
+    expect(flag("nonsense")).toBe(false);
+    expect(flag("true")).toBe(true);
+    expect(flag(" TRUE ")).toBe(true);
+  });
+
   it("the platform-domain-authentication key is gone (D50): setting it changes nothing", () => {
     const c = loadRuntimeConfig({
       ...base,

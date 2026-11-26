@@ -94,6 +94,17 @@ const schema = z
      * store's email account answers 503 NOT_CONFIGURED "Not available yet" and no customer mail is sent.
      */
     EMAIL_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    /**
+     * Wave 2b2 Task 3 (D52): lets a store connect its own mailbox over SMTP (Gmail app password,
+     * Outlook, Zoho or any server) instead of a Resend key. NOT a secret. Off by default because
+     * Railway blocks outbound SMTP below the Pro plan: with it off, saving a mailbox answers 503
+     * NOT_CONFIGURED, `GET /notifications/email-connection` says `smtpAvailable: false`, and an
+     * existing mailbox connection sends nothing. Turn it on only after the plan allows SMTP.
+     */
+    EMAIL_SMTP_ENABLED: z
+      .string()
+      .default("false")
+      .transform((v) => v.trim().toLowerCase() === "true"),
     /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
     ADMIN_PUBLIC_URL: z.string().url().optional(),
     /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */

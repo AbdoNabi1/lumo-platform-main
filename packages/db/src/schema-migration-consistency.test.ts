@@ -1329,3 +1329,54 @@ describe("store email connections (20261130000000)", () => {
     expect(text).not.toMatch(/sender_domains/);
   });
 });
+
+describe("email connection SMTP kind (20261201000000)", () => {
+  const name = "20261201000000_email_connection_smtp";
+  const migration = join(migrationsDir, name, "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+
+  it("widens only the kind CHECK, by dropping and re-adding the one named constraint", () => {
+    const sql = code();
+    expect(sql).toContain(
+      'ALTER TABLE "notifications"."email_connections"\n  DROP CONSTRAINT IF EXISTS "email_connections_kind_check";',
+    );
+    expect(sql).toContain(
+      `ADD CONSTRAINT "email_connections_kind_check" CHECK ("kind" IN ('resend','smtp'));`,
+    );
+    expect(sql.match(/\bALTER TABLE\b/g)).toHaveLength(2);
+    expect(sql).not.toMatch(
+      /\bCREATE\b|\bDROP TABLE\b|\bDROP COLUMN\b|\bADD COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b|ALTER COLUMN|POLICY/,
+    );
+    expect(sql).not.toMatch(/ALTER TABLE (?!"notifications"\."email_connections")/);
+  });
+
+  it("adds no column: the mailbox details live in the sealed blob", () => {
+    expect(readSql()).not.toMatch(/ADD COLUMN/i);
+    const columns = [...columnsEverAddedTo("notifications", "email_connections", readSql())];
+    expect(columns).toEqual([]);
+  });
+
+  it("sorts after the store email connections migration, last of all", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((entry) => /^\d{14}_/.test(entry))
+      .sort();
+    expect(names.indexOf(name)).toBeGreaterThan(
+      names.indexOf("20261130000000_store_email_connections"),
+    );
+    expect(names.at(-1)).toBe(name);
+  });
+
+  it("the Prisma model keeps `kind` a plain string (the CHECK is the rule)", () => {
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+    const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    expect(model).toMatch(/kind\s+String/);
+  });
+});

@@ -62,7 +62,7 @@ describe("GetEmailConnection", () => {
     expect.hasAssertions();
     expect(await setup().get.execute({ tenantId: TENANT })).toEqual({
       ok: true,
-      value: { credentialsConfigured: true, connection: null },
+      value: { credentialsConfigured: true, smtpAvailable: false, connection: null },
     });
     expect(await setup({ vault: false }).get.execute({ tenantId: TENANT })).toMatchObject({
       value: { credentialsConfigured: false, connection: null },

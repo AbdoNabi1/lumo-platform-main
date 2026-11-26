@@ -8,6 +8,8 @@ import {
   EnvelopeEmailConnectionVault,
   EMAIL_CREDENTIALS_KEY_ALIAS,
   InMemoryEmailConnectionVault,
+  RoutingStoreEmailProvider,
+  SmtpStoreEmailProvider,
   type EmailConnectionVault,
   type StoreEmailProvider,
 } from "@platform/notifications";
@@ -69,19 +71,32 @@ export function staffInviteDelivery(
  * connection answers 503 NOT_CONFIGURED "Not available yet" and no customer mail is sent.
  */
 export function storeEmailDelivery(
-  config: Pick<RuntimeConfig, "EMAIL_CREDENTIALS_KEK_REF" | "APP_ENV">,
+  config: Pick<RuntimeConfig, "EMAIL_CREDENTIALS_KEK_REF" | "APP_ENV"> &
+    Partial<Pick<RuntimeConfig, "EMAIL_SMTP_ENABLED">>,
   fetchImpl?: typeof fetch,
-): { readonly emailVault?: EmailConnectionVault; readonly emailProvider: StoreEmailProvider } {
-  const emailProvider = new ResendStoreEmailProvider(fetchImpl === undefined ? {} : { fetchImpl });
+): {
+  readonly emailVault?: EmailConnectionVault;
+  readonly emailProvider: StoreEmailProvider;
+  /** `EMAIL_SMTP_ENABLED`: mailbox (SMTP) accounts may be connected and used. */
+  readonly smtpEnabled: boolean;
+} {
+  const smtpEnabled = config.EMAIL_SMTP_ENABLED === true;
+  // The flag is enforced where connections are saved and read, and again here: with it off there is
+  // no SMTP provider at all, so no mailbox connection can send even if a row exists.
+  const emailProvider = new RoutingStoreEmailProvider({
+    resend: new ResendStoreEmailProvider(fetchImpl === undefined ? {} : { fetchImpl }),
+    ...(smtpEnabled ? { smtp: new SmtpStoreEmailProvider() } : {}),
+  });
   if (config.EMAIL_CREDENTIALS_KEK_REF !== undefined) {
     return {
       emailVault: buildEmailConnectionVault(config.EMAIL_CREDENTIALS_KEK_REF),
       emailProvider,
+      smtpEnabled,
     };
   }
   return config.APP_ENV === "local"
-    ? { emailVault: new InMemoryEmailConnectionVault(), emailProvider }
-    : { emailProvider };
+    ? { emailVault: new InMemoryEmailConnectionVault(), emailProvider, smtpEnabled }
+    : { emailProvider, smtpEnabled };
 }
 
 /**

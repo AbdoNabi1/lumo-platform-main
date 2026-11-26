@@ -419,6 +419,8 @@ export interface AdminWiringDeps {
    */
   readonly emailVault?: EmailConnectionVault;
   readonly emailProvider?: StoreEmailProvider;
+  /** Wave 2b2 Task 3: mailbox (SMTP) accounts may be connected and used (`EMAIL_SMTP_ENABLED`). */
+  readonly smtpEnabled?: boolean;
   /**
    * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
    * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
@@ -997,6 +999,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     // Customer mail goes only through the store's own email connection (D46); there is no platform sender here.
     ...(deps.emailVault === undefined ? {} : { emailVault: deps.emailVault }),
     ...(deps.emailProvider === undefined ? {} : { emailProvider: deps.emailProvider }),
+    ...(deps.smtpEnabled === undefined ? {} : { smtpEnabled: deps.smtpEnabled }),
     // Customer name, address and language are read when a mail is sent, through a closure over the
     // Identity cell (Identity is wired after Notifications). The logger gets short codes only.
     recipients: new CustomerRecipientResolver({

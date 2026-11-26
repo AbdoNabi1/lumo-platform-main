@@ -1,4 +1,4 @@
-import type { EmailConnectionKind } from "../domain/messaging/email-connection";
+import type { EmailConnectionKind, SmtpSettings } from "../domain/messaging/email-connection";
 
 /**
  * Seals and opens a store's email credentials (D48). What the vault returns is an opaque string the
@@ -21,10 +21,15 @@ export interface EmailConnectionVault {
   ): Promise<Readonly<Record<string, string>>>;
 }
 
-/** The merchant's own credentials for one send: in memory only, never stored or logged. */
+/**
+ * The merchant's own credentials for one send: in memory only, never stored or logged. `apiKey` is
+ * the secret of the account: the Resend API key, or the SMTP password (with `smtp` = where and as whom).
+ */
 export interface StoreEmailCredentials {
   readonly kind: EmailConnectionKind;
   readonly apiKey: string;
+  /** Present exactly for `kind: "smtp"`. */
+  readonly smtp?: SmtpSettings;
 }
 
 export interface StoreEmailMessage {
@@ -38,13 +43,21 @@ export interface StoreEmailMessage {
 }
 
 /** Why a send through the merchant's account failed. Codes are what a notification row records. */
+export type SmtpStoreEmailFailureCode =
+  | "EMAIL_AUTH_FAILED"
+  | "EMAIL_DAILY_LIMIT"
+  | "EMAIL_CONNECTION_FAILED"
+  | "EMAIL_TLS_FAILED"
+  | "EMAIL_REJECTED";
+
 export type StoreEmailFailureCode =
   | "EMAIL_KEY_REJECTED"
   | "EMAIL_SENDER_REJECTED"
   | "EMAIL_REQUEST_REJECTED"
   | "EMAIL_RATE_LIMITED"
   | "EMAIL_PROVIDER_UNAVAILABLE"
-  | "EMAIL_TIMEOUT";
+  | "EMAIL_TIMEOUT"
+  | SmtpStoreEmailFailureCode;
 
 export type StoreEmailResult =
   | { readonly ok: true }
@@ -56,7 +69,7 @@ export type StoreEmailResult =
     };
 
 /**
- * One email provider's HTTPS API, called with the MERCHANT's own credentials (D47). It never reads a
+ * One email provider (HTTPS API or SMTP mailbox), called with the MERCHANT's own credentials (D47). It never reads a
  * platform key: the key arrives with each call. Never throws for a provider refusal: that is a
  * `{ ok: false }` result.
  */

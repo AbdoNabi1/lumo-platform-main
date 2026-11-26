@@ -331,7 +331,9 @@ export class SendTestEmail implements UseCase<
             error.providerMessage ?? "Your email provider didn't accept the test email",
             error.code === "EMAIL_RATE_LIMITED" ||
               error.code === "EMAIL_PROVIDER_UNAVAILABLE" ||
-              error.code === "EMAIL_TIMEOUT",
+              error.code === "EMAIL_TIMEOUT" ||
+              error.code === "EMAIL_CONNECTION_FAILED" ||
+              error.code === "EMAIL_DAILY_LIMIT",
           ),
         );
       }

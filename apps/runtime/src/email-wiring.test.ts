@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
-import {
-  LoggingEmailSender,
-  ResendEmailSender,
-  ResendStoreEmailProvider,
-  wireAdmin,
-} from "@platform/admin";
+import { LoggingEmailSender, ResendEmailSender, wireAdmin } from "@platform/admin";
 import {
   EnvelopeEmailConnectionVault,
   InMemoryEmailConnectionVault,
+  RoutingStoreEmailProvider,
 } from "@platform/notifications";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { JsonEventSerializer } from "@platform/domain-events";
@@ -179,14 +175,14 @@ describe("storeEmailDelivery (Wave 2b2, D47/D48)", () => {
     const wiring = storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: kek, APP_ENV: "production" });
     expect(wiring.emailVault).toBeInstanceOf(EnvelopeEmailConnectionVault);
     expect(wiring.emailVault?.backing).toBe("real");
-    expect(wiring.emailProvider).toBeInstanceOf(ResendStoreEmailProvider);
+    expect(wiring.emailProvider).toBeInstanceOf(RoutingStoreEmailProvider);
   });
 
   it("without the KEK outside local: NO vault (saving answers 503 NOT_CONFIGURED), but the provider is still wired", () => {
     for (const APP_ENV of ["production", "staging", "development"] as const) {
       const wiring = storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: undefined, APP_ENV });
       expect(wiring.emailVault).toBeUndefined();
-      expect(wiring.emailProvider).toBeInstanceOf(ResendStoreEmailProvider);
+      expect(wiring.emailProvider).toBeInstanceOf(RoutingStoreEmailProvider);
     }
   });
 
@@ -208,6 +204,76 @@ describe("storeEmailDelivery (Wave 2b2, D47/D48)", () => {
     await expect(
       buildEmailConnectionVault("j".repeat(32)).open("t-1", "resend", sealed),
     ).rejects.toThrow(/could not be opened/);
+  });
+});
+
+describe("storeEmailDelivery and the SMTP flag (Wave 2b2 Task 3, D52)", () => {
+  const smtpCredentials = {
+    kind: "smtp" as const,
+    apiKey: "app-password-1234",
+    // localhost is a private address: a send is refused before any network is touched.
+    smtp: { host: "localhost", port: 465, security: "tls" as const, username: "shop@gmail.test" },
+  };
+  const message = {
+    to: "customer@example.test",
+    subject: "Hi",
+    text: "t",
+    html: "<p>t</p>",
+    from: "<shop@gmail.test>",
+  };
+  const unreachable = (calls: string[]) =>
+    (async (url: string) => {
+      calls.push(String(url));
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response;
+    }) as unknown as typeof fetch;
+
+  it("EMAIL_SMTP_ENABLED defaults to off", () => {
+    expect(
+      storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: undefined, APP_ENV: "local" }).smtpEnabled,
+    ).toBe(false);
+  });
+
+  it("off: no SMTP provider exists, so a mailbox connection can never send, whatever is stored", async () => {
+    const calls: string[] = [];
+    const wiring = storeEmailDelivery(
+      {
+        EMAIL_CREDENTIALS_KEK_REF: "k".repeat(32),
+        APP_ENV: "production",
+        EMAIL_SMTP_ENABLED: false,
+      },
+      unreachable(calls),
+    );
+    expect(wiring.smtpEnabled).toBe(false);
+    expect(await wiring.emailProvider.send(smtpCredentials, message)).toMatchObject({
+      ok: false,
+      code: "EMAIL_PROVIDER_UNAVAILABLE",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("on: mailbox credentials go to the SMTP provider (never to Resend's HTTPS API)", async () => {
+    const calls: string[] = [];
+    const wiring = storeEmailDelivery(
+      {
+        EMAIL_CREDENTIALS_KEK_REF: "k".repeat(32),
+        APP_ENV: "production",
+        EMAIL_SMTP_ENABLED: true,
+      },
+      unreachable(calls),
+    );
+    expect(wiring.smtpEnabled).toBe(true);
+    // The SMTP provider answered (a private host is refused with its own fixed code).
+    expect(await wiring.emailProvider.send(smtpCredentials, message)).toMatchObject({
+      ok: false,
+      code: "EMAIL_CONNECTION_FAILED",
+    });
+    expect(calls).toEqual([]);
+    // Resend keys still go to Resend.
+    await wiring.emailProvider.send(
+      { kind: "resend", apiKey: "re_store_AbCdEfGhIjKlMnOpQrStUv1234" },
+      message,
+    );
+    expect(calls).toEqual(["https://api.resend.com/emails"]);
   });
 });
 

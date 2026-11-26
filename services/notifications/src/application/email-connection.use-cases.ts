@@ -10,12 +10,19 @@ import {
 } from "@platform/utils";
 import {
   connectionState,
+  presetOf,
+  readSmtpSecrets,
   sanitizeProviderMessage,
   secretLast4,
+  smtpErrorCodeOf,
+  smtpSecrets,
   validateEmailConnectionDraft,
   type ConnectionState,
   type EmailConnectionKind,
   type EmailConnectionStatus,
+  type SmtpErrorCode,
+  type SmtpPreset,
+  type SmtpSettings,
   type StoredEmailConnection,
 } from "../domain/messaging/email-connection";
 import type {
@@ -25,8 +32,10 @@ import type {
 import { SETTINGS_STALE_MESSAGE } from "../domain/messaging/notification-settings";
 import { formatFrom } from "../domain/messaging/sender-resolution";
 import { EmailConnectionUnavailableError } from "./email-connection-errors";
+import { credentialsFromSecrets } from "./email-credentials";
 import type {
   EmailConnectionVault,
+  StoreEmailCredentials,
   StoreEmailMessage,
   StoreEmailProvider,
 } from "./email-connection-ports";
@@ -40,6 +49,17 @@ export interface EmailConnectionDeps {
   /** Absent (no KEK outside local): saving answers 503 NOT_CONFIGURED "Not available yet". */
   readonly vault?: EmailConnectionVault;
   readonly provider?: StoreEmailProvider;
+  /** The server may use SMTP mailboxes (`EMAIL_SMTP_ENABLED`). Off: saving a mailbox answers 503. */
+  readonly smtpEnabled?: boolean;
+}
+
+/** Where a mailbox connection goes and as whom. Never the password. */
+export interface SmtpView {
+  readonly preset: SmtpPreset;
+  readonly host: string;
+  readonly port: number;
+  readonly security: SmtpSettings["security"];
+  readonly username: string;
 }
 
 /** What the page shows. Never the key, never the sealed blob: only the last four characters. */
@@ -52,19 +72,25 @@ export interface EmailConnectionView {
   /** none | disabled | failed | connected: what "Customer emails" can honestly say. */
   readonly state: ConnectionState;
   readonly lastError: string | null;
+  /** For a mailbox connection: which fixed failure it was, so the page can use its own sentence. */
+  readonly lastErrorCode: SmtpErrorCode | null;
   readonly lastErrorAt: string | null;
   readonly verifiedAt: string | null;
   readonly version: number;
+  /** Mailbox connections only (host, port, security, username); null otherwise. */
+  readonly smtp: SmtpView | null;
 }
 
 export interface EmailConnectionOutput {
   /** The server can seal and use email credentials (a KEK and a provider are configured). */
   readonly credentialsConfigured: boolean;
+  /** The server may use mailbox (SMTP) accounts: `EMAIL_SMTP_ENABLED`. */
+  readonly smtpAvailable: boolean;
   /** null while the store has not connected an email account. */
   readonly connection: EmailConnectionView | null;
 }
 
-function toView(connection: StoredEmailConnection): EmailConnectionView {
+function toView(connection: StoredEmailConnection, smtp: SmtpView | null): EmailConnectionView {
   return {
     kind: connection.kind,
     fromEmail: connection.fromEmail,
@@ -73,19 +99,40 @@ function toView(connection: StoredEmailConnection): EmailConnectionView {
     status: connection.status,
     state: connectionState(connection),
     lastError: connection.lastError,
+    lastErrorCode: connection.kind === "smtp" ? smtpErrorCodeOf(connection.lastError) : null,
     lastErrorAt: connection.lastErrorAt?.toISOString() ?? null,
     verifiedAt: connection.verifiedAt?.toISOString() ?? null,
     version: connection.version,
+    smtp,
   };
 }
 
-function output(
+/** The non-secret part of a mailbox connection, read from the sealed blob. Null if it won't open. */
+async function smtpViewOf(
   deps: EmailConnectionDeps,
+  tenantId: string,
+  row: StoredEmailConnection,
+): Promise<SmtpView | null> {
+  if (row.kind !== "smtp" || deps.vault === undefined) return null;
+  try {
+    const parsed = readSmtpSecrets(
+      await deps.vault.open(tenantId, row.kind, row.sealedCredentials),
+    );
+    return parsed === null ? null : { preset: presetOf(parsed.settings), ...parsed.settings };
+  } catch {
+    return null;
+  }
+}
+
+async function output(
+  deps: EmailConnectionDeps,
+  tenantId: string,
   row: StoredEmailConnection | null,
-): EmailConnectionOutput {
+): Promise<EmailConnectionOutput> {
   return {
     credentialsConfigured: deps.vault !== undefined && deps.provider !== undefined,
-    connection: row === null ? null : toView(row),
+    smtpAvailable: deps.smtpEnabled === true,
+    connection: row === null ? null : toView(row, await smtpViewOf(deps, tenantId, row)),
   };
 }
 
@@ -119,8 +166,7 @@ async function testSend(
   provider: StoreEmailProvider,
   input: {
     readonly tenantId: string;
-    readonly kind: EmailConnectionKind;
-    readonly apiKey: string;
+    readonly credentials: StoreEmailCredentials;
     readonly fromEmail: string;
     readonly to: string;
   },
@@ -140,12 +186,12 @@ async function testSend(
     from: formatFrom(profile.storeName, input.fromEmail),
   };
   try {
-    const result = await provider.send({ kind: input.kind, apiKey: input.apiKey }, message);
+    const result = await provider.send(input.credentials, message);
     if (result.ok) return { ok: true };
     return {
       ok: false,
       message: sanitizeProviderMessage(result.message, PROVIDER_UNREACHABLE_MESSAGE, [
-        input.apiKey,
+        input.credentials.apiKey,
       ]),
     };
   } catch {
@@ -171,7 +217,9 @@ export class GetEmailConnection implements UseCase<
   async execute(
     input: GetEmailConnectionInput,
   ): Promise<Result<EmailConnectionOutput, DomainError>> {
-    return ok(output(this.deps, await this.deps.connections.find(input.tenantId)));
+    return ok(
+      await output(this.deps, input.tenantId, await this.deps.connections.find(input.tenantId)),
+    );
   }
 }
 
@@ -183,6 +231,10 @@ export interface SaveEmailConnectionInput {
   readonly fromEmail: unknown;
   /** Write-only. Absent/empty keeps the stored key (only when the store already has one). */
   readonly apiKey: unknown;
+  /** Mailbox (SMTP) connections: preset and, for `custom`, host/port/security; plus the username. */
+  readonly smtp?: unknown;
+  /** Write-only mailbox password. Absent/empty keeps the stored one (same server and user only). */
+  readonly password?: unknown;
   /** The signed-in staff member's own address, resolved server-side: where the test mail goes. */
   readonly actorEmail: string | null;
 }
@@ -213,46 +265,70 @@ export class SaveEmailConnection implements UseCase<
     }
     const draft = validateEmailConnectionDraft(input);
     if (!draft.ok) return err(draft.error);
+    // Mailboxes need the server to be allowed to open mail connections at all (EMAIL_SMTP_ENABLED).
+    if (draft.value.kind === "smtp" && this.deps.smtpEnabled !== true) {
+      return err(new EmailConnectionUnavailableError());
+    }
     const existing = await this.deps.connections.find(input.tenantId);
     if ((existing?.version ?? null) !== input.expectedVersion) {
       return err(new ConflictError(SETTINGS_STALE_MESSAGE));
     }
     if (input.actorEmail === null || input.actorEmail === "") return err(NO_ADDRESS);
 
-    const { kind, fromEmail } = draft.value;
-    let apiKey = draft.value.apiKey;
+    const { kind, fromEmail, smtp } = draft.value;
+    const secretField = kind === "smtp" ? "password" : "apiKey";
+    let secret = draft.value.apiKey;
     let sealed: string;
     let last4: string;
-    if (apiKey !== null) {
-      sealed = await vault.seal(input.tenantId, kind, { apiKey });
-      last4 = secretLast4(apiKey);
+    if (secret !== null) {
+      sealed = await vault.seal(
+        input.tenantId,
+        kind,
+        smtp === null ? { apiKey: secret } : smtpSecrets(smtp, secret),
+      );
+      last4 = secretLast4(secret, kind);
     } else {
-      // Keeping the stored key: only possible when there is one of the same kind that still opens.
+      // Keeping the stored secret: only possible when there is one of the same kind that still opens.
       let stored: string | undefined;
       if (existing !== null && existing.kind === kind) {
         try {
-          stored = (await vault.open(input.tenantId, kind, existing.sealedCredentials))["apiKey"];
+          const opened = await vault.open(input.tenantId, kind, existing.sealedCredentials);
+          if (smtp === null) {
+            stored = opened["apiKey"];
+          } else {
+            // A saved password is only ever re-used for the SAME server and user: otherwise
+            // "keep the password" would be a way to send it somewhere else.
+            const previous = readSmtpSecrets(opened);
+            stored =
+              previous !== null &&
+              previous.settings.host === smtp.host &&
+              previous.settings.username.toLowerCase() === smtp.username.toLowerCase()
+                ? previous.password
+                : undefined;
+          }
         } catch {
           stored = undefined;
         }
       }
       if (stored === undefined || stored === "" || existing === null) {
         return err(
-          new ValidationError("Enter your API key", [
-            { field: "apiKey", message: "must not be empty" },
+          new ValidationError(kind === "smtp" ? "Enter your app password" : "Enter your API key", [
+            { field: secretField, message: "must not be empty" },
           ]),
         );
       }
-      apiKey = stored;
-      sealed = existing.sealedCredentials;
-      last4 = existing.secretLast4;
+      secret = stored;
+      sealed =
+        smtp === null
+          ? existing.sealedCredentials
+          : await vault.seal(input.tenantId, kind, smtpSecrets(smtp, stored));
+      last4 = existing.kind === kind ? existing.secretLast4 : secretLast4(stored, kind);
     }
 
     const now = this.deps.clock.now();
     const tested = await testSend(this.deps, provider, {
       tenantId: input.tenantId,
-      kind,
-      apiKey,
+      credentials: smtp === null ? { kind, apiKey: secret } : { kind, apiKey: secret, smtp },
       fromEmail,
       to: input.actorEmail,
     });
@@ -273,7 +349,9 @@ export class SaveEmailConnection implements UseCase<
       if (error instanceof ConcurrencyError) return err(new ConflictError(SETTINGS_STALE_MESSAGE));
       throw error;
     }
-    return ok(output(this.deps, await this.deps.connections.find(input.tenantId)));
+    return ok(
+      await output(this.deps, input.tenantId, await this.deps.connections.find(input.tenantId)),
+    );
   }
 }
 
@@ -313,7 +391,9 @@ export class SetEmailConnectionEnabled implements UseCase<
       if (error instanceof ConcurrencyError) return err(new ConflictError(SETTINGS_STALE_MESSAGE));
       throw error;
     }
-    return ok(output(this.deps, await this.deps.connections.find(input.tenantId)));
+    return ok(
+      await output(this.deps, input.tenantId, await this.deps.connections.find(input.tenantId)),
+    );
   }
 }
 
@@ -333,7 +413,7 @@ export class DeleteEmailConnection implements UseCase<
     input: GetEmailConnectionInput,
   ): Promise<Result<EmailConnectionOutput, DomainError>> {
     await this.deps.connections.remove(input.tenantId);
-    return ok(output(this.deps, null));
+    return ok(await output(this.deps, input.tenantId, null));
   }
 }
 
@@ -365,25 +445,28 @@ export class TestEmailConnection implements UseCase<
     if (existing === null) return err(new NotFoundError("No email account is connected"));
     if (input.actorEmail === null || input.actorEmail === "") return err(NO_ADDRESS);
 
-    let apiKey: string | undefined;
+    if (existing.kind === "smtp" && this.deps.smtpEnabled !== true) {
+      return err(new EmailConnectionUnavailableError());
+    }
+    let credentials: StoreEmailCredentials | null;
     try {
-      apiKey = (await vault.open(input.tenantId, existing.kind, existing.sealedCredentials))[
-        "apiKey"
-      ];
+      credentials = credentialsFromSecrets(
+        existing.kind,
+        await vault.open(input.tenantId, existing.kind, existing.sealedCredentials),
+      );
     } catch {
-      apiKey = undefined;
+      credentials = null;
     }
     const now = this.deps.clock.now();
     const tested: TestOutcome =
-      apiKey === undefined || apiKey === ""
+      credentials === null
         ? {
             ok: false,
             message: "The saved email key can't be used any more. Enter your API key again.",
           }
         : await testSend(this.deps, provider, {
             tenantId: input.tenantId,
-            kind: existing.kind,
-            apiKey,
+            credentials,
             fromEmail: existing.fromEmail,
             to: input.actorEmail,
           });
@@ -403,6 +486,8 @@ export class TestEmailConnection implements UseCase<
       if (error instanceof ConcurrencyError) return err(new ConflictError(SETTINGS_STALE_MESSAGE));
       throw error;
     }
-    return ok(output(this.deps, await this.deps.connections.find(input.tenantId)));
+    return ok(
+      await output(this.deps, input.tenantId, await this.deps.connections.find(input.tenantId)),
+    );
   }
 }

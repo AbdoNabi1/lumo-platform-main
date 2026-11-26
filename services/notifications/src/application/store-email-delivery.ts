@@ -2,8 +2,10 @@ import type { Clock } from "@platform/contracts";
 import { isUsableConnection, sanitizeProviderMessage } from "../domain/messaging/email-connection";
 import type { EmailConnectionRepository } from "../domain/messaging/messaging-repositories";
 import { formatFrom } from "../domain/messaging/sender-resolution";
+import { credentialsFromSecrets } from "./email-credentials";
 import type {
   EmailConnectionVault,
+  StoreEmailCredentials,
   StoreEmailFailureCode,
   StoreEmailProvider,
 } from "./email-connection-ports";
@@ -36,6 +38,8 @@ export interface StoreEmailDeliveryDeps {
   /** Absent (no KEK): nothing can be opened, so nothing is sent. */
   readonly vault?: EmailConnectionVault;
   readonly provider?: StoreEmailProvider;
+  /** Mailbox (SMTP) connections may be used (`EMAIL_SMTP_ENABLED`). Off: they count as not connected. */
+  readonly smtpEnabled?: boolean;
   readonly clock: Clock;
 }
 
@@ -56,42 +60,46 @@ export class StoreEmailDelivery implements StoreMailSender {
 
   async isConnected(tenantId: string): Promise<boolean> {
     if (this.deps.vault === undefined || this.deps.provider === undefined) return false;
-    return isUsableConnection(await this.deps.connections.find(tenantId));
+    const connection = await this.deps.connections.find(tenantId);
+    return isUsableConnection(connection) && this.kindAllowed(connection.kind);
   }
 
   async send(tenantId: string, storeName: string, mail: OutgoingMail): Promise<void> {
     const { vault, provider, connections } = this.deps;
     const connection = await connections.find(tenantId);
-    if (vault === undefined || provider === undefined || !isUsableConnection(connection)) {
+    if (
+      vault === undefined ||
+      provider === undefined ||
+      !isUsableConnection(connection) ||
+      !this.kindAllowed(connection.kind)
+    ) {
       throw new StoreEmailError("EMAIL_NOT_CONNECTED");
     }
 
-    let apiKey: string | undefined;
+    let credentials: StoreEmailCredentials | null;
     try {
-      apiKey = (await vault.open(tenantId, connection.kind, connection.sealedCredentials))[
-        "apiKey"
-      ];
+      credentials = credentialsFromSecrets(
+        connection.kind,
+        await vault.open(tenantId, connection.kind, connection.sealedCredentials),
+      );
     } catch {
-      apiKey = undefined;
+      credentials = null;
     }
-    if (apiKey === undefined || apiKey === "") {
+    if (credentials === null) {
       await this.recordFailure(tenantId, KEY_UNREADABLE_MESSAGE);
       throw new StoreEmailError("EMAIL_NOT_CONNECTED");
     }
 
     let result;
     try {
-      result = await provider.send(
-        { kind: connection.kind, apiKey },
-        {
-          to: mail.to,
-          subject: mail.subject,
-          text: mail.text,
-          html: mail.html,
-          from: formatFrom(storeName, connection.fromEmail),
-          ...(mail.idempotencyKey === undefined ? {} : { idempotencyKey: mail.idempotencyKey }),
-        },
-      );
+      result = await provider.send(credentials, {
+        to: mail.to,
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+        from: formatFrom(storeName, connection.fromEmail),
+        ...(mail.idempotencyKey === undefined ? {} : { idempotencyKey: mail.idempotencyKey }),
+      });
     } catch {
       // An adapter defect: whatever it threw may carry the key or an address, so none of it is kept.
       result = {
@@ -101,9 +109,15 @@ export class StoreEmailDelivery implements StoreMailSender {
       };
     }
     if (result.ok) return;
-    const message = sanitizeProviderMessage(result.message, PROVIDER_UNREACHABLE_MESSAGE, [apiKey]);
+    const message = sanitizeProviderMessage(result.message, PROVIDER_UNREACHABLE_MESSAGE, [
+      credentials.apiKey,
+    ]);
     await this.recordFailure(tenantId, message);
     throw new StoreEmailError(result.code, message);
+  }
+
+  private kindAllowed(kind: string): boolean {
+    return kind !== "smtp" || this.deps.smtpEnabled === true;
   }
 
   /** Best effort: a failure to note the failure never replaces the failure being reported. */

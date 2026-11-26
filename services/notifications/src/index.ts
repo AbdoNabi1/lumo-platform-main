@@ -9,6 +9,7 @@ export { EmailConnectionController } from "./interfaces/email-connection.control
 export type {
   EmailConnectionVault,
   StoreEmailCredentials,
+  SmtpStoreEmailFailureCode,
   StoreEmailFailureCode,
   StoreEmailMessage,
   StoreEmailProvider,
@@ -37,6 +38,11 @@ export {
 } from "./infrastructure/envelope-email-connection-vault";
 export type { KekRefResolver } from "./infrastructure/envelope-email-connection-vault";
 export { InMemoryStoreEmailProvider } from "./infrastructure/in-memory-store-email-provider";
+export {
+  RoutingStoreEmailProvider,
+  SmtpStoreEmailProvider,
+} from "./infrastructure/smtp-store-email-provider";
+export type { SmtpClientOptions } from "./infrastructure/smtp-client";
 export type { RecordedStoreEmail } from "./infrastructure/in-memory-store-email-provider";
 export { TemplatedNotifier } from "./application/templated-notifier";
 export type {

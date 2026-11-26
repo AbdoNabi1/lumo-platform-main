@@ -86,7 +86,7 @@ describe("store email connection routes (Wave 2b2)", () => {
   let fx: ReturnType<typeof infra>;
 
   async function boot(
-    options: { vault?: boolean; budget?: "allow" | "deny" | "throw" } = {},
+    options: { vault?: boolean; budget?: "allow" | "deny" | "throw"; smtp?: boolean } = {},
   ): Promise<void> {
     mail = await storeEmailHarness({
       tenantId: "tenant-a",
@@ -108,6 +108,7 @@ describe("store email connection routes (Wave 2b2)", () => {
       responseCache: fx.cache,
       ...rest,
       ...(options.vault === false ? {} : { emailVault }),
+      ...(options.smtp === true ? { smtpEnabled: true } : {}),
     });
   }
 
@@ -137,7 +138,11 @@ describe("store email connection routes (Wave 2b2)", () => {
     expect.hasAssertions();
     const read = await call("GET", "/notifications/email-connection", "tok-a");
     expect(read.statusCode).toBe(200);
-    expect(read.json()).toEqual({ credentialsConfigured: true, connection: null });
+    expect(read.json()).toEqual({
+      credentialsConfigured: true,
+      smtpAvailable: false,
+      connection: null,
+    });
   });
 
   it("connect: seals the key, sends the test mail to YOUR address through the STORE's key, answers connected without the key", async () => {
@@ -190,7 +195,11 @@ describe("store email connection routes (Wave 2b2)", () => {
     await app.close();
     await boot({ vault: false });
     const read = await call("GET", "/notifications/email-connection", "tok-a");
-    expect(read.json()).toEqual({ credentialsConfigured: false, connection: null });
+    expect(read.json()).toEqual({
+      credentialsConfigured: false,
+      smtpAvailable: false,
+      connection: null,
+    });
     const res = await put(connect);
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "NOT_CONFIGURED", message: "Not available yet" });
@@ -271,7 +280,11 @@ describe("store email connection routes (Wave 2b2)", () => {
     });
 
     const removed = await call("DELETE", "/notifications/email-connection", "tok-a");
-    expect(removed.json()).toEqual({ credentialsConfigured: true, connection: null });
+    expect(removed.json()).toEqual({
+      credentialsConfigured: true,
+      smtpAvailable: false,
+      connection: null,
+    });
     expect((await call("GET", "/notifications/settings", "tok-a")).json()).toMatchObject({
       deliveryConfigured: false,
       emailConnection: "none",
@@ -298,7 +311,11 @@ describe("store email connection routes (Wave 2b2)", () => {
     expect.hasAssertions();
     await put(connect);
     const other = await call("GET", "/notifications/email-connection", "tok-b");
-    expect(other.json()).toEqual({ credentialsConfigured: true, connection: null });
+    expect(other.json()).toEqual({
+      credentialsConfigured: true,
+      smtpAvailable: false,
+      connection: null,
+    });
     const settings = await call("GET", "/notifications/settings", "tok-b");
     expect(settings.json()).toMatchObject({ deliveryConfigured: false, emailConnection: "none" });
     const off = await call("POST", "/notifications/email-connection/enabled", "tok-b", {
@@ -422,5 +439,104 @@ describe("store email connection routes (Wave 2b2)", () => {
       payload: { email: "sam@customer.test", name: "Sam", password: "correct-horse-battery" },
     });
     expect(other.statusCode).toBe(503);
+  });
+
+  describe("mailbox (SMTP) connection behind EMAIL_SMTP_ENABLED", () => {
+    const gmail = {
+      kind: "smtp",
+      fromEmail: "Shop@Gmail.com",
+      smtp: { preset: "gmail", username: "shop@gmail.com" },
+      password: "abcd efgh ijkl mnop",
+    };
+
+    it("flag off: PUT kind smtp answers 503 NOT_CONFIGURED, stores nothing, GET says smtpAvailable false", async () => {
+      expect.hasAssertions();
+      const res = await put(gmail);
+      expect(res.statusCode).toBe(503);
+      expect(res.json()).toMatchObject({ code: "NOT_CONFIGURED" });
+      expect(res.body).not.toContain("abcdefghijklmnop");
+      expect(res.body).not.toContain("abcd efgh");
+      expect(mail.provider.calls).toHaveLength(0);
+      expect(mail.platformMail).toHaveLength(0);
+      const read = await call("GET", "/notifications/email-connection", "tok-a");
+      expect(read.json()).toEqual({
+        credentialsConfigured: true,
+        smtpAvailable: false,
+        connection: null,
+      });
+    });
+
+    it("flag on: connects through the store's mailbox (not the platform's), answers no password", async () => {
+      expect.hasAssertions();
+      await app.close();
+      await boot({ smtp: true });
+      const res = await put(gmail);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        smtpAvailable: true,
+        connection: {
+          kind: "smtp",
+          fromEmail: "shop@gmail.com",
+          secretLast4: "",
+          status: "connected",
+          state: "connected",
+          smtp: {
+            preset: "gmail",
+            host: "smtp.gmail.com",
+            port: 465,
+            security: "tls",
+            username: "shop@gmail.com",
+          },
+        },
+      });
+      expect(res.body).not.toContain("abcdefghijklmnop");
+      expect(mail.provider.calls).toHaveLength(1);
+      expect(mail.provider.calls[0]?.credentials).toMatchObject({
+        kind: "smtp",
+        apiKey: "abcdefghijklmnop",
+        smtp: { host: "smtp.gmail.com" },
+      });
+      expect(mail.provider.calls[0]?.message.to).toBe("owner@merchant.test");
+      // Spy proof: Morbeh's own sender sent nothing for the store's mailbox.
+      expect(mail.platformMail).toHaveLength(0);
+      const read = await call("GET", "/notifications/email-connection", "tok-a");
+      expect(read.body).not.toContain("abcdefghijklmnop");
+    });
+
+    it("a refused mailbox login is saved as failed with its fixed code, never the server's text or the password", async () => {
+      expect.hasAssertions();
+      await app.close();
+      await boot({ smtp: true });
+      mail.provider.failNext(
+        "EMAIL_AUTH_FAILED",
+        "AUTH_FAILED: The mail server didn't accept the username or password. abcdefghijklmnop",
+      );
+      const res = await put(gmail);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toMatchObject({
+        connection: { status: "failed", state: "failed", lastErrorCode: "AUTH_FAILED" },
+      });
+      expect(res.body).not.toContain("abcdefghijklmnop");
+      expect(mail.platformMail).toHaveLength(0);
+    });
+
+    it("validation: a mailbox From that is not the username, or a private host, is 422 naming the field", async () => {
+      expect.hasAssertions();
+      await app.close();
+      await boot({ smtp: true });
+      const wrongFrom = await put({ ...gmail, fromEmail: "orders@gmail.com" });
+      expect(wrongFrom.statusCode).toBe(422);
+      expect(JSON.stringify(wrongFrom.json())).toContain("fromEmail");
+      const internal = await put({
+        ...gmail,
+        fromEmail: "a@b.test",
+        smtp: { preset: "custom", host: "localhost", port: 25, security: "tls", username: "a" },
+      });
+      expect(internal.statusCode).toBe(422);
+      expect(JSON.stringify(internal.json())).toContain("smtp.host");
+      const stray = await put({ ...gmail, smtp: { ...gmail.smtp, password: "x" } });
+      expect(stray.statusCode).toBe(422);
+      expect(mail.provider.calls).toHaveLength(0);
+    });
   });
 });

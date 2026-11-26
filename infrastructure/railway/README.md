@@ -397,11 +397,30 @@ Notes:
   customer email is sent. The API refuses to boot outside `local` with the in-memory vault.
 - Rotating the value strands the keys sealed under the old one: merchants would have to enter their key
   again. Treat it like the payment key-encryption key.
-- SMTP (Gmail/Outlook app passwords) is **not** supported yet: Railway only allows outbound SMTP on the
-  Pro plan and above; the HTTPS API (Resend) works on every plan.
-- **Deploy the migrations first:** `20261129000000_notification_settings` then
+- SMTP (Gmail / Outlook / Zoho / custom mailbox with an app password) is built but **off by default**:
+  Railway only allows outbound SMTP on the Pro plan and above, while the HTTPS API (Resend) works on
+  every plan. See `EMAIL_SMTP_ENABLED` below.
+- **Deploy the migrations first:** `20261129000000_notification_settings`, then
   `20261130000000_store_email_connections` (creates `notifications.email_connections` and drops the
-  empty `notifications.sender_domains`).
+  empty `notifications.sender_domains`), then `20261201000000_email_connection_smtp` (widens the
+  `kind` CHECK to `('resend','smtp')`; nothing else changes).
+
+#### 4e. Mailbox (SMTP) accounts, `EMAIL_SMTP_ENABLED`
+
+| Service | Variable             | Value                                           |
+| ------- | -------------------- | ----------------------------------------------- |
+| API     | `EMAIL_SMTP_ENABLED` | `true` or `false` (default `false`; not secret) |
+
+- Turn it on **only after upgrading Railway to the Pro plan** (Hobby blocks outbound SMTP ports, so a
+  mailbox could never connect). It is a plain Variable: change it and redeploy, no migration.
+- Off: the Email account page shows the mailbox option as "Needs a server upgrade"; saving one answers
+  503 `NOT_CONFIGURED`; a mailbox connection that already exists sends nothing (customer mail is
+  recorded `EMAIL_NOT_CONNECTED`). Resend accounts are unaffected.
+- On: the API connects out to the merchant's mail server (465 TLS, 587 STARTTLS; certificates are
+  verified; the password is only ever sent over an encrypted connection). Private and loopback
+  addresses are refused, so a merchant cannot aim it at the platform's own network.
+- Gmail needs an **app password** (Google Account > Security > 2-Step Verification on > App
+  passwords), never the normal password. Gmail limits a normal account to about 500 emails a day.
 
 **Rollback:** delete `EMAIL_CREDENTIALS_KEK_REF`. Saved accounts stay in the table but can no longer be
 opened, so no customer mail is sent until it is set again.

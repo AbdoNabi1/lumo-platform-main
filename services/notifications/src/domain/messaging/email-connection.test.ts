@@ -34,7 +34,10 @@ describe("validateEmailConnectionDraft", () => {
         fromEmail: " Shop@Nusuj.COM ",
         apiKey: ` ${KEY} `,
       }),
-    ).toEqual({ ok: true, value: { kind: "resend", fromEmail: "shop@nusuj.com", apiKey: KEY } });
+    ).toEqual({
+      ok: true,
+      value: { kind: "resend", fromEmail: "shop@nusuj.com", apiKey: KEY, smtp: null },
+    });
   });
 
   it("an empty or missing key means 'keep the stored one'", () => {

@@ -1,6 +1,7 @@
 import {
   sanitizeProviderMessage,
   type StoreEmailCredentials,
+  type SmtpStoreEmailFailureCode,
   type StoreEmailFailureCode,
   type StoreEmailMessage,
   type StoreEmailProvider,
@@ -9,7 +10,10 @@ import {
 
 const RESEND_EMAILS_URL = "https://api.resend.com/emails";
 
-const FALLBACK: Readonly<Record<StoreEmailFailureCode, string>> = {
+/** The refusals an HTTPS provider can produce: the mailbox (SMTP) ones belong to the SMTP provider. */
+type ResendFailureCode = Exclude<StoreEmailFailureCode, SmtpStoreEmailFailureCode>;
+
+const FALLBACK: Readonly<Record<ResendFailureCode, string>> = {
   EMAIL_KEY_REJECTED: "Your email provider didn't accept the API key.",
   EMAIL_SENDER_REJECTED: "Your email provider didn't accept the sender address.",
   EMAIL_REQUEST_REJECTED: "Your email provider didn't accept this email.",
@@ -18,11 +22,7 @@ const FALLBACK: Readonly<Record<StoreEmailFailureCode, string>> = {
   EMAIL_TIMEOUT: "Your email provider took too long to answer. Try again in a moment.",
 };
 
-function fail(
-  code: StoreEmailFailureCode,
-  providerText: unknown,
-  apiKey: string,
-): StoreEmailResult {
+function fail(code: ResendFailureCode, providerText: unknown, apiKey: string): StoreEmailResult {
   return {
     ok: false,
     code,
@@ -43,10 +43,7 @@ async function readProblem(response: Response): Promise<{ name: string; message:
   }
 }
 
-function codeFor(
-  status: number,
-  problem: { name: string; message: string },
-): StoreEmailFailureCode {
+function codeFor(status: number, problem: { name: string; message: string }): ResendFailureCode {
   if (status === 401) return "EMAIL_KEY_REJECTED";
   if (status === 429) return "EMAIL_RATE_LIMITED";
   if (status >= 500) return "EMAIL_PROVIDER_UNAVAILABLE";

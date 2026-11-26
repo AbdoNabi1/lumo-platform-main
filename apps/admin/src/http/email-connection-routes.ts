@@ -17,6 +17,23 @@ const saveBody = z
     kind: z.string().min(1).max(32),
     fromEmail: z.string().max(320),
     apiKey: z.string().max(300).nullable().optional(),
+    /**
+     * Mailbox (SMTP) accounts: the preset and, for `custom`, host/port/security, plus the username. The
+     * server decides the rest from the preset; the rules are the use case's. No password in here.
+     */
+    smtp: z
+      .object({
+        preset: z.string().min(1).max(16),
+        host: z.string().max(253).optional(),
+        port: z.number().int().optional(),
+        security: z.string().max(16).optional(),
+        username: z.string().max(320),
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    /** Write-only mailbox password: accepted here, never returned. Absent/empty keeps the stored one. */
+    password: z.string().max(300).nullable().optional(),
     /** null when the page loaded "not connected". */
     expectedVersion: z.number().int().min(1).nullable(),
   })
@@ -83,6 +100,8 @@ export function emailConnectionRoutes(
           kind: body.kind,
           fromEmail: body.fromEmail,
           apiKey: body.apiKey ?? null,
+          smtp: body.smtp ?? undefined,
+          password: body.password ?? null,
         });
       },
     }),

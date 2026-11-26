@@ -106,6 +106,8 @@ export interface NotificationsMessagingDeps {
   readonly emailVault?: EmailConnectionVault;
   /** Calls the merchant's own provider (Resend HTTPS) with THEIR key. Absent ⇒ nothing can be sent. */
   readonly emailProvider?: StoreEmailProvider;
+  /** Mailbox (SMTP) accounts may be connected and used (`EMAIL_SMTP_ENABLED`). Default off. */
+  readonly smtpEnabled?: boolean;
 }
 
 export interface NotificationsWiringDeps {
@@ -186,6 +188,7 @@ function buildEmailConnectionController(
     clock: deps.clock,
     ...(messaging.emailVault === undefined ? {} : { vault: messaging.emailVault }),
     ...(messaging.emailProvider === undefined ? {} : { provider: messaging.emailProvider }),
+    smtpEnabled: messaging.smtpEnabled === true,
   };
   return new EmailConnectionController({
     getConnection: new GetEmailConnection(connectionDeps),
@@ -268,6 +271,7 @@ function assemble(
     clock: deps.clock,
     ...(messaging.emailVault === undefined ? {} : { vault: messaging.emailVault }),
     ...(messaging.emailProvider === undefined ? {} : { provider: messaging.emailProvider }),
+    smtpEnabled: messaging.smtpEnabled === true,
   });
   const emailProvider = new TemplatedEmailProvider({
     settings: repos.settings,
