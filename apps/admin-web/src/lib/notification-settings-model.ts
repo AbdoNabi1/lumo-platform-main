@@ -122,31 +122,123 @@ export function insertVariable(
   return { text: text.slice(0, start) + token + text.slice(end), caret: start + token.length };
 }
 
-/** The email providers a store can connect. Only Resend exists today; the others are "coming soon". */
-export const EMAIL_CONNECTION_KINDS = ["resend"] as const;
+/** The email providers a store can connect: a Resend API key, or its own mailbox over SMTP. */
+export const EMAIL_CONNECTION_KINDS = ["resend", "smtp"] as const;
 export type EmailConnectionKind = (typeof EMAIL_CONNECTION_KINDS)[number];
 
 /**
- * Every provider the picker lists, in order. `kind` is what the server can connect today; `null`
- * means "Coming soon" (shown, disabled). Adding a provider (Task 3: Gmail / other mailbox, SMTP)
- * is a change to this list plus its `EMAIL_CONNECTION_KINDS` entry, never to the component.
- * Brand names are not translated.
+ * Every provider the picker lists, in order. `kind` is what the server can connect; `null` means
+ * "Coming soon" (shown, disabled). `needsSmtp` marks a provider that also needs the server's
+ * `EMAIL_SMTP_ENABLED` switch (`smtpAvailable` on the account): without it the option is disabled
+ * and says "Needs a server upgrade". Adding a provider is a change to this list plus its
+ * `EMAIL_CONNECTION_KINDS` entry, never to the component. Brand names are not translated.
  */
 export interface EmailProviderChoice {
   readonly id: string;
   readonly label: string;
   readonly kind: EmailConnectionKind | null;
+  readonly needsSmtp: boolean;
 }
 
 export const EMAIL_PROVIDER_CHOICES: readonly EmailProviderChoice[] = [
-  { id: "resend", label: "Resend", kind: "resend" },
-  { id: "sendgrid", label: "SendGrid", kind: null },
-  { id: "brevo", label: "Brevo", kind: null },
-  { id: "smtp", label: "SMTP", kind: null },
+  { id: "resend", label: "Resend", kind: "resend", needsSmtp: false },
+  { id: "smtp", label: "Gmail / other mailbox (SMTP)", kind: "smtp", needsSmtp: true },
+  { id: "sendgrid", label: "SendGrid", kind: null, needsSmtp: false },
+  { id: "brevo", label: "Brevo", kind: null, needsSmtp: false },
 ];
 
 export function isEmailConnectionKind(value: unknown): value is EmailConnectionKind {
   return typeof value === "string" && (EMAIL_CONNECTION_KINDS as readonly string[]).includes(value);
+}
+
+export const SMTP_PRESET_IDS = ["gmail", "outlook", "zoho", "custom"] as const;
+export type SmtpPresetId = (typeof SMTP_PRESET_IDS)[number];
+export type SmtpSecurity = "tls" | "starttls";
+
+export function isSmtpPresetId(value: unknown): value is SmtpPresetId {
+  return typeof value === "string" && (SMTP_PRESET_IDS as readonly string[]).includes(value);
+}
+
+export function isSmtpSecurity(value: unknown): value is SmtpSecurity {
+  return value === "tls" || value === "starttls";
+}
+
+/**
+ * The mailbox presets, mirroring the server's (it is the authority: it pins the server for a preset
+ * and ignores what we send). `host` is null for "other mail server": the person types it. Brand
+ * names are not translated.
+ */
+export interface SmtpPresetChoice {
+  readonly id: SmtpPresetId;
+  readonly label: string | null;
+  readonly host: string | null;
+  readonly port: number | null;
+  readonly security: SmtpSecurity | null;
+  /** The From address must be the mailbox itself (the server refuses anything else for a preset). */
+  readonly fromIsUsername: boolean;
+}
+
+export const SMTP_PRESET_CHOICES: readonly SmtpPresetChoice[] = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    security: "tls",
+    fromIsUsername: true,
+  },
+  {
+    id: "outlook",
+    label: "Outlook / Hotmail",
+    host: "smtp-mail.outlook.com",
+    port: 587,
+    security: "starttls",
+    fromIsUsername: true,
+  },
+  {
+    id: "zoho",
+    label: "Zoho Mail",
+    host: "smtp.zoho.com",
+    port: 465,
+    security: "tls",
+    fromIsUsername: true,
+  },
+  { id: "custom", label: null, host: null, port: null, security: null, fromIsUsername: false },
+];
+
+/** The ports a custom mail server may use: the SMTP submission ports (the server checks this too). */
+export const CUSTOM_SMTP_PORTS: readonly number[] = [25, 465, 587, 2525];
+
+/** The fixed failure a mailbox can report; the page words each one itself, in both languages. */
+export const SMTP_ERROR_CODES = [
+  "AUTH_FAILED",
+  "DAILY_LIMIT",
+  "CONNECTION_FAILED",
+  "TLS_FAILED",
+  "REJECTED",
+] as const;
+export type SmtpErrorCode = (typeof SMTP_ERROR_CODES)[number];
+
+export function isSmtpErrorCode(value: unknown): value is SmtpErrorCode {
+  return typeof value === "string" && (SMTP_ERROR_CODES as readonly string[]).includes(value);
+}
+
+/** Where a mailbox connection goes and as whom. Never the password. */
+export interface SmtpConnectionDto {
+  readonly preset: SmtpPresetId;
+  readonly host: string;
+  readonly port: number;
+  readonly security: SmtpSecurity;
+  readonly username: string;
+}
+
+/** What the page sends for a mailbox: the preset and username; a custom server adds its own details. */
+export interface EmailSaveSmtp {
+  readonly preset: SmtpPresetId;
+  readonly username: string;
+  readonly host?: string;
+  readonly port?: number;
+  readonly security?: SmtpSecurity;
 }
 
 /** The store's own email account as the server shows it. Never the key: only its last four. */
@@ -160,15 +252,21 @@ export interface EmailConnectionDto {
   readonly state: EmailConnectionState;
   /** The provider's refusal, sanitized by the server (no addresses, no keys). */
   readonly lastError: string | null;
+  /** A mailbox's fixed failure, so the page can use its own sentence; null for anything else. */
+  readonly lastErrorCode: SmtpErrorCode | null;
   readonly lastErrorAt: string | null;
   readonly verifiedAt: string | null;
   readonly version: number;
+  /** Mailbox (SMTP) connections only; null for Resend. */
+  readonly smtp: SmtpConnectionDto | null;
 }
 
 /** `GET /notifications/email-connection` and what every write answers with. */
 export interface EmailConnectionSnapshot {
   /** false: the server cannot store keys, so the page says "Not available yet". */
   readonly credentialsConfigured: boolean;
+  /** false: the server's `EMAIL_SMTP_ENABLED` is off, so mailbox accounts say "Needs a server upgrade". */
+  readonly smtpAvailable: boolean;
   /** null while the store has not connected an email account. */
   readonly connection: EmailConnectionDto | null;
 }

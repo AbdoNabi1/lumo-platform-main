@@ -1,12 +1,16 @@
 import {
   isEmailConnectionKind,
   isEmailConnectionState,
+  isSmtpErrorCode,
+  isSmtpPresetId,
+  isSmtpSecurity,
   isTemplateKey,
   isTemplateLocale,
   TEMPLATE_LOCALES,
   type EmailConnectionDto,
   type EmailConnectionKind,
   type EmailConnectionSnapshot,
+  type EmailSaveSmtp,
   type NotificationSettingsSnapshot,
   type NotificationSettingsValues,
   type PreviewDto,
@@ -126,9 +130,22 @@ function isEmailConnection(value: unknown): value is EmailConnectionDto {
     (value["status"] === "connected" || value["status"] === "failed") &&
     isEmailConnectionState(value["state"]) &&
     isNullableString(value["lastError"]) &&
+    (value["lastErrorCode"] === null || isSmtpErrorCode(value["lastErrorCode"])) &&
     isNullableString(value["lastErrorAt"]) &&
     isNullableString(value["verifiedAt"]) &&
-    typeof value["version"] === "number"
+    typeof value["version"] === "number" &&
+    (value["smtp"] === null || isSmtpConnection(value["smtp"]))
+  );
+}
+
+function isSmtpConnection(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isSmtpPresetId(value["preset"]) &&
+    typeof value["host"] === "string" &&
+    typeof value["port"] === "number" &&
+    isSmtpSecurity(value["security"]) &&
+    typeof value["username"] === "string"
   );
 }
 
@@ -136,6 +153,7 @@ function isEmailConnectionSnapshot(value: unknown): value is EmailConnectionSnap
   return (
     isRecord(value) &&
     typeof value["credentialsConfigured"] === "boolean" &&
+    typeof value["smtpAvailable"] === "boolean" &&
     (value["connection"] === null || isEmailConnection(value["connection"]))
   );
 }
@@ -270,7 +288,12 @@ export function saveEmailConnection(
   input: {
     readonly kind: EmailConnectionKind;
     readonly fromEmail: string;
+    /** Resend: the API key. null = keep the stored one. */
     readonly apiKey: string | null;
+    /** Mailbox: which server and as whom (custom adds host, port, security). */
+    readonly smtp?: EmailSaveSmtp | null;
+    /** Mailbox: the app password, write-only. null = keep the stored one. */
+    readonly password?: string | null;
   },
   expectedVersion: number | null,
   idempotencyKey: string,
@@ -283,6 +306,10 @@ export function saveEmailConnection(
         kind: input.kind,
         fromEmail: input.fromEmail,
         ...(input.apiKey === null ? {} : { apiKey: input.apiKey }),
+        ...(input.smtp === undefined || input.smtp === null ? {} : { smtp: input.smtp }),
+        ...(input.password === undefined || input.password === null
+          ? {}
+          : { password: input.password }),
         expectedVersion,
       },
       idempotencyKey,

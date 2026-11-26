@@ -2549,6 +2549,56 @@ export const en = {
       disconnecting: "Disconnecting…",
       disconnectCancel: "Cancel",
       disconnected: "Email account disconnected. Customer emails are off.",
+      needsUpgrade: "Needs a server upgrade",
+      needsUpgradeBody:
+        "Connecting a Gmail or other mailbox needs a server upgrade first. Resend works now.",
+      presetLabel: "Mailbox provider",
+      presetCustom: "Other mail server",
+      hostLabel: "Mail server",
+      hostHint: "The server name from your email host, like smtp.yourhost.com.",
+      portLabel: "Port",
+      securityLabel: "Security",
+      securityTls: "TLS (usually port 465)",
+      securityStartTls: "STARTTLS (usually port 587)",
+      usernameLabel: "Mailbox username",
+      usernameHint: "Usually your full email address.",
+      passwordLabel: "App password",
+      passwordHint: "Stored sealed and never shown again.",
+      passwordSaved: "Password saved. Leave this empty to keep it.",
+      passwordRequired: "Enter your app password.",
+      passwordInvalid: "That password can't be used. Check it and try again.",
+      usernameRequired: "Enter the mailbox username.",
+      usernameInvalid: "That username doesn't look right.",
+      hostRequired: "Enter the mail server name, like smtp.yourhost.com.",
+      hostInvalid: "That doesn't look like a mail server name, like smtp.yourhost.com.",
+      portInvalid: "Use port 25, 465, 587 or 2525.",
+      presetInvalid: "Choose a mailbox provider from the list.",
+      fromMustMatch:
+        "For Gmail, Outlook and Zoho the From email must be the same address as the mailbox.",
+      gmailHowToTitle: "How to connect Gmail",
+      gmailHowTo1: "Turn on 2-Step Verification in your Google Account.",
+      gmailHowTo2: "In your Google Account, open Security, then App passwords.",
+      gmailHowTo3: "Create an app password named Morbeh and copy the 16 characters.",
+      gmailHowTo4: "Paste it below as the app password. Don't use your normal Gmail password.",
+      gmailLink1: "Open 2-Step Verification",
+      gmailLink2: "Open App passwords",
+      outlookNote:
+        "Microsoft may not allow mailbox sign-in with an app password. If it fails, use Resend instead.",
+      zohoNote:
+        "In Zoho Mail, create an app-specific password (Settings, Security, App Passwords) and use it below.",
+      customNote:
+        "Ask your email host for the mail server name, the port and whether it uses TLS or STARTTLS.",
+      smtpErrors: {
+        AUTH_FAILED:
+          "The mail server didn't accept the username or password. For Gmail, use an app password, not your normal password.",
+        DAILY_LIMIT:
+          "This mailbox reached its sending limit for now. Try again later, or use Resend.",
+        CONNECTION_FAILED:
+          "We couldn't reach the mail server. The server may block mail ports, or the mail server name or port may be wrong.",
+        TLS_FAILED:
+          "We couldn't make a secure connection to the mail server. Check the server name and the security setting.",
+        REJECTED: "The mail server refused the email. Check the From address and try again.",
+      },
     },
     customerTitle: "Customer notifications",
     customerHint: "The emails your customers get about their orders.",

@@ -290,4 +290,20 @@ describe("Settings > Notifications routes (Wave 2b2)", () => {
         .filter((routePath) => routePath.includes("sender-domain")),
     ).toEqual([]);
   });
+
+  it("the route's strict save body declares every field a mailbox save sends (Task 3)", () => {
+    expect.hasAssertions();
+    const source = readFileSync(path.join(HTTP_DIR, "email-connection-routes.ts"), "utf8");
+    const body =
+      /const saveBody = z([\s\S]*?)\.strict\(\);\s*const enabledBody/.exec(source)?.[1] ?? "";
+    expect(body).not.toBe("");
+    for (const field of ["kind", "fromEmail", "apiKey", "smtp", "password", "expectedVersion"]) {
+      expect(body, field).toMatch(new RegExp(`\\b${field}:`));
+    }
+    // The nested mailbox object is strict too, and holds exactly what the page sends for it.
+    for (const field of ["preset", "host", "port", "security", "username"]) {
+      expect(body, `smtp.${field}`).toMatch(new RegExp(`\\b${field}:`));
+    }
+    expect(body).toMatch(/\.strict\(\)\s*\.nullable\(\)/);
+  });
 });

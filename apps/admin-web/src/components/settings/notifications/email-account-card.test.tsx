@@ -12,6 +12,10 @@ import {
 import {
   CONNECTION,
   EMAIL_CONNECTED,
+  EMAIL_NONE_SMTP,
+  EMAIL_SMTP_CONNECTED,
+  EMAIL_SMTP_FAILED,
+  EMAIL_SMTP_FLAG_OFF,
   EMAIL_FAILED,
   EMAIL_NONE,
   EMAIL_OFF,
@@ -86,10 +90,13 @@ describe("Email account card: not connected", () => {
 
     const group = screen.getByRole("group", { name: copy.providerLabel });
     expect(within(group).getByRole("radio", { name: "Resend" })).toBeChecked();
-    for (const name of ["SendGrid", "Brevo", "SMTP"]) {
+    for (const name of ["SendGrid", "Brevo"]) {
       expect(within(group).getByRole("radio", { name: new RegExp(name) })).toBeDisabled();
     }
-    expect(within(group).getAllByText(copy.comingSoon)).toHaveLength(3);
+    expect(within(group).getAllByText(copy.comingSoon)).toHaveLength(2);
+    // The mailbox option is listed too; without the server's SMTP switch it says why it is disabled.
+    expect(within(group).getByRole("radio", { name: /Gmail \/ other mailbox/ })).toBeDisabled();
+    expect(within(group).getByText(copy.needsUpgrade)).toBeInTheDocument();
   });
 
   it("starts empty, with a write-only key box and no Send test, switch or Disconnect yet", () => {
@@ -534,7 +541,7 @@ describe("Email account card: Arabic and logical CSS", () => {
     expect(screen.getByRole("button", { name: arCopy.sendTest })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: arCopy.enabledLabel })).toBeInTheDocument();
     expect(screen.getByText(arCopy.howTo3)).toBeInTheDocument();
-    expect(screen.getAllByText(arCopy.comingSoon)).toHaveLength(3);
+    expect(screen.getAllByText(arCopy.comingSoon)).toHaveLength(2);
     expect(screen.queryByText(copy.title)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: arCopy.disconnect }));
@@ -612,6 +619,7 @@ describe("Email account card: sending limits and the provider list", () => {
       const radio = radios.find((node) => node.getAttribute("value") === choice.id);
       expect(radio, choice.id).toBeDefined();
       if (choice.kind === null) expect(radio).toBeDisabled();
+      else if (choice.needsSmtp) expect(radio).toBeDisabled();
       else expect(radio).toBeChecked();
     }
     expect(within(group).getAllByText(copy.comingSoon)).toHaveLength(
@@ -626,5 +634,381 @@ describe("Email account card: sending limits and the provider list", () => {
     expect(new Set(EMAIL_PROVIDER_CHOICES.map((choice) => choice.id)).size).toBe(
       EMAIL_PROVIDER_CHOICES.length,
     );
+  });
+});
+
+describe("Email account card: mailbox (SMTP) accounts", () => {
+  const PASSWORD = "abcd efgh ijkl mnop";
+  const providers = () => screen.getByRole("group", { name: copy.providerLabel });
+  const mailboxRadio = () =>
+    within(providers()).getByRole("radio", { name: /Gmail \/ other mailbox/ });
+  const usernameInput = () => screen.getByLabelText(copy.usernameLabel);
+  const passwordInput = () => screen.getByLabelText(copy.passwordLabel);
+
+  function chooseMailbox() {
+    fireEvent.click(mailboxRadio());
+  }
+
+  describe("the server's SMTP switch is off", () => {
+    it("disables the option with 'Needs a server upgrade' and shows no mailbox form", () => {
+      renderCard(EMAIL_NONE);
+
+      expect(mailboxRadio()).toBeDisabled();
+      expect(within(providers()).getByText(copy.needsUpgrade)).toBeInTheDocument();
+      expect(screen.queryByLabelText(copy.passwordLabel)).toBeNull();
+      expect(screen.queryByTestId("email-needs-upgrade")).toBeNull();
+      // Resend keeps working and stays selected.
+      expect(within(providers()).getByRole("radio", { name: "Resend" })).toBeChecked();
+    });
+
+    it("a mailbox that was connected before keeps its page, locked, with Disconnect still there", () => {
+      renderCard(EMAIL_SMTP_FLAG_OFF);
+
+      expect(mailboxRadio()).toBeChecked();
+      expect(screen.getByTestId("email-needs-upgrade")).toHaveTextContent(copy.needsUpgrade);
+      expect(screen.getByTestId("email-needs-upgrade")).toHaveTextContent(copy.needsUpgradeBody);
+      expect(screen.getByRole("button", { name: copy.save })).toBeDisabled();
+      expect(usernameInput()).toBeDisabled();
+      expect(passwordInput()).toBeDisabled();
+      expect(screen.getByRole("button", { name: copy.sendTest })).toBeDisabled();
+      expect(screen.getByRole("switch", { name: copy.enabledLabel })).toBeDisabled();
+      expect(screen.getByRole("button", { name: copy.disconnect })).toBeEnabled();
+    });
+
+    it("says it in Arabic too", () => {
+      const arCopy = ar.notificationSettings.email;
+      renderCard(EMAIL_SMTP_FLAG_OFF, ar);
+      expect(screen.getByTestId("email-needs-upgrade")).toHaveTextContent(arCopy.needsUpgrade);
+      expect(arCopy.needsUpgrade).not.toBe(copy.needsUpgrade);
+    });
+  });
+
+  describe("choosing the mailbox", () => {
+    it("is a real selection: the Resend key box gives way to the mailbox form, and back", () => {
+      renderCard(EMAIL_NONE_SMTP);
+
+      expect(screen.getByLabelText(copy.keyLabel)).toBeInTheDocument();
+      expect(screen.queryByLabelText(copy.passwordLabel)).toBeNull();
+
+      chooseMailbox();
+      expect(mailboxRadio()).toBeChecked();
+      expect(within(providers()).getByRole("radio", { name: "Resend" })).not.toBeChecked();
+      expect(screen.queryByLabelText(copy.keyLabel)).toBeNull();
+      expect(screen.getByLabelText(copy.presetLabel)).toHaveValue("gmail");
+      expect(usernameInput()).toHaveValue("");
+      expect(passwordInput()).toHaveAttribute("type", "password");
+      expect(passwordInput()).toHaveValue("");
+      // Host, port and security are for "other mail server" only.
+      expect(screen.queryByLabelText(copy.hostLabel)).toBeNull();
+      expect(screen.queryByLabelText(copy.portLabel)).toBeNull();
+      expect(screen.queryByLabelText(copy.securityLabel)).toBeNull();
+
+      fireEvent.click(within(providers()).getByRole("radio", { name: "Resend" }));
+      expect(screen.getByLabelText(copy.keyLabel)).toBeInTheDocument();
+      expect(screen.queryByLabelText(copy.passwordLabel)).toBeNull();
+    });
+
+    it("shows the Gmail app-password how-to with its two links", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+
+      const steps = within(screen.getByRole("region", { name: copy.gmailHowToTitle })).getAllByRole(
+        "listitem",
+      );
+      expect(steps.map((step) => step.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+        `${copy.gmailHowTo1} ${copy.gmailLink1}`,
+        `${copy.gmailHowTo2} ${copy.gmailLink2}`,
+        copy.gmailHowTo3,
+        copy.gmailHowTo4,
+      ]);
+      expect(copy.gmailHowTo1).toMatch(/2-Step Verification/);
+      expect(copy.gmailHowTo2).toMatch(/App passwords/);
+      expect(copy.gmailHowTo3).toMatch(/16 characters/);
+      const link = screen.getByRole("link", { name: copy.gmailLink2 });
+      expect(link).toHaveAttribute("href", "https://myaccount.google.com/apppasswords");
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(screen.queryByRole("region", { name: copy.howToTitle })).toBeNull();
+    });
+
+    it("lists the presets and swaps the how-to for each", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      const picker = screen.getByLabelText(copy.presetLabel);
+      expect(
+        within(picker)
+          .getAllByRole("option")
+          .map((o) => o.textContent),
+      ).toEqual(["Gmail", "Outlook / Hotmail", "Zoho Mail", copy.presetCustom]);
+
+      fireEvent.change(picker, { target: { value: "outlook" } });
+      expect(screen.getByTestId("email-mailbox-note")).toHaveTextContent(copy.outlookNote);
+      expect(screen.queryByRole("region", { name: copy.gmailHowToTitle })).toBeNull();
+      fireEvent.change(picker, { target: { value: "zoho" } });
+      expect(screen.getByTestId("email-mailbox-note")).toHaveTextContent(copy.zohoNote);
+      fireEvent.change(picker, { target: { value: "custom" } });
+      expect(screen.getByTestId("email-mailbox-note")).toHaveTextContent(copy.customNote);
+    });
+
+    it("asks for host, port and security only for 'other mail server'", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.change(screen.getByLabelText(copy.presetLabel), { target: { value: "custom" } });
+
+      expect(screen.getByLabelText(copy.hostLabel)).toHaveValue("");
+      expect(screen.getByLabelText(copy.portLabel)).toHaveValue(465);
+      expect(screen.getByLabelText(copy.securityLabel)).toHaveValue("tls");
+      expect(screen.getByLabelText(copy.hostLabel)).toHaveAttribute("dir", "ltr");
+
+      fireEvent.change(screen.getByLabelText(copy.presetLabel), { target: { value: "zoho" } });
+      expect(screen.queryByLabelText(copy.hostLabel)).toBeNull();
+    });
+  });
+
+  describe("saving a mailbox", () => {
+    function fillGmail() {
+      chooseMailbox();
+      fireEvent.change(fromInput(), { target: { value: "Shop@Gmail.com" } });
+      fireEvent.change(usernameInput(), { target: { value: "shop@gmail.com" } });
+      fireEvent.change(passwordInput(), { target: { value: PASSWORD } });
+    }
+
+    it("sends the preset, the username and the app password; then says 'Password saved', never the password", async () => {
+      actions.saveEmailConnectionAction.mockResolvedValue(success(EMAIL_SMTP_CONNECTED));
+      renderCard(EMAIL_NONE_SMTP);
+      fillGmail();
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(await screen.findByRole("status")).toHaveTextContent(copy.savedConnected);
+      expect(actions.saveEmailConnectionAction).toHaveBeenCalledWith({
+        kind: "smtp",
+        fromEmail: "shop@gmail.com",
+        smtp: { preset: "gmail", username: "shop@gmail.com" },
+        password: PASSWORD,
+        expectedVersion: null,
+      });
+      expect(chip()).toHaveTextContent(copy.statusConnected);
+      expect(passwordInput()).toHaveValue("");
+      expect(screen.getByText(copy.passwordSaved)).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("abcd efgh");
+      expect(screen.queryByText(/ending in/)).toBeNull();
+    });
+
+    it("sends a custom server's details with the password", async () => {
+      actions.saveEmailConnectionAction.mockResolvedValue(success(EMAIL_SMTP_CONNECTED));
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.change(screen.getByLabelText(copy.presetLabel), { target: { value: "custom" } });
+      fireEvent.change(fromInput(), { target: { value: "orders@shop.example" } });
+      fireEvent.change(screen.getByLabelText(copy.hostLabel), {
+        target: { value: "mail.shop.example" },
+      });
+      fireEvent.change(screen.getByLabelText(copy.portLabel), { target: { value: "587" } });
+      fireEvent.change(screen.getByLabelText(copy.securityLabel), {
+        target: { value: "starttls" },
+      });
+      fireEvent.change(usernameInput(), { target: { value: "mailer" } });
+      fireEvent.change(passwordInput(), { target: { value: "s3cret-pass" } });
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      await waitFor(() => expect(actions.saveEmailConnectionAction).toHaveBeenCalledTimes(1));
+      expect(actions.saveEmailConnectionAction).toHaveBeenCalledWith({
+        kind: "smtp",
+        fromEmail: "orders@shop.example",
+        smtp: {
+          preset: "custom",
+          username: "mailer",
+          host: "mail.shop.example",
+          port: 587,
+          security: "starttls",
+        },
+        password: "s3cret-pass",
+        expectedVersion: null,
+      });
+    });
+
+    it("refuses missing pieces without calling the server", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(screen.getByText(copy.fromInvalid)).toBeInTheDocument();
+      expect(screen.getByText(copy.usernameRequired)).toBeInTheDocument();
+      expect(screen.getByText(copy.passwordRequired)).toBeInTheDocument();
+      expect(actions.saveEmailConnectionAction).not.toHaveBeenCalled();
+    });
+
+    it("a Gmail preset needs the From address to be the mailbox itself", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.change(fromInput(), { target: { value: "orders@gmail.com" } });
+      fireEvent.change(usernameInput(), { target: { value: "shop@gmail.com" } });
+      fireEvent.change(passwordInput(), { target: { value: PASSWORD } });
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(screen.getByText(copy.fromMustMatch)).toBeInTheDocument();
+      expect(actions.saveEmailConnectionAction).not.toHaveBeenCalled();
+    });
+
+    it("a custom server needs a name and one of the mail ports", () => {
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.change(screen.getByLabelText(copy.presetLabel), { target: { value: "custom" } });
+      fireEvent.change(fromInput(), { target: { value: "orders@shop.example" } });
+      fireEvent.change(usernameInput(), { target: { value: "mailer" } });
+      fireEvent.change(passwordInput(), { target: { value: "x" } });
+      fireEvent.change(screen.getByLabelText(copy.portLabel), { target: { value: "22" } });
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(screen.getByText(copy.hostRequired)).toBeInTheDocument();
+      expect(screen.getByText(copy.portInvalid)).toBeInTheDocument();
+      expect(actions.saveEmailConnectionAction).not.toHaveBeenCalled();
+    });
+
+    it("puts the server's field issues for a mailbox under the right fields", async () => {
+      actions.saveEmailConnectionAction.mockResolvedValue({
+        status: "error",
+        message: en.formErrors.invalid,
+        fieldErrors: { "smtp.host": copy.hostInvalid, password: copy.passwordInvalid },
+      });
+      renderCard(EMAIL_NONE_SMTP);
+      chooseMailbox();
+      fireEvent.change(screen.getByLabelText(copy.presetLabel), { target: { value: "custom" } });
+      fireEvent.change(fromInput(), { target: { value: "orders@shop.example" } });
+      fireEvent.change(screen.getByLabelText(copy.hostLabel), {
+        target: { value: "x.shop.example" },
+      });
+      fireEvent.change(usernameInput(), { target: { value: "mailer" } });
+      fireEvent.change(passwordInput(), { target: { value: "x" } });
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(await screen.findByText(copy.hostInvalid)).toBeInTheDocument();
+      expect(screen.getByText(copy.passwordInvalid)).toBeInTheDocument();
+    });
+
+    it("shows the mailbox's refusal as Failed with the page's own sentence, not the server's", async () => {
+      actions.saveEmailConnectionAction.mockResolvedValue(success(EMAIL_SMTP_FAILED));
+      renderCard(EMAIL_NONE_SMTP);
+      fillGmail();
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(copy.savedFailed);
+      expect(chip()).toHaveTextContent(copy.statusFailed);
+      expect(screen.getByTestId("email-last-error")).toHaveTextContent(copy.smtpErrors.AUTH_FAILED);
+      expect(screen.getByTestId("email-last-error")).not.toHaveTextContent("AUTH_FAILED:");
+    });
+  });
+
+  describe("a connected mailbox", () => {
+    it("shows the mailbox, 'Password saved' (no last four), and never prefills the password", () => {
+      renderCard(EMAIL_SMTP_CONNECTED);
+
+      expect(chip()).toHaveTextContent(copy.statusConnected);
+      expect(mailboxRadio()).toBeChecked();
+      expect(screen.getByLabelText(copy.presetLabel)).toHaveValue("gmail");
+      expect(usernameInput()).toHaveValue("shop@gmail.com");
+      expect(passwordInput()).toHaveValue("");
+      expect(screen.getByText(copy.passwordSaved)).toBeInTheDocument();
+      expect(screen.queryByText(/ending in/)).toBeNull();
+      expect(screen.getByText(/Customer emails go out from/)).toHaveTextContent("shop@gmail.com");
+    });
+
+    it("keeps the saved password when the box is empty and sends the loaded version", async () => {
+      actions.saveEmailConnectionAction.mockResolvedValue(success(EMAIL_SMTP_CONNECTED));
+      renderCard(EMAIL_SMTP_CONNECTED);
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      await waitFor(() => expect(actions.saveEmailConnectionAction).toHaveBeenCalledTimes(1));
+      expect(actions.saveEmailConnectionAction).toHaveBeenCalledWith({
+        kind: "smtp",
+        fromEmail: "shop@gmail.com",
+        smtp: { preset: "gmail", username: "shop@gmail.com" },
+        password: null,
+        expectedVersion: 4,
+      });
+    });
+
+    it("a saved mailbox that is switched to Resend must bring a Resend key", () => {
+      renderCard({ ...EMAIL_SMTP_CONNECTED, smtpAvailable: true });
+      fireEvent.click(within(providers()).getByRole("radio", { name: "Resend" }));
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(screen.getByText(copy.keyRequired)).toBeInTheDocument();
+      expect(actions.saveEmailConnectionAction).not.toHaveBeenCalled();
+    });
+
+    it("a Resend account switched to a mailbox must bring a password", () => {
+      renderCard({ ...EMAIL_CONNECTED, smtpAvailable: true });
+      chooseMailbox();
+      fireEvent.change(usernameInput(), { target: { value: "shop@gmail.com" } });
+      fireEvent.change(fromInput(), { target: { value: "shop@gmail.com" } });
+      fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+      expect(screen.getByText(copy.passwordRequired)).toBeInTheDocument();
+      expect(actions.saveEmailConnectionAction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("every failure code has a sentence in both languages", () => {
+    const codes = [
+      "AUTH_FAILED",
+      "DAILY_LIMIT",
+      "CONNECTION_FAILED",
+      "TLS_FAILED",
+      "REJECTED",
+    ] as const;
+
+    it.each(codes)("%s is worded by the page, in English and Arabic", (code) => {
+      const snapshot: EmailConnectionSnapshot = {
+        ...EMAIL_SMTP_FAILED,
+        connection: {
+          ...EMAIL_SMTP_FAILED.connection!,
+          lastError: `${code}: server words that must not be shown`,
+          lastErrorCode: code,
+        },
+      };
+      const { unmount } = renderCard(snapshot);
+      expect(screen.getByTestId("email-last-error")).toHaveTextContent(copy.smtpErrors[code]);
+      expect(screen.getByTestId("email-last-error")).not.toHaveTextContent("server words");
+      unmount();
+
+      const arCopy = ar.notificationSettings.email;
+      renderCard(snapshot, ar);
+      expect(screen.getByTestId("email-last-error")).toHaveTextContent(arCopy.smtpErrors[code]);
+      expect(arCopy.smtpErrors[code]).not.toBe(copy.smtpErrors[code]);
+    });
+
+    it("CONNECTION_FAILED says the server may block mail ports", () => {
+      expect(copy.smtpErrors.CONNECTION_FAILED).toMatch(/may block mail ports/);
+      expect(copy.smtpErrors.AUTH_FAILED).toMatch(/app password/);
+    });
+  });
+
+  describe("Arabic and logical CSS", () => {
+    it("renders the mailbox form in Arabic with logical classes only", () => {
+      const arCopy = ar.notificationSettings.email;
+      const { container } = renderCard(EMAIL_SMTP_CONNECTED, ar);
+
+      expect(screen.getByLabelText(arCopy.presetLabel)).toBeInTheDocument();
+      expect(screen.getByLabelText(arCopy.usernameLabel)).toBeInTheDocument();
+      expect(screen.getByLabelText(arCopy.passwordLabel)).toBeInTheDocument();
+      expect(screen.getByText(arCopy.passwordSaved)).toBeInTheDocument();
+      expect(screen.getByRole("region", { name: arCopy.gmailHowToTitle })).toBeInTheDocument();
+      fireEvent.change(screen.getByLabelText(arCopy.presetLabel), { target: { value: "custom" } });
+      expect(screen.getByLabelText(arCopy.hostLabel)).toBeInTheDocument();
+      expect(screen.getByLabelText(arCopy.securityLabel)).toBeInTheDocument();
+
+      const classes = Array.from(container.querySelectorAll("[class]"))
+        .map((element) => element.getAttribute("class") ?? "")
+        .join(" ")
+        .split(/\s+/);
+      expect(classes.filter((cls) => /(^|:)(ml|mr|pl|pr|left|right)-/.test(cls))).toEqual([]);
+    });
+
+    it("has an Arabic string for every mailbox string", () => {
+      const keys = Object.keys(copy) as (keyof typeof copy)[];
+      const arCopy = ar.notificationSettings.email;
+      expect(Object.keys(arCopy).sort()).toEqual(keys.sort());
+      expect(Object.keys(arCopy.smtpErrors).sort()).toEqual(Object.keys(copy.smtpErrors).sort());
+    });
   });
 });

@@ -199,7 +199,7 @@ describe("email account actions", () => {
 
     expect(result).toEqual({ status: "success", snapshot: EMAIL_CONNECTED });
     expect(api.saveEmailConnection).toHaveBeenCalledWith(
-      { kind: "resend", fromEmail: "orders@shop.example", apiKey: KEY },
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: KEY, smtp: null, password: null },
       2,
       expect.any(String),
     );
@@ -218,13 +218,19 @@ describe("email account actions", () => {
 
     expect(api.saveEmailConnection).toHaveBeenNthCalledWith(
       1,
-      { kind: "resend", fromEmail: "orders@shop.example", apiKey: null },
+      {
+        kind: "resend",
+        fromEmail: "orders@shop.example",
+        apiKey: null,
+        smtp: null,
+        password: null,
+      },
       null,
       expect.any(String),
     );
     expect(api.saveEmailConnection).toHaveBeenNthCalledWith(
       2,
-      { kind: "resend", fromEmail: "a@shop.example", apiKey: null },
+      { kind: "resend", fromEmail: "a@shop.example", apiKey: null, smtp: null, password: null },
       4,
       expect.any(String),
     );
@@ -247,6 +253,13 @@ describe("email account actions", () => {
     ["a missing version", { kind: "resend", fromEmail: "a@shop.example" }],
     ["a version of zero", { ...save, expectedVersion: 0 }],
     ["a field that is not part of the call", { ...save, enabled: true }],
+    ["a mailbox with no server details", { ...save, kind: "smtp", apiKey: undefined }],
+    [
+      "a mailbox carrying an API key",
+      { ...save, kind: "smtp", smtp: { preset: "gmail", username: "a@gmail.com" } },
+    ],
+    ["Resend carrying a mailbox", { ...save, smtp: { preset: "gmail", username: "a@gmail.com" } }],
+    ["Resend carrying a password", { ...save, password: "abcdefgh" }],
   ])("refuses %s before it reaches the API (and never echoes the key)", async (_label, input) => {
     expect.hasAssertions();
     const result = await actions.saveEmailConnectionAction(input);
@@ -425,5 +438,155 @@ describe("the sender-domain actions are gone", () => {
   it("exports no sender-domain action", () => {
     expect.hasAssertions();
     expect(Object.keys(actions).filter((name) => /domain/i.test(name))).toEqual([]);
+  });
+});
+
+describe("mailbox (SMTP) account actions", () => {
+  const mailbox = {
+    kind: "smtp",
+    fromEmail: "Shop@Gmail.com",
+    smtp: { preset: "gmail", username: " shop@gmail.com " },
+    password: "abcd efgh ijkl mnop",
+    expectedVersion: null,
+  };
+  const PASSWORD = "abcd efgh ijkl mnop";
+
+  it("connects a Gmail mailbox: the preset, the user and the typed password; no server details", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_CONNECTED });
+    const result = await actions.saveEmailConnectionAction(mailbox);
+
+    expect(result).toEqual({ status: "success", snapshot: EMAIL_CONNECTED });
+    expect(api.saveEmailConnection).toHaveBeenCalledWith(
+      {
+        kind: "smtp",
+        fromEmail: "shop@gmail.com",
+        apiKey: null,
+        smtp: { preset: "gmail", username: "shop@gmail.com" },
+        password: PASSWORD,
+      },
+      null,
+      expect.any(String),
+    );
+    expect(refreshed()).toEqual(BOTH_PAGES);
+  });
+
+  it("a custom server sends its host, port and security; the host is lower-cased", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_CONNECTED });
+    await actions.saveEmailConnectionAction({
+      ...mailbox,
+      smtp: {
+        preset: "custom",
+        username: "mailer",
+        host: "Mail.Shop.Example",
+        port: 587,
+        security: "starttls",
+      },
+      password: null,
+      expectedVersion: 4,
+    });
+
+    expect(api.saveEmailConnection).toHaveBeenCalledWith(
+      {
+        kind: "smtp",
+        fromEmail: "shop@gmail.com",
+        apiKey: null,
+        smtp: {
+          preset: "custom",
+          username: "mailer",
+          host: "mail.shop.example",
+          port: 587,
+          security: "starttls",
+        },
+        password: null,
+      },
+      4,
+      expect.any(String),
+    );
+  });
+
+  it.each([
+    ["an unknown preset", { smtp: { preset: "yahoo", username: "a@y.com" } }],
+    ["no username", { smtp: { preset: "gmail", username: "  " } }],
+    ["a username with a line break", { smtp: { preset: "gmail", username: "a\r\nb" } }],
+    [
+      "server details on a preset",
+      { smtp: { preset: "gmail", username: "a@gmail.com", host: "smtp.evil.example" } },
+    ],
+    [
+      "a custom server with no host",
+      { smtp: { preset: "custom", username: "u", port: 587, security: "tls" } },
+    ],
+    [
+      "a custom server on port 22",
+      {
+        smtp: {
+          preset: "custom",
+          username: "u",
+          host: "mail.shop.example",
+          port: 22,
+          security: "tls",
+        },
+      },
+    ],
+    [
+      "a custom server on localhost",
+      { smtp: { preset: "custom", username: "u", host: "localhost", port: 465, security: "tls" } },
+    ],
+    [
+      "a custom server with no security",
+      { smtp: { preset: "custom", username: "u", host: "mail.shop.example", port: 465 } },
+    ],
+    ["a password that is not text", { password: 12345678 }],
+    ["an enormous password", { password: "x".repeat(300) }],
+    [
+      "an unknown field inside smtp",
+      { smtp: { preset: "gmail", username: "a@gmail.com", tls: true } },
+    ],
+  ])("refuses %s before it reaches the API, never echoing the password", async (_label, patch) => {
+    expect.hasAssertions();
+    const result = await actions.saveEmailConnectionAction({ ...mailbox, ...patch });
+
+    expect(result).toEqual({ status: "error", message: en.formErrors.invalid, fieldErrors: {} });
+    expect(JSON.stringify(result)).not.toContain("abcd");
+    expect(api.saveEmailConnection).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("maps the server's mailbox field issues to this page's sentences", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({
+      outcome: "invalid",
+      message: "Invalid email account",
+      fields: [
+        { field: "fromEmail", message: "must be the same address as the mailbox username" },
+        { field: "smtp.host", message: "must be a mail server name like smtp.example.com" },
+        { field: "smtp.port", message: "must be 25, 465, 587 or 2525" },
+        { field: "smtp.username", message: "must not be empty" },
+        { field: "password", message: `doesn't look like a valid password ${PASSWORD}` },
+      ],
+    });
+    const result = await actions.saveEmailConnectionAction(mailbox);
+
+    expect(result).toEqual({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: {
+        fromEmail: copy.email.fromMustMatch,
+        "smtp.host": copy.email.hostInvalid,
+        "smtp.port": copy.email.portInvalid,
+        "smtp.username": copy.email.usernameInvalid,
+        password: copy.email.passwordInvalid,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("abcd");
+  });
+
+  it("503 is 'not available' (the SMTP switch is off): the same answer as for Resend", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "error", status: 503, message: "x" });
+    expect(await actions.saveEmailConnectionAction(mailbox)).toEqual({ status: "unavailable" });
+    expect(refreshed()).toEqual(BOTH_PAGES);
   });
 });

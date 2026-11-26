@@ -16,14 +16,18 @@ import type { MutationResult } from "@/lib/api/client";
 import { newIdempotencyKey, toFormState } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import {
+  CUSTOM_SMTP_PORTS,
   isEmailConnectionKind,
   isPlausibleEmail,
+  isSmtpPresetId,
+  isSmtpSecurity,
   isTemplateKey,
   isTemplateLocale,
   normalizeEmail,
   type EmailConnectionActionResult,
   type EmailConnectionKind,
   type EmailConnectionSnapshot,
+  type EmailSaveSmtp,
   type NotificationSettingsPatch,
   type NotificationSettingsSaveResult,
   type PreviewActionResult,
@@ -127,38 +131,82 @@ function refreshEmailConnection(): void {
 export interface EmailSaveInput {
   readonly kind: EmailConnectionKind;
   readonly fromEmail: string;
-  /** null = keep the stored key. */
+  /** Resend: null = keep the stored key. */
   readonly apiKey: string | null;
+  /** Mailbox only. */
+  readonly smtp: EmailSaveSmtp | null;
+  /** Mailbox only: null = keep the stored password. */
+  readonly password: string | null;
   readonly expectedVersion: number | null;
 }
 
 const MAX_KEY_LENGTH = 256;
+const MAX_HOST_LENGTH = 253;
+const MAX_USERNAME_LENGTH = 254;
+const SAVE_FIELDS = ["kind", "fromEmail", "apiKey", "smtp", "password", "expectedVersion"];
+const SMTP_FIELDS = ["preset", "username", "host", "port", "security"];
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001F\u007F]/;
+
+/** The mailbox part of a save: a known preset, a plain username and, for "other", a real server. */
+function parseSmtp(input: unknown): EmailSaveSmtp | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  for (const field of Object.keys(raw)) if (!SMTP_FIELDS.includes(field)) return null;
+  const { preset, username, host, port, security } = raw;
+  if (!isSmtpPresetId(preset) || typeof username !== "string") return null;
+  const user = username.trim();
+  if (user === "" || user.length > MAX_USERNAME_LENGTH || CONTROL.test(user) || /\s/.test(user)) {
+    return null;
+  }
+  if (preset !== "custom") {
+    // A preset decides the server: details for one are not accepted at all.
+    return host === undefined && port === undefined && security === undefined
+      ? { preset, username: user }
+      : null;
+  }
+  if (typeof host !== "string" || typeof port !== "number" || !isSmtpSecurity(security))
+    return null;
+  const name = host.trim().toLowerCase();
+  if (name.length > MAX_HOST_LENGTH || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(name)) return null;
+  if (!CUSTOM_SMTP_PORTS.includes(port)) return null;
+  return { preset, username: user, host: name, port, security };
+}
 
 /**
- * A client call is untrusted: only the four known fields, a known provider, a plausible From
- * address and a version the page really had are let through. A blank key means "keep the stored
- * one". The key is never echoed into an error.
+ * A client call is untrusted: only the known fields, a known provider, a plausible From address
+ * and a version the page really had are let through. A blank secret means "keep the stored one".
+ * The key or password is never echoed into an error.
  */
 export function parseEmailSave(input: unknown): EmailSaveInput | null {
   if (typeof input !== "object" || input === null) return null;
   const raw = input as Record<string, unknown>;
-  for (const field of Object.keys(raw)) {
-    if (!["kind", "fromEmail", "apiKey", "expectedVersion"].includes(field)) return null;
-  }
-  const { kind, fromEmail, apiKey, expectedVersion } = raw;
+  for (const field of Object.keys(raw)) if (!SAVE_FIELDS.includes(field)) return null;
+  const { kind, fromEmail, apiKey, smtp, password, expectedVersion } = raw;
   if (!isEmailConnectionKind(kind)) return null;
   if (typeof fromEmail !== "string" || !isPlausibleEmail(fromEmail)) return null;
-  if (apiKey !== undefined && apiKey !== null && typeof apiKey !== "string") return null;
-  const key = typeof apiKey === "string" ? apiKey.trim() : "";
-  if (key.length > MAX_KEY_LENGTH) return null;
   const version = parseVersion(expectedVersion);
   if (version === undefined) return null;
-  return {
-    kind,
-    fromEmail: normalizeEmail(fromEmail),
-    apiKey: key === "" ? null : key,
-    expectedVersion: version,
+  const secret = (value: unknown): string | null | undefined => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== "string") return undefined;
+    const text = value.trim();
+    return text.length > MAX_KEY_LENGTH ? undefined : text === "" ? null : text;
   };
+  const base = { kind, fromEmail: normalizeEmail(fromEmail), expectedVersion: version };
+  if (kind === "smtp") {
+    // A mailbox has a password and a server, never an API key.
+    const parsedSmtp = parseSmtp(smtp);
+    const parsedPassword = secret(password);
+    if (parsedSmtp === null || parsedPassword === undefined) return null;
+    if (apiKey !== undefined && apiKey !== null && apiKey !== "") return null;
+    return { ...base, apiKey: null, smtp: parsedSmtp, password: parsedPassword };
+  }
+  if (smtp !== undefined && smtp !== null) return null;
+  if (password !== undefined && password !== null && password !== "") return null;
+  const parsedKey = secret(apiKey);
+  if (parsedKey === undefined) return null;
+  return { ...base, apiKey: parsedKey, smtp: null, password: null };
 }
 
 function parseVersion(value: unknown): number | null | undefined {
@@ -182,9 +230,20 @@ function emailOutcome(
       if (result.status === 429) return { status: "rate_limited" };
       return { status: "error", message: dictionary.formErrors.unexpected, fieldErrors: {} };
     default: {
-      const refused = failure(result, dictionary, (field) => {
-        if (field === "fromEmail") return copy.email.fromInvalid;
+      const refused = failure(result, dictionary, (field, message) => {
+        if (field === "fromEmail") {
+          return message.includes("same address")
+            ? copy.email.fromMustMatch
+            : copy.email.fromInvalid;
+        }
         if (field === "apiKey") return copy.email.keyInvalid;
+        if (field === "password") return copy.email.passwordInvalid;
+        if (field === "smtp.username") return copy.email.usernameInvalid;
+        if (field === "smtp.host") return copy.email.hostInvalid;
+        if (field === "smtp.port") return copy.email.portInvalid;
+        if (field === "smtp.security" || field === "smtp.preset" || field === "smtp") {
+          return copy.email.presetInvalid;
+        }
         if (field === "kind") return copy.email.kindInvalid;
         if (field === "actor") return copy.email.noAddress;
         return undefined;
@@ -208,7 +267,13 @@ export async function runEmailSave(
   const parsed = parseEmailSave(input);
   if (parsed === null) return invalidEmailInput(dictionary);
   const result = await saveEmailConnection(
-    { kind: parsed.kind, fromEmail: parsed.fromEmail, apiKey: parsed.apiKey },
+    {
+      kind: parsed.kind,
+      fromEmail: parsed.fromEmail,
+      apiKey: parsed.apiKey,
+      smtp: parsed.smtp,
+      password: parsed.password,
+    },
     parsed.expectedVersion,
     newIdempotencyKey(),
   );

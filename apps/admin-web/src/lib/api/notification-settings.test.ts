@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EMAIL_CONNECTED,
+  EMAIL_SMTP_CONNECTED,
+  EMAIL_SMTP_FAILED,
   EMAIL_FAILED,
   EMAIL_NONE,
   SETTINGS,
@@ -270,6 +272,92 @@ describe("writes", () => {
       fromEmail: "orders@shop.example",
       expectedVersion: null,
     });
+  });
+
+  it("sends a mailbox as preset + username + write-only password; no API key", async () => {
+    expect.hasAssertions();
+    const fetchMock = stubFetch(jsonResponse(200, EMAIL_SMTP_CONNECTED));
+
+    const result = await api.saveEmailConnection(
+      {
+        kind: "smtp",
+        fromEmail: "shop@gmail.com",
+        apiKey: null,
+        smtp: { preset: "gmail", username: "shop@gmail.com" },
+        password: "abcdefghijklmnop",
+      },
+      null,
+      "key-smtp",
+    );
+
+    expect(result).toEqual({ outcome: "ok", data: EMAIL_SMTP_CONNECTED });
+    expect(request(fetchMock).body).toEqual({
+      kind: "smtp",
+      fromEmail: "shop@gmail.com",
+      smtp: { preset: "gmail", username: "shop@gmail.com" },
+      password: "abcdefghijklmnop",
+      expectedVersion: null,
+    });
+  });
+
+  it("leaves the password out when it is kept, and sends a custom server's details", async () => {
+    expect.hasAssertions();
+    const fetchMock = stubFetch(jsonResponse(200, EMAIL_SMTP_CONNECTED));
+
+    await api.saveEmailConnection(
+      {
+        kind: "smtp",
+        fromEmail: "orders@shop.example",
+        apiKey: null,
+        smtp: {
+          preset: "custom",
+          username: "mailer",
+          host: "mail.shop.example",
+          port: 587,
+          security: "starttls",
+        },
+        password: null,
+      },
+      4,
+      "key-smtp-2",
+    );
+
+    expect(request(fetchMock).body).toEqual({
+      kind: "smtp",
+      fromEmail: "orders@shop.example",
+      smtp: {
+        preset: "custom",
+        username: "mailer",
+        host: "mail.shop.example",
+        port: 587,
+        security: "starttls",
+      },
+      expectedVersion: 4,
+    });
+  });
+
+  it("reads smtpAvailable, the mailbox's server and its fixed failure code", async () => {
+    expect.hasAssertions();
+    stubFetch(jsonResponse(200, EMAIL_SMTP_FAILED));
+    expect(await api.fetchEmailConnection()).toEqual({
+      outcome: "ok",
+      emailConnection: EMAIL_SMTP_FAILED,
+    });
+
+    const connection = EMAIL_SMTP_CONNECTED.connection;
+    for (const bad of [
+      { ...EMAIL_SMTP_CONNECTED, smtpAvailable: undefined },
+      { ...EMAIL_SMTP_CONNECTED, connection: { ...connection, lastErrorCode: "SOMETHING_ELSE" } },
+      { ...EMAIL_SMTP_CONNECTED, connection: { ...connection, smtp: { preset: "yahoo" } } },
+      {
+        ...EMAIL_SMTP_CONNECTED,
+        connection: { ...connection, smtp: { ...connection?.smtp, security: "none" } },
+      },
+      { ...EMAIL_SMTP_CONNECTED, connection: { ...connection, smtp: undefined } },
+    ]) {
+      stubFetch(jsonResponse(200, bad));
+      expect((await api.fetchEmailConnection()).outcome, JSON.stringify(bad)).toBe("error");
+    }
   });
 
   it("switches, tests and disconnects on the committed paths", async () => {
