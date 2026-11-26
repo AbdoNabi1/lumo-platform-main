@@ -21,6 +21,7 @@ import {
   addressRuleIssues,
   addressRulesFor,
   cartLineLimitIssue,
+  DEFAULT_CHECKOUT_SETTINGS,
   normalizeAddressInput,
 } from "../domain/checkout-settings";
 import type { CheckoutSettingsRepository } from "../domain/checkout-settings-repository";
@@ -226,6 +227,16 @@ export interface SetContactEmailInput {
   readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly email: string;
+  /**
+   * Wave 2a: the shopper's answer to "email me news and offers". Kept only while the shop's
+   * `marketingEmailPrompt` is not `hidden`; otherwise ignored (never stored). Absent = no answer sent.
+   */
+  readonly marketingOptIn?: boolean;
+}
+
+export interface SetContactEmailDeps extends CheckoutDetailsDeps {
+  /** Wave 2a: absent => the prompt is treated as hidden (today's behaviour), so the answer is ignored. */
+  readonly settings?: CheckoutSettingsRepository;
 }
 
 /**
@@ -237,9 +248,9 @@ export class SetContactEmail implements UseCase<
   CheckoutDetailsOutput,
   DomainError
 > {
-  private readonly deps: CheckoutDetailsDeps;
+  private readonly deps: SetContactEmailDeps;
 
-  constructor(deps: CheckoutDetailsDeps) {
+  constructor(deps: SetContactEmailDeps) {
     this.deps = deps;
   }
 
@@ -247,14 +258,25 @@ export class SetContactEmail implements UseCase<
     const email = ContactEmail.create(input.email);
     if (!email.ok) return err(email.error);
 
-    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
+    const { settings, sessions, unitOfWork } = this.deps;
+    return unitOfWork.run<Result<CheckoutDetailsOutput, DomainError>>(async (tx) => {
+      const session = await sessions.findById(input.checkoutSessionId, input.tenantId, tx);
+      if (session === null) return err(new NotFoundError("Checkout session not found"));
       try {
         session.setContactEmail(email.value);
-        return ok(undefined);
+        // Only a shop that SHOWS the box keeps the answer; a hidden prompt (or no settings row, whose
+        // default is hidden) drops it, so a forged field cannot create a consent nobody was asked for.
+        if (input.marketingOptIn !== undefined && settings !== undefined) {
+          const row = await settings.find(input.tenantId, tx);
+          const prompt = (row?.values ?? DEFAULT_CHECKOUT_SETTINGS).marketingEmailPrompt;
+          if (prompt !== "hidden") session.setMarketingOptIn(input.marketingOptIn);
+        }
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
+      await sessions.save(session, input.tenantId, tx);
+      return ok({ checkoutSessionId: session.id.toString() });
     });
   }
 }

@@ -87,6 +87,7 @@ export class PrismaCheckoutSessionRepository
         data: {
           customerRef: row.customerRef,
           contactEmail: row.contactEmail,
+          marketingOptIn: row.marketingOptIn,
           state: row.state,
           orderRef: row.orderRef,
           items: row.items,

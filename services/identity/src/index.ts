@@ -108,6 +108,14 @@ export type {
   ChangeMarketingConsentInput,
   ChangeMarketingConsentOutput,
 } from "./application/change-marketing-consent.use-case";
+export {
+  RecordShopperMarketingConsent,
+  SHOPPER_CHECKOUT_CONSENT_SOURCE,
+} from "./application/record-shopper-marketing-consent.use-case";
+export type {
+  RecordShopperMarketingConsentInput,
+  RecordShopperMarketingConsentOutput,
+} from "./application/record-shopper-marketing-consent.use-case";
 export { GetCustomerAnnotations } from "./application/get-customer-annotations.use-case";
 export type {
   CustomerAnnotationsItem,

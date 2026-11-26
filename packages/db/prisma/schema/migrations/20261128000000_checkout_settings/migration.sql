@@ -37,3 +37,6 @@ CREATE POLICY tenant_isolation ON "checkout"."checkout_settings" FOR ALL
   WITH CHECK (tenant_id = current_setting('app.tenant_id', true));
 
 ALTER TABLE "checkout"."checkout_sessions" ADD COLUMN "marketing_opt_in" BOOLEAN;
+
+-- Shopper marketing consent at checkout: who made the choice (null = staff / older rows).
+ALTER TABLE "identity"."consent_records" ADD COLUMN "source" TEXT;

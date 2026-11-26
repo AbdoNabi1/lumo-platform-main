@@ -5,6 +5,7 @@ import {
   DEFAULT_CHECKOUT_SETTINGS,
   type CheckoutSettingsValues,
 } from "../domain/checkout-settings";
+import { UpdateCheckoutSettings } from "../application/checkout-settings.use-cases";
 import { InMemoryCheckoutSettingsRepository } from "./in-memory-checkout-settings-repository";
 import { PrismaCheckoutSettingsRepository } from "./prisma-checkout-settings-repository";
 
@@ -100,6 +101,76 @@ describe("PrismaCheckoutSettingsRepository (no database)", () => {
     await expect(
       repo().save("t-1", DEFAULT_CHECKOUT_SETTINGS, null, client),
     ).rejects.toBeInstanceOf(ConcurrencyError);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("a fake Prisma unique-violation error (a real PrismaClientKnownRequestError shape) is a ConcurrencyError", async () => {
+    const { client } = fakeClient();
+    const prismaError = Object.assign(
+      new Error("Unique constraint failed on the fields: (`tenant_id`)"),
+      {
+        code: "P2002",
+        meta: { target: ["tenant_id"] },
+      },
+    );
+    (client as unknown as { checkoutSettings: { create: unknown } }).checkoutSettings.create =
+      vi.fn(() => Promise.reject(prismaError));
+    const error = await repo()
+      .save("t-1", values, null, client)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConcurrencyError);
+    expect((error as ConcurrencyError).cause).toBe(prismaError);
+    // Anything else is not a race and stays what it was.
+    const other = new Error("connection reset");
+    (client as unknown as { checkoutSettings: { create: unknown } }).checkoutSettings.create =
+      vi.fn(() => Promise.reject(other));
+    await expect(repo().save("t-1", values, null, client)).rejects.toBe(other);
+  });
+
+  it("two concurrent FIRST saves through the use case: the loser is a CONFLICT (409), not a failed commit (500)", async () => {
+    // Postgres semantics in miniature: once the insert fails the transaction is aborted, and a unit of
+    // work that lets its callback RETURN afterwards fails on COMMIT. Only an error leaving the
+    // callback (a rollback) is survivable.
+    const { client, rows } = fakeClient();
+    const create = (
+      client as unknown as { checkoutSettings: { create: (a: unknown) => Promise<unknown> } }
+    ).checkoutSettings.create;
+    let aborted = false;
+    (client as unknown as { checkoutSettings: { create: unknown } }).checkoutSettings.create =
+      vi.fn(async (args: unknown) => {
+        try {
+          return await create(args);
+        } catch (error) {
+          aborted = true;
+          throw error;
+        }
+      });
+    const unitOfWork = {
+      run: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => {
+        aborted = false;
+        const value = await work(client);
+        if (aborted) throw new Error("25P02: cannot COMMIT an aborted transaction");
+        return value;
+      },
+    };
+    const update = new UpdateCheckoutSettings({ settings: repo(), unitOfWork });
+    const input = { tenantId: "t-1", expectedVersion: null, values };
+
+    const first = await update.execute(input);
+    // The second page loaded before the first save committed, so it saw no row either: its own
+    // up-front version check passes and the INSERT is what loses.
+    const findNone = vi
+      .spyOn(PrismaCheckoutSettingsRepository.prototype, "find")
+      .mockResolvedValueOnce(null);
+    const second = await update.execute(input);
+    findNone.mockRestore();
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.error.code).toBe("CONFLICT");
+      expect(second.error.message).toBe("These settings were changed by someone else");
+    }
     expect(rows).toHaveLength(1);
   });
 

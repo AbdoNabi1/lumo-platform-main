@@ -91,7 +91,9 @@ export class OrderCreationAdapter implements OrderCreationPort {
     this.customers = customers;
   }
 
-  async create(input: OrderCreationInput): Promise<{ readonly orderRef: string }> {
+  async create(
+    input: OrderCreationInput,
+  ): Promise<{ readonly orderRef: string; readonly customerRef: string }> {
     const customerRef = input.customerRef ?? (await this.resolveGuestCustomerRef(input));
 
     const response = await this.orders.createFromCheckout({
@@ -179,7 +181,9 @@ export class OrderCreationAdapter implements OrderCreationPort {
     }
 
     const { orderId } = response.body as CreateFromCheckoutBody;
-    return { orderRef: orderId };
+    // Wave 2a: the customer the order was placed for, so Checkout can attach the shopper's marketing
+    // consent to them (a signed-in customer, or the guest customer resolved from the contact email).
+    return { orderRef: orderId, customerRef };
   }
 
   /**

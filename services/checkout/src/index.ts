@@ -30,6 +30,7 @@ export type {
   PricingValidationResult,
   PromotionValidationPort,
   PromotionValidationResult,
+  ShopperMarketingConsentPort,
   ShippingCalculationPort,
   ShippingQuote,
   TaxCalculationPort,

@@ -200,7 +200,26 @@ export interface OrderCreationPort {
     /** Phase 2: the discounts the shopper got, as shown at checkout; absent when none. */
     readonly discounts?: readonly AppliedDiscountSnapshot[];
     readonly idempotencyKey: string;
-  }): Promise<{ readonly orderRef: string }>;
+  }): Promise<{
+    readonly orderRef: string;
+    /**
+     * Wave 2a: the Identity customer the order was placed for (the signed-in customer, or the guest
+     * customer resolved from the contact email). Absent when the implementation has none to name.
+     */
+    readonly customerRef?: string;
+  }>;
+}
+
+/**
+ * Wave 2a: records that the shopper ticked "email me news and offers" at checkout. Identity owns the
+ * consent; Checkout only says WHO agreed (the order's customer) and in WHICH checkout.
+ */
+export interface ShopperMarketingConsentPort {
+  record(input: {
+    readonly tenantId: string;
+    readonly customerRef: string;
+    readonly checkoutSessionId: string;
+  }): Promise<void>;
 }
 
 /**

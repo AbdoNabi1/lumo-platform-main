@@ -58,7 +58,14 @@ const addressBody = z.object({
  * a body carrying `customerRef` (or anything else) is a spoof attempt, not a typo. The email only
  * ever feeds Identity's find-or-create at completion; it never confers access to a customer.
  */
-const contactBody = z.object({ sessionRef: z.string().min(1), email: z.string().min(1) }).strict();
+const contactBody = z
+  .object({
+    sessionRef: z.string().min(1),
+    email: z.string().min(1),
+    /** Wave 2a: the marketing box. Kept only while the shop shows the prompt; otherwise ignored. */
+    marketingOptIn: z.boolean().optional(),
+  })
+  .strict();
 /** Mirrors `checkout-routes.ts`'s Phase A.1 F-01 fix: the caller supplies only `method`, never a rate — `SelectShipping` re-derives the authoritative rate itself. */
 const shippingSelectionBody = z
   .object({ sessionRef: z.string().min(1), method: z.string().min(1) })
@@ -574,6 +581,7 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           email: body.email,
+          ...(body.marketingOptIn === undefined ? {} : { marketingOptIn: body.marketingOptIn }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(

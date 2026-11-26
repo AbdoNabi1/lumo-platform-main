@@ -1041,6 +1041,21 @@ describe("checkout settings (20261128000000)", () => {
     expect(statement![1]!.trim()).toBe("BOOLEAN");
   });
 
+  it("adds the nullable source column to identity.consent_records (who made the choice), nothing else", () => {
+    expect([...columnsEverAddedTo("identity", "consent_records", readSql())]).toEqual(["source"]);
+    const statement = /ALTER TABLE "identity"\."consent_records" ADD COLUMN "source"([^;]*);/.exec(
+      readSql(),
+    );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("TEXT");
+    const identity = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "identity.prisma"),
+      "utf-8",
+    );
+    const model = /model ConsentRecord \{([\s\S]*?)\n\}/.exec(identity)?.[1] ?? "";
+    expect(model).toMatch(/source\s+String\?/);
+  });
+
   it("is purely additive", () => {
     expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
     expect(code()).not.toMatch(/ALTER COLUMN/);

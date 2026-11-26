@@ -5,6 +5,8 @@ interface ConsentRecordProps {
   readonly scope: ConsentScope;
   readonly granted: boolean;
   readonly occurredAt: Date;
+  /** Where the choice came from (`shopper/checkout`); absent on staff assertions and older rows. */
+  readonly source: string | undefined;
 }
 
 /**
@@ -17,8 +19,9 @@ export class ConsentRecord extends Entity<ConsentRecordProps> {
     scope: ConsentScope,
     granted: boolean,
     occurredAt: Date,
+    source?: string,
   ): ConsentRecord {
-    return new ConsentRecord({ scope, granted, occurredAt }, id);
+    return new ConsentRecord({ scope, granted, occurredAt, source }, id);
   }
 
   get scope(): ConsentScope {
@@ -31,5 +34,9 @@ export class ConsentRecord extends Entity<ConsentRecordProps> {
 
   get occurredAt(): Date {
     return this.props.occurredAt;
+  }
+
+  get source(): string | undefined {
+    return this.props.source;
   }
 }

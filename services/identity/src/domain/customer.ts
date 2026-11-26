@@ -164,12 +164,13 @@ export class Customer extends AggregateRoot<CustomerProps> {
     granted: boolean,
     eventId: string,
     occurredAt: Date,
+    source?: string,
   ): void {
-    this.props.consents.push(ConsentRecord.create(consentId, scope, granted, occurredAt));
+    this.props.consents.push(ConsentRecord.create(consentId, scope, granted, occurredAt, source));
     this.addDomainEvent(
       new ConsentChanged(
         { eventId, aggregateId: this.id, occurredAt },
-        { scope: scope.value, granted },
+        { scope: scope.value, granted, ...(source === undefined ? {} : { source }) },
       ),
     );
   }

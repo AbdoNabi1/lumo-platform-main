@@ -199,7 +199,10 @@ describe("checkout and customer-account settings, enforced through the real HTTP
     );
     const base = `/public/checkouts/${started.id}`;
     ok(await post(`${base}/items`, h, { sessionRef, cartId: cart.id }), "load items");
-    const finish = async (shipping: Record<string, string> = {}) => {
+    const finish = async (
+      shipping: Record<string, string> = {},
+      contact: { email?: string; marketingOptIn?: boolean } = {},
+    ) => {
       ok(await post(`${base}/billing-address`, h, { sessionRef, ...address }), "billing");
       ok(
         await post(`${base}/shipping-address`, h, { sessionRef, ...address, ...shipping }),
@@ -214,12 +217,17 @@ describe("checkout and customer-account settings, enforced through the real HTTP
         }),
         "payment",
       );
-      ok(await post(`${base}/contact`, h, { sessionRef, email: "shopper@example.com" }), "contact");
+      ok(
+        await post(`${base}/contact`, h, { sessionRef, email: "shopper@example.com", ...contact }),
+        "contact",
+      );
       ok(await post(`${base}/recalculate`, h, { sessionRef }), "recalculate");
     };
     return {
       cart,
       checkoutId: started.id,
+      contact: (body: Record<string, unknown>) =>
+        post(`${base}/contact`, h, { sessionRef, email: "shopper@example.com", ...body }),
       shipTo: (shipping: Record<string, string>) =>
         post(`${base}/shipping-address`, h, { sessionRef, ...address, ...shipping }),
       finish,
@@ -684,6 +692,99 @@ describe("checkout and customer-account settings, enforced through the real HTTP
         field: "requireLogin",
         message: "Customer accounts must be on to require login",
       });
+    });
+  });
+
+  describe("marketing opt-in at checkout (D35, server side)", () => {
+    const shopper = { name: "Mona Ali", phone: "01012345678" };
+
+    beforeEach(async () => {
+      await seedProduct("tok-a");
+    });
+
+    /** Whether the shop's customer with this email currently agrees to marketing email (staff view). */
+    async function agrees(token: string, email: string): Promise<boolean | undefined> {
+      const page = ok<{ items: { email: string; emailMarketing: boolean }[] }>(
+        await get("/customers/export-rows?limit=50", admin(token)),
+        "customers",
+      );
+      return page.items.find((row) => row.email === email)?.emailMarketing;
+    }
+
+    it("prompt shown and ticked: completing the order records the shopper's marketing consent", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "show" }, null);
+      const checkout = await startedCheckout("tenant-a", "s-ticked");
+      await checkout.finish(shopper, { marketingOptIn: true });
+      expect(await agrees("tok-a", "shopper@example.com")).toBeUndefined(); // nobody yet
+      expect((await checkout.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(true);
+    });
+
+    it("prompt preselect: a ticked box is recorded the same way", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "preselect" }, null);
+      const checkout = await startedCheckout("tenant-a", "s-pre");
+      await checkout.finish(shopper, { marketingOptIn: true });
+      expect((await checkout.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(true);
+    });
+
+    it("prompt shown but unticked, or never answered: the order completes and nothing is recorded", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "show" }, null);
+      const unticked = await startedCheckout("tenant-a", "s-unticked");
+      await unticked.finish(shopper, { marketingOptIn: false });
+      expect((await unticked.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(false);
+      const silent = await startedCheckout("tenant-a", "s-silent");
+      await silent.finish(shopper);
+      expect((await silent.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(false);
+    });
+
+    it("prompt hidden (the DEFAULT, no settings row): a sent marketingOptIn is ignored and nothing is recorded", async () => {
+      const checkout = await startedCheckout("tenant-a", "s-hidden");
+      await checkout.finish(shopper, { marketingOptIn: true });
+      expect((await checkout.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(false);
+    });
+
+    it("prompt saved as hidden: a forged marketingOptIn is ignored too", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "hidden" }, null);
+      const checkout = await startedCheckout("tenant-a", "s-forged");
+      await checkout.finish(shopper, { marketingOptIn: true });
+      expect((await checkout.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(false);
+    });
+
+    it("a signed-in customer checks out with their account email: the consent lands on THEIR account", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "show" }, null);
+      const session = await registerAndLogin("tenant-a", "sara@example.com");
+      const checkout = await startedCheckout("tenant-a", "s-member-mkt", 1, {
+        "x-customer-session": session,
+      });
+      await checkout.finish(shopper, { email: "sara@example.com", marketingOptIn: true });
+      const done = await post(
+        `/public/checkouts/${checkout.checkoutId}/complete`,
+        storefront("tenant-a", { "x-customer-session": session }),
+        { sessionRef: "s-member-mkt", idempotencyKey: "idem-member-mkt" },
+      );
+      expect(done.statusCode).toBe(200);
+      expect(await agrees("tok-a", "sara@example.com")).toBe(true);
+    });
+
+    it("another shop's prompt does not apply to this shop", async () => {
+      await saveSettings("tok-b", { marketingEmailPrompt: "show" }, null);
+      const checkout = await startedCheckout("tenant-a", "s-other-shop-mkt");
+      await checkout.finish(shopper, { marketingOptIn: true });
+      expect((await checkout.complete()).statusCode).toBe(200);
+      expect(await agrees("tok-a", "shopper@example.com")).toBe(false);
+    });
+
+    it("the contact body stays strict: marketingOptIn must be a boolean, and unknown keys are refused", async () => {
+      await saveSettings("tok-a", { marketingEmailPrompt: "show" }, null);
+      const checkout = await startedCheckout("tenant-a", "s-strict");
+      expect((await checkout.contact({ marketingOptIn: "yes" })).statusCode).toBe(422);
+      expect((await checkout.contact({ customerRef: "someone-else" })).statusCode).toBe(422);
+      expect((await checkout.contact({ marketingOptIn: true })).statusCode).toBe(200);
     });
   });
 });

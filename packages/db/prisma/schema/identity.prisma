@@ -99,6 +99,8 @@ model ConsentRecord {
   scope      String // marketing (email) | marketing_sms | analytics | data_sharing (domain-enforced)
   granted    Boolean
   occurredAt DateTime @map("occurred_at")
+  /// Who made the choice when it was the shopper themselves ("shopper/checkout"); null = staff / older rows.
+  source     String?
 
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 

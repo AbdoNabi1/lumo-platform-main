@@ -73,24 +73,29 @@ export class UpdateCheckoutSettings implements UseCase<
     const values = validateCheckoutSettings(input.values);
     if (!values.ok) return err(values.error);
 
-    return this.deps.unitOfWork.run<Result<CheckoutSettingsOutput, DomainError>>(async (tx) => {
-      const stored = await this.deps.settings.find(input.tenantId, tx);
-      if ((stored?.version ?? null) !== input.expectedVersion) {
-        return err(new ConflictError(SETTINGS_STALE_MESSAGE));
-      }
-      try {
-        const version = await this.deps.settings.save(
-          input.tenantId,
-          values.value,
-          input.expectedVersion,
-          tx,
-        );
-        return ok({ values: values.value, version });
-      } catch (error) {
-        if (error instanceof ConcurrencyError)
-          return err(new ConflictError(SETTINGS_STALE_MESSAGE));
-        throw error;
-      }
-    });
+    // The race (a unique violation on a second first save, or a version that moved) is mapped
+    // OUTSIDE the unit of work, never swallowed inside it: on Postgres the failed insert has already
+    // aborted the transaction, so returning normally would make the unit of work try to COMMIT an
+    // aborted transaction and answer 500. Letting the error leave the callback rolls it back first.
+    try {
+      return await this.deps.unitOfWork.run<Result<CheckoutSettingsOutput, DomainError>>(
+        async (tx) => {
+          const stored = await this.deps.settings.find(input.tenantId, tx);
+          if ((stored?.version ?? null) !== input.expectedVersion) {
+            return err(new ConflictError(SETTINGS_STALE_MESSAGE));
+          }
+          const version = await this.deps.settings.save(
+            input.tenantId,
+            values.value,
+            input.expectedVersion,
+            tx,
+          );
+          return ok({ values: values.value, version });
+        },
+      );
+    } catch (error) {
+      if (error instanceof ConcurrencyError) return err(new ConflictError(SETTINGS_STALE_MESSAGE));
+      throw error;
+    }
   }
 }

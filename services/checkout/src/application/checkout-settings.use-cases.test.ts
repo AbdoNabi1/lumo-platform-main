@@ -100,6 +100,31 @@ describe("UpdateCheckoutSettings", () => {
     expect(result.error.message).toBe("These settings were changed by someone else");
   });
 
+  it("the race leaves the unit of work as an error (so a Postgres transaction rolls back), mapped outside it", async () => {
+    const settings = new InMemoryCheckoutSettingsRepository();
+    settings.save = () => Promise.reject(new ConcurrencyError("raced"));
+    let callbackOutcome: "returned" | "threw" | "pending" = "pending";
+    const unitOfWork = {
+      run: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => {
+        try {
+          const value = await work({});
+          callbackOutcome = "returned";
+          return value;
+        } catch (error) {
+          callbackOutcome = "threw";
+          throw error;
+        }
+      },
+    };
+    const update = new UpdateCheckoutSettings({ settings, unitOfWork });
+
+    const result = await update.execute({ tenantId: "t1", expectedVersion: null, values: changed });
+
+    expect(callbackOutcome).toBe("threw");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("CONFLICT");
+  });
+
   it("an invalid document is a VALIDATION error naming the field, and nothing is saved", async () => {
     const { update, get } = setup();
     const result = await update.execute({

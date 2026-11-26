@@ -16,6 +16,7 @@ import {
   type OrderCancellationPort as CheckoutOrderCancellationPort,
   type OrderStockReservationPort as CheckoutStockReservationPort,
   type OrderCreationPort,
+  type ShopperMarketingConsentPort,
   type PaymentInitiationPort,
   type PaymentMethodPort,
   type PricingValidationPort,
@@ -150,6 +151,7 @@ import {
 import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-store-link-targets.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
+import { ShopperMarketingConsentAdapter } from "./infrastructure/cross-context/shopper-marketing-consent.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { PrismaStaffDirectoryAdapter } from "./infrastructure/cross-context/staff-directory.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
@@ -524,6 +526,8 @@ export interface AdminWiringDeps {
    * 5 orchestration ports above do.
    */
   readonly orderCreation?: OrderCreationPort;
+  /** Wave 2a: overrides the Identity-backed recording of the shopper's marketing opt-in (tests). */
+  readonly marketingConsent?: ShopperMarketingConsentPort;
   /** WP-13: overrides for the checkout-to-Payments seams (tests). Absent ⇒ the real adapters over Payments. */
   readonly paymentMethods?: PaymentMethodPort;
   readonly paymentInitiation?: PaymentInitiationPort;
@@ -1169,6 +1173,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     draftCompletion: deps.draftCompletion ?? new DraftOrderCompletionAdapter(orders.orders),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
+    // Wave 2a: a ticked marketing box becomes a `shopper/checkout` consent record in Identity.
+    marketingConsent:
+      deps.marketingConsent ?? new ShopperMarketingConsentAdapter(identity.customers),
     // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
     // RequestFulfillment uses later (so that later call finds the reservation and adds none), with the
     // real release (G-130) and Orders' own cancellation behind it. Both read the REAL order, so they are
