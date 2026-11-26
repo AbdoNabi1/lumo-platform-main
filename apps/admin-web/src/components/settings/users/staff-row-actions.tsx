@@ -11,12 +11,16 @@ import {
 import type { StaffMemberView } from "@/lib/staff/roles";
 import type { Dictionary } from "@/messages/en";
 
-export type RowAction = "role" | "deactivate" | "reactivate" | "resend" | "revoke";
+export type RowAction = "role" | "reset" | "deactivate" | "reactivate" | "resend" | "revoke";
 
-/** Which actions a row offers. The owner and the signed-in member offer none (the server refuses them anyway). */
+/**
+ * Which actions a row offers. The owner and the signed-in member offer none (the server refuses them
+ * anyway). Wave 1f: "Reset two-step" is for someone who has two-step on and is not a pending invitee.
+ */
 export function rowActionsOf(member: StaffMemberView): readonly RowAction[] {
   if (member.isOwner || member.isSelf) return [];
   const actions: RowAction[] = ["role"];
+  if (member.twoStep && member.invitation === null) actions.push("reset");
   if (member.status === "active") actions.push("deactivate");
   if (member.status === "deactivated") actions.push("reactivate");
   if (member.invitation !== null) actions.push("resend", "revoke");
@@ -49,6 +53,7 @@ export function StaffRowActions({
   const label = t.users.menu.label.replace("{email}", member.email);
   const names: Record<RowAction, string> = {
     role: t.users.menu.changeRole,
+    reset: t.users.menu.resetTwoStep,
     deactivate: t.users.menu.deactivate,
     reactivate: t.users.menu.reactivate,
     resend: t.users.menu.resend,
@@ -82,7 +87,10 @@ export function StaffRowActions({
             disabled={busy}
             onSelect={() => {
               keepFocusAway.current =
-                action === "role" || action === "deactivate" || action === "revoke";
+                action === "role" ||
+                action === "reset" ||
+                action === "deactivate" ||
+                action === "revoke";
               onChoose(action, member);
             }}
           >

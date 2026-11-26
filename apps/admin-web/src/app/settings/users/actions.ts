@@ -7,6 +7,7 @@ import {
   changeStaffRole,
   inviteStaff,
   resendStaffInvitation,
+  resetStaffTwoStep,
   revokeStaffInvitation,
   setRequireTwoStep,
   setStaffActive,
@@ -170,6 +171,22 @@ export async function setStaffActiveAction(
   if (!isId(principalExternalId) || typeof active !== "boolean")
     return failure(t.formErrors.invalid);
   const result = await setStaffActive(principalExternalId, active, newIdempotencyKey());
+  revalidateUsers();
+  return stateOf(result, t);
+}
+
+/**
+ * Wave 1f (D28): an admin resets a colleague's two-step; at their next sign-in they set it up again. The
+ * server refuses the owner, yourself and a pending invitee with exact sentences (mapped to the locale).
+ * Revalidates the table (their badge flips to Off) and the activity page on every outcome that reached the
+ * API.
+ */
+export async function resetStaffTwoStepAction(
+  principalExternalId: string,
+): Promise<StaffActionState> {
+  const t = await dictionary();
+  if (!isId(principalExternalId)) return failure(t.formErrors.invalid);
+  const result = await resetStaffTwoStep(principalExternalId, newIdempotencyKey());
   revalidateUsers();
   return stateOf(result, t);
 }

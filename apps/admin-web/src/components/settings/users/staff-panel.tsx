@@ -8,6 +8,7 @@ import {
   changeStaffRoleAction,
   inviteStaffAction,
   resendInvitationAction,
+  resetStaffTwoStepAction,
   revokeInvitationAction,
   setStaffActiveAction,
   type StaffActionState,
@@ -24,7 +25,7 @@ import { StaffTable } from "./staff-table";
 import { TwoStepPolicyCard } from "./two-step-policy-card";
 import { WithEmail } from "./with-email";
 
-type DialogKind = "invite" | "role" | "deactivate" | "revoke";
+type DialogKind = "invite" | "role" | "reset" | "deactivate" | "revoke";
 
 interface Target {
   readonly kind: DialogKind;
@@ -206,6 +207,18 @@ export function StaffPanel({
     showError(key, result);
   }
 
+  async function submitReset(member: StaffMemberView): Promise<void> {
+    const key = keyOf("reset", member.principalExternalId);
+    const result = await run(key, () => resetStaffTwoStepAction(member.principalExternalId));
+    if (result === null) return;
+    if (result.status === "success") {
+      // Say it in the page too: the dialog may already have been dismissed while this was in flight.
+      setNotice({ tone: "success", template: k.notices.twoStepReset, email: member.email });
+      if (targetKey(targetRef.current) === key) close();
+      return;
+    }
+    showError(key, result);
+  }
   async function submitRevoke(member: StaffMemberView): Promise<void> {
     if (member.invitation === null) return;
     const key = keyOf("revoke", member.principalExternalId);
@@ -257,6 +270,7 @@ export function StaffPanel({
   function choose(action: RowAction, member: StaffMemberView): void {
     const id = member.principalExternalId;
     if (action === "role") open({ kind: "role", id });
+    else if (action === "reset") open({ kind: "reset", id });
     else if (action === "deactivate") open({ kind: "deactivate", id });
     else if (action === "revoke") open({ kind: "revoke", id });
     else if (action === "reactivate") void reactivate(member);
@@ -454,6 +468,37 @@ export function StaffPanel({
         />
       </StaffDialog>
 
+      <StaffDialog
+        open={target?.kind === "reset" && targetMember !== undefined}
+        onOpenChange={onOpenChange("reset")}
+        title={k.resetTwoStep.title}
+        description={
+          targetMember === undefined ? (
+            ""
+          ) : (
+            <>
+              <WithEmail template={k.resetTwoStep.body} email={targetMember.email} />
+              <span className="mt-1 block">{k.resetTwoStep.hint}</span>
+            </>
+          )
+        }
+        initialFocus="cancel"
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
+        <DialogError message={errorHere?.message ?? null} />
+        <StaffDialogFooter
+          cancelLabel={k.resetTwoStep.cancel}
+          submitLabel={k.resetTwoStep.confirm}
+          pendingLabel={k.resetTwoStep.resetting}
+          pending={pending}
+          destructive
+          submitType="button"
+          onCancel={close}
+          onSubmit={() => {
+            if (targetMember !== undefined) void submitReset(targetMember);
+          }}
+        />
+      </StaffDialog>
       <StaffDialog
         open={target?.kind === "revoke" && targetMember !== undefined}
         onOpenChange={onOpenChange("revoke")}

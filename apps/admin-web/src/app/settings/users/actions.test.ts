@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   changeStaffRole: vi.fn(),
   setStaffActive: vi.fn(),
   setRequireTwoStep: vi.fn(),
+  resetStaffTwoStep: vi.fn(),
 }));
 const revalidatePath = vi.hoisted(() => vi.fn());
 const cookieLocale = vi.hoisted(() => ({ value: undefined as string | undefined }));
@@ -30,6 +31,7 @@ const {
   changeStaffRoleAction,
   inviteStaffAction,
   resendInvitationAction,
+  resetStaffTwoStepAction,
   revokeInvitationAction,
   setRequireTwoStepAction,
   setStaffActiveAction,
@@ -61,6 +63,7 @@ const ACTIONS = [
   ["revokeInvitationAction", api.revokeStaffInvitation, () => revokeInvitationAction("inv-1", 2)],
   ["changeStaffRoleAction", api.changeStaffRole, () => changeStaffRoleAction("p-1", "admin")],
   ["setStaffActiveAction", api.setStaffActive, () => setStaffActiveAction("p-1", false)],
+  ["resetStaffTwoStepAction", api.resetStaffTwoStep, () => resetStaffTwoStepAction("p-1")],
 ] as const;
 
 beforeEach(() => {
@@ -132,6 +135,8 @@ describe("invitation arguments are checked before the API is reached", () => {
     ["a fractional version", () => revokeInvitationAction("i", 1.5)],
     ["an unknown role", () => changeStaffRoleAction("p", "owner" as never)],
     ["a non-boolean active", () => setStaffActiveAction("p", "yes" as never)],
+    ["an empty reset id", () => resetStaffTwoStepAction("")],
+    ["a non-string reset id", () => resetStaffTwoStepAction(7 as never)],
   ])("refuses %s", async (_label, run) => {
     expect(await run()).toMatchObject({ status: "error", message: en.formErrors.invalid });
     for (const mock of Object.values(api)) expect(mock).not.toHaveBeenCalled();
@@ -370,5 +375,78 @@ describe("the 1d staff commands under the two-step policy (Wave 1e)", () => {
     api.changeStaffRole.mockResolvedValue({ outcome: "ok", data: {} });
     await changeStaffRoleAction("p-1", "admin");
     expect(revalidatePath).toHaveBeenCalledWith("/settings/users/activity");
+  });
+});
+
+describe("resetStaffTwoStepAction (Wave 1f)", () => {
+  const ACTIVITY = "/settings/users/activity";
+
+  it("sends the member's id with an Idempotency-Key and revalidates the table and the activity page", async () => {
+    api.resetStaffTwoStep.mockResolvedValue({ outcome: "ok", data: { reset: true } });
+    expect(await resetStaffTwoStepAction("pid-mona")).toEqual({ status: "success" });
+    expect(api.resetStaffTwoStep.mock.calls[0]?.[0]).toBe("pid-mona");
+    expect(api.resetStaffTwoStep.mock.calls[0]?.[1]).toMatch(UUID);
+    expect(revalidatePath.mock.calls.map((call) => call[0])).toEqual([PAGE, ACTIVITY]);
+  });
+
+  it.each([
+    ["forbidden", { outcome: "forbidden" }],
+    ["not_found", { outcome: "not_found" }],
+    ["unauthorized", { outcome: "unauthorized" }],
+    ["error", { outcome: "error", message: "boom" }],
+    ["conflict", { outcome: "conflict", message: "Something else" }],
+  ])(
+    "revalidates both pages on every outcome that reached the API (%s)",
+    async (_label, result) => {
+      api.resetStaffTwoStep.mockResolvedValue(result);
+      expect(await resetStaffTwoStepAction("pid-mona")).toMatchObject({ status: "error" });
+      expect(revalidatePath.mock.calls.map((call) => call[0])).toEqual([PAGE, ACTIVITY]);
+    },
+  );
+
+  it.each([
+    [
+      "The store owner's two-step verification can't be reset",
+      en.users.errors.ownerTwoStepReset,
+      ar.users.errors.ownerTwoStepReset,
+    ],
+    [
+      "Reset your own two-step from your account page",
+      en.users.errors.selfTwoStepReset,
+      ar.users.errors.selfTwoStepReset,
+    ],
+    ["Revoke the invitation instead", en.users.errors.revokeInstead, ar.users.errors.revokeInstead],
+  ])("maps the server's exact sentence %j to the locale", async (message, english, arabic) => {
+    api.resetStaffTwoStep.mockResolvedValue({ outcome: "conflict", message });
+    expect(await resetStaffTwoStepAction("pid-mona")).toMatchObject({
+      status: "error",
+      message: english,
+    });
+    cookieLocale.value = "ar";
+    expect(await resetStaffTwoStepAction("pid-mona")).toMatchObject({
+      status: "error",
+      message: arabic,
+    });
+    expect(arabic).not.toBe(english);
+  });
+});
+
+describe("the platform rule's 409 on the policy switch (Wave 1f)", () => {
+  it("maps the exact sentence to the locale, never the raw text", async () => {
+    api.setRequireTwoStep.mockResolvedValue({
+      outcome: "conflict",
+      code: "TWO_STEP_REQUIRED",
+      message: "Two-step verification is required for everyone on Morbeh",
+    });
+    expect(await setRequireTwoStepAction(false)).toMatchObject({
+      status: "error",
+      message: en.usersPolicy.errors.platformRequired,
+    });
+    cookieLocale.value = "ar";
+    expect(await setRequireTwoStepAction(true)).toMatchObject({
+      status: "error",
+      message: ar.usersPolicy.errors.platformRequired,
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(PAGE);
   });
 });

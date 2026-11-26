@@ -80,6 +80,22 @@ export function TwoStepPolicyCard({
     );
   }
 
+  // Wave 1f (D29): while Morbeh requires two-step for everyone the per-store switch is gone: a read-only note.
+  if (policy.platformRequired === true) {
+    return (
+      <Card>
+        <CardContent className="flex flex-wrap items-start justify-between gap-3 pt-6">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold">{k.title}</h2>
+            <p role="note" className="text-muted-foreground mt-1 text-sm">
+              {k.platformNote}
+            </p>
+          </div>
+          <Badge variant="success">{k.platformRequired}</Badge>
+        </CardContent>
+      </Card>
+    );
+  }
   const on = override !== null && override.base === policy ? override.value : policy.requireTwoStep;
   const blocker = on ? null : policyBlocker(policy, members);
   const showMissing = !on && policy.notEnrolled.length > 0;

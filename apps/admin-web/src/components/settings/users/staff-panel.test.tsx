@@ -12,6 +12,7 @@ const actions = vi.hoisted(() => ({
   changeStaffRoleAction: vi.fn(),
   setStaffActiveAction: vi.fn(),
   setRequireTwoStepAction: vi.fn(),
+  resetStaffTwoStepAction: vi.fn(),
 }));
 vi.mock("@/app/settings/users/actions", () => actions);
 
@@ -791,5 +792,152 @@ describe("two-step (Wave 1e)", () => {
     const card = screen.getByRole("switch").closest("div") as HTMLElement;
     const table = screen.getByRole("table");
     expect(card.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("Reset two-step (Wave 1f)", () => {
+  const MONA = member({
+    principalExternalId: "pid-mona",
+    email: "mona@shop.example",
+    role: "operator",
+    twoStep: true,
+  });
+  const OWNER_ON = { ...OWNER, twoStep: true };
+  const ME_ON = { ...ME, twoStep: true };
+  const MEMBERS = [OWNER_ON, ME_ON, MONA, SAM, ANN];
+  const TITLE = "Reset two-step verification?";
+  const BODY =
+    "mona@shop.example will have to set up two-step verification again at their next sign-in.";
+  const HINT = "If this account may be compromised, deactivate it instead.";
+
+  it("is offered on a member who has two-step on, and on nobody else: not the owner, not you, not a member without it, not an invitee", async () => {
+    mount(MEMBERS);
+    // The owner and your own row have no menu at all, even with two-step on.
+    expect(body().queryByRole("button", { name: /owner@shop.example/ })).toBeNull();
+    expect(body().queryByRole("button", { name: /me@shop.example/ })).toBeNull();
+
+    pickFromMenu("mona@shop.example");
+    const items = await body().findAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Change role",
+      "Reset two-step",
+      "Deactivate",
+    ]);
+    escape(items[0]!);
+    await waitFor(() => expect(body().queryByRole("menu")).toBeNull());
+
+    pickFromMenu("sam@shop.example");
+    const samItems = await body().findAllByRole("menuitem");
+    expect(samItems.map((item) => item.textContent)).not.toContain("Reset two-step");
+    escape(samItems[0]!);
+    await waitFor(() => expect(body().queryByRole("menu")).toBeNull());
+
+    pickFromMenu("ann@shop.example");
+    const annItems = await body().findAllByRole("menuitem");
+    expect(annItems.map((item) => item.textContent)).not.toContain("Reset two-step");
+  });
+
+  it("is a real dialog: titled, the email in a bdi, the compromised hint, and no claim that they are signed out now", async () => {
+    mount(MEMBERS);
+    await choose("mona@shop.example", "Reset two-step");
+    const dialog = await body().findByRole("dialog", { name: TITLE });
+    expect(dialog).toHaveAccessibleDescription(`${BODY} ${HINT}`);
+    const email = within(dialog).getByText("mona@shop.example");
+    expect(email.tagName).toBe("BDI");
+    expect(email).toHaveAttribute("dir", "auto");
+    expect(within(dialog).getByText(HINT)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/signed out/i);
+    expect(document.body.textContent).not.toMatch(/sign(ed)? you out|logged out/i);
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus(),
+    );
+    expect(within(dialog).getByRole("button", { name: "Reset two-step" })).not.toHaveFocus();
+  });
+
+  it("Escape and Cancel close it, focus returns to the row's button, and nothing is sent", async () => {
+    mount(MEMBERS);
+    const trigger = await choose("mona@shop.example", "Reset two-step");
+    const dialog = await body().findByRole("dialog", { name: TITLE });
+    escape(dialog);
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await choose("mona@shop.example", "Reset two-step");
+    await body().findByRole("dialog", { name: TITLE });
+    fireEvent.click(body().getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(actions.resetStaffTwoStepAction).not.toHaveBeenCalled();
+  });
+
+  it("confirming resets once, closes the dialog, says so in the page and returns focus to the still-mounted button", async () => {
+    mount(MEMBERS);
+    const trigger = await choose("mona@shop.example", "Reset two-step");
+    const dialog = await body().findByRole("dialog", { name: TITLE });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset two-step" }));
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    expect(actions.resetStaffTwoStepAction).toHaveBeenCalledTimes(1);
+    expect(actions.resetStaffTwoStepAction).toHaveBeenCalledWith("pid-mona");
+    expect(await body().findByRole("status")).toHaveTextContent(
+      "Two-step verification was reset for mona@shop.example.",
+    );
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("while pending: busy and disabled, Escape closes it, the request is not repeated, and the answer still lands in the page", async () => {
+    const pending = hold();
+    actions.resetStaffTwoStepAction.mockImplementation(() => pending.promise);
+    mount(MEMBERS);
+    const trigger = await choose("mona@shop.example", "Reset two-step");
+    const dialog = await body().findByRole("dialog", { name: TITLE });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset two-step" }));
+    const busy = await within(dialog).findByRole("button", { name: "Resetting…" });
+    expect(busy).toBeDisabled();
+    fireEvent.click(busy);
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+
+    escape(dialog);
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+
+    await choose("mona@shop.example", "Reset two-step");
+    const again = await body().findByRole("dialog", { name: TITLE });
+    fireEvent.click(within(again).getByRole("button", { name: "Resetting…" }));
+    expect(actions.resetStaffTwoStepAction).toHaveBeenCalledTimes(1);
+
+    await act(async () => pending.settle(SUCCESS));
+    await waitFor(() => expect(body().queryByRole("dialog")).toBeNull());
+    expect(await body().findByRole("status")).toHaveTextContent(
+      "Two-step verification was reset for mona@shop.example.",
+    );
+  });
+
+  it("shows a refusal inside the open dialog, which stays open", async () => {
+    actions.resetStaffTwoStepAction.mockResolvedValue({
+      status: "error",
+      message: en.users.errors.ownerTwoStepReset,
+      fieldErrors: {},
+    });
+    mount(MEMBERS);
+    await choose("mona@shop.example", "Reset two-step");
+    const dialog = await body().findByRole("dialog", { name: TITLE });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Reset two-step" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "The store owner's two-step verification can't be reset.",
+    );
+    expect(body().queryByRole("dialog", { name: TITLE })).toBeInTheDocument();
+  });
+
+  it("reads in Arabic, with the email isolated, and never says they are signed out now", async () => {
+    mount(MEMBERS, ar, "ar");
+    const trigger = rowButton("mona@shop.example", ar);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.click(await body().findByRole("menuitem", { name: ar.users.menu.resetTwoStep }));
+    const dialog = await body().findByRole("dialog", { name: ar.users.resetTwoStep.title });
+    expect(within(dialog).getByText("mona@shop.example").tagName).toBe("BDI");
+    expect(within(dialog).getByText(ar.users.resetTwoStep.hint)).toBeInTheDocument();
+    expect(dialog.textContent).toMatch(/[\u0600-\u06FF]/);
+    expect(ar.users.resetTwoStep.body).not.toMatch(/تسجيل الخروج|خرجوا|مسجّل/);
+    expect(ar.users.resetTwoStep.title).not.toBe(en.users.resetTwoStep.title);
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { CopyIcon, DownloadIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { Badge, Button, Card, CardContent, Input, Label } from "@platform/ui";
 import {
   confirmTwoStepAction,
@@ -10,6 +10,9 @@ import {
   startTwoStepAction,
   type TwoStepActionResult,
 } from "@/app/account/security/actions";
+import { AuthCodeInput, useAuthCode } from "@/components/auth/auth-code-input";
+import { BackupCodesBlock } from "@/components/auth/backup-codes-block";
+import { SetupKeyBlock } from "@/components/auth/setup-key-block";
 import {
   DialogError,
   StaffDialog,
@@ -17,7 +20,7 @@ import {
 } from "@/components/settings/users/staff-dialog";
 import { formatMediumDate, formatNumber } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { groupManualKey, type OwnTwoStepStatus, type TwoStepSetup } from "@/lib/staff/two-step";
+import type { OwnTwoStepStatus, TwoStepSetup } from "@/lib/staff/two-step";
 import type { Dictionary } from "@/messages/en";
 
 type Phase =
@@ -31,8 +34,6 @@ interface Notice {
   readonly tone: "success" | "error";
   readonly text: string;
 }
-
-const DOWNLOAD_NAME = "morbeh-backup-codes.txt";
 
 /**
  * The member's own two-step verification: off → set up (manual key + `otpauth://` link + first code) →
@@ -74,11 +75,10 @@ export function TwoStepPanel({
     readonly scope: "confirm" | DialogKind;
     readonly message: string;
   } | null>(null);
-  const [confirmCode, setConfirmCode] = useState("");
-  const [regenerateCode, setRegenerateCode] = useState("");
+  // Wave 1f: both code fields take six digits only and catch a pasted setup key (see AuthCodeInput).
+  const confirmCode = useAuthCode();
+  const regenerateCode = useAuthCode();
   const [password, setPassword] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState<"key" | "codes" | null>(null);
 
   const turnOnButton = useRef<HTMLButtonElement>(null);
   const turnOffButton = useRef<HTMLButtonElement>(null);
@@ -135,8 +135,6 @@ export function TwoStepPanel({
   }
 
   function showCodes(codes: readonly string[], fresh: boolean): void {
-    setSaved(false);
-    setCopied(null);
     setPhase({ kind: "codes", codes, fresh });
     setOverride({
       base: status,
@@ -153,9 +151,8 @@ export function TwoStepPanel({
     const result = await run("start", startTwoStepAction);
     if (result === null) return;
     if (result.status === "ok") {
-      setConfirmCode("");
+      confirmCode.clear();
       setFieldError(null);
-      setCopied(null);
       setPhase({ kind: "setup", setup: result.data });
       return;
     }
@@ -163,26 +160,25 @@ export function TwoStepPanel({
   }
 
   function cancelSetup(): void {
-    setConfirmCode("");
+    confirmCode.clear();
     setFieldError(null);
-    setCopied(null);
     setPhase({ kind: "overview" });
   }
 
   async function confirm(setup: TwoStepSetup): Promise<void> {
     const result = await run("confirm", () =>
-      confirmTwoStepAction({ enrollmentId: setup.enrollmentId, code: confirmCode }),
+      confirmTwoStepAction({ enrollmentId: setup.enrollmentId, code: confirmCode.value }),
     );
     if (result === null) return;
     if (result.status === "ok") {
       // Two-step IS on now, whether or not the setup panel is still showing: the codes must be seen.
-      setConfirmCode("");
+      confirmCode.clear();
       setFieldError(null);
       showCodes(result.data.backupCodes, true);
       return;
     }
     if (result.reason === "expired") {
-      setConfirmCode("");
+      confirmCode.clear();
       setFieldError(null);
       setPhase({ kind: "overview" });
       setNotice({ tone: "error", text: result.message });
@@ -194,8 +190,6 @@ export function TwoStepPanel({
   }
 
   function done(): void {
-    setSaved(false);
-    setCopied(null);
     setPhase({ kind: "overview" });
     setNotice({ tone: "success", text: k.notices.enabled });
   }
@@ -204,7 +198,7 @@ export function TwoStepPanel({
     lastDialog.current = kind;
     afterClose.current = null;
     setFieldError(null);
-    setRegenerateCode("");
+    regenerateCode.clear();
     setPassword("");
     setDialog(kind);
   }
@@ -212,7 +206,7 @@ export function TwoStepPanel({
   function closeDialog(): void {
     setDialog(null);
     setFieldError(null);
-    setRegenerateCode("");
+    regenerateCode.clear();
     setPassword("");
   }
 
@@ -221,13 +215,16 @@ export function TwoStepPanel({
     if (reason === "policy_required") {
       setOverride({ base: status, value: { ...live, policyRequired: true } });
     }
+    if (reason === "platform_required") {
+      setOverride({ base: status, value: { ...live, platformRequired: true } });
+    }
     if (dialogRef.current === kind) setFieldError({ scope: kind, message });
     else setNotice({ tone: "error", text: message });
   }
 
   async function regenerate(): Promise<void> {
     const result = await run("regenerate", () =>
-      regenerateBackupCodesAction({ code: regenerateCode }),
+      regenerateBackupCodesAction({ code: regenerateCode.value }),
     );
     if (result === null) return;
     if (result.status === "ok") {
@@ -264,25 +261,6 @@ export function TwoStepPanel({
       return;
     }
     (lastDialog.current === "disable" ? turnOffButton.current : newCodesButton.current)?.focus();
-  }
-
-  async function copy(text: string, what: "key" | "codes"): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(what);
-    } catch {
-      // Clipboard blocked: the text is still on screen for the person to select.
-    }
-  }
-
-  function download(codes: readonly string[]): void {
-    const text = `${k.codes.fileHeading}\n\n${codes.join("\n")}\n`;
-    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = DOWNLOAD_NAME;
-    link.click();
-    URL.revokeObjectURL(url);
   }
 
   const starting = pendingKeys.has("start");
@@ -333,8 +311,12 @@ export function TwoStepPanel({
                 <p className="text-sm">
                   {k.codesLeft.replace("{count}", formatNumber(locale, live.backupCodesLeft))}
                 </p>
-                {live.policyRequired && (
-                  <p className="text-muted-foreground text-sm">{k.policyOnNote}</p>
+                {live.platformRequired === true ? (
+                  <p className="text-muted-foreground text-sm">{k.platformRequired}</p>
+                ) : (
+                  live.policyRequired && (
+                    <p className="text-muted-foreground text-sm">{k.policyOnNote}</p>
+                  )
                 )}
                 <div className="flex flex-wrap gap-2">
                   <Button
@@ -345,7 +327,7 @@ export function TwoStepPanel({
                   >
                     {k.newCodes}
                   </Button>
-                  {!live.policyRequired && (
+                  {!live.policyRequired && live.platformRequired !== true && (
                     <Button
                       ref={turnOffButton}
                       type="button"
@@ -360,7 +342,11 @@ export function TwoStepPanel({
             ) : (
               <>
                 <p className="text-muted-foreground text-sm">{k.offBody}</p>
-                {live.policyRequired && <p className="text-sm">{k.policyOffNote}</p>}
+                {live.platformRequired === true ? (
+                  <p className="text-sm">{k.platformRequired}</p>
+                ) : (
+                  live.policyRequired && <p className="text-sm">{k.policyOffNote}</p>
+                )}
                 <div>
                   <Button
                     ref={turnOnButton}
@@ -383,54 +369,23 @@ export function TwoStepPanel({
           <CardContent className="flex flex-col gap-4 pt-6">
             <h2 className="text-lg font-semibold">{k.setup.title}</h2>
             <p className="text-sm">{k.setup.step1}</p>
-            <div className="flex flex-col gap-1.5">
-              <span id="two-step-key-label" className="text-sm font-medium">
-                {k.setup.keyLabel}
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <code
-                  dir="ltr"
-                  aria-labelledby="two-step-key-label"
-                  className="bg-muted break-all rounded-xl px-3 py-2 text-base tracking-wider"
-                >
-                  {groupManualKey(phase.setup.manualKey)}
-                </code>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void copy(phase.setup.manualKey, "key")}
-                >
-                  <CopyIcon aria-hidden="true" />
-                  {copied === "key" ? k.setup.copied : k.setup.copy}
-                </Button>
-              </div>
-            </div>
-            <p className="text-sm">
-              <a href={phase.setup.provisioningUri} className="text-primary underline">
-                <ExternalLinkIcon aria-hidden="true" className="me-1 inline size-4" />
-                {k.setup.openInApp}
-              </a>
-            </p>
+            <SetupKeyBlock setup={phase.setup} labels={k.setup} />
             <p className="text-sm">{k.setup.step2}</p>
             <form
               className="flex flex-col gap-3"
               onSubmit={(event: FormEvent) => {
                 event.preventDefault();
-                if (confirmCode.trim().length > 0) void confirm(phase.setup);
+                if (confirmCode.ready) void confirm(phase.setup);
               }}
             >
               <div className="flex max-w-xs flex-col gap-1.5">
                 <Label htmlFor="two-step-code">{k.setup.codeLabel}</Label>
-                <Input
+                <AuthCodeInput
                   id="two-step-code"
                   name="code"
-                  dir="ltr"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={8}
-                  value={confirmCode}
-                  onChange={(event) => setConfirmCode(event.target.value)}
+                  code={confirmCode}
+                  hint={k.codeInput.hint}
+                  keyWarning={k.codeInput.keyWarning}
                 />
               </div>
               {errorHere("confirm") !== null && (
@@ -442,7 +397,7 @@ export function TwoStepPanel({
                 <Button
                   type="submit"
                   loading={confirming}
-                  disabled={confirming || confirmCode.trim().length === 0}
+                  disabled={confirming || !confirmCode.ready}
                 >
                   {confirming ? k.setup.confirming : k.setup.confirm}
                 </Button>
@@ -462,47 +417,7 @@ export function TwoStepPanel({
               {phase.fresh ? k.codes.title : k.codes.regeneratedTitle}
             </h2>
             <p className="text-sm">{k.codes.body}</p>
-            <ul aria-label={k.codes.listLabel} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {phase.codes.map((code) => (
-                <li key={code} className="bg-muted rounded-xl px-3 py-2 text-base tracking-wider">
-                  <bdi dir="ltr">{code}</bdi>
-                </li>
-              ))}
-            </ul>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => void copy(phase.codes.join("\n"), "codes")}
-              >
-                <CopyIcon aria-hidden="true" />
-                {copied === "codes" ? k.codes.copied : k.codes.copyAll}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => download(phase.codes)}
-              >
-                <DownloadIcon aria-hidden="true" />
-                {k.codes.download}
-              </Button>
-            </div>
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={saved}
-                onChange={(event) => setSaved(event.target.checked)}
-              />
-              <span>{k.codes.savedLabel}</span>
-            </label>
-            <div>
-              <Button type="button" disabled={!saved} onClick={done}>
-                {k.codes.done}
-              </Button>
-            </div>
+            <BackupCodesBlock codes={phase.codes} labels={k.codes} onDone={done} />
           </CardContent>
         </Card>
       )}
@@ -521,20 +436,17 @@ export function TwoStepPanel({
           className="flex flex-col gap-3"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
-            if (regenerateCode.trim().length > 0) void regenerate();
+            if (regenerateCode.ready) void regenerate();
           }}
         >
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="two-step-regenerate-code">{k.regenerate.codeLabel}</Label>
-            <Input
+            <AuthCodeInput
               id="two-step-regenerate-code"
               name="code"
-              dir="ltr"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={8}
-              value={regenerateCode}
-              onChange={(event) => setRegenerateCode(event.target.value)}
+              code={regenerateCode}
+              hint={k.codeInput.hint}
+              keyWarning={k.codeInput.keyWarning}
             />
           </div>
           <DialogError message={errorHere("regenerate")} />
@@ -543,6 +455,7 @@ export function TwoStepPanel({
             submitLabel={k.regenerate.submit}
             pendingLabel={k.regenerate.submitting}
             pending={regenerating}
+            submitDisabled={!regenerateCode.ready}
             destructive={false}
             submitType="submit"
             onCancel={closeDialog}
