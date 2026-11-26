@@ -11,6 +11,7 @@ import {
   InMemoryNotificationSettingsRepository,
   InMemorySenderDomainRepository,
 } from "../infrastructure/in-memory-messaging-repositories";
+import { SenderDomainTakenError } from "../domain/messaging/sender-domain";
 import { InMemorySenderDomainProvider } from "../infrastructure/in-memory-sender-domain-provider";
 import { loadSenderContext } from "./messaging-support";
 import { SenderDomainProviderError, type SenderDomainProvider } from "./sender-domain-ports";
@@ -305,6 +306,67 @@ describe("VerifySenderDomain", () => {
       error: { code: "BUSINESS_RULE", message: DOMAIN_USED_BY_ANOTHER_STORE },
     });
     expect((await senderDomains.find(A))?.status).toBe("not_started");
+  });
+});
+
+describe("the database refuses a second verified owner (partial unique index)", () => {
+  /** A stale "is it taken?" answer, as when the other store verifies between the check and the write. */
+  class StaleCheckRepository extends InMemorySenderDomainRepository {
+    override isVerifiedByAnotherStore(): Promise<boolean> {
+      return Promise.resolve(false);
+    }
+  }
+
+  it("the in-memory twin throws SenderDomainTakenError like the index would", async () => {
+    expect.hasAssertions();
+    const repo = new InMemorySenderDomainRepository();
+    repo.setVerified(B, ["nusuj.example"]);
+    const row = {
+      domain: "nusuj.example",
+      providerDomainId: "x",
+      status: "verified" as const,
+      records: [],
+      verifiedAt: new Date(0),
+    };
+    await expect(repo.save(A, row)).rejects.toBeInstanceOf(SenderDomainTakenError);
+    await expect(
+      repo.save(A, { ...row, status: "pending", verifiedAt: null }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("verify: a race the pre-check missed is refused with the same message and A stays unverified", async () => {
+    expect.hasAssertions();
+    const senderDomains = new StaleCheckRepository();
+    const twin = new InMemorySenderDomainProvider();
+    const store = {
+      get: (): Promise<StoreProfile> =>
+        Promise.resolve({
+          storeName: "Nusuj",
+          contactEmail: "hello@nusuj.example",
+          defaultLocale: "en",
+        }),
+    };
+    const deps = {
+      settings: new InMemoryNotificationSettingsRepository(),
+      store,
+      senderDomains,
+      provider: twin,
+      clock: { now: () => new Date("2026-11-26T10:00:00.000Z") },
+    };
+    const start = new StartSenderDomain(deps);
+    const verify = new VerifySenderDomain(deps);
+    await start.execute({ tenantId: A });
+    twin.setStatus(twin.idOf("nusuj.example") ?? "", "verified");
+    senderDomains.setVerified(B, ["nusuj.example"]);
+
+    const result = await verify.execute({ tenantId: A });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "BUSINESS_RULE", message: DOMAIN_USED_BY_ANOTHER_STORE },
+    });
+    expect((await senderDomains.find(A))?.status).toBe("not_started");
+    expect(await senderDomains.listVerifiedDomains(A)).toEqual([]);
   });
 });
 

@@ -1165,6 +1165,16 @@ describe("notification settings (20261129000000)", () => {
     ).toHaveLength(3);
   });
 
+  it("allows one verified owner per domain (partial unique index, SQL only)", () => {
+    const sql = readSql();
+    expect(sql).toContain(
+      `CREATE UNIQUE INDEX "sender_domains_verified_domain_key" ON "notifications"."sender_domains" ("domain") WHERE "status" = 'verified';`,
+    );
+    // Prisma cannot model it: the schema must not claim a plain unique on domain.
+    const domains = /model SenderDomain \{([\s\S]*?)\n\}/.exec(schema())?.[1] ?? "";
+    expect(domains).not.toMatch(/@@unique|@unique/);
+  });
+
   it("is purely additive", () => {
     expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
     expect(code()).not.toMatch(/ALTER COLUMN/);

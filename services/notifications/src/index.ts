@@ -18,6 +18,7 @@ export {
   SENDER_DOMAIN_STATUSES,
 } from "./domain/messaging/sender-domain";
 export type { DnsRecord, SenderDomainStatus } from "./domain/messaging/sender-domain";
+export { SenderDomainTakenError } from "./domain/messaging/sender-domain";
 export { InMemorySenderDomainProvider } from "./infrastructure/in-memory-sender-domain-provider";
 export { TemplatedNotifier } from "./application/templated-notifier";
 export type {

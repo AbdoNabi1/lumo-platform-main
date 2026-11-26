@@ -42,6 +42,17 @@ export interface StoredSenderDomain {
   readonly verifiedAt: Date | null;
 }
 
+/**
+ * Another store already has this domain verified. Thrown by `SenderDomainRepository.save` when the
+ * database refuses a second verified owner (partial unique index `sender_domains_verified_domain_key`).
+ */
+export class SenderDomainTakenError extends Error {
+  constructor() {
+    super("Another store has already verified this domain");
+    this.name = "SenderDomainTakenError";
+  }
+}
+
 const DOMAIN_PATTERN = /^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
 export function isValidDomainName(domain: string): boolean {

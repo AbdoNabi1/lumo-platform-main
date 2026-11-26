@@ -9,7 +9,7 @@ import type {
   NotificationSettingsValues,
   StoredNotificationSettings,
 } from "../domain/messaging/notification-settings";
-import type { StoredSenderDomain } from "../domain/messaging/sender-domain";
+import { SenderDomainTakenError, type StoredSenderDomain } from "../domain/messaging/sender-domain";
 import type { TemplateKey, TemplateLocale } from "../domain/messaging/template-catalogue";
 
 /** In-memory settings with the SAME version contract as the Prisma repository (stale = `ConcurrencyError`). */
@@ -122,6 +122,14 @@ export class InMemorySenderDomainRepository implements SenderDomainRepository {
     row: StoredSenderDomain,
     options: { readonly replacing?: string } = {},
   ): Promise<void> {
+    // The database's partial unique index: one verified owner per domain.
+    if (row.status === "verified") {
+      for (const [owner, others] of this.rows) {
+        if (owner !== tenantId && others.get(row.domain)?.status === "verified") {
+          return Promise.reject(new SenderDomainTakenError());
+        }
+      }
+    }
     const own = this.rows.get(tenantId) ?? new Map<string, StoredSenderDomain>();
     if (options.replacing !== undefined) own.delete(options.replacing);
     own.set(row.domain, { ...row, records: [...row.records] });

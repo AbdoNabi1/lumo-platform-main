@@ -18,6 +18,7 @@ import type {
 import {
   normalizeDomainStatus,
   parseDnsRecords,
+  SenderDomainTakenError,
   type StoredSenderDomain,
 } from "../domain/messaging/sender-domain";
 import {
@@ -234,24 +235,31 @@ export class PrismaSenderDomainRepository implements SenderDomainRepository {
       records: row.records.map((record) => ({ ...record })),
       verifiedAt: row.verifiedAt,
     };
-    await runInTenantTransaction(this.prisma, tenantId, async (client) => {
-      if (options.replacing !== undefined && options.replacing !== row.domain) {
-        await client.senderDomain.deleteMany({ where: { tenantId, domain: options.replacing } });
-      }
-      const { count } = await client.senderDomain.updateMany({
-        where: { tenantId, domain: row.domain },
-        data,
-      });
-      if (count > 0) return;
-      try {
-        await client.senderDomain.create({ data: { tenantId, domain: row.domain, ...data } });
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          throw new ConcurrencyError("Sender domain was saved concurrently", { cause: error });
+    try {
+      await runInTenantTransaction(this.prisma, tenantId, async (client) => {
+        if (options.replacing !== undefined && options.replacing !== row.domain) {
+          await client.senderDomain.deleteMany({ where: { tenantId, domain: options.replacing } });
         }
-        throw error;
+        const { count } = await client.senderDomain.updateMany({
+          where: { tenantId, domain: row.domain },
+          data,
+        });
+        if (count > 0) return;
+        await client.senderDomain.create({ data: { tenantId, domain: row.domain, ...data } });
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+      // Two unique rules can fire: (tenant, domain) when this store raced itself, and the partial
+      // index `sender_domains_verified_domain_key` when another store verified the domain first.
+      // The transaction is already rolled back here, so asking is safe.
+      if (
+        row.status === "verified" &&
+        (await this.isVerifiedByAnotherStore(row.domain, tenantId))
+      ) {
+        throw new SenderDomainTakenError();
       }
-    });
+      throw new ConcurrencyError("Sender domain was saved concurrently", { cause: error });
+    }
   }
 
   async isVerifiedByAnotherStore(domain: string, tenantId: string): Promise<boolean> {

@@ -10,7 +10,7 @@ import {
 } from "../application/sender-domain.use-cases";
 import { UpdateNotificationSettings } from "../application/notification-settings.use-cases";
 import { loadSenderContext } from "../application/messaging-support";
-import type { StoredSenderDomain } from "../domain/messaging/sender-domain";
+import { SenderDomainTakenError, type StoredSenderDomain } from "../domain/messaging/sender-domain";
 import {
   PrismaNotificationSettingsRepository,
   PrismaSenderDomainRepository,
@@ -241,6 +241,21 @@ describe.runIf(Boolean(databaseUrl))("sender_domains (integration)", () => {
     await repo.save(tenantId, { ...row(domain, "failed"), verifiedAt: null });
     expect(await repo.listVerifiedDomains(tenantId)).toEqual([]);
     expect((await repo.find(tenantId))?.verifiedAt).toBeNull();
+    await prisma.$disconnect();
+  });
+
+  it("refuses a second verified owner of the same domain; unverified rows may coexist", async () => {
+    const [tenantA, tenantB] = [newTenant(), newTenant()];
+    const domain = unique();
+    const prisma = createTestPrismaClient(databaseUrl);
+    const repo = new PrismaSenderDomainRepository(prisma);
+    await repo.save(tenantA, row(domain, "verified"));
+    await repo.save(tenantB, row(domain));
+
+    await expect(repo.save(tenantB, row(domain, "verified"))).rejects.toBeInstanceOf(
+      SenderDomainTakenError,
+    );
+    expect((await repo.find(tenantB))?.status).toBe("pending");
     await prisma.$disconnect();
   });
 

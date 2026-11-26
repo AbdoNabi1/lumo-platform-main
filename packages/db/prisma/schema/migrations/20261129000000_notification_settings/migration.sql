@@ -45,6 +45,11 @@ CREATE TABLE "notifications"."sender_domains" (
   PRIMARY KEY ("tenant_id","domain")
 );
 
+-- One verified owner per domain. Partial: Prisma cannot model it, so it lives only in SQL
+-- (like security.staff_invitations_one_pending_per_email). Closes the race the unscoped
+-- "verified by another store" read cannot (and RLS-enforcing roles would hide).
+CREATE UNIQUE INDEX "sender_domains_verified_domain_key" ON "notifications"."sender_domains" ("domain") WHERE "status" = 'verified';
+
 ALTER TABLE "notifications"."notification_settings" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "notifications"."notification_settings" FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON "notifications"."notification_settings";

@@ -74,6 +74,8 @@ model NotificationTemplateOverride {
 }
 
 // The store's own sending domain as the email provider sees it (Task 2 fills it).
+// "One verified owner per domain" is a PARTIAL unique index that exists only in SQL
+// (`sender_domains_verified_domain_key` ... WHERE "status" = 'verified'); Prisma cannot express it.
 model SenderDomain {
   tenantId         String    @map("tenant_id")
   domain           String

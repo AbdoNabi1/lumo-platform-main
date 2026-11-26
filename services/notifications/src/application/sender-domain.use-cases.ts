@@ -16,6 +16,7 @@ import type {
 import { effectiveNotificationSettings } from "../domain/messaging/notification-settings";
 import {
   isValidDomainName,
+  SenderDomainTakenError,
   type DnsRecord,
   type SenderDomainStatus,
   type StoredSenderDomain,
@@ -199,6 +200,9 @@ export class StartSenderDomain implements UseCase<
         existing === null ? {} : { replacing: existing.domain },
       );
     } catch (error) {
+      if (error instanceof SenderDomainTakenError) {
+        return err(new BusinessRuleError(DOMAIN_USED_BY_ANOTHER_STORE));
+      }
       if (error instanceof ConcurrencyError) return err(new ConflictError(STALE));
       throw error;
     }
@@ -260,6 +264,9 @@ export class VerifySenderDomain implements UseCase<
           fresh.status === "verified" ? (existing.verifiedAt ?? this.deps.clock.now()) : null,
       });
     } catch (error) {
+      if (error instanceof SenderDomainTakenError) {
+        return err(new BusinessRuleError(DOMAIN_USED_BY_ANOTHER_STORE));
+      }
       if (error instanceof ConcurrencyError) return err(new ConflictError(STALE));
       throw error;
     }
