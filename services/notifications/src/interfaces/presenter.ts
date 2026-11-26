@@ -14,6 +14,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   BUSINESS_RULE: 409,
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
+  NOT_CONFIGURED: 503,
 };
 
 /** Maps a use-case `Result` to a transport-neutral response (framework-agnostic; no HTTP server). */

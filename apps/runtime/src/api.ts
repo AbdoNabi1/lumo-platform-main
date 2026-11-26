@@ -704,6 +704,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
     // request endpoint still answers 202 and sends nothing.
     emailSender: email.emailSender,
+    // Wave 2b: Settings > Notifications tells the merchant honestly whether email really delivers, and
+    // From is the platform mailbox until a store's own domain is verified.
+    emailDeliveryConfigured: email.deliveryConfigured,
+    emailFrom: config.EMAIL_FROM,
     // Wave 1d: staff invitations go only through a REAL delivery (Resend) and need ADMIN_PUBLIC_URL;
     // otherwise inviting answers 503 NOT_CONFIGURED before anything is written.
     ...staffInviteDelivery(email, runtime.config),

@@ -1,5 +1,34 @@
-export { wireNotifications } from "./composition";
-export type { NotificationsWiringDeps, WiredNotifications } from "./composition";
+export { DEFAULT_PLATFORM_FROM, wireNotifications } from "./composition";
+export type {
+  NotificationsMessagingDeps,
+  NotificationsWiringDeps,
+  WiredNotifications,
+} from "./composition";
+export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+export type {
+  EmailDeliveryPort,
+  OutgoingMail,
+  RecipientContact,
+  RecipientResolverPort,
+  StoreProfile,
+  StoreProfilePort,
+} from "./application/messaging-ports";
+export {
+  chooseLocale,
+  isTemplateKey,
+  isTemplateLocale,
+  TEMPLATE_CATALOGUE,
+  TEMPLATE_KEYS,
+  TEMPLATE_LOCALES,
+} from "./domain/messaging/template-catalogue";
+export type { TemplateKey, TemplateLocale } from "./domain/messaging/template-catalogue";
+export {
+  emailDomain,
+  isFreeMailDomain,
+  isValidEmail,
+  resolveSender,
+} from "./domain/messaging/sender-resolution";
+export { escapeHtml, renderTemplate, formatMoney } from "./domain/messaging/template-renderer";
 export { NotificationsController } from "./interfaces/notifications.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Notification } from "./domain/notification";

@@ -1086,3 +1086,132 @@ describe("checkout settings (20261128000000)", () => {
     expect(schema).toMatch(/marketingOptIn\s+Boolean\?\s+@map\("marketing_opt_in"\)/);
   });
 });
+
+describe("notification settings (20261129000000)", () => {
+  const migration = join(migrationsDir, "20261129000000_notification_settings", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+  const schema = () =>
+    readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+
+  it("creates the three notifications tables with exactly the planned columns", () => {
+    const sql = readSql();
+    expect([...columnsEverAddedTo("notifications", "notification_settings", sql)].sort()).toEqual([
+      "disabled_templates",
+      "sender_email",
+      "staff_recipients",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    expect(
+      [...columnsEverAddedTo("notifications", "notification_template_overrides", sql)].sort(),
+    ).toEqual(["body", "key", "locale", "subject", "tenant_id", "updated_at"]);
+    expect([...columnsEverAddedTo("notifications", "sender_domains", sql)].sort()).toEqual([
+      "domain",
+      "provider_domain_id",
+      "records",
+      "status",
+      "tenant_id",
+      "updated_at",
+      "verified_at",
+    ]);
+  });
+
+  it("types every column as planned", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      '"sender_email" TEXT,',
+      `"staff_recipients" JSONB NOT NULL DEFAULT '[]'`,
+      `"disabled_templates" TEXT[] NOT NULL DEFAULT '{}'`,
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      `"locale" TEXT NOT NULL CHECK ("locale" IN ('en','ar'))`,
+      '"subject" TEXT NOT NULL',
+      '"body" TEXT NOT NULL',
+      'PRIMARY KEY ("tenant_id","key","locale")',
+      '"provider_domain_id" TEXT NOT NULL',
+      '"records" JSONB NOT NULL',
+      '"verified_at" TIMESTAMP(3),',
+      'PRIMARY KEY ("tenant_id","domain")',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on every new table for reads and writes", () => {
+    const sql = readSql();
+    for (const table of [
+      "notification_settings",
+      "notification_template_overrides",
+      "sender_domains",
+    ]) {
+      expect(sql).toContain(`ALTER TABLE "notifications"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(sql).toContain(`ALTER TABLE "notifications"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(sql).toContain(`CREATE POLICY tenant_isolation ON "notifications"."${table}" FOR ALL`);
+    }
+    expect(
+      sql.match(/USING \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(3);
+    expect(
+      sql.match(/WITH CHECK \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(3);
+  });
+
+  it("is purely additive", () => {
+    expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+    expect(code()).not.toMatch(/ALTER COLUMN/);
+    expect(code()).not.toMatch(/ALTER TABLE "(?!notifications")/);
+  });
+
+  it("sorts after the checkout settings migration", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((name) => /^\d{14}_/.test(name))
+      .sort();
+    expect(names.indexOf("20261129000000_notification_settings")).toBeGreaterThan(
+      names.indexOf("20261128000000_checkout_settings"),
+    );
+  });
+
+  it("matches the Prisma models", () => {
+    const text = schema();
+    const settings = /model NotificationSettings \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /senderEmail\s+String\?\s+@map\("sender_email"\)/,
+      /staffRecipients\s+Json\s+@default\("\[\]"\)\s+@map\("staff_recipients"\)/,
+      /disabledTemplates\s+String\[\]\s+@default\(\[\]\)\s+@map\("disabled_templates"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("notification_settings"\)/,
+      /@@schema\("notifications"\)/,
+    ])
+      expect(settings).toMatch(field);
+    const overrides = /model NotificationTemplateOverride \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@map\("tenant_id"\)/,
+      /locale\s+String/,
+      /subject\s+String/,
+      /body\s+String/,
+      /@@id\(\[tenantId, key, locale\]\)/,
+      /@@map\("notification_template_overrides"\)/,
+    ])
+      expect(overrides).toMatch(field);
+    const domains = /model SenderDomain \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /providerDomainId\s+String\s+@map\("provider_domain_id"\)/,
+      /records\s+Json/,
+      /verifiedAt\s+DateTime\?\s+@map\("verified_at"\)/,
+      /@@id\(\[tenantId, domain\]\)/,
+      /@@map\("sender_domains"\)/,
+    ])
+      expect(domains).toMatch(field);
+  });
+});

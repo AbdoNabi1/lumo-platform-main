@@ -43,3 +43,47 @@ model ProcessedProviderCallback {
   @@map("processed_callbacks")
   @@schema("notifications")
 }
+
+// Wave 2b (Settings > Notifications): one row per tenant, created on the first save. A tenant with no
+// row uses the in-code defaults. No customer address is stored (ADR-0006); `sender_email` and the
+// staff recipients are the MERCHANT's own addresses.
+model NotificationSettings {
+  tenantId          String   @id @map("tenant_id")
+  senderEmail       String?  @map("sender_email")
+  staffRecipients   Json     @default("[]") @map("staff_recipients") // string[] of emails, max 10
+  disabledTemplates String[] @default([]) @map("disabled_templates")
+  version           Int      @default(1)
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_settings")
+  @@schema("notifications")
+}
+
+// A merchant's own subject/body for one template + language. Deleting the row = "revert to default".
+model NotificationTemplateOverride {
+  tenantId  String   @map("tenant_id")
+  key       String
+  locale    String // en | ar (CHECK in the migration)
+  subject   String
+  body      String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@id([tenantId, key, locale])
+  @@map("notification_template_overrides")
+  @@schema("notifications")
+}
+
+// The store's own sending domain as the email provider sees it (Task 2 fills it).
+model SenderDomain {
+  tenantId         String    @map("tenant_id")
+  domain           String
+  providerDomainId String    @map("provider_domain_id")
+  status           String
+  records          Json
+  verifiedAt       DateTime? @map("verified_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@id([tenantId, domain])
+  @@map("sender_domains")
+  @@schema("notifications")
+}

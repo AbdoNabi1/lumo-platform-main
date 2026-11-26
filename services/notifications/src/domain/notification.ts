@@ -108,7 +108,12 @@ export class Notification extends AggregateRoot<NotificationProps> {
   }
 
   /** The generic, validated transition — every named method below delegates to this. */
-  transition(toStatus: NotificationStatusValue, eventId: string, occurredAt: Date): void {
+  transition(
+    toStatus: NotificationStatusValue,
+    eventId: string,
+    occurredAt: Date,
+    reason?: string,
+  ): void {
     const fromStatus = this.props.status.value;
     if (!canTransitionNotification(fromStatus, toStatus)) {
       throw new BusinessRuleError(
@@ -121,6 +126,7 @@ export class Notification extends AggregateRoot<NotificationProps> {
         UniqueEntityId.from(this.id.toString() + this.props.history.length),
         toStatus,
         occurredAt,
+        reason,
       ),
     );
     this.addDomainEvent(
@@ -142,7 +148,7 @@ export class Notification extends AggregateRoot<NotificationProps> {
   }
 
   markFailed(reason: string, eventId: string, occurredAt: Date): void {
-    this.transition("failed", eventId, occurredAt);
+    this.transition("failed", eventId, occurredAt, reason);
     this.recordAttempt("failed", occurredAt, reason);
   }
 
@@ -173,8 +179,8 @@ export class Notification extends AggregateRoot<NotificationProps> {
     this.transition("retrying", eventId, occurredAt);
   }
 
-  cancel(eventId: string, occurredAt: Date): void {
-    this.transition("cancelled", eventId, occurredAt);
+  cancel(eventId: string, occurredAt: Date, reason?: string): void {
+    this.transition("cancelled", eventId, occurredAt, reason);
   }
 
   expire(eventId: string, occurredAt: Date): void {
