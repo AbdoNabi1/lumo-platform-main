@@ -4,16 +4,13 @@ import type {
   ProviderSendResult,
 } from "../application/ports";
 import type {
-  EmailDeliveryPort,
   NotificationLog,
   RecipientContact,
   RecipientResolverPort,
+  StoreMailSender,
 } from "../application/messaging-ports";
-import {
-  copyFor,
-  loadSenderContext,
-  type SenderContextDeps,
-} from "../application/messaging-support";
+import { copyFor, loadStoreContext, type StoreContextDeps } from "../application/messaging-support";
+import { StoreEmailError, type StoreEmailErrorCode } from "../application/store-email-delivery";
 import { findStaffRecipient, STAFF_REF_PREFIX } from "../application/staff-recipient-ref";
 import type { TemplateOverrideRepository } from "../domain/messaging/messaging-repositories";
 import { effectiveNotificationSettings } from "../domain/messaging/notification-settings";
@@ -27,16 +24,17 @@ import {
   type TemplateLocale,
 } from "../domain/messaging/template-catalogue";
 
-export interface TemplatedEmailProviderDeps extends SenderContextDeps {
+export interface TemplatedEmailProviderDeps extends StoreContextDeps {
   readonly overrides: TemplateOverrideRepository;
   readonly recipients: RecipientResolverPort;
-  readonly delivery: EmailDeliveryPort;
+  /** The store's own email connection (D46): the only way a customer's mail leaves. */
+  readonly mail: StoreMailSender;
   readonly log: NotificationLog;
 }
 
 /** Why a send failed, as a short code. This is all that is ever recorded or logged: no address, no body. */
 export type EmailFailureCode =
-  "EMAIL_NOT_CONFIGURED" | "RECIPIENT_NOT_FOUND" | "MISSING_VARIABLE" | "EMAIL_SEND_FAILED";
+  StoreEmailErrorCode | "RECIPIENT_NOT_FOUND" | "MISSING_VARIABLE" | "EMAIL_SEND_FAILED";
 
 class EmailFailure extends Error {
   constructor(readonly failure: EmailFailureCode) {
@@ -101,13 +99,15 @@ function minor(value: string | undefined): number | undefined {
 }
 
 /**
- * Wave 2b: the real email channel. Replaces the in-memory email provider: it resolves the
- * recipient's address at send time (never stored on the notification), picks the language, renders
- * the merchant's template (or the default), resolves From / Reply-To (D38) and sends over the
- * platform's `EmailSender`.
+ * Wave 2b/2b2: the real email channel. It resolves the recipient's address at send time (never
+ * stored on the notification), picks the language, renders the merchant's template (or the default)
+ * and sends through the STORE's own email connection, From the merchant's address (D46). It never
+ * touches the platform's mail account: with no connection, or a switched-off, failed or refusing
+ * one, nothing is sent and the notification is recorded failed.
  *
- * Failures are short codes only (`EMAIL_NOT_CONFIGURED`...): the notification row records the code,
- * the log carries the template key and the code, never an address or a body (ADR-0006, D42).
+ * Failures are short codes only (`EMAIL_NOT_CONNECTED`, a provider code ...): the notification row
+ * records the code, the log carries the template key and the code, never an address or a body
+ * (ADR-0006, D42).
  */
 export class TemplatedEmailProvider implements EmailProviderPort {
   private readonly deps: TemplatedEmailProviderDeps;
@@ -122,7 +122,11 @@ export class TemplatedEmailProvider implements EmailProviderPort {
       await this.deliver(request, key);
     } catch (error) {
       const code: EmailFailureCode =
-        error instanceof EmailFailure ? error.failure : "EMAIL_SEND_FAILED";
+        error instanceof EmailFailure
+          ? error.failure
+          : error instanceof StoreEmailError
+            ? error.code
+            : "EMAIL_SEND_FAILED";
       this.deps.log.warn("notification email not sent", {
         template: key ?? "custom",
         reason: code,
@@ -133,11 +137,14 @@ export class TemplatedEmailProvider implements EmailProviderPort {
   }
 
   private async deliver(request: ProviderSendRequest, key: TemplateKey | null): Promise<void> {
-    if (!this.deps.delivery.deliveryConfigured) throw new EmailFailure("EMAIL_NOT_CONFIGURED");
     const tenantId = request.tenantId;
     if (tenantId === undefined) throw new EmailFailure("RECIPIENT_NOT_FOUND");
+    // No working connection: nothing is rendered, resolved or sent (D46).
+    if (!(await this.deps.mail.isConnected(tenantId))) {
+      throw new EmailFailure("EMAIL_NOT_CONNECTED");
+    }
 
-    const context = await loadSenderContext(this.deps, tenantId);
+    const context = await loadStoreContext(this.deps, tenantId);
     const variables = request.variables ?? {};
     const transient = request.transient ?? {};
 
@@ -199,13 +206,11 @@ export class TemplatedEmailProvider implements EmailProviderPort {
       html = rendered.html;
     }
 
-    await this.deps.delivery.send({
+    await this.deps.mail.send(tenantId, context.profile.storeName, {
       to: contact.email,
       subject,
       text,
       html,
-      from: context.sender.from,
-      ...(context.sender.replyTo === undefined ? {} : { replyTo: context.sender.replyTo }),
       idempotencyKey: request.idempotencyKey,
     });
   }

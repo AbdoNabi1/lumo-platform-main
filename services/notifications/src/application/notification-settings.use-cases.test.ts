@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ConcurrencyError } from "@platform/utils";
-import type { EmailDeliveryPort, OutgoingMail, StoreProfilePort } from "./messaging-ports";
+import type { StoreProfilePort } from "./messaging-ports";
 import {
   GetNotificationSettings,
   UpdateNotificationSettings,
@@ -14,10 +14,11 @@ import {
   SendTestEmail,
 } from "./notification-templates.use-cases";
 import {
+  InMemoryEmailConnectionRepository,
   InMemoryNotificationSettingsRepository,
-  InMemorySenderDomainRepository,
   InMemoryTemplateOverrideRepository,
 } from "../infrastructure/in-memory-messaging-repositories";
+import { STORE_KEY, storeEmailFixture } from "../testing/store-email-fixture";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
 import type { NotificationSettingsRepository } from "../domain/messaging/messaging-repositories";
 
@@ -27,8 +28,7 @@ const OTHER = "tenant-b";
 function setup(options: { configured?: boolean; contactEmail?: string | null } = {}) {
   const settings = new InMemoryNotificationSettingsRepository();
   const overrides = new InMemoryTemplateOverrideRepository();
-  const senderDomains = new InMemorySenderDomainRepository();
-  const sent: OutgoingMail[] = [];
+  const email = storeEmailFixture();
   const store: StoreProfilePort = {
     get: () =>
       Promise.resolve({
@@ -38,26 +38,20 @@ function setup(options: { configured?: boolean; contactEmail?: string | null } =
         defaultLocale: "ar",
       }),
   };
-  const delivery: EmailDeliveryPort = {
-    deliveryConfigured: options.configured ?? true,
-    platformFrom: "Morbeh <onboarding@resend.dev>",
-    send: (message) => {
-      sent.push(message);
-      return Promise.resolve();
-    },
-  };
-  const base = { settings, overrides, store, senderDomains, platformFrom: delivery.platformFrom };
+  const base = { settings, overrides, store };
   const settingsDeps = {
-    ...base,
+    settings,
+    store,
     unitOfWork: new InMemoryUnitOfWork(),
-    deliveryConfigured: delivery.deliveryConfigured,
+    connections: email.connections,
   };
+  const ready = options.configured === false ? Promise.resolve() : email.connect(TENANT);
   return {
     settings,
     overrides,
-    senderDomains,
-    sent,
-    delivery,
+    email,
+    ready,
+    sent: email.provider.calls,
     get: new GetNotificationSettings(settingsDeps),
     update: new UpdateNotificationSettings(settingsDeps),
     list: new ListNotificationTemplates(base),
@@ -65,14 +59,14 @@ function setup(options: { configured?: boolean; contactEmail?: string | null } =
     put: new PutNotificationTemplate(base),
     revert: new RevertNotificationTemplate(base),
     preview: new PreviewNotificationTemplate(base),
-    sendTest: new SendTestEmail({ ...base, delivery }),
+    sendTest: new SendTestEmail({ ...base, mail: email.delivery }),
   };
 }
 
 const values = { senderEmail: null, staffRecipients: [], disabledTemplates: [] };
 
 describe("settings", () => {
-  it("reads the defaults with deliveryConfigured and the reply-to sender summary", async () => {
+  it("reads the defaults: no email connection means delivery is not configured", async () => {
     expect.hasAssertions();
     const { get } = setup({ configured: false });
     const result = await get.execute({ tenantId: TENANT });
@@ -81,30 +75,70 @@ describe("settings", () => {
       value: {
         version: null,
         deliveryConfigured: false,
+        emailConnection: "none",
         storeName: "Nusuj Store",
         values: { senderEmail: null, staffRecipients: [], disabledTemplates: [] },
-        sender: { mode: "reply_to", effectiveEmail: "contact@gmail.com", freeMail: true },
+        sender: { mode: "not_connected", effectiveEmail: null, freeMail: false },
       },
     });
   });
 
-  it("saves, bumps the version, and shows an own-domain sender once its domain is verified", async () => {
+  it("deliveryConfigured means a connected, switched-on connection (D46)", async () => {
     expect.hasAssertions();
-    const { update, get, senderDomains } = setup();
+    const ctx = setup({ configured: false });
+    await ctx.email.connect(TENANT, { fromEmail: "Shop@Nusuj.com" });
+    expect(await ctx.get.execute({ tenantId: TENANT })).toMatchObject({
+      value: {
+        deliveryConfigured: true,
+        emailConnection: "connected",
+        sender: { mode: "store_connection", effectiveEmail: "shop@nusuj.com", freeMail: false },
+      },
+    });
+    // Another store's connection never counts for this one.
+    expect(await ctx.get.execute({ tenantId: OTHER })).toMatchObject({
+      value: { deliveryConfigured: false, emailConnection: "none" },
+    });
+  });
+
+  it("a switched-off or failed connection is not delivery either, and says which", async () => {
+    expect.hasAssertions();
+    const off = setup({ configured: false });
+    await off.email.connect(TENANT, { enabled: false });
+    expect(await off.get.execute({ tenantId: TENANT })).toMatchObject({
+      value: { deliveryConfigured: false, emailConnection: "disabled" },
+    });
+    const failed = setup({ configured: false });
+    await failed.email.connect(TENANT, { status: "failed" });
+    expect(await failed.get.execute({ tenantId: TENANT })).toMatchObject({
+      value: { deliveryConfigured: false, emailConnection: "failed" },
+    });
+  });
+
+  it("flags a free-mail From address (an API provider cannot send from it)", async () => {
+    expect.hasAssertions();
+    const ctx = setup({ configured: false });
+    await ctx.email.connect(TENANT, { fromEmail: "shop@gmail.com" });
+    expect(await ctx.get.execute({ tenantId: TENANT })).toMatchObject({
+      value: { sender: { effectiveEmail: "shop@gmail.com", freeMail: true } },
+    });
+  });
+
+  it("saves and bumps the version; the stored sender email is kept but is not the From", async () => {
+    expect.hasAssertions();
+    const { update, get } = setup({ configured: false });
     const saved = await update.execute({
       tenantId: TENANT,
       expectedVersion: null,
       values: { ...values, senderEmail: "Hello@nusuj.com", staffRecipients: ["me@nusuj.com"] },
     });
-    expect(saved).toMatchObject({ ok: true, value: { version: 1, sender: { mode: "reply_to" } } });
-    senderDomains.setVerified(TENANT, ["nusuj.com"]);
+    expect(saved).toMatchObject({ ok: true, value: { version: 1 } });
     const read = await get.execute({ tenantId: TENANT });
     expect(read).toMatchObject({
       ok: true,
       value: {
         version: 1,
         values: { senderEmail: "hello@nusuj.com", staffRecipients: ["me@nusuj.com"] },
-        sender: { mode: "own_domain", effectiveEmail: "hello@nusuj.com", freeMail: false },
+        sender: { mode: "not_connected", effectiveEmail: null },
       },
     });
   });
@@ -138,9 +172,7 @@ describe("settings", () => {
       store: {
         get: () => Promise.resolve({ storeName: "S", contactEmail: null, defaultLocale: null }),
       },
-      senderDomains: new InMemorySenderDomainRepository(),
-      platformFrom: "M <a@b.co>",
-      deliveryConfigured: true,
+      connections: new InMemoryEmailConnectionRepository(),
       unitOfWork: {
         run: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => {
           try {
@@ -305,74 +337,97 @@ describe("templates", () => {
 });
 
 describe("send a test email", () => {
-  it("sends only to the actor's own address, with the real sender resolution, and marks it a test", async () => {
+  it("sends only to the actor's own address, through the STORE's account, and marks it a test", async () => {
     expect.hasAssertions();
-    const { sendTest, sent } = setup();
-    const result = await sendTest.execute({
+    const ctx = setup();
+    await ctx.ready;
+    const result = await ctx.sendTest.execute({
       tenantId: TENANT,
       key: "order_confirmation",
       locale: "en",
       actorEmail: "staff@nusuj.com",
     });
     expect(result).toEqual({ ok: true, value: { sent: true } });
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
+    expect(ctx.sent).toHaveLength(1);
+    expect(ctx.sent[0]?.message).toMatchObject({
       to: "staff@nusuj.com",
-      from: '"Nusuj Store" <onboarding@resend.dev>',
-      replyTo: "contact@gmail.com",
+      from: '"Nusuj Store" <shop@nusuj.com>',
     });
-    expect(sent[0]?.subject.startsWith("[Test] ")).toBe(true);
+    expect(ctx.sent[0]?.credentials.apiKey).toBe(STORE_KEY);
+    expect(ctx.sent[0]?.message.subject.startsWith("[Test] ")).toBe(true);
   });
 
   it("ignores any recipient in the input: only actorEmail is ever used", async () => {
     expect.hasAssertions();
-    const { sendTest, sent } = setup();
-    await sendTest.execute({
+    const ctx = setup();
+    await ctx.ready;
+    await ctx.sendTest.execute({
       tenantId: TENANT,
       key: "order_confirmation",
       actorEmail: "staff@nusuj.com",
       ...({ to: "victim@example.com" } as object),
     });
-    expect(sent.map((m) => m.to)).toEqual(["staff@nusuj.com"]);
+    expect(ctx.sent.map((call) => call.message.to)).toEqual(["staff@nusuj.com"]);
   });
 
-  it("answers NOT_CONFIGURED (503) and sends nothing when the runtime has no real provider", async () => {
+  it("no connection / switched off / failed: EMAIL_NOT_CONNECTED (503) and nothing is sent", async () => {
     expect.hasAssertions();
-    const { sendTest, sent } = setup({ configured: false });
-    const result = await sendTest.execute({
+    for (const seed of [undefined, { enabled: false }, { status: "failed" as const }]) {
+      const ctx = setup({ configured: false });
+      if (seed !== undefined) await ctx.email.connect(TENANT, seed);
+      const result = await ctx.sendTest.execute({
+        tenantId: TENANT,
+        key: "order_confirmation",
+        actorEmail: "staff@nusuj.com",
+      });
+      expect(result).toMatchObject({ ok: false, error: { code: "EMAIL_NOT_CONNECTED" } });
+      expect(ctx.sent).toHaveLength(0);
+    }
+  });
+
+  it("another store's connection is never used for this store's test", async () => {
+    expect.hasAssertions();
+    const ctx = setup({ configured: false });
+    await ctx.email.connect(OTHER);
+    const result = await ctx.sendTest.execute({
       tenantId: TENANT,
       key: "order_confirmation",
       actorEmail: "staff@nusuj.com",
     });
-    expect(result).toMatchObject({ ok: false, error: { code: "NOT_CONFIGURED" } });
-    expect(sent).toHaveLength(0);
+    expect(result).toMatchObject({ ok: false, error: { code: "EMAIL_NOT_CONNECTED" } });
+    expect(ctx.sent).toHaveLength(0);
   });
 
-  it("refuses when the actor has no address and when the provider fails (no address in the error)", async () => {
+  it("refuses when the actor has no address", async () => {
     expect.hasAssertions();
     const ctx = setup();
+    await ctx.ready;
     expect(
       await ctx.sendTest.execute({ tenantId: TENANT, key: "order_confirmation", actorEmail: null }),
     ).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
-    const failing = new SendTestEmail({
-      settings: ctx.settings,
-      overrides: ctx.overrides,
-      store: {
-        get: () => Promise.resolve({ storeName: "S", contactEmail: null, defaultLocale: null }),
-      },
-      senderDomains: ctx.senderDomains,
-      platformFrom: ctx.delivery.platformFrom,
-      delivery: {
-        ...ctx.delivery,
-        send: vi.fn(() => Promise.reject(new Error("provider said no to staff@nusuj.com"))),
-      },
-    });
-    const result = await failing.execute({
+    expect(ctx.sent).toHaveLength(0);
+  });
+
+  it("a refusing provider is PROVIDER_ERROR with the provider's sanitized message: no key, no address", async () => {
+    expect.hasAssertions();
+    const ctx = setup();
+    await ctx.ready;
+    ctx.email.provider.failNext(
+      "EMAIL_SENDER_REJECTED",
+      `The nusuj.com domain is not verified. Sent to staff@nusuj.com with ${STORE_KEY}`,
+    );
+    const result = await ctx.sendTest.execute({
       tenantId: TENANT,
       key: "order_confirmation",
       actorEmail: "staff@nusuj.com",
     });
-    expect(result).toMatchObject({ ok: false, error: { code: "BUSINESS_RULE" } });
-    expect(JSON.stringify(result)).not.toContain("staff@nusuj.com");
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: "PROVIDER_ERROR", retryable: false },
+    });
+    const text = result.ok ? "" : `${result.error.message} ${JSON.stringify(result.error)}`;
+    expect(text).toContain("domain is not verified");
+    expect(text).not.toContain("staff@nusuj.com");
+    expect(text).not.toContain(STORE_KEY);
   });
 });

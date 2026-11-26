@@ -1,12 +1,18 @@
 import {
-  EmailSignupEmailAdapter,
   LoggingEmailSender,
   ResendEmailSender,
-  ResendSenderDomainProvider,
+  ResendStoreEmailProvider,
   type EmailSender,
-  type SignupEmailPort,
 } from "@platform/admin";
-import type { SenderDomainProvider } from "@platform/notifications";
+import {
+  EnvelopeEmailConnectionVault,
+  EMAIL_CREDENTIALS_KEY_ALIAS,
+  InMemoryEmailConnectionVault,
+  type EmailConnectionVault,
+  type StoreEmailProvider,
+} from "@platform/notifications";
+import { EnvelopeCipher, KeyAliasRegistry } from "@platform/secrets";
+import { NodeCrypto } from "@platform/security";
 import { logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
 
@@ -17,14 +23,13 @@ export interface EmailWiring {
    * answers every call successfully while sending nothing, so it must never back an invitation.
    */
   readonly deliveryConfigured: boolean;
-  /**
-   * Present ONLY when `RESEND_API_KEY` is set. Absent ⇒ the caller keeps the logging signup adapter,
-   * so `assertProductionSignupEmailConfigured` still refuses a non-local deployment with no real sender.
-   */
-  readonly signupEmail?: SignupEmailPort;
 }
 
-/** Plan 1C: Resend when a key is configured, otherwise a sender that logs recipient + subject only. */
+/**
+ * Plan 1C: Resend when a key is configured, otherwise a sender that logs recipient + subject only.
+ * Wave 2b2 (D45): this is MORBEH's own account. It backs staff invitations, staff password reset and
+ * Morbeh -> merchant mail ONLY. It is never handed to anything that sends a store's customer mail.
+ */
 export function resolveEmailWiring(
   config: Pick<RuntimeConfig, "RESEND_API_KEY" | "EMAIL_FROM">,
   fetchImpl?: typeof fetch,
@@ -37,11 +42,7 @@ export function resolveEmailWiring(
     from: config.EMAIL_FROM,
     ...(fetchImpl === undefined ? {} : { fetchImpl }),
   });
-  return {
-    emailSender,
-    deliveryConfigured: true,
-    signupEmail: new EmailSignupEmailAdapter(emailSender),
-  };
+  return { emailSender, deliveryConfigured: true };
 }
 
 /**
@@ -59,19 +60,48 @@ export function staffInviteDelivery(
 }
 
 /**
- * Wave 2b (D43): the provider's Domains API, only with a full-access `RESEND_DOMAINS_API_KEY`.
- * Absent ⇒ nothing is passed, so "Authenticate domain" answers 503 NOT_CONFIGURED.
+ * Wave 2b2 (D47/D48): how a store's customer mail is delivered: through the MERCHANT's own email
+ * account. The provider takes the merchant's key per call and holds no platform key; the vault seals
+ * that key under `EMAIL_CREDENTIALS_KEK_REF`.
+ *
+ * With no KEK: `APP_ENV=local` gets the in-memory stub vault (so a developer can click through the
+ * page; the boot guard accepts it only there), any other environment gets NO vault, so saving a
+ * connection answers 503 NOT_CONFIGURED "Not available yet" and no customer mail is sent.
  */
-export function senderDomainDelivery(
-  config: Pick<RuntimeConfig, "RESEND_DOMAINS_API_KEY">,
+export function storeEmailDelivery(
+  config: Pick<RuntimeConfig, "EMAIL_CREDENTIALS_KEK_REF" | "APP_ENV">,
   fetchImpl?: typeof fetch,
-): { readonly senderDomainProvider?: SenderDomainProvider } {
-  return config.RESEND_DOMAINS_API_KEY === undefined
-    ? {}
-    : {
-        senderDomainProvider: new ResendSenderDomainProvider({
-          apiKey: config.RESEND_DOMAINS_API_KEY,
-          ...(fetchImpl === undefined ? {} : { fetchImpl }),
-        }),
-      };
+): { readonly emailVault?: EmailConnectionVault; readonly emailProvider: StoreEmailProvider } {
+  const emailProvider = new ResendStoreEmailProvider(fetchImpl === undefined ? {} : { fetchImpl });
+  if (config.EMAIL_CREDENTIALS_KEK_REF !== undefined) {
+    return {
+      emailVault: buildEmailConnectionVault(config.EMAIL_CREDENTIALS_KEK_REF),
+      emailProvider,
+    };
+  }
+  return config.APP_ENV === "local"
+    ? { emailVault: new InMemoryEmailConnectionVault(), emailProvider }
+    : { emailProvider };
+}
+
+/**
+ * The real email credential vault (D48): `@platform/secrets`' envelope encryption over `NodeCrypto`,
+ * the data key wrapped under a KEK derived from `kekRef`, under its OWN alias. The stored blob is
+ * `{v, alias, wrappedDek, ciphertext}` only: with `NodeCrypto` the key reference IS the key material,
+ * so it is resolved on open from this trusted alias registry, never from the row.
+ */
+export function buildEmailConnectionVault(kekRef: string): EmailConnectionVault {
+  const aliases = new KeyAliasRegistry();
+  aliases.set(EMAIL_CREDENTIALS_KEY_ALIAS, kekRef);
+  return new EnvelopeEmailConnectionVault(
+    new EnvelopeCipher(new NodeCrypto(), aliases),
+    EMAIL_CREDENTIALS_KEY_ALIAS,
+    (alias) => {
+      try {
+        return aliases.resolve(alias);
+      } catch {
+        return undefined;
+      }
+    },
+  );
 }

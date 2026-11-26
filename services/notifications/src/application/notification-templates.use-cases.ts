@@ -1,6 +1,6 @@
 import type { UseCase } from "@platform/application";
 import { err, ok, type Result } from "@platform/types";
-import { BusinessRuleError, DomainError, ValidationError } from "@platform/utils";
+import { ValidationError, type DomainError } from "@platform/utils";
 import type {
   NotificationSettingsRepository,
   TemplateOverride,
@@ -22,13 +22,15 @@ import {
 } from "../domain/messaging/template-catalogue";
 import {
   copyFor,
-  loadSenderContext,
+  loadStoreContext,
   renderSample,
-  type SenderContextDeps,
+  type StoreContextDeps,
 } from "./messaging-support";
-import type { EmailDeliveryPort } from "./messaging-ports";
+import { EmailNotConnectedError, EmailProviderRefusedError } from "./email-connection-errors";
+import type { StoreMailSender } from "./messaging-ports";
+import { StoreEmailError } from "./store-email-delivery";
 
-export interface TemplateDeps extends SenderContextDeps {
+export interface TemplateDeps extends StoreContextDeps {
   readonly overrides: TemplateOverrideRepository;
   readonly settings: NotificationSettingsRepository;
 }
@@ -244,7 +246,7 @@ export class PreviewNotificationTemplate implements UseCase<
     if (!ref.ok) return err(ref.error);
     const copy = await previewCopy(this.deps, input, ref.value.key, ref.value.locale);
     if (!copy.ok) return err(copy.error);
-    const context = await loadSenderContext(this.deps, input.tenantId);
+    const context = await loadStoreContext(this.deps, input.tenantId);
     const rendered = renderSample(
       ref.value.key,
       ref.value.locale,
@@ -273,22 +275,14 @@ export interface SendTestEmailInput {
 }
 
 export interface SendTestEmailDeps extends TemplateDeps {
-  readonly delivery: EmailDeliveryPort;
-}
-
-/** "The server can't send mail": the presenter maps `NOT_CONFIGURED` to 503. */
-export class EmailNotConfiguredError extends DomainError {
-  readonly retryable = false;
-  constructor() {
-    super("Email isn't set up on this server, so no email can be sent", {
-      code: "NOT_CONFIGURED",
-    });
-  }
+  /** The store's own email connection: the ONLY way a test mail leaves (D46). */
+  readonly mail: StoreMailSender;
 }
 
 /**
- * Sends the template, rendered with sample data, to the signed-in staff member's OWN address. The
- * test mail uses the real sender resolution, so it shows exactly what a customer would see.
+ * Sends the template, rendered with sample data, to the signed-in staff member's OWN address,
+ * through the STORE's email connection: it shows exactly what a customer would get. No connection (or
+ * a switched-off / failing one) is `EMAIL_NOT_CONNECTED` and nothing is sent: never the platform's mail.
  */
 export class SendTestEmail implements UseCase<
   SendTestEmailInput,
@@ -304,7 +298,8 @@ export class SendTestEmail implements UseCase<
   async execute(input: SendTestEmailInput): Promise<Result<{ readonly sent: true }, DomainError>> {
     const ref = validateTemplateRef(input.key, input.locale);
     if (!ref.ok) return err(ref.error);
-    if (!this.deps.delivery.deliveryConfigured) return err(new EmailNotConfiguredError());
+    if (!(await this.deps.mail.isConnected(input.tenantId)))
+      return err(new EmailNotConnectedError());
     if (input.actorEmail === null || input.actorEmail === "") {
       return err(
         new ValidationError("We can't find an email address for your account", [
@@ -314,7 +309,7 @@ export class SendTestEmail implements UseCase<
     }
     const copy = await previewCopy(this.deps, input, ref.value.key, ref.value.locale);
     if (!copy.ok) return err(copy.error);
-    const context = await loadSenderContext(this.deps, input.tenantId);
+    const context = await loadStoreContext(this.deps, input.tenantId);
     const rendered = renderSample(
       ref.value.key,
       ref.value.locale,
@@ -322,16 +317,30 @@ export class SendTestEmail implements UseCase<
       context.profile.storeName,
     );
     try {
-      await this.deps.delivery.send({
+      await this.deps.mail.send(input.tenantId, context.profile.storeName, {
         to: input.actorEmail,
         subject: rendered.subject === "" ? "Test email" : `[Test] ${rendered.subject}`,
         text: rendered.text,
         html: rendered.html,
-        from: context.sender.from,
-        ...(context.sender.replyTo === undefined ? {} : { replyTo: context.sender.replyTo }),
       });
-    } catch {
-      return err(new BusinessRuleError("The test email could not be sent. Try again in a moment."));
+    } catch (error) {
+      if (error instanceof StoreEmailError) {
+        if (error.code === "EMAIL_NOT_CONNECTED") return err(new EmailNotConnectedError());
+        return err(
+          new EmailProviderRefusedError(
+            error.providerMessage ?? "Your email provider didn't accept the test email",
+            error.code === "EMAIL_RATE_LIMITED" ||
+              error.code === "EMAIL_PROVIDER_UNAVAILABLE" ||
+              error.code === "EMAIL_TIMEOUT",
+          ),
+        );
+      }
+      return err(
+        new EmailProviderRefusedError(
+          "The test email could not be sent. Try again in a moment.",
+          true,
+        ),
+      );
     }
     return ok({ sent: true });
   }

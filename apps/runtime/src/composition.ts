@@ -46,7 +46,6 @@ import {
   type PaymentCredentialVault,
   type ProviderRegistration,
 } from "@platform/payments";
-import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
@@ -224,13 +223,6 @@ export interface RuntimeCore {
    * code step is available (`staffTokenIssuer` + `mfaConfigured`).
    */
   readonly staffTwoStepRequired: boolean;
-  /**
-   * G-72: dispatches the two signup-related emails (complete-account / already-registered). Always
-   * `LoggingSignupEmailAdapter` today — no real provider is wired anywhere in this composition (D4:
-   * "the user's choice", not in scope). `apps/runtime/src/api.ts` refuses to boot outside `local`
-   * while this is still that logging adapter.
-   */
-  readonly signupEmail: SignupEmailPort;
 }
 
 /** Wave 1e: true only for the real TOTP provider together with its encryption key. */
@@ -483,7 +475,6 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     mfaProviders,
     mfaConfigured: isMfaConfigured(mfaProviders, config),
     staffTwoStepRequired: config.STAFF_TWO_STEP === "required",
-    signupEmail: new LoggingSignupEmailAdapter(),
   };
 }
 

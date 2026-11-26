@@ -12,18 +12,29 @@ import {
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import type {
-  EmailDeliveryPort,
   NotificationLog,
   RecipientResolverPort,
+  StoreMailSender,
   StoreProfilePort,
 } from "./application/messaging-ports";
+import type {
+  EmailConnectionVault,
+  StoreEmailProvider,
+} from "./application/email-connection-ports";
+import { StoreEmailDelivery } from "./application/store-email-delivery";
+import {
+  DeleteEmailConnection,
+  GetEmailConnection,
+  SaveEmailConnection,
+  SetEmailConnectionEnabled,
+  TestEmailConnection,
+} from "./application/email-connection.use-cases";
 import { TemplatedNotifier } from "./application/templated-notifier";
 import { TemplatedEmailProvider } from "./infrastructure/templated-email-provider";
 import type { EmailProviderPort } from "./application/ports";
 import type {
+  EmailConnectionRepository,
   NotificationSettingsRepository,
-  SenderDomainReader,
-  SenderDomainRepository,
   TemplateOverrideRepository,
 } from "./domain/messaging/messaging-repositories";
 import {
@@ -38,12 +49,6 @@ import {
   RevertNotificationTemplate,
   SendTestEmail,
 } from "./application/notification-templates.use-cases";
-import {
-  GetSenderDomain,
-  StartSenderDomain,
-  VerifySenderDomain,
-} from "./application/sender-domain.use-cases";
-import type { SenderDomainProvider } from "./application/sender-domain-ports";
 import { CreateNotification } from "./application/create-notification.use-case";
 import { GetNotification } from "./application/get-notification.use-case";
 import { ListNotifications } from "./application/list-notifications.use-case";
@@ -64,13 +69,13 @@ import {
 } from "./infrastructure/in-memory-port-adapters";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
+  InMemoryEmailConnectionRepository,
   InMemoryNotificationSettingsRepository,
-  InMemorySenderDomainRepository,
   InMemoryTemplateOverrideRepository,
 } from "./infrastructure/in-memory-messaging-repositories";
 import {
+  PrismaEmailConnectionRepository,
   PrismaNotificationSettingsRepository,
-  PrismaSenderDomainRepository,
   PrismaTemplateOverrideRepository,
 } from "./infrastructure/prisma-messaging-repositories";
 import {
@@ -79,31 +84,28 @@ import {
 } from "./infrastructure/notifications-event-translator";
 import { PrismaNotificationRepository } from "./infrastructure/prisma-notification-repository";
 import { NotificationSettingsController } from "./interfaces/notification-settings.controller";
-import { SenderDomainController } from "./interfaces/sender-domain.controller";
+import { EmailConnectionController } from "./interfaces/email-connection.controller";
 import { NotificationsController } from "./interfaces/notifications.controller";
 
-/** The default platform mailbox: the same as the runtime's `EMAIL_FROM` default. */
-export const DEFAULT_PLATFORM_FROM = "Morbeh <onboarding@resend.dev>";
-
 /**
- * Wave 2b: what Settings > Notifications needs from outside the context. Present in the admin app's
- * wiring (store profile from Tenancy/Online store, delivery over the runtime's `EmailSender`); absent
- * in the bare in-memory wiring, where the store has no name or contact and nothing is delivered.
+ * What Settings > Notifications needs from outside the context. Present in the admin app's wiring
+ * (store profile from Tenancy/Online store); absent in the bare in-memory wiring, where the store has
+ * no name or contact. Customer mail goes ONLY through the store's own email connection (Wave 2b2,
+ * D45/D46): there is no platform mailbox here and nothing to fall back to.
  */
 export interface NotificationsMessagingDeps {
   readonly store: StoreProfilePort;
-  readonly delivery: EmailDeliveryPort;
-  /** Tests seed verified domains here; production reads `notifications.sender_domains`. */
-  readonly senderDomains?: SenderDomainReader;
   /** Resolves a customer reference to a name, address and language at send time. Absent ⇒ nobody is found. */
   readonly recipients?: RecipientResolverPort;
   /** Failure logging for the email channel: short codes only, never an address or a body. */
   readonly log?: NotificationLog;
   /**
-   * The email provider's Domains API (D43). Absent (no `RESEND_DOMAINS_API_KEY`) ⇒ authenticating a
-   * domain answers 503 NOT_CONFIGURED and Reply-To mode keeps working.
+   * Seals the merchants' email keys (D48). Absent (no `EMAIL_CREDENTIALS_KEK_REF` outside local) ⇒
+   * saving a connection answers 503 NOT_CONFIGURED and nothing can be sent.
    */
-  readonly senderDomainProvider?: SenderDomainProvider;
+  readonly emailVault?: EmailConnectionVault;
+  /** Calls the merchant's own provider (Resend HTTPS) with THEIR key. Absent ⇒ nothing can be sent. */
+  readonly emailProvider?: StoreEmailProvider;
 }
 
 export interface NotificationsWiringDeps {
@@ -124,8 +126,10 @@ export interface WiredNotifications {
   readonly notifications: NotificationsController;
   /** Settings > Notifications: sender, templates, preview, test-send (Wave 2b). */
   readonly settings: NotificationSettingsController;
-  /** Authenticate the store's own sending domain and read its status (D43). */
-  readonly senderDomain: SenderDomainController;
+  /** The store's own email account: connect, test, switch, disconnect (D46-D49). */
+  readonly emailConnection: EmailConnectionController;
+  /** The one way a store's mail is sent: through its own connection, resolved per call (D46). */
+  readonly storeMail: StoreMailSender;
   /** The one entry the order/payment/fulfilment/draft triggers use to send a templated mail (Wave 2b). */
   readonly notifier: TemplatedNotifier;
   readonly drainOutbox: () => Promise<number>;
@@ -135,38 +139,29 @@ export interface WiredNotifications {
 interface MessagingRepositories {
   readonly settings: NotificationSettingsRepository;
   readonly overrides: TemplateOverrideRepository;
-  readonly senderDomains: SenderDomainRepository;
+  readonly connections: EmailConnectionRepository;
 }
 
 const UNCONFIGURED_MESSAGING: NotificationsMessagingDeps = {
   store: { get: () => Promise.resolve({ storeName: "", contactEmail: null, defaultLocale: null }) },
-  delivery: {
-    deliveryConfigured: false,
-    platformFrom: DEFAULT_PLATFORM_FROM,
-    send: () => Promise.reject(new Error("EMAIL_NOT_CONFIGURED")),
-  },
 };
 
 function buildSettingsController(
   repos: MessagingRepositories,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   messaging: NotificationsMessagingDeps,
+  storeMail: StoreMailSender,
 ): NotificationSettingsController {
-  const senderDomains = messaging.senderDomains ?? repos.senderDomains;
   const templateDeps = {
     settings: repos.settings,
     overrides: repos.overrides,
     store: messaging.store,
-    senderDomains,
-    platformFrom: messaging.delivery.platformFrom,
   };
   const settingsDeps = {
     settings: repos.settings,
     store: messaging.store,
-    senderDomains,
-    platformFrom: messaging.delivery.platformFrom,
     unitOfWork,
-    deliveryConfigured: messaging.delivery.deliveryConfigured,
+    connections: repos.connections,
   };
   return new NotificationSettingsController({
     getSettings: new GetNotificationSettings(settingsDeps),
@@ -176,28 +171,28 @@ function buildSettingsController(
     putTemplate: new PutNotificationTemplate(templateDeps),
     revertTemplate: new RevertNotificationTemplate(templateDeps),
     previewTemplate: new PreviewNotificationTemplate(templateDeps),
-    sendTest: new SendTestEmail({ ...templateDeps, delivery: messaging.delivery }),
+    sendTest: new SendTestEmail({ ...templateDeps, mail: storeMail }),
   });
 }
 
-function buildSenderDomainController(
+function buildEmailConnectionController(
   deps: NotificationsWiringDeps,
   repos: MessagingRepositories,
   messaging: NotificationsMessagingDeps,
-): SenderDomainController {
-  const domainDeps = {
-    settings: repos.settings,
+): EmailConnectionController {
+  const connectionDeps = {
+    connections: repos.connections,
     store: messaging.store,
-    senderDomains: repos.senderDomains,
     clock: deps.clock,
-    ...(messaging.senderDomainProvider === undefined
-      ? {}
-      : { provider: messaging.senderDomainProvider }),
+    ...(messaging.emailVault === undefined ? {} : { vault: messaging.emailVault }),
+    ...(messaging.emailProvider === undefined ? {} : { provider: messaging.emailProvider }),
   };
-  return new SenderDomainController({
-    getDomain: new GetSenderDomain(domainDeps),
-    startDomain: new StartSenderDomain(domainDeps),
-    verifyDomain: new VerifySenderDomain(domainDeps),
+  return new EmailConnectionController({
+    getConnection: new GetEmailConnection(connectionDeps),
+    saveConnection: new SaveEmailConnection(connectionDeps),
+    setEnabled: new SetEmailConnectionEnabled(connectionDeps),
+    deleteConnection: new DeleteEmailConnection(connectionDeps),
+    testConnection: new TestEmailConnection(connectionDeps),
   });
 }
 
@@ -264,23 +259,30 @@ function assemble(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   repos: MessagingRepositories,
   messaging: NotificationsMessagingDeps,
-): Pick<WiredNotifications, "notifications" | "settings" | "senderDomain" | "notifier"> {
-  const senderDomains = messaging.senderDomains ?? repos.senderDomains;
+): Pick<
+  WiredNotifications,
+  "notifications" | "settings" | "emailConnection" | "storeMail" | "notifier"
+> {
+  const storeMail = new StoreEmailDelivery({
+    connections: repos.connections,
+    clock: deps.clock,
+    ...(messaging.emailVault === undefined ? {} : { vault: messaging.emailVault }),
+    ...(messaging.emailProvider === undefined ? {} : { provider: messaging.emailProvider }),
+  });
   const emailProvider = new TemplatedEmailProvider({
     settings: repos.settings,
     overrides: repos.overrides,
     store: messaging.store,
-    senderDomains,
-    platformFrom: messaging.delivery.platformFrom,
     recipients: messaging.recipients ?? NO_RECIPIENTS,
-    delivery: messaging.delivery,
+    mail: storeMail,
     log: messaging.log ?? SILENT_LOG,
   });
   const built = buildController(notifications, unitOfWork, deps, emailProvider);
   return {
     notifications: built.controller,
-    settings: buildSettingsController(repos, unitOfWork, messaging),
-    senderDomain: buildSenderDomainController(deps, repos, messaging),
+    settings: buildSettingsController(repos, unitOfWork, messaging, storeMail),
+    emailConnection: buildEmailConnectionController(deps, repos, messaging),
+    storeMail,
     notifier: new TemplatedNotifier({
       settings: repos.settings,
       create: built.create,
@@ -326,7 +328,7 @@ export function wireNotifications(
         {
           settings: new PrismaNotificationSettingsRepository(deps.prisma),
           overrides: new PrismaTemplateOverrideRepository(deps.prisma),
-          senderDomains: new PrismaSenderDomainRepository(deps.prisma),
+          connections: new PrismaEmailConnectionRepository(deps.prisma),
         },
         messaging,
       ),
@@ -354,7 +356,7 @@ export function wireNotifications(
     {
       settings: new InMemoryNotificationSettingsRepository(),
       overrides: new InMemoryTemplateOverrideRepository(),
-      senderDomains: new InMemorySenderDomainRepository(),
+      connections: new InMemoryEmailConnectionRepository(),
     },
     messaging,
   );

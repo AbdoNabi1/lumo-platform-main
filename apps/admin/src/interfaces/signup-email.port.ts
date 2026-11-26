@@ -13,6 +13,13 @@
  * guarded (see `apps/runtime/src/api.ts`'s `assertProductionSignupEmailConfigured`).
  */
 export interface SignupEmailPort {
+  /**
+   * Wave 2b2 (D51): whether this store can send sign-up mail at all (it has a working email
+   * connection). False means the sign-up flow answers 503 EMAIL_NOT_CONNECTED and nothing is sent.
+   * Never a fallback to the platform's account.
+   */
+  isAvailable(tenantId: string): Promise<boolean>;
+
   sendCompleteAccountEmail(input: {
     readonly email: string;
     readonly link: string;

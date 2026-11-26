@@ -80,18 +80,20 @@ const schema = z
     AUTH_SIGNING_KEY: z.string().min(1).optional(),
     STAFF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(7200),
     /**
-     * Plan 1C: Resend API key (`re_...`). SECRET — set it only in Railway Variables; never log or commit it.
+     * Plan 1C: Morbeh's OWN Resend API key (`re_...`), for Morbeh -> merchant/staff mail only. SECRET — set it only in Railway Variables; never log or commit it.
      * Absent ⇒ emails are written to the log (recipient + subject only) instead of being sent.
      */
     RESEND_API_KEY: z.string().min(10).optional(),
     /** Plan 1C: the From header. The default is Resend's sandbox sender, which only delivers to the Resend account's own address. */
     EMAIL_FROM: z.string().min(3).default("Morbeh <onboarding@resend.dev>"),
     /**
-     * Wave 2b (D43): Resend FULL-ACCESS key, used only to create and verify merchants' sending domains
-     * (the sending key above cannot manage domains). SECRET. Optional: absent ⇒ "Authenticate domain"
-     * answers 503 NOT_CONFIGURED and every store's mail uses its name with Reply-To.
+     * Wave 2b2 (D45/D48): merchants' own email keys (Settings > Notifications > Email account) are
+     * sealed under this key-encryption key, SEPARATE from the payment and shipping ones. SECRET, min
+     * 32 chars. The two keys above are Morbeh's OWN account (staff invites, password reset, Morbeh ->
+     * merchant mail) and are NEVER used for a store's customer mail. Absent outside `local` => saving a
+     * store's email account answers 503 NOT_CONFIGURED "Not available yet" and no customer mail is sent.
      */
-    RESEND_DOMAINS_API_KEY: z.string().min(10).optional(),
+    EMAIL_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
     /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
     ADMIN_PUBLIC_URL: z.string().url().optional(),
     /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */

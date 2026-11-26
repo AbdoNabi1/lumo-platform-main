@@ -1,30 +1,42 @@
 import { describe, expect, it } from "vitest";
 import {
-  EmailSignupEmailAdapter,
   LoggingEmailSender,
   ResendEmailSender,
-  ResendSenderDomainProvider,
+  ResendStoreEmailProvider,
   wireAdmin,
 } from "@platform/admin";
+import {
+  EnvelopeEmailConnectionVault,
+  InMemoryEmailConnectionVault,
+} from "@platform/notifications";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { JsonEventSerializer } from "@platform/domain-events";
-import { PLATFORM_ADMIN_ROLE } from "@platform/security";
-import { resolveEmailWiring, senderDomainDelivery, staffInviteDelivery } from "./email-wiring";
+import {
+  HashedPasswordAuthProvider,
+  InMemoryPasswordCredentialStore,
+  PLATFORM_ADMIN_ROLE,
+  ScryptPasswordHasher,
+} from "@platform/security";
+import {
+  buildEmailConnectionVault,
+  resolveEmailWiring,
+  staffInviteDelivery,
+  storeEmailDelivery,
+} from "./email-wiring";
 
 describe("resolveEmailWiring (Plan 1C)", () => {
-  it("without a key: a logging sender and NO signup adapter (the G-72 guard keeps refusing)", () => {
+  it("without a key: a logging sender", () => {
     const wiring = resolveEmailWiring({ RESEND_API_KEY: undefined, EMAIL_FROM: "x@y.test" });
     expect(wiring.emailSender).toBeInstanceOf(LoggingEmailSender);
-    expect(wiring.signupEmail).toBeUndefined();
   });
 
-  it("with a key: a Resend sender and a real signup adapter", () => {
+  it("with a key: a Resend sender: Morbeh's own account, and nothing that sends a store's customer mail (D45)", () => {
     const wiring = resolveEmailWiring({
       RESEND_API_KEY: "re_fake_key_123",
       EMAIL_FROM: "Morbeh <onboarding@resend.dev>",
     });
     expect(wiring.emailSender).toBeInstanceOf(ResendEmailSender);
-    expect(wiring.signupEmail).toBeInstanceOf(EmailSignupEmailAdapter);
+    expect(Object.keys(wiring).sort()).toEqual(["deliveryConfigured", "emailSender"]);
   });
 });
 
@@ -160,26 +172,165 @@ describe("staff invitation delivery capability (Wave 1d, R1)", () => {
   });
 });
 
-describe("senderDomainDelivery (Wave 2b, D43)", () => {
-  it("without RESEND_DOMAINS_API_KEY: no provider, so authenticating a domain answers NOT_CONFIGURED", () => {
-    expect(senderDomainDelivery({ RESEND_DOMAINS_API_KEY: undefined })).toEqual({});
+describe("storeEmailDelivery (Wave 2b2, D47/D48)", () => {
+  const kek = "k".repeat(32);
+
+  it("with the KEK: the real envelope vault and the Resend provider for the MERCHANT's key", () => {
+    const wiring = storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: kek, APP_ENV: "production" });
+    expect(wiring.emailVault).toBeInstanceOf(EnvelopeEmailConnectionVault);
+    expect(wiring.emailVault?.backing).toBe("real");
+    expect(wiring.emailProvider).toBeInstanceOf(ResendStoreEmailProvider);
   });
 
-  it("with the full-access key: the Resend Domains provider, using that key only", async () => {
-    const seen: string[] = [];
-    const wiring = senderDomainDelivery({ RESEND_DOMAINS_API_KEY: "re_full_access_1" }, ((
-      _url: string,
-      init: RequestInit,
-    ) => {
-      seen.push((init.headers as Record<string, string>)["authorization"] ?? "");
-      return Promise.resolve(
-        new Response(JSON.stringify({ id: "d1", status: "pending", records: [] }), {
-          status: 200,
-        }),
-      );
-    }) as typeof fetch);
-    expect(wiring.senderDomainProvider).toBeInstanceOf(ResendSenderDomainProvider);
-    await wiring.senderDomainProvider?.get("d1");
-    expect(seen).toEqual(["Bearer re_full_access_1"]);
+  it("without the KEK outside local: NO vault (saving answers 503 NOT_CONFIGURED), but the provider is still wired", () => {
+    for (const APP_ENV of ["production", "staging", "development"] as const) {
+      const wiring = storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: undefined, APP_ENV });
+      expect(wiring.emailVault).toBeUndefined();
+      expect(wiring.emailProvider).toBeInstanceOf(ResendStoreEmailProvider);
+    }
+  });
+
+  it("without the KEK in local: the in-memory stub vault (the boot guard allows it only there)", () => {
+    const wiring = storeEmailDelivery({ EMAIL_CREDENTIALS_KEK_REF: undefined, APP_ENV: "local" });
+    expect(wiring.emailVault).toBeInstanceOf(InMemoryEmailConnectionVault);
+    expect(wiring.emailVault?.backing).toBe("stub");
+  });
+
+  it("the sealed blob holds no key reference and opens only under the same KEK", async () => {
+    const vault = buildEmailConnectionVault(kek);
+    const sealed = await vault.seal("t-1", "resend", { apiKey: "re_store_secret_key_value_1234" });
+    expect(sealed).not.toContain(kek);
+    expect(sealed).not.toContain("kekRef");
+    expect(sealed).not.toContain("re_store_secret_key_value_1234");
+    expect(await vault.open("t-1", "resend", sealed)).toEqual({
+      apiKey: "re_store_secret_key_value_1234",
+    });
+    await expect(
+      buildEmailConnectionVault("j".repeat(32)).open("t-1", "resend", sealed),
+    ).rejects.toThrow(/could not be opened/);
+  });
+});
+
+describe("a store's customer mail never touches the platform's account (D45), composed the way the runtime composes it", () => {
+  const clock: Clock = { now: () => new Date("2026-11-26T10:00:00.000Z") };
+  let n = 0;
+  const idGenerator: IdGenerator = {
+    generate: () => `00000000-0000-4000-8000-${String((n += 1)).padStart(12, "0")}`,
+  };
+  const owner: Principal = { id: "owner-1", kind: "staff", roles: ["admin"], tenantId: "t-1" };
+  const PLATFORM_KEY = "re_platform_morbeh_own_key_1";
+  const STORE_KEY = "re_store_AbCdEfGhIjKlMnOpQrStUv1234";
+
+  async function compose() {
+    const platformCalls: { auth: string; body: string }[] = [];
+    const storeCalls: { auth: string; body: string }[] = [];
+    const record = (into: typeof platformCalls) => async (_url: string, init: RequestInit) => {
+      into.push({
+        auth: (init.headers as Record<string, string>)["authorization"] ?? "",
+        body: String(init.body),
+      });
+      return { ok: true, status: 200, json: async () => ({ id: "1" }) } as unknown as Response;
+    };
+    const email = resolveEmailWiring(
+      { RESEND_API_KEY: PLATFORM_KEY, EMAIL_FROM: "Morbeh <no-reply@morbeh.test>" },
+      record(platformCalls) as unknown as typeof fetch,
+    );
+    const store = new InMemoryPasswordCredentialStore();
+    await store.save({
+      tenantId: "t-1",
+      identifier: "staff:owner@merchant.test",
+      principalExternalId: "owner-1",
+      passwordHash: "x",
+    });
+    const admin = wireAdmin({
+      serializer: new JsonEventSerializer(),
+      idGenerator,
+      clock,
+      emailSender: email.emailSender,
+      adminPublicUrl: "https://admin.test",
+      passwordAuthProvider: new HashedPasswordAuthProvider({
+        store,
+        hasher: new ScryptPasswordHasher({ log2N: 10 }),
+        clock,
+      }),
+      ...staffInviteDelivery(email, { ADMIN_PUBLIC_URL: "https://admin.test" }),
+      ...storeEmailDelivery(
+        { EMAIL_CREDENTIALS_KEK_REF: "k".repeat(32), APP_ENV: "production" },
+        record(storeCalls) as unknown as typeof fetch,
+      ),
+    });
+    const { security, identityDirectory } = admin.securityWiring;
+    identityDirectory.register("owner-1");
+    await security.registerPrincipal({
+      tenantId: "t-1",
+      externalId: "owner-1",
+      kind: "human",
+      displayName: "owner@merchant.test",
+      subjectRef: "owner-1",
+    });
+    await security.defineRole({
+      tenantId: "t-1",
+      key: PLATFORM_ADMIN_ROLE,
+      name: PLATFORM_ADMIN_ROLE,
+      permissions: ["*:*"],
+    });
+    await security.assignRole({
+      tenantId: "t-1",
+      principalExternalId: "owner-1",
+      roleKey: PLATFORM_ADMIN_ROLE,
+      grantedBy: "test",
+    });
+    return { admin, platformCalls, storeCalls };
+  }
+
+  it("connecting a store's account and test-sending a template use the STORE's key; the platform's key is never sent", async () => {
+    const { admin, platformCalls, storeCalls } = await compose();
+    const saved = await admin.emailConnection.save(owner, {
+      tenantId: "t-1",
+      expectedVersion: null,
+      kind: "resend",
+      fromEmail: "shop@merchant.test",
+      apiKey: STORE_KEY,
+    });
+    expect(saved.status).toBe(200);
+    expect(JSON.stringify(saved.body)).not.toContain(STORE_KEY);
+    const test = await admin.notificationSettings.sendTest(owner, {
+      tenantId: "t-1",
+      key: "order_confirmation",
+      locale: "en",
+    });
+    expect(test.status).toBe(200);
+    expect(storeCalls.map((call) => call.auth)).toEqual([
+      `Bearer ${STORE_KEY}`,
+      `Bearer ${STORE_KEY}`,
+    ]);
+    expect(platformCalls).toHaveLength(0);
+    expect(JSON.stringify(platformCalls)).not.toContain("shop@merchant.test");
+  });
+
+  it("with no connection nothing is sent at all for a template test: not even by the platform", async () => {
+    const { admin, platformCalls, storeCalls } = await compose();
+    const test = await admin.notificationSettings.sendTest(owner, {
+      tenantId: "t-1",
+      key: "order_confirmation",
+      locale: "en",
+    });
+    expect(test.status).toBe(503);
+    expect(test.body).toMatchObject({ code: "EMAIL_NOT_CONNECTED" });
+    expect(storeCalls).toHaveLength(0);
+    expect(platformCalls).toHaveLength(0);
+  });
+
+  it("staff invitations still go through the PLATFORM's account with the platform's key", async () => {
+    const { admin, platformCalls, storeCalls } = await compose();
+    const invited = await admin.staff.invite(owner, "t-1", {
+      email: "sam@example.test",
+      role: "viewer",
+    });
+    expect(invited.status).toBe(201);
+    expect(platformCalls).toHaveLength(1);
+    expect(platformCalls[0]?.auth).toBe(`Bearer ${PLATFORM_KEY}`);
+    expect(platformCalls[0]?.body).toContain("accept-invite?token=");
+    expect(storeCalls).toHaveLength(0);
   });
 });

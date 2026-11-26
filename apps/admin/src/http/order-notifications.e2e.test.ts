@@ -14,12 +14,18 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { createAdminHttpApi } from "./server";
 import { httpDriver, seedSingleVariantProduct } from "./testing/seed-catalog";
 import { httpStockDriver, seedStock } from "./testing/seed-stock";
+import {
+  STORE_API_KEY,
+  storeEmailHarness,
+  type StoreEmailHarness,
+} from "./testing/store-email-harness";
 
 /**
- * Wave 2b: the order mails over the REAL admin pipeline with the real wiring (Checkout, Orders,
+ * Wave 2b / 2b2: the order mails over the REAL admin pipeline with the real wiring (Checkout, Orders,
  * Identity, Notifications): one confirmation and one staff mail when an order is placed, one mail when
  * it is cancelled, never the old generic "status changed" mail, nothing sensitive on the delivery log,
- * and an order that checkout undid for lack of stock mails nobody.
+ * and an order that checkout undid for lack of stock mails nobody. Every customer mail goes through the
+ * STORE's own email connection; the platform's own sender (a spy here) is never called for it.
  */
 
 interface Sent {
@@ -69,13 +75,21 @@ const idGenerator = { generate: () => `id-${(n += 1)}` };
 describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
   let app: FastifyInstance;
   let sent: Sent[];
+  let mail: StoreEmailHarness;
   let productId = "";
 
   const admin = { authorization: "Bearer tok-a", "content-type": "application/json" };
   const storefront = { "x-tenant-id": "tenant-a", "content-type": "application/json" };
 
-  async function boot(extra: Record<string, unknown> = {}) {
-    sent = [];
+  /** `connect: false` leaves the store with no email account (the D46 \"not connected\" case). */
+  async function boot(options: { connect?: boolean } = {}) {
+    mail = await storeEmailHarness({
+      tenantId: "tenant-a",
+      staffId: "staff-1",
+      staffEmail: "owner@merchant.test",
+      clock,
+    });
+    sent = mail.storeMail;
     const fx = infra();
     app = await createAdminHttpApi({
       tenantMode: "multi",
@@ -87,11 +101,24 @@ describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
       rateLimiter: fx.rateLimiter,
       idempotencyKeys: fx.idempotencyKeys,
       responseCache: fx.cache,
-      emailSender: { send: async (message: Sent) => void sent.push(message) },
-      emailDeliveryConfigured: true,
-      emailFrom: "Morbeh <mail@morbeh.test>",
-      ...extra,
+      ...mail.deps,
     });
+    if (options.connect !== false) {
+      const connected = await app.inject({
+        method: "PUT",
+        url: "/api/v1/notifications/email-connection",
+        headers: admin,
+        payload: {
+          kind: "resend",
+          fromEmail: "shop@merchant.test",
+          apiKey: STORE_API_KEY,
+          expectedVersion: null,
+        },
+      });
+      if (connected.statusCode !== 200) throw new Error(`connect failed: ${connected.body}`);
+      // The connection's own test mail is not an order mail.
+      mail.storeMail.length = 0;
+    }
     const driver = httpDriver(async (method, url, payload) =>
       method === "GET" ? get(url, admin) : post(url, admin, payload ?? {}),
     );
@@ -179,7 +206,7 @@ describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
       expectedVersion: null,
     });
 
-  it("placing an order mails the customer once and each staff recipient once, From the store, Reply-To the merchant", async () => {
+  it("placing an order mails the customer once and each staff recipient once, through the store's own account", async () => {
     expect.hasAssertions();
     ok(await setStaff(["owner@shop.test", "ops@shop.test"]), "settings");
     const { orderId, complete } = await placeOrder("s-1");
@@ -188,10 +215,14 @@ describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
     const customerMail = sent.filter((m) => m.to === "shopper@example.com");
     expect(customerMail).toHaveLength(1);
     expect(customerMail[0]?.subject).toMatch(/confirmed|تأكيد/);
-    expect(customerMail[0]?.replyTo).toBe("hello@merchant.test");
-    expect(customerMail[0]?.from).toContain("mail@morbeh.test");
-    expect(customerMail[0]?.from).not.toContain("merchant.test");
+    expect(customerMail[0]?.from).toContain("<shop@merchant.test>");
+    expect(customerMail[0]?.from).not.toContain("morbeh");
     expect(customerMail[0]?.idempotencyKey).toBeDefined();
+    // Every mail used the STORE's key; the platform's own account sent nothing.
+    expect(mail.provider.calls.every((call) => call.credentials.apiKey === STORE_API_KEY)).toBe(
+      true,
+    );
+    expect(mail.platformMail).toHaveLength(0);
     expect(sent.filter((m) => m.to === "owner@shop.test")).toHaveLength(1);
     expect(sent.filter((m) => m.to === "ops@shop.test")).toHaveLength(1);
     expect(sent).toHaveLength(3);
@@ -227,16 +258,54 @@ describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
     expect(after[0]?.subject).toMatch(/canceled|إلغاء/);
   });
 
-  it("with email not configured the order is placed and nothing is claimed sent", async () => {
+  it("with no email account connected the order is placed, the notification is failed EMAIL_NOT_CONNECTED and NOTHING is sent: not by the platform either", async () => {
     expect.hasAssertions();
     await app.close();
-    await boot({ emailDeliveryConfigured: false });
+    await boot({ connect: false });
     const { orderId } = await placeOrder("s-4");
     expect(orderId).toBeTruthy();
     expect(sent).toHaveLength(0);
+    expect(mail.platformMail).toHaveLength(0);
     const list = JSON.stringify(ok<unknown>(await get("/notifications", admin), "list"));
     expect(list).not.toContain('"status":"sent"');
     expect(list).toContain("failed");
+    expect(list).toContain("EMAIL_NOT_CONNECTED");
+  });
+
+  it("a switched-off email account sends nothing, and nothing goes to the platform's account instead", async () => {
+    expect.hasAssertions();
+    const off = await post("/notifications/email-connection/enabled", admin, {
+      enabled: false,
+      expectedVersion: 1,
+    });
+    expect(off.statusCode).toBe(200);
+    await placeOrder("s-7");
+    expect(sent).toHaveLength(0);
+    expect(mail.platformMail).toHaveLength(0);
+    expect(JSON.stringify(ok<unknown>(await get("/notifications", admin), "list"))).toContain(
+      "EMAIL_NOT_CONNECTED",
+    );
+  });
+
+  it("a refusing provider records its sanitized code on the delivery log and never shows the key or an address", async () => {
+    expect.hasAssertions();
+    mail.provider.failNext(
+      "EMAIL_SENDER_REJECTED",
+      `The merchant.test domain is not verified (shopper@example.com, ${STORE_API_KEY})`,
+    );
+    const { orderId } = await placeOrder("s-8");
+    expect(orderId).toBeTruthy();
+    const list = JSON.stringify(ok<unknown>(await get("/notifications", admin), "list"));
+    expect(list).toContain("EMAIL_SENDER_REJECTED");
+    expect(list).not.toContain(STORE_API_KEY);
+    expect(list).not.toContain("shopper@example.com");
+    const connection = JSON.stringify(
+      ok<unknown>(await get("/notifications/email-connection", admin), "connection"),
+    );
+    expect(connection).toContain("domain is not verified");
+    expect(connection).not.toContain(STORE_API_KEY);
+    expect(connection).not.toContain("shopper@example.com");
+    expect(mail.platformMail).toHaveLength(0);
   });
 
   it("a switched-off confirmation sends nothing but the staff mail still does", async () => {
@@ -256,14 +325,7 @@ describe("order mails, end to end through the real pipeline (Wave 2b)", () => {
 
   it("a mail provider that fails never fails the order", async () => {
     expect.hasAssertions();
-    await app.close();
-    await boot({
-      emailSender: {
-        send: async () => {
-          throw new Error("provider down");
-        },
-      },
-    });
+    mail.provider.throwNext();
     const { orderId } = await placeOrder("s-6");
     expect(orderId).toBeTruthy();
     const cancel = await post(`/orders/${orderId}/advance`, admin, { toStatus: "cancelled" });

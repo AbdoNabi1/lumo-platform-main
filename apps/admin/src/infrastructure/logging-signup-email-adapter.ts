@@ -9,6 +9,11 @@ import type { SignupEmailPort } from "../interfaces/signup-email.port";
  * exact class outside `local`, mirroring `InMemoryTotpMfaProvider`'s guard.
  */
 export class LoggingSignupEmailAdapter implements SignupEmailPort {
+  /** The dev adapter has nothing to connect: it always "can" log. */
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
   async sendCompleteAccountEmail(input: {
     readonly email: string;
     readonly link: string;
