@@ -65,9 +65,41 @@ describe("fetchOwnTwoStep", () => {
     ["a missing field", { enabled: true, activatedAt: null, backupCodesLeft: 0 }],
     ["a string count", { ...STATUS, backupCodesLeft: "9" }],
     ["a non-boolean flag", { ...STATUS, policyRequired: "no" }],
+    ["a non-boolean platformRequired", { ...STATUS, platformRequired: "yes" }],
   ])("rejects %s as an unexpected shape", async (_name, body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, body)));
     expect((await fetchOwnTwoStep()).outcome).toBe("error");
+  });
+});
+
+describe("fetchOwnTwoStep — platformRequired (Wave 1f)", () => {
+  it("carries platformRequired through and accepts a server that does not send it yet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ...STATUS, platformRequired: true })),
+    );
+    expect(await fetchOwnTwoStep()).toEqual({
+      outcome: "ok",
+      data: { ...STATUS, platformRequired: true },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, STATUS)));
+    expect((await fetchOwnTwoStep()).outcome).toBe("ok");
+  });
+
+  it("disable while the platform requires it is a flat 409 TWO_STEP_REQUIRED (read as body.code)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "TWO_STEP_REQUIRED",
+          message: "Two-step verification is required for everyone, so it can't be turned off",
+        }),
+      ),
+    );
+    expect(await disableOwnTwoStep("pw")).toMatchObject({
+      outcome: "conflict",
+      code: "TWO_STEP_REQUIRED",
+    });
   });
 });
 
@@ -137,14 +169,12 @@ describe("the writes (no idempotency key, ever)", () => {
   it("confirm: a 409 carries the message, a 429 the status and code", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          jsonResponse(409, {
-            code: "BUSINESS_RULE",
-            message: "That code didn't work. Try again.",
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "BUSINESS_RULE",
+          message: "That code didn't work. Try again.",
+        }),
+      ),
     );
     expect(await confirmOwnTwoStep({ enrollmentId: "e", code: "1" })).toMatchObject({
       outcome: "conflict",
@@ -194,13 +224,11 @@ describe("the writes (no idempotency key, ever)", () => {
     expect((await disableOwnTwoStep("pw")).outcome).toBe("ok");
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          jsonResponse(409, {
-            message: "Your store requires two-step verification, so it can't be turned off",
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          message: "Your store requires two-step verification, so it can't be turned off",
+        }),
+      ),
     );
     expect(await disableOwnTwoStep("pw")).toMatchObject({ outcome: "conflict" });
   });

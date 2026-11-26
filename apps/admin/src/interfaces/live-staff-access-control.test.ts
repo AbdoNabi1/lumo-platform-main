@@ -240,7 +240,12 @@ describe("owner-only resources (R5)", () => {
     reader.snapshots.set("t-1/op", active(["operator"]));
     reader.snapshots.set("t-1/vw", active(["viewer"]));
     const control = live(new RoleTableAccessControl());
-    for (const permission of ["staff:read_policy", "staff:set_policy", "staff:read_activity"]) {
+    for (const permission of [
+      "staff:read_policy",
+      "staff:set_policy",
+      "staff:read_activity",
+      "staff:reset_two_step",
+    ]) {
       expect([permission, await control.authorize(staff(["admin"]), permission)]).toEqual([
         permission,
         true,

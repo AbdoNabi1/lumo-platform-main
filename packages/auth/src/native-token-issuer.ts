@@ -50,9 +50,31 @@ export interface MfaChallengeClaims {
   readonly email: string;
 }
 
-const CHALLENGE_TYP = "mfa-challenge+jwt";
-const CHALLENGE_PURPOSE = "staff-login-mfa";
-const DEFAULT_CHALLENGE_TTL_SECONDS = 300;
+/**
+ * Wave 1f: a sign-in challenge has a purpose. `staff-login-mfa` = "a code is owed" (the verify step);
+ * `staff-login-mfa-setup` = "set two-step up now" (the setup-at-sign-in step). Each has its own `typ`,
+ * audience and `purpose` claim, so one can never be accepted as the other — nor as a session token.
+ */
+export type MfaChallengePurpose = "staff-login-mfa" | "staff-login-mfa-setup";
+
+const CHALLENGE_SPECS: Readonly<
+  Record<
+    MfaChallengePurpose,
+    { readonly typ: string; readonly audienceSuffix: string; readonly defaultTtlSeconds: number }
+  >
+> = {
+  "staff-login-mfa": {
+    typ: "mfa-challenge+jwt",
+    audienceSuffix: "mfa-challenge",
+    defaultTtlSeconds: 300,
+  },
+  "staff-login-mfa-setup": {
+    typ: "mfa-setup+jwt",
+    audienceSuffix: "mfa-setup",
+    defaultTtlSeconds: 600,
+  },
+};
+const DEFAULT_CHALLENGE_PURPOSE: MfaChallengePurpose = "staff-login-mfa";
 const CHALLENGE_CLOCK_TOLERANCE_SECONDS = 30;
 
 /**
@@ -99,38 +121,48 @@ export class NativeTokenIssuer {
    */
   async issueChallenge(
     claims: MfaChallengeClaims,
-    ttlSeconds: number = DEFAULT_CHALLENGE_TTL_SECONDS,
+    ttlSeconds?: number,
+    purpose: MfaChallengePurpose = DEFAULT_CHALLENGE_PURPOSE,
   ): Promise<{ token: string; expiresIn: number; jti: string }> {
+    const spec = CHALLENGE_SPECS[purpose];
+    const ttl = ttlSeconds ?? spec.defaultTtlSeconds;
     const { kid } = await this.publicJwk;
     const nowSeconds = Math.floor((this.options.now?.() ?? new Date()).getTime() / 1000);
     const jti = randomUUID();
     const token = await new SignJWT({
-      purpose: CHALLENGE_PURPOSE,
+      purpose,
       tenant_id: claims.tenantId,
       email: claims.email,
     })
       .setProtectedHeader({
         alg: "ES256",
-        typ: CHALLENGE_TYP,
+        typ: spec.typ,
         ...(kid === undefined ? {} : { kid }),
       })
       .setSubject(claims.sub)
       .setIssuer(this.options.issuer)
-      .setAudience(this.challengeAudience())
+      .setAudience(this.challengeAudience(purpose))
       .setJti(jti)
       .setIssuedAt(nowSeconds)
-      .setExpirationTime(nowSeconds + ttlSeconds)
+      .setExpirationTime(nowSeconds + ttl)
       .sign(this.options.privateKey);
-    return { token, expiresIn: ttlSeconds, jti };
+    return { token, expiresIn: ttl, jti };
   }
 
-  /** The challenge's claims, or `null` for anything wrong with it (expired, forged, wrong kind) — never throws. */
-  async verifyChallenge(token: string): Promise<(MfaChallengeClaims & { jti: string }) | null> {
+  /**
+   * The challenge's claims, or `null` for anything wrong with it (expired, forged, wrong kind, or a
+   * challenge of the OTHER purpose) — never throws. Only the requested `purpose` is accepted.
+   */
+  async verifyChallenge(
+    token: string,
+    purpose: MfaChallengePurpose = DEFAULT_CHALLENGE_PURPOSE,
+  ): Promise<(MfaChallengeClaims & { jti: string }) | null> {
     try {
+      const spec = CHALLENGE_SPECS[purpose];
       const { payload } = await jwtVerify(token, createLocalJWKSet(await this.jwks()), {
         issuer: this.options.issuer,
-        audience: this.challengeAudience(),
-        typ: CHALLENGE_TYP,
+        audience: this.challengeAudience(purpose),
+        typ: spec.typ,
         algorithms: ["ES256"],
         clockTolerance: CHALLENGE_CLOCK_TOLERANCE_SECONDS,
         currentDate: this.options.now?.() ?? new Date(),
@@ -139,7 +171,7 @@ export class NativeTokenIssuer {
       const tenantId = payload["tenant_id"];
       const email = payload["email"];
       if (
-        payload["purpose"] !== CHALLENGE_PURPOSE ||
+        payload["purpose"] !== purpose ||
         typeof sub !== "string" ||
         sub.length === 0 ||
         typeof jti !== "string" ||
@@ -156,8 +188,8 @@ export class NativeTokenIssuer {
     }
   }
 
-  private challengeAudience(): string {
-    return `${this.options.audience}:mfa-challenge`;
+  private challengeAudience(purpose: MfaChallengePurpose): string {
+    return `${this.options.audience}:${CHALLENGE_SPECS[purpose].audienceSuffix}`;
   }
 
   async jwks(): Promise<{ keys: JWK[] }> {

@@ -286,6 +286,40 @@ describe("disableTwoStepAction", () => {
     });
   });
 
+  it("the platform rule (flat 409 TWO_STEP_REQUIRED) is platform_required in the locale, by code and by sentence", async () => {
+    const sentence = "Two-step verification is required for everyone, so it can't be turned off";
+    api.disableOwnTwoStep.mockResolvedValue({
+      outcome: "conflict",
+      code: "TWO_STEP_REQUIRED",
+      message: sentence,
+    });
+    expect(await disableTwoStepAction({ password: "pw" })).toEqual({
+      status: "error",
+      reason: "platform_required",
+      message: en.accountSecurity.errors.platformRequired,
+    });
+    // The sentence alone (no code on the wire) maps the same way, in Arabic too.
+    api.disableOwnTwoStep.mockResolvedValue({ outcome: "conflict", message: sentence });
+    cookieLocale.value = "ar";
+    expect(await disableTwoStepAction({ password: "pw" })).toEqual({
+      status: "error",
+      reason: "platform_required",
+      message: ar.accountSecurity.errors.platformRequired,
+    });
+    expect(ar.accountSecurity.errors.platformRequired).not.toBe(
+      en.accountSecurity.errors.platformRequired,
+    );
+    // The refusal reached the API: every affected page is revalidated.
+    expect(revalidatePath.mock.calls.map((call) => call[0])).toEqual([
+      PAGE,
+      USERS,
+      ACTIVITY,
+      PAGE,
+      USERS,
+      ACTIVITY,
+    ]);
+  });
+
   it("refuses an empty or oversized password without calling the API", async () => {
     expect(await disableTwoStepAction({ password: "" })).toMatchObject({
       reason: "validation",

@@ -1,3 +1,4 @@
+import { errorCodeOf } from "./mfa-challenge";
 import type { MfaVia } from "./mfa-cookies";
 
 /**
@@ -26,13 +27,7 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
-/** `error.code` of the nested envelope, else the flat `code`. */
-export function errorCodeOf(body: unknown): string | undefined {
-  const record = asRecord(body);
-  const nested = asRecord(record["error"])["code"];
-  const code = nested ?? record["code"];
-  return typeof code === "string" ? code : undefined;
-}
+export { errorCodeOf };
 
 export async function verifyLoginCode(input: {
   readonly runtimeUrl: string;

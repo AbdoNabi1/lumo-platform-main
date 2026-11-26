@@ -136,6 +136,8 @@ import type {
   CreateStaffInvitationInput,
   RenewStaffInvitation,
   RenewStaffInvitationInput,
+  ResetStaffTwoStep,
+  ResetStaffTwoStepInput,
   RevokeStaffInvitation,
   RevokeStaffInvitationInput,
   SetStaffActive,
@@ -272,6 +274,7 @@ export interface SecurityControllerDeps {
   readonly staffAccess: StaffAccess;
   readonly changeStaffRole: ChangeStaffRole;
   readonly setStaffActive: SetStaffActive;
+  readonly resetStaffTwoStep: ResetStaffTwoStep;
   readonly createStaffInvitation: CreateStaffInvitation;
   readonly renewStaffInvitation: RenewStaffInvitation;
   readonly revokeStaffInvitation: RevokeStaffInvitation;
@@ -469,6 +472,10 @@ export class SecurityController {
   /** Wave 1d: 200 `{ status: "active" | "deactivated" }`. */
   async setStaffActive(input: SetStaffActiveInput): Promise<ControllerResponse> {
     return present(await this.deps.setStaffActive.execute(input), 200);
+  }
+
+  async resetStaffTwoStep(input: ResetStaffTwoStepInput): Promise<ControllerResponse> {
+    return present(await this.deps.resetStaffTwoStep.execute(input), 200);
   }
   /** Wave 1d: 201 `{ invitationId, principalExternalId, identifier }` — no credential, no password. */
   async createStaffInvitation(input: CreateStaffInvitationInput): Promise<ControllerResponse> {

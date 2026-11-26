@@ -382,6 +382,12 @@ export interface AdminWiringDeps {
    * setup) and, with `staffTokenIssuer`, decides the "code step is available" capability. Absent ⇒ false.
    */
   readonly mfaConfigured?: boolean;
+  /**
+   * Wave 1f (D25/D31): the runtime rule `STAFF_TWO_STEP=required`. Two-step is then mandatory for every
+   * staff and merchant sign-in, but ONLY when the code step is available (`staffTokenIssuer` + `mfaConfigured`):
+   * the rule never locks anyone out of a server that can't ask for a code. Absent/false ⇒ Wave 1e behaviour.
+   */
+  readonly staffTwoStepRequired?: boolean;
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
   /**
@@ -1419,8 +1425,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     security: security.security,
     logger: adminLogger,
   });
+  const codeStepAvailable = deps.staffTokenIssuer !== undefined && deps.mfaConfigured === true;
+  const twoStepRequired = deps.staffTwoStepRequired === true && codeStepAvailable;
   const staffAuth = new StaffAuthAdminController({
     security: security.security,
+    twoStepRequired,
     ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
     sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
     clock: deps.clock,
@@ -1505,7 +1514,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
       clock: deps.clock,
       liveAccess: liveAccessControl,
-      codeStepAvailable: deps.staffTokenIssuer !== undefined && deps.mfaConfigured === true,
+      codeStepAvailable,
+      twoStepRequired,
     }),
     liveAccessControl,
     customer360: new Customer360AdminController({

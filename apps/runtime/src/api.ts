@@ -56,6 +56,42 @@ export function assertProductionMfaConfigured(
 }
 
 /**
+ * Wave 1f (D31): two-step is mandatory (`STAFF_TWO_STEP=required`, the default). That is only real when the
+ * sign-in code step exists — native staff sign-in (AUTH_MODE=native), the real TOTP provider and its
+ * `MFA_TOTP_KEY`. Outside `local` the API refuses to boot with the rule on and no code step (it must never
+ * silently become optional, nor lock everyone out); `local` gets a warning. With AUTH_MODE=ory staff sign
+ * in through Ory, not through Morbeh's code step, so the rule does not apply there (a warning says so).
+ */
+export function assertProductionStaffTwoStepConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  input: {
+    readonly staffTwoStep: RuntimeConfig["STAFF_TWO_STEP"];
+    readonly authMode: RuntimeConfig["AUTH_MODE"];
+    readonly mfaConfigured: boolean;
+  },
+): void {
+  if (input.staffTwoStep !== "required") return;
+  if (input.authMode !== "native") {
+    logger.warn(
+      "STAFF_TWO_STEP=required has no effect: AUTH_MODE is not native (Ory signs staff in)",
+    );
+    return;
+  }
+  if (input.mfaConfigured) return;
+  if (appEnv === "local") {
+    logger.warn(
+      "STAFF_TWO_STEP=required is not enforced: no MFA_TOTP_KEY / real TOTP provider, APP_ENV=local",
+    );
+    return;
+  }
+  throw new Error(
+    "STAFF_TWO_STEP=required needs MFA_TOTP_KEY and the TOTP provider. Two-step verification is " +
+      "mandatory for every staff and merchant sign-in, so the code step must be available: set " +
+      "MFA_TOTP_KEY (min 32 characters) — or set STAFF_TWO_STEP=optional on purpose.",
+  );
+}
+
+/**
  * V-1 (closed by C2-2): services/payments previously wired `PaymentProvider` unconditionally to
  * the in-memory stub (`verifyWebhook()` always `true`), so the public `POST /payments/webhook`
  * route would have accepted any payload with no real signature check. `buildRuntimeCore` now
@@ -522,6 +558,13 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // single boot attempt on a fresh environment reveals everything still missing at once.
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
+    collectGuardFailure(() =>
+      assertProductionStaffTwoStepConfigured(config.APP_ENV, {
+        staffTwoStep: config.STAFF_TWO_STEP,
+        authMode: config.AUTH_MODE,
+        mfaConfigured: runtime.mfaConfigured,
+      }),
+    ),
     collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionCarriersConfigured(config.APP_ENV, {
@@ -563,6 +606,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     realShippingAndTax: true,
     mfaProviders: runtime.mfaProviders,
     mfaConfigured: runtime.mfaConfigured,
+    staffTwoStepRequired: runtime.staffTwoStepRequired,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,
     clock: runtime.clock,

@@ -348,3 +348,41 @@ describe("Arabic", () => {
     expect(screen.getByText("mona@shop.example").tagName).toBe("BDI");
   });
 });
+
+describe("platform-required (Wave 1f): a read-only note instead of the switch", () => {
+  const PLATFORM: StaffSecurityPolicy = { ...READY, platformRequired: true };
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)("renders the note and no switch (%s)", (_locale, t) => {
+    expect.hasAssertions();
+    mount(PLATFORM, [ME, SAM, MONA], t);
+    expect(screen.getByRole("note")).toHaveTextContent(t.usersPolicy.platformNote);
+    expect(screen.getByText(t.usersPolicy.platformRequired)).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).toBeNull();
+    expect(screen.queryByText(t.usersPolicy.switchLabel)).toBeNull();
+    // Nothing that could change the stored per-store flag is reachable.
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(document.body.textContent).not.toContain(t.usersPolicy.cantEnable);
+    expect(document.body.textContent).not.toContain("mona@shop.example");
+  });
+
+  it("the note is the plan's sentence, and Arabic is a different one", () => {
+    expect.hasAssertions();
+    expect(en.usersPolicy.platformNote).toBe(
+      "Two-step verification is required for everyone on Morbeh.",
+    );
+    expect(ar.usersPolicy.platformNote).not.toBe(en.usersPolicy.platformNote);
+  });
+
+  it("platformRequired false (or absent) keeps the switch", () => {
+    expect.hasAssertions();
+    mount({ ...READY, platformRequired: false });
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+    cleanup();
+    mount(READY);
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+});

@@ -124,3 +124,59 @@ describe("exchangePassword — the code step (Wave 1e)", () => {
     expect(await exchangePassword({ ...base, fetchImpl })).toEqual({ ok: false, reason: "mfa" });
   });
 });
+
+describe("exchangePassword — setup at sign-in (Wave 1f)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const SETUP_BODY = {
+    error: { code: "MFA_SETUP_REQUIRED", message: "Set up two-step verification to continue" },
+    setupChallenge: "signed.setup.jwt",
+    setupChallengeExpiresIn: 600,
+  };
+
+  it("carries the setup challenge and its lifetime from the nested MFA_SETUP_REQUIRED 403", async () => {
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, SETUP_BODY) })).toEqual({
+      ok: false,
+      reason: "mfa_setup",
+      setupChallenge: "signed.setup.jwt",
+      setupChallengeExpiresIn: 600,
+    });
+  });
+
+  it("caps the lifetime at 600 s and drops a nonsense one", async () => {
+    expect(
+      await exchangePassword({
+        ...base,
+        fetchImpl: ok(403, { ...SETUP_BODY, setupChallengeExpiresIn: 99999 }),
+      }),
+    ).toMatchObject({ reason: "mfa_setup", setupChallengeExpiresIn: 600 });
+    const noLifetime = await exchangePassword({
+      ...base,
+      fetchImpl: ok(403, { ...SETUP_BODY, setupChallengeExpiresIn: -4 }),
+    });
+    expect(noLifetime).toEqual({
+      ok: false,
+      reason: "mfa_setup",
+      setupChallenge: "signed.setup.jwt",
+    });
+  });
+
+  it("is a plain mfa result when MFA_SETUP_REQUIRED names no usable challenge", async () => {
+    const body = { error: { code: "MFA_SETUP_REQUIRED" }, setupChallenge: "" };
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, body) })).toEqual({
+      ok: false,
+      reason: "mfa",
+    });
+  });
+
+  it("still reads an MFA_REQUIRED 403 as the code step, never as setup", async () => {
+    const body = { error: { code: "MFA_REQUIRED" }, challenge: "c", setupChallenge: "nope" };
+    expect(await exchangePassword({ ...base, fetchImpl: ok(403, body) })).toEqual({
+      ok: false,
+      reason: "mfa",
+      challenge: "c",
+    });
+  });
+});

@@ -4,7 +4,14 @@ import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./rate-limited-response";
-import { finishStaffLogin, loginVerifyBody } from "./staff-login-verify";
+import {
+  confirmStaffSetup,
+  finishStaffLogin,
+  loginVerifyBody,
+  setupConfirmBody,
+  setupStartBody,
+  startStaffSetup,
+} from "./staff-login-verify";
 import {
   staffIdentifier,
   STAFF_IDENTIFIER_PREFIX,
@@ -101,6 +108,42 @@ export function publicStaffAuthRoutes(
       // tenant is the signed challenge's; it must equal the request's (else the challenge is "expired").
       handle: ({ body, context }) =>
         finishStaffLogin({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/login/setup/start",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: start two-step setup at sign-in with the setup challenge (returns the key ONCE; never cached)",
+      schema: { body: setupStartBody },
+      // NOT idempotent: the secret must never sit in the idempotency cache. Tenant = the signed challenge's,
+      // which must equal the request's.
+      handle: ({ body, context }) =>
+        startStaffSetup({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/login/setup/confirm",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish setup at sign-in with the first code; returns the session token and the backup codes ONCE",
+      schema: { body: setupConfirmBody },
+      handle: ({ body, context }) =>
+        confirmStaffSetup({
           admin,
           body,
           requestTenantId: context.tenantId,

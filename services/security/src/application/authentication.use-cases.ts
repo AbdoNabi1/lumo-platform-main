@@ -90,6 +90,12 @@ export interface AuthenticateInput {
    * Default false, so customers' sign-in is unchanged.
    */
   readonly requireEnrolledFactor?: boolean;
+  /**
+   * Staff sign-in only (Wave 1f, mandatory two-step): when true and the principal has NO active
+   * enrolment, no session is created (requirement `required`, `hasActiveEnrollment: false`) — the
+   * caller sends them to set two-step up. Default false; customers never pass it.
+   */
+  readonly requireFactorEnrollment?: boolean;
   readonly sessionTtlSeconds?: number;
   readonly metadata?: Readonly<Record<string, string>>;
 }
@@ -180,14 +186,18 @@ export class Authenticate implements UseCase<
       sensitiveAction: input.sensitiveAction ?? false,
     });
     const hasActiveEnrollment = enrollments.some((e) => e.isActive);
-    const requirement: MfaRequirement =
+    // Wave 1f: an unenrolled staff member must set two-step up before any session exists, whatever the
+    // risk or policy engine says (and even if a caller claims a factor was satisfied: there is none).
+    const mustEnrol = input.requireFactorEnrollment === true && !hasActiveEnrollment;
+    const enrolledAndAsked =
       input.requireEnrolledFactor === true &&
       hasActiveEnrollment &&
-      (mfa.requirement === "none" || mfa.requirement === "optional")
-        ? "required"
-        : mfa.requirement;
+      (mfa.requirement === "none" || mfa.requirement === "optional");
+    const requirement: MfaRequirement =
+      mustEnrol || enrolledAndAsked ? "required" : mfa.requirement;
     const mfaSatisfied =
-      input.mfaSatisfied === true || requirement === "none" || requirement === "optional";
+      !mustEnrol &&
+      (input.mfaSatisfied === true || requirement === "none" || requirement === "optional");
 
     const refreshFingerprint = await this.deps.crypto.randomToken(24);
     return this.deps.unitOfWork.run<Result<AuthenticationOutcome, DomainError>>(async (tx) => {

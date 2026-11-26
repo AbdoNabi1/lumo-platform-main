@@ -307,6 +307,67 @@ export class SetStaffActive implements UseCase<
   }
 }
 
+// ── ResetStaffTwoStep ──────────────────────────────────────────────────────────────────────────
+
+export interface ResetStaffTwoStepInput {
+  readonly tenantId: string;
+  readonly actorExternalId: string;
+  readonly targetExternalId: string;
+}
+
+/**
+ * Wave 1f (D28) — an admin resets a COLLEAGUE's two-step: every active and pending enrolment of the
+ * target is revoked and all their sessions are signed out; at their next sign-in they set two-step up
+ * again. Never the store owner's, never the actor's own (that is the account page). Validates before its
+ * first write, then enrolments → sessions → audit in the one unit of work.
+ */
+export class ResetStaffTwoStep implements UseCase<
+  ResetStaffTwoStepInput,
+  { readonly reset: true; readonly revokedEnrollments: number },
+  DomainError
+> {
+  constructor(private readonly deps: StaffDeps) {}
+
+  async execute(
+    input: ResetStaffTwoStepInput,
+  ): Promise<Result<{ readonly reset: true; readonly revokedEnrollments: number }, DomainError>> {
+    const { deps } = this;
+    const { tenantId } = input;
+    return runStaffCommand(deps, tenantId, async (tx) => {
+      const now = deps.clock.now();
+      await requireActiveStaffAdmin(deps, tenantId, input.actorExternalId, now, tx);
+      const directory = await loadStaffDirectory(deps, tenantId, now, tx);
+      const target = directory.staff.get(input.targetExternalId);
+      if (target === undefined) throw new NotFoundError("Staff member not found");
+      if (target.isOwner)
+        throw new BusinessRuleError("The store owner's two-step verification can't be reset");
+      if (target.principal.externalId === input.actorExternalId)
+        throw new BusinessRuleError("Reset your own two-step from your account page");
+      if (target.invitation !== null) throw new BusinessRuleError("Revoke the invitation instead");
+
+      const principal = await loadPrincipal(deps, tenantId, input.targetExternalId, tx);
+      const live = (
+        await deps.mfaEnrollments.listByPrincipal(principal.id.toString(), tenantId, tx)
+      ).filter((e) => e.method === "totp" && (e.status === "active" || e.status === "pending"));
+
+      // ── first write ──
+      for (const enrollment of live) {
+        enrollment.revoke(deps.idGenerator.generate(), now);
+        await deps.mfaEnrollments.save(enrollment, tenantId, tx);
+      }
+      const revokedSessions = await revokeSessionsInTx(deps, tenantId, principal, now, tx);
+      await auditStaff(deps, tx, {
+        tenantId,
+        action: "security.staff.two_step_reset",
+        target: principal.externalId,
+        actor: input.actorExternalId,
+        extra: { revokedSessions: String(revokedSessions) },
+      });
+      return { reset: true, revokedEnrollments: live.length } as const;
+    });
+  }
+}
+
 // ── CreateStaffInvitation ──────────────────────────────────────────────────────────────────────
 
 export interface CreateStaffInvitationInput {

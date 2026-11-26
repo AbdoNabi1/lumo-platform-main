@@ -13,7 +13,8 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
 /** Plan 1C: neutral notices after the forgot-password / reset-password round trips. */
 const NOTICE_TEXT: Readonly<Record<string, string>> = {
   done: "Password changed. Sign in / اتغيرت كلمة السر، ادخل",
-  ready: "Your store is ready — sign in / متجرك جاهز — سجّل دخول",
+  ready:
+    "Your store is ready. Sign in to set up two-step verification. / متجرك جاهز. سجّل الدخول عشان تجهّز التحقق بخطوتين.",
   invited: "Your account is ready. Sign in. / حسابك جاهز. سجّل الدخول.",
   sent: "If the account exists, a reset link is on its way / لو الحساب موجود، هيوصلك لينك إعادة التعيين",
 };

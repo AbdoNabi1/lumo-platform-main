@@ -25,7 +25,8 @@ export type StaffActivityKind =
   | "two_step_on"
   | "two_step_off"
   | "backup_codes_regenerated"
-  | "two_step_policy_changed";
+  | "two_step_policy_changed"
+  | "two_step_reset";
 
 export interface StaffActivityItem {
   readonly id: string;
@@ -69,6 +70,7 @@ const KIND_BY_ACTION: Readonly<Record<string, StaffActivityKind>> = {
   "security.staff.deactivated": "deactivated",
   "security.staff.reactivated": "reactivated",
   "security.staff.two_step_policy_changed": "two_step_policy_changed",
+  "security.staff.two_step_reset": "two_step_reset",
   "security.mfa.enabled": "two_step_on",
   "security.mfa.disabled": "two_step_off",
   "security.mfa.backup_codes_regenerated": "backup_codes_regenerated",

@@ -4,6 +4,8 @@ import { en } from "@/messages/en";
 import { staffConflictMessage } from "./errors";
 import {
   groupManualKey,
+  isBackupCodesBody,
+  isTwoStepSetup,
   ownTwoStepConflictKey,
   policyConflict,
   requiresTwoStepConflict,
@@ -33,6 +35,10 @@ describe("the server's exact two-step sentences", () => {
     ["Two-step verification is already on", "alreadyOn"],
     ["Two-step verification isn't on", "notOn"],
     ["Your store requires two-step verification, so it can't be turned off", "policyRequired"],
+    [
+      "Two-step verification is required for everyone, so it can't be turned off",
+      "platformRequired",
+    ],
   ] as const)("maps the self-service 409 %j", (message, key) => {
     expect(ownTwoStepConflictKey(message)).toBe(key);
   });
@@ -48,6 +54,7 @@ describe("the server's exact two-step sentences", () => {
     ["Turn on two-step verification for your own account first", "selfFirst"],
     ["Everyone needs two-step verification turned on first", "everyoneFirst"],
     ["Revoke or wait for pending invitations first", "pendingInvitations"],
+    ["Two-step verification is required for everyone on Morbeh", "platformRequired"],
   ] as const)("maps the policy refusal %j in both locales", (message, key) => {
     expect(policyConflict(message, en)).toBe(en.usersPolicy.errors[key]);
     expect(policyConflict(message, ar)).toBe(ar.usersPolicy.errors[key]);
@@ -70,5 +77,29 @@ describe("the server's exact two-step sentences", () => {
     expect(staffConflictMessage("A store needs at least one admin", en)).toBe(
       en.users.errors.lastAdmin,
     );
+  });
+});
+
+describe("the two-step wire guards (Wave 1f)", () => {
+  const SETUP = {
+    enrollmentId: "5b8d3f1e-0000-4000-8000-000000000001",
+    manualKey: "JBSWY3DPEHPK3PXP",
+    provisioningUri: "otpauth://totp/Morbeh:me%40shop.example?secret=JBSWY3DPEHPK3PXP",
+  };
+
+  it("accepts exactly a setup: id, key and an otpauth link", () => {
+    expect(isTwoStepSetup(SETUP)).toBe(true);
+    expect(isTwoStepSetup({ ...SETUP, manualKey: "" })).toBe(false);
+    expect(isTwoStepSetup({ ...SETUP, enrollmentId: "" })).toBe(false);
+    expect(isTwoStepSetup({ ...SETUP, provisioningUri: "https://evil.example" })).toBe(false);
+    expect(isTwoStepSetup(null)).toBe(false);
+    expect(isTwoStepSetup([SETUP])).toBe(false);
+  });
+
+  it("accepts a body of backup codes and nothing else", () => {
+    expect(isBackupCodesBody({ backupCodes: ["a", "b"] })).toBe(true);
+    expect(isBackupCodesBody({ backupCodes: [1] })).toBe(false);
+    expect(isBackupCodesBody({})).toBe(false);
+    expect(isBackupCodesBody("codes")).toBe(false);
   });
 });

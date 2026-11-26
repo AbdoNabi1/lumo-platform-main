@@ -220,6 +220,11 @@ export interface RuntimeCore {
    */
   readonly mfaConfigured: boolean;
   /**
+   * Wave 1f: `STAFF_TWO_STEP=required`. Threaded into the admin wiring, which enforces it only when the
+   * code step is available (`staffTokenIssuer` + `mfaConfigured`).
+   */
+  readonly staffTwoStepRequired: boolean;
+  /**
    * G-72: dispatches the two signup-related emails (complete-account / already-registered). Always
    * `LoggingSignupEmailAdapter` today — no real provider is wired anywhere in this composition (D4:
    * "the user's choice", not in scope). `apps/runtime/src/api.ts` refuses to boot outside `local`
@@ -477,6 +482,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     platformTenantId,
     mfaProviders,
     mfaConfigured: isMfaConfigured(mfaProviders, config),
+    staffTwoStepRequired: config.STAFF_TWO_STEP === "required",
     signupEmail: new LoggingSignupEmailAdapter(),
   };
 }

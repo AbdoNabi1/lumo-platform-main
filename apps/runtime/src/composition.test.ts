@@ -196,6 +196,14 @@ describe("composition root (lazy clients — graph builds without any Docker run
     expect(withKey.mfaConfigured).toBe(true);
   });
 
+  it("staffTwoStepRequired (Wave 1f) follows STAFF_TWO_STEP: required by default, off with optional", () => {
+    expect(buildRuntimeCore(loadRuntimeConfig(validEnv)).staffTwoStepRequired).toBe(true);
+    expect(
+      buildRuntimeCore(loadRuntimeConfig({ ...validEnv, STAFF_TWO_STEP: "optional" }))
+        .staffTwoStepRequired,
+    ).toBe(false);
+  });
+
   it("isMfaConfigured refuses the in-memory reference provider even when the key is set", () => {
     const key = { MFA_TOTP_KEY: "k".repeat(32) };
     const reference = new MapMfaProviderResolver([new InMemoryTotpMfaProvider()]);

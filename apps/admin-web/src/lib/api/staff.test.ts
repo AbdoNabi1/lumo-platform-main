@@ -18,6 +18,7 @@ const {
   inviteStaff,
   isStaffMemberView,
   resendStaffInvitation,
+  resetStaffTwoStep,
   revokeStaffInvitation,
   setRequireTwoStep,
   setStaffActive,
@@ -292,6 +293,96 @@ describe("fetchStaffSecurityPolicy", () => {
   });
 });
 
+describe("fetchStaffSecurityPolicy — platformRequired (Wave 1f)", () => {
+  const policy = {
+    requireTwoStep: false,
+    codeStepAvailable: true,
+    activeStaff: 3,
+    enrolledActiveStaff: 3,
+    notEnrolled: [],
+    pendingInvitations: 0,
+  };
+
+  it("carries platformRequired through, and accepts a server that does not send it yet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ...policy, platformRequired: true })),
+    );
+    expect(await fetchStaffSecurityPolicy()).toEqual({
+      outcome: "ok",
+      data: { ...policy, platformRequired: true },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, policy)));
+    expect((await fetchStaffSecurityPolicy()).outcome).toBe("ok");
+  });
+
+  it("rejects a non-boolean platformRequired", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse(200, { ...policy, platformRequired: "yes" })),
+    );
+    expect((await fetchStaffSecurityPolicy()).outcome).toBe("error");
+  });
+
+  it("the policy POST while the platform requires it is a flat 409 TWO_STEP_REQUIRED", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "TWO_STEP_REQUIRED",
+          message: "Two-step verification is required for everyone on Morbeh",
+        }),
+      ),
+    );
+    expect(await setRequireTwoStep(false, "k")).toMatchObject({
+      outcome: "conflict",
+      code: "TWO_STEP_REQUIRED",
+      message: "Two-step verification is required for everyone on Morbeh",
+    });
+  });
+});
+
+describe("resetStaffTwoStep (Wave 1f)", () => {
+  it("POSTs {} to /staff/:id/two-step/reset with the Idempotency-Key", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(200, { reset: true, revokedEnrollments: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await resetStaffTwoStep("p/1", "key-9")).toEqual({
+      outcome: "ok",
+      data: { reset: true, revokedEnrollments: 1 },
+    });
+    const [url, init] = lastCall(fetchMock);
+    expect(url).toBe("http://runtime.test/api/v1/staff/p%2F1/two-step/reset");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({});
+    expect((init.headers as Record<string, string>)["idempotency-key"]).toBe("key-9");
+  });
+
+  it.each([
+    [
+      409,
+      { code: "BUSINESS_RULE", message: "The store owner's two-step verification can't be reset" },
+      "conflict",
+    ],
+    [
+      409,
+      { code: "BUSINESS_RULE", message: "Reset your own two-step from your account page" },
+      "conflict",
+    ],
+    [403, {}, "forbidden"],
+    [404, {}, "not_found"],
+  ] as const)("reports %i %j as %s", async (status, body, outcome) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(status, body)));
+    expect((await resetStaffTwoStep("p-1", "k")).outcome).toBe(outcome);
+  });
+
+  it("rejects a 200 that is not a reset", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(200, { ok: true })));
+    expect((await resetStaffTwoStep("p-1", "k")).outcome).toBe("error");
+  });
+});
+
 describe("setRequireTwoStep", () => {
   it("POSTs { requireTwoStep } with the Idempotency-Key", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { requireTwoStep: true }));
@@ -310,14 +401,12 @@ describe("setRequireTwoStep", () => {
   it("carries the exact 409 message through", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue(
-          jsonResponse(409, {
-            code: "BUSINESS_RULE",
-            message: "Everyone needs two-step verification turned on first",
-          }),
-        ),
+      vi.fn().mockResolvedValue(
+        jsonResponse(409, {
+          code: "BUSINESS_RULE",
+          message: "Everyone needs two-step verification turned on first",
+        }),
+      ),
     );
     expect(await setRequireTwoStep(true, "k")).toMatchObject({
       outcome: "conflict",

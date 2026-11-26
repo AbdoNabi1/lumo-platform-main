@@ -131,7 +131,10 @@ describe("turning two-step on", () => {
     // The secret and the link are gone the moment the codes appear.
     expect(document.body.innerHTML).not.toContain(KEY);
     expect(document.body.innerHTML).not.toContain("otpauth://");
-    expect(screen.getByRole("heading", { name: en.accountSecurity.codes.title })).toHaveFocus();
+    // Focus moves in a passive effect: under a loaded run it lands a tick after the list appears.
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: en.accountSecurity.codes.title })).toHaveFocus(),
+    );
   });
 
   it('Done stays disabled until "I saved my backup codes" is checked; then the codes and the secret are gone', async () => {
@@ -521,5 +524,128 @@ describe("Arabic", () => {
     expect(screen.getByText(ar.accountSecurity.statusOn)).toBeInTheDocument();
     expect(screen.getByText(/مفعّل منذ/)).toBeInTheDocument();
     expect(screen.getByText(/أكواد الطوارئ المتبقية/)).toBeInTheDocument();
+  });
+});
+
+describe("Wave 1f: two-step is required for everyone on Morbeh", () => {
+  const REQUIRED: OwnTwoStepStatus = { ...ON, platformRequired: true };
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "on + platform-required (%s): no Turn off, the note, and Get new backup codes stays",
+    (locale, t) => {
+      mount(REQUIRED, t, locale);
+      expect(screen.queryByRole("button", { name: t.accountSecurity.turnOff })).toBeNull();
+      expect(screen.getByText(t.accountSecurity.platformRequired)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: t.accountSecurity.newCodes })).toBeEnabled();
+      // The store-level note is replaced by the platform one, not shown next to it.
+      expect(screen.queryByText(t.accountSecurity.policyOnNote)).toBeNull();
+    },
+  );
+
+  it("the English and Arabic notes are different sentences", () => {
+    expect(ar.accountSecurity.platformRequired).not.toBe(en.accountSecurity.platformRequired);
+    expect(en.accountSecurity.platformRequired).toBe("Required for everyone on Morbeh");
+  });
+
+  it("off + platform-required: Turn on stays and the note says why", () => {
+    mount({ ...OFF, platformRequired: true });
+    expect(screen.getByText(en.accountSecurity.platformRequired)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: en.accountSecurity.turnOn })).toBeEnabled();
+  });
+
+  it("without platformRequired (or false) Turn off is still offered", () => {
+    mount(ON);
+    expect(screen.getByRole("button", { name: en.accountSecurity.turnOff })).toBeInTheDocument();
+    cleanup();
+    mount({ ...ON, platformRequired: false });
+    expect(screen.getByRole("button", { name: en.accountSecurity.turnOff })).toBeInTheDocument();
+  });
+
+  it("a platform-required refusal from a stale page removes Turn off at once", async () => {
+    mount(ON);
+    fireEvent.click(screen.getByRole("button", { name: en.accountSecurity.turnOff }));
+    const dialog = await screen.findByRole("dialog");
+    actions.disableTwoStepAction.mockResolvedValue(
+      refusal("platform_required", en.accountSecurity.errors.platformRequired),
+    );
+    fireEvent.change(within(dialog).getByLabelText(en.accountSecurity.disable.passwordLabel), {
+      target: { value: "pw" },
+    });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: en.accountSecurity.disable.confirm }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      en.accountSecurity.errors.platformRequired,
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: en.accountSecurity.disable.cancel }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.queryByRole("button", { name: en.accountSecurity.turnOff })).toBeNull();
+    expect(screen.getByText(en.accountSecurity.platformRequired)).toBeInTheDocument();
+  });
+});
+
+describe("Wave 1f: the authenticator-code inputs are digits only", () => {
+  it("setup: digits only, the 123456 placeholder, the helper text; Confirm waits for six digits", async () => {
+    mount(OFF);
+    const input = (await startSetup()) as HTMLInputElement;
+    expect(input).toHaveAttribute("placeholder", "123456");
+    expect(screen.getByText(en.accountSecurity.codeInput.hint)).toBeInTheDocument();
+    const confirm = screen.getByRole("button", { name: en.accountSecurity.setup.confirm });
+    fireEvent.change(input, { target: { value: "12 34-5" } });
+    expect(input.value).toBe("12345");
+    expect(confirm).toBeDisabled();
+    fireEvent.change(input, { target: { value: "123456" } });
+    expect(confirm).toBeEnabled();
+  });
+
+  it("setup: a pasted key shows the inline hint, never reaches the action, and Confirm stays off", async () => {
+    mount(OFF);
+    const input = (await startSetup()) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: KEY } });
+    expect(screen.getByRole("alert")).toHaveTextContent(en.accountSecurity.codeInput.keyWarning);
+    expect(screen.getByRole("button", { name: en.accountSecurity.setup.confirm })).toBeDisabled();
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    expect(actions.confirmTwoStepAction).not.toHaveBeenCalled();
+  });
+
+  it("setup: the Arabic hint and warning are Arabic", async () => {
+    mount(OFF, ar, "ar");
+    actions.startTwoStepAction.mockResolvedValue(ok(SETUP));
+    fireEvent.click(screen.getByRole("button", { name: ar.accountSecurity.turnOn }));
+    const input = await screen.findByLabelText(ar.accountSecurity.setup.codeLabel);
+    expect(screen.getByText(ar.accountSecurity.codeInput.hint)).toBeInTheDocument();
+    fireEvent.change(input, { target: { value: KEY } });
+    expect(screen.getByRole("alert")).toHaveTextContent(ar.accountSecurity.codeInput.keyWarning);
+    expect(ar.accountSecurity.codeInput.hint).not.toBe(en.accountSecurity.codeInput.hint);
+  });
+
+  it("new backup codes: digits only, a pasted key is caught and never sent", async () => {
+    mount(ON);
+    fireEvent.click(screen.getByRole("button", { name: en.accountSecurity.newCodes }));
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByLabelText(
+      en.accountSecurity.regenerate.codeLabel,
+    ) as HTMLInputElement;
+    expect(input).toHaveAttribute("placeholder", "123456");
+    expect(within(dialog).getByText(en.accountSecurity.codeInput.hint)).toBeInTheDocument();
+    const submit = within(dialog).getByRole("button", {
+      name: en.accountSecurity.regenerate.submit,
+    });
+    expect(submit).toBeDisabled();
+    fireEvent.change(input, { target: { value: KEY } });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      en.accountSecurity.codeInput.keyWarning,
+    );
+    expect(submit).toBeDisabled();
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+    expect(actions.regenerateBackupCodesAction).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "65432" } });
+    fireEvent.change(input, { target: { value: "654321" } });
+    expect(submit).toBeEnabled();
   });
 });

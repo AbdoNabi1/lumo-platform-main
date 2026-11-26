@@ -28,6 +28,7 @@ export type TwoStepFailure =
   | "wrong_code"
   | "wrong_password"
   | "policy_required"
+  | "platform_required"
   | "already_on"
   | "not_on"
   | "limited"
@@ -60,6 +61,7 @@ const CONFLICT_REASON = {
   alreadyOn: "already_on",
   notOn: "not_on",
   policyRequired: "policy_required",
+  platformRequired: "platform_required",
 } as const satisfies Record<string, TwoStepFailure>;
 
 /** A failed write as a reason + the locale's sentence. `onNotFound` is what a 404 means for this call. */
@@ -81,7 +83,11 @@ function failureOf(
         ? fail("expired", t.accountSecurity.errors.expired)
         : fail("unexpected", t.formErrors.notFound);
     case "conflict": {
-      const key = ownTwoStepConflictKey(result.message);
+      // Wave 1f: the platform rule is a flat 409 with the code TWO_STEP_REQUIRED; the sentence maps too.
+      const key =
+        result.code === "TWO_STEP_REQUIRED"
+          ? "platformRequired"
+          : ownTwoStepConflictKey(result.message);
       return key === null
         ? fail("unexpected", t.formErrors.conflict)
         : fail(CONFLICT_REASON[key], t.accountSecurity.errors[key]);

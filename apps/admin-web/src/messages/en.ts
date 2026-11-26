@@ -5385,6 +5385,7 @@ export const en = {
       reactivate: "Reactivate",
       resend: "Resend invitation",
       revoke: "Revoke invitation",
+      resetTwoStep: "Reset two-step",
     },
     invite: {
       title: "Add staff",
@@ -5417,7 +5418,16 @@ export const en = {
       revoking: "Revoking…",
       cancel: "Cancel",
     },
+    resetTwoStep: {
+      title: "Reset two-step verification?",
+      body: "{email} will have to set up two-step verification again at their next sign-in.",
+      hint: "If this account may be compromised, deactivate it instead.",
+      confirm: "Reset two-step",
+      resetting: "Resetting…",
+      cancel: "Cancel",
+    },
     notices: {
+      twoStepReset: "Two-step verification was reset for {email}.",
       invited: "Invitation sent to {email}.",
       resent: "Invitation sent to {email}.",
       reactivated: "{email} can sign in again.",
@@ -5443,6 +5453,8 @@ export const en = {
       otherStore: "This email is already used by another store.",
       stale: "This invitation was changed by someone else. Reload to see the latest version.",
       notPending: "This invitation is no longer pending. Reload to see the latest version.",
+      ownerTwoStepReset: "The store owner's two-step verification can't be reset.",
+      selfTwoStepReset: "Reset your own two-step from your account page.",
       requiresTwoStepInvite:
         "Your store requires two-step verification. Turn that off before inviting people.",
       requiresTwoStepReactivate:
@@ -5462,6 +5474,11 @@ export const en = {
     policyOffNote:
       "Your store requires two-step verification for everyone. Turn it on to keep signing in.",
     policyOnNote: "Your store requires two-step verification, so it can't be turned off.",
+    platformRequired: "Required for everyone on Morbeh",
+    codeInput: {
+      hint: "The 6-digit number from your app — not the setup key",
+      keyWarning: "This looks like the setup key. Enter the 6-digit number your app shows.",
+    },
     onSince: "On since {date}",
     codesLeft: "Backup codes left: {count}",
     turnOn: "Turn on",
@@ -5522,6 +5539,8 @@ export const en = {
       alreadyOn: "Two-step verification is already on.",
       notOn: "Two-step verification isn't on.",
       policyRequired: "Your store requires two-step verification, so it can't be turned off.",
+      platformRequired:
+        "Two-step verification is required for everyone, so it can't be turned off.",
       wrongPassword: "That password is incorrect.",
       limited: "Too many attempts. Wait a few minutes and try again.",
       notConfigured: "Two-step verification isn't set up on this server yet.",
@@ -5541,6 +5560,8 @@ export const en = {
     accountLink: "Go to your account security",
     missingHeading: "These people don't have two-step verification yet:",
     loadError: "Couldn't load the two-step policy.",
+    platformRequired: "Required",
+    platformNote: "Two-step verification is required for everyone on Morbeh.",
     enable: {
       title: "Require two-step verification for everyone?",
       description: "Everyone will need a code at every sign-in.",
@@ -5566,6 +5587,7 @@ export const en = {
       selfFirst: "Turn on two-step verification for your own account first.",
       everyoneFirst: "Everyone needs two-step verification turned on first.",
       pendingInvitations: "Revoke or wait for pending invitations first.",
+      platformRequired: "Two-step verification is required for everyone on Morbeh.",
     },
   },
   /** Wave 1e: Settings > Users and permissions > Activity. Placeholders: {actor}, {subject}, {from}, {to}. */
@@ -5601,6 +5623,7 @@ export const en = {
       backup_codes_regenerated: "{subject} got new backup codes.",
       two_step_policy_on: "{actor} started requiring two-step verification for everyone.",
       two_step_policy_off: "{actor} stopped requiring two-step verification.",
+      two_step_reset: "{actor} reset two-step verification for {subject}.",
     },
   },
   /** Wave 1d (O6): the Security console is for the store owner only; a 403 from a loader says so. */

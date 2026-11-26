@@ -30,6 +30,7 @@ vi.mock("@/app/settings/users/actions", () => ({
   changeStaffRoleAction: vi.fn(),
   setStaffActiveAction: vi.fn(),
   setRequireTwoStepAction: vi.fn(),
+  resetStaffTwoStepAction: vi.fn(),
 }));
 const { default: UsersPage } = await import("./page");
 
@@ -123,5 +124,32 @@ describe("/settings/users", () => {
     mocks.fetchStaff.mockResolvedValue({ outcome: "not_found" });
     render(await UsersPage());
     expect(screen.getByRole("alert")).toHaveTextContent(en.users.loadError);
+  });
+
+  it.each([
+    ["en", en],
+    ["ar", ar],
+  ] as const)(
+    "shows the read-only platform note instead of the switch when Morbeh requires two-step (%s)",
+    async (locale, t) => {
+      mocks.locale.value = locale;
+      mocks.fetchStaff.mockResolvedValue({ outcome: "ok", data: { items: [OWNER, ME] } });
+      mocks.fetchStaffSecurityPolicy.mockResolvedValue({
+        outcome: "ok",
+        data: { ...POLICY, platformRequired: true },
+      });
+      render(await UsersPage());
+      expect(screen.getByRole("note")).toHaveTextContent(t.usersPolicy.platformNote);
+      expect(screen.queryByRole("switch")).toBeNull();
+      // The people-without-two-step list belongs to the switch that is gone.
+      expect(document.body.textContent).not.toContain(t.usersPolicy.missingHeading);
+    },
+  );
+
+  it("keeps the switch while the platform rule is off", async () => {
+    mocks.fetchStaff.mockResolvedValue({ outcome: "ok", data: { items: [OWNER, ME] } });
+    render(await UsersPage());
+    expect(screen.getByRole("switch")).toBeInTheDocument();
+    expect(screen.queryByRole("note", { name: /Morbeh/ })).toBeNull();
   });
 });

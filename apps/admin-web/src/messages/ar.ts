@@ -5141,6 +5141,7 @@ export const ar: Dictionary = {
       reactivate: "إعادة التفعيل",
       resend: "إعادة إرسال الدعوة",
       revoke: "إلغاء الدعوة",
+      resetTwoStep: "إعادة ضبط التحقق بخطوتين",
     },
     invite: {
       title: "إضافة موظف",
@@ -5173,7 +5174,16 @@ export const ar: Dictionary = {
       revoking: "جارٍ الإلغاء…",
       cancel: "تراجع",
     },
+    resetTwoStep: {
+      title: "إعادة ضبط التحقق بخطوتين؟",
+      body: "سيتعين على {email} إعداد التحقق بخطوتين من جديد عند تسجيل دخوله التالي.",
+      hint: "إذا كان هذا الحساب مُعرَّضًا للاختراق، فعطّله بدلًا من ذلك.",
+      confirm: "إعادة ضبط التحقق بخطوتين",
+      resetting: "جارٍ إعادة الضبط…",
+      cancel: "تراجع",
+    },
     notices: {
+      twoStepReset: "أُعيد ضبط التحقق بخطوتين لـ {email}.",
       invited: "تم إرسال الدعوة إلى {email}.",
       resent: "تم إرسال الدعوة إلى {email}.",
       reactivated: "يمكن لـ {email} تسجيل الدخول مرة أخرى.",
@@ -5199,6 +5209,8 @@ export const ar: Dictionary = {
       otherStore: "هذا البريد الإلكتروني مستخدم في متجر آخر.",
       stale: "عدّل شخص آخر هذه الدعوة. أعد التحميل لرؤية أحدث نسخة.",
       notPending: "لم تعد هذه الدعوة معلّقة. أعد التحميل لرؤية أحدث نسخة.",
+      ownerTwoStepReset: "لا يمكن إعادة ضبط التحقق بخطوتين لمالك المتجر.",
+      selfTwoStepReset: "أعد ضبط التحقق بخطوتين لحسابك من صفحة حسابك.",
       requiresTwoStepInvite: "يشترط متجرك التحقق بخطوتين. أوقف ذلك قبل دعوة أشخاص.",
       requiresTwoStepReactivate: "يشترط متجرك التحقق بخطوتين. أوقف ذلك قبل إعادة تفعيل أشخاص.",
     },
@@ -5212,6 +5224,11 @@ export const ar: Dictionary = {
     offBody: "سيتطلب تسجيل الدخول كلمة السر ورمزًا من تطبيق مصادقة على هاتفك.",
     policyOffNote: "يشترط متجرك التحقق بخطوتين للجميع. فعّله لتتمكن من متابعة تسجيل الدخول.",
     policyOnNote: "يشترط متجرك التحقق بخطوتين، لذا لا يمكن إيقافه.",
+    platformRequired: "مطلوب من الجميع على مربح",
+    codeInput: {
+      hint: "الرقم المكوّن من 6 أرقام من تطبيقك، وليس مفتاح الإعداد",
+      keyWarning: "يبدو هذا مفتاح الإعداد. أدخل الرقم المكوّن من 6 أرقام الذي يعرضه تطبيقك.",
+    },
     onSince: "مفعّل منذ {date}",
     codesLeft: "أكواد الطوارئ المتبقية: {count}",
     turnOn: "تفعيل",
@@ -5269,6 +5286,7 @@ export const ar: Dictionary = {
       alreadyOn: "التحقق بخطوتين مفعّل بالفعل.",
       notOn: "التحقق بخطوتين غير مفعّل.",
       policyRequired: "يشترط متجرك التحقق بخطوتين، لذا لا يمكن إيقافه.",
+      platformRequired: "التحقق بخطوتين مطلوب من الجميع، لذا لا يمكن إيقافه.",
       wrongPassword: "كلمة السر غير صحيحة.",
       limited: "محاولات كثيرة. انتظر بضع دقائق وحاول مرة أخرى.",
       notConfigured: "لم يُعدّ التحقق بخطوتين على هذا الخادم بعد.",
@@ -5287,6 +5305,8 @@ export const ar: Dictionary = {
     accountLink: "الانتقال إلى أمان حسابك",
     missingHeading: "هؤلاء الأشخاص لم يفعّلوا التحقق بخطوتين بعد:",
     loadError: "تعذّر تحميل سياسة التحقق بخطوتين.",
+    platformRequired: "مطلوب",
+    platformNote: "التحقق بخطوتين مطلوب من الجميع على مربح.",
     enable: {
       title: "اشتراط التحقق بخطوتين للجميع؟",
       description: "سيحتاج الجميع إلى رمز في كل تسجيل دخول.",
@@ -5312,6 +5332,7 @@ export const ar: Dictionary = {
       selfFirst: "فعّل التحقق بخطوتين لحسابك أولًا.",
       everyoneFirst: "يجب أن يفعّل الجميع التحقق بخطوتين أولًا.",
       pendingInvitations: "ألغِ الدعوات المعلّقة أو انتظر انتهاءها أولًا.",
+      platformRequired: "التحقق بخطوتين مطلوب من الجميع على مربح.",
     },
   },
   usersActivity: {
@@ -5346,6 +5367,7 @@ export const ar: Dictionary = {
       backup_codes_regenerated: "حصل {subject} على أكواد طوارئ جديدة.",
       two_step_policy_on: "بدأ {actor} اشتراط التحقق بخطوتين للجميع.",
       two_step_policy_off: "أوقف {actor} اشتراط التحقق بخطوتين.",
+      two_step_reset: "أعاد {actor} ضبط التحقق بخطوتين لـ {subject}.",
     },
   },
   securityOwnerOnly: {

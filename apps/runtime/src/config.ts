@@ -93,6 +93,13 @@ const schema = z
     BOOTSTRAP_OWNER_PASSWORD: z.string().min(12).optional(),
     /** G-87: key the TOTP secrets are encrypted under. Secret, ≥32 chars. Absent ⇒ legacy constant (local only). */
     MFA_TOTP_KEY: z.string().min(32).optional(),
+    /**
+     * Wave 1f (D25/D31): two-step verification is mandatory for every staff and merchant sign-in
+     * (`required`, the default) or left to each person (`optional`, the Wave 1e behaviour). Enforced only
+     * while the code step is available (AUTH_MODE=native + the real TOTP provider + MFA_TOTP_KEY);
+     * outside `local` the API refuses to boot with `required` and no code step (fail closed).
+     */
+    STAFF_TWO_STEP: z.enum(["required", "optional"]).default("required"),
     KETO_READ_URL: z.string().url().optional(),
     /** Ory Keto write-API base (relation-tuple sync); required outside `local` (H-2, superRefine). */
     KETO_WRITE_URL: z.string().url().optional(),

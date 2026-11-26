@@ -7,7 +7,7 @@ import type {
   PasswordResetService,
   SecurityController,
 } from "@platform/security";
-import { ValidationError, toErrorEnvelope } from "@platform/utils";
+import { AppError, ValidationError, toErrorEnvelope } from "@platform/utils";
 import { passwordResetEmail } from "../infrastructure/email-templates";
 import type { AdminResponse } from "./admin-response";
 import type { EmailSender } from "./email-sender.port";
@@ -49,6 +49,15 @@ export const CHALLENGE_EXPIRED: AdminResponse = {
   status: 401,
   body: { error: { code: "CHALLENGE_EXPIRED", message: "Your sign-in expired. Start again." } },
 };
+/** Wave 1f: two-step is mandatory, so it can't be turned off (409, flat envelope like the other conflicts). */
+const TWO_STEP_REQUIRED: AdminResponse = {
+  status: 409,
+  body: toErrorEnvelope(
+    new AppError("Two-step verification is required for everyone, so it can't be turned off", {
+      code: "TWO_STEP_REQUIRED",
+    }),
+  ),
+};
 const INVALID_PASSWORD: AdminResponse = {
   status: 401,
   body: { code: "INVALID_PASSWORD", message: "That password is incorrect" },
@@ -73,6 +82,12 @@ export interface StaffAuthAdminControllerDeps {
   readonly sessionTtlSeconds: number;
   /** Wave 1e: the `now` handed to the code checks (the replay guard works on the TOTP time step). */
   readonly clock: Clock;
+  /**
+   * Wave 1f (D25/D31): two-step is mandatory for every staff and merchant sign-in. True only when the
+   * runtime rule is on (`STAFF_TWO_STEP=required`) AND the code step is available (issuer + the real
+   * TOTP provider). False ⇒ the Wave 1e behaviour, unchanged.
+   */
+  readonly twoStepRequired: boolean;
   /** Plan 1C: forgot-password. Absent ⇒ the request endpoint still answers 202 and sends nothing. */
   readonly passwordReset?: PasswordResetService;
   readonly emailSender?: EmailSender;
@@ -109,6 +124,8 @@ export class StaffAuthAdminController {
       sessionTtlSeconds: this.deps.sessionTtlSeconds,
       // Wave 1e: someone with two-step on gets no session from the password alone.
       requireEnrolledFactor: true,
+      // Wave 1f: and, while the rule is on, nobody gets one without two-step on at all.
+      ...(this.deps.twoStepRequired ? { requireFactorEnrollment: true } : {}),
     });
     if (outcome.status < 200 || outcome.status >= 300) return UNAUTHENTICATED;
     const result = outcome.body as {
@@ -144,6 +161,13 @@ export class StaffAuthAdminController {
       readonly hasActiveEnrollment: boolean;
     },
   ): Promise<AdminResponse> {
+    if (
+      this.deps.twoStepRequired &&
+      !result.hasActiveEnrollment &&
+      result.principalExternalId !== null
+    ) {
+      return this.setupRequired(issuer, input, result.principalExternalId);
+    }
     if (!result.hasActiveEnrollment || result.principalExternalId === null) {
       return {
         status: 403,
@@ -168,6 +192,44 @@ export class StaffAuthAdminController {
         mfaRequirement: result.mfaRequirement,
         challenge: challenge.token,
         challengeExpiresIn: challenge.expiresIn,
+      },
+    };
+  }
+
+  /**
+   * Wave 1f: the password was right but the member has no two-step yet and the rule is on. They get a
+   * short-lived SETUP challenge (its own purpose: never a code challenge, never a session) to bring to the
+   * setup-at-sign-in step. Someone with no staff role gets the plain 401: nothing durable is started for them.
+   */
+  private async setupRequired(
+    issuer: NativeTokenIssuer,
+    input: { readonly tenantId: string; readonly email: string },
+    principalExternalId: string,
+  ): Promise<AdminResponse> {
+    const listed = await this.deps.security.listPrincipalRoleKeys({
+      tenantId: input.tenantId,
+      principalExternalId,
+    });
+    const keys = (listed.body as { roleKeys?: readonly string[] }).roleKeys ?? [];
+    if (!keys.some((key) => TOKEN_ROLE[key] !== undefined)) return UNAUTHENTICATED;
+    const setup = await issuer.issueChallenge(
+      {
+        sub: principalExternalId,
+        tenantId: input.tenantId,
+        email: input.email.trim().toLowerCase(),
+      },
+      undefined,
+      "staff-login-mfa-setup",
+    );
+    return {
+      status: 403,
+      body: {
+        error: {
+          code: "MFA_SETUP_REQUIRED",
+          message: "Set up two-step verification to continue",
+        },
+        setupChallenge: setup.token,
+        setupChallengeExpiresIn: setup.expiresIn,
       },
     };
   }
@@ -253,6 +315,91 @@ export class StaffAuthAdminController {
     return issued;
   }
 
+  /** The signed claims of a live SETUP challenge of ours (never a code challenge), or null. */
+  async readSetupChallenge(setupChallenge: string): Promise<VerifiedChallenge | null> {
+    const issuer = this.deps.issuer;
+    if (issuer === undefined || !this.deps.twoStepRequired) return null;
+    return issuer.verifyChallenge(setupChallenge, "staff-login-mfa-setup");
+  }
+
+  /**
+   * Starts the member's setup at sign-in: the secret is in the response ONCE (201, no-store). The member
+   * and the label (their email) come from the signed claims, never from the request.
+   */
+  async startSetup(claims: VerifiedChallenge): Promise<AdminResponse> {
+    const started = await this.deps.security.startOwnTwoStep({
+      tenantId: claims.tenantId,
+      principalExternalId: claims.sub,
+      email: claims.email,
+    });
+    return noStore(this.setupAnswer(started));
+  }
+
+  /**
+   * Proves the first code and switches two-step on. Wrong code → the ONE uniform 401; a setup that is
+   * already finished or gone (enrolment no longer pending, two-step already on) is just an expired
+   * challenge. Returns the backup codes WITHOUT a session: the route burns the challenge, then calls
+   * {@link completeSetupLogin}.
+   */
+  async confirmSetup(
+    claims: VerifiedChallenge,
+    input: { readonly enrollmentId: string; readonly code: string },
+  ): Promise<{ readonly refused: AdminResponse } | { readonly backupCodes: readonly string[] }> {
+    const confirmed = await this.deps.security.confirmOwnTwoStep({
+      tenantId: claims.tenantId,
+      principalExternalId: claims.sub,
+      enrollmentId: input.enrollmentId,
+      code: input.code,
+      now: this.deps.clock.now(),
+    });
+    if (confirmed.status === 200) {
+      return { backupCodes: (confirmed.body as { backupCodes: readonly string[] }).backupCodes };
+    }
+    return { refused: noStore(this.setupAnswer(confirmed)) };
+  }
+
+  /** The session for a member whose setup just succeeded: the same tail as any sign-in (active + role re-check). */
+  async completeSetupLogin(
+    claims: VerifiedChallenge,
+    backupCodes: readonly string[],
+  ): Promise<AdminResponse> {
+    const session = await this.completeLogin(claims);
+    if (session.status !== 200) return noStore(session);
+    return noStore({ status: 200, body: { ...(session.body as object), backupCodes } });
+  }
+
+  /** The whole setup at sign-in for a caller that applies no limit of its own (the routes use the parts). */
+  async startSetupAtLogin(setupChallenge: string): Promise<AdminResponse> {
+    const claims = await this.readSetupChallenge(setupChallenge);
+    if (claims === null) return CHALLENGE_EXPIRED;
+    return this.startSetup(claims);
+  }
+
+  async confirmSetupAtLogin(input: {
+    readonly setupChallenge: string;
+    readonly enrollmentId: string;
+    readonly code: string;
+  }): Promise<AdminResponse> {
+    const claims = await this.readSetupChallenge(input.setupChallenge);
+    if (claims === null) return CHALLENGE_EXPIRED;
+    const confirmed = await this.confirmSetup(claims, input);
+    if ("refused" in confirmed) return confirmed.refused;
+    return this.completeSetupLogin(claims, confirmed.backupCodes);
+  }
+
+  /** The setup steps' answer for a Security response: 2xx passes; a 4xx is uniform; a 5xx passes (503 etc.). */
+  private setupAnswer(response: AdminResponse): AdminResponse {
+    if (response.status >= 500) return response;
+    if (response.status >= 200 && response.status < 300) return response;
+    if (response.status === 404 || response.status === 409) {
+      // No such pending enrolment / two-step already on: this setup is over (or was never theirs).
+      const body = response.body as { message?: string } | null;
+      if (body?.message === "That code didn't work. Try again.") return INVALID_CODE;
+      return CHALLENGE_EXPIRED;
+    }
+    return INVALID_CODE;
+  }
+
   /** The whole code step for a caller that applies no limit of its own (the routes use the parts). */
   async verifyLoginCode(input: {
     readonly challenge: string;
@@ -265,7 +412,13 @@ export class StaffAuthAdminController {
 
   /** Wave 1e: the signed-in member's own two-step status. */
   async twoStepStatus(tenantId: string, principalExternalId: string): Promise<AdminResponse> {
-    return noStore(await this.deps.security.getOwnTwoStep({ tenantId, principalExternalId }));
+    const status = await this.deps.security.getOwnTwoStep({ tenantId, principalExternalId });
+    // Wave 1f: the panel hides "Turn off" while two-step is required for everyone on the platform.
+    if (status.status !== 200) return noStore(status);
+    return noStore({
+      ...status,
+      body: { ...(status.body as object), platformRequired: this.deps.twoStepRequired },
+    });
   }
 
   /** Starts (or restarts) a setup. The secret is in the response ONCE: never cached, never replayed. */
@@ -313,6 +466,8 @@ export class StaffAuthAdminController {
     readonly principalExternalId: string;
     readonly password: string;
   }): Promise<AdminResponse> {
+    // Wave 1f (D27): while two-step is mandatory it can't be turned off — refused before the password is asked.
+    if (this.deps.twoStepRequired) return TWO_STEP_REQUIRED;
     const { credentialStore } = this.deps;
     if (credentialStore === undefined) return NOT_CONFIGURED;
     const credential = await credentialStore.findByPrincipal(

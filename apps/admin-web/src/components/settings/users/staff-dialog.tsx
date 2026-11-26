@@ -65,6 +65,7 @@ export function StaffDialogFooter({
   pending,
   destructive,
   submitType,
+  submitDisabled,
   onCancel,
   onSubmit,
 }: {
@@ -74,6 +75,8 @@ export function StaffDialogFooter({
   readonly pending: boolean;
   readonly destructive: boolean;
   readonly submitType: "button" | "submit";
+  /** Keeps the primary button off while the form is not ready (it is always off while pending). */
+  readonly submitDisabled?: boolean;
   readonly onCancel: () => void;
   readonly onSubmit?: () => void;
 }) {
@@ -86,7 +89,7 @@ export function StaffDialogFooter({
         type={submitType}
         variant={destructive ? "destructive" : "primary"}
         loading={pending}
-        disabled={pending}
+        disabled={pending || submitDisabled === true}
         {...(onSubmit === undefined ? {} : { onClick: onSubmit })}
       >
         {pending ? pendingLabel : submitLabel}

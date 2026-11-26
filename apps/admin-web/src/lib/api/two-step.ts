@@ -1,5 +1,10 @@
 import { getAdminApi, mutateAdminApi, type ApiResult, type MutationResult } from "./client";
-import type { OwnTwoStepStatus, TwoStepSetup } from "@/lib/staff/two-step";
+import {
+  isBackupCodesBody,
+  isTwoStepSetup,
+  type OwnTwoStepStatus,
+  type TwoStepSetup,
+} from "@/lib/staff/two-step";
 
 export type { OwnTwoStepStatus, TwoStepSetup };
 
@@ -24,26 +29,8 @@ function isStatus(value: unknown): value is OwnTwoStepStatus {
     (value["activatedAt"] === null || typeof value["activatedAt"] === "string") &&
     typeof value["backupCodesLeft"] === "number" &&
     Number.isSafeInteger(value["backupCodesLeft"]) &&
-    typeof value["policyRequired"] === "boolean"
-  );
-}
-
-function isSetup(value: unknown): value is TwoStepSetup {
-  return (
-    isRecord(value) &&
-    typeof value["enrollmentId"] === "string" &&
-    typeof value["manualKey"] === "string" &&
-    value["manualKey"].length > 0 &&
-    typeof value["provisioningUri"] === "string" &&
-    value["provisioningUri"].startsWith("otpauth://")
-  );
-}
-
-function isBackupCodes(value: unknown): value is { readonly backupCodes: readonly string[] } {
-  return (
-    isRecord(value) &&
-    Array.isArray(value["backupCodes"]) &&
-    value["backupCodes"].every((code) => typeof code === "string")
+    typeof value["policyRequired"] === "boolean" &&
+    (value["platformRequired"] === undefined || typeof value["platformRequired"] === "boolean")
   );
 }
 
@@ -62,7 +49,11 @@ export function fetchOwnTwoStep(): Promise<ApiResult<OwnTwoStepStatus>> {
  * 409 already on · 503 `NOT_CONFIGURED` (this server has no TOTP key).
  */
 export function startOwnTwoStep(): Promise<MutationResult<TwoStepSetup>> {
-  return mutateAdminApi("/api/v1/auth/staff/two-step/start", { method: "POST", body: {} }, isSetup);
+  return mutateAdminApi(
+    "/api/v1/auth/staff/two-step/start",
+    { method: "POST", body: {} },
+    isTwoStepSetup,
+  );
 }
 
 /** `POST /auth/staff/two-step/confirm` — the first code; the 10 backup codes come back ONCE. 409 wrong code · 429. */
@@ -73,7 +64,7 @@ export function confirmOwnTwoStep(body: {
   return mutateAdminApi(
     "/api/v1/auth/staff/two-step/confirm",
     { method: "POST", body },
-    isBackupCodes,
+    isBackupCodesBody,
   );
 }
 
@@ -84,7 +75,7 @@ export function regenerateBackupCodes(
   return mutateAdminApi(
     "/api/v1/auth/staff/two-step/backup-codes",
     { method: "POST", body: { code } },
-    isBackupCodes,
+    isBackupCodesBody,
   );
 }
 
