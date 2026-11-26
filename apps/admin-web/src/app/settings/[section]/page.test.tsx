@@ -22,10 +22,10 @@ beforeEach(() => {
 });
 
 describe("/settings/[section] coming-soon page", () => {
-  it("renders the Checkout title, the coming-soon text and a link back to /settings", async () => {
+  it("renders the Markets title, the coming-soon text and a link back to /settings", async () => {
     expect.hasAssertions();
-    render(await SectionPage({ params: Promise.resolve({ section: "checkout" }) }));
-    expect(screen.getByRole("heading", { level: 1, name: "Checkout" })).toBeInTheDocument();
+    render(await SectionPage({ params: Promise.resolve({ section: "markets" }) }));
+    expect(screen.getByRole("heading", { level: 1, name: "Markets" })).toBeInTheDocument();
     expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: en.settingsNav.backToSettings })).toHaveAttribute(
       "href",
@@ -36,19 +36,17 @@ describe("/settings/[section] coming-soon page", () => {
 
   it("renders inside the settings frame with the section's own entry current", async () => {
     expect.hasAssertions();
-    render(await SectionPage({ params: Promise.resolve({ section: "checkout" }) }));
+    render(await SectionPage({ params: Promise.resolve({ section: "markets" }) }));
     expect(screen.getByRole("navigation", { name: en.settingsNav.label })).toBeInTheDocument();
     expect(
       screen
         .getAllByRole("link")
         .filter((link) => link.getAttribute("aria-current") === "page")
         .map((link) => link.getAttribute("href")),
-    ).toEqual(["/settings/checkout"]);
+    ).toEqual(["/settings/markets"]);
   });
 
   it.each([
-    "checkout",
-    "customer-accounts",
     "markets",
     "apps",
     "customer-events",
@@ -61,14 +59,21 @@ describe("/settings/[section] coming-soon page", () => {
     expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
   });
 
-  it.each(["nope", "general", "billing", "locations", "plan", "languages", "users"])(
-    "calls notFound for %s (not one of the eight unavailable ids)",
-    async (section) => {
-      expect.hasAssertions();
-      await expect(SectionPage({ params: Promise.resolve({ section }) })).rejects.toThrow(
-        "NEXT_NOT_FOUND",
-      );
-      expect(mocks.notFound).toHaveBeenCalledTimes(1);
-    },
-  );
+  it.each([
+    "nope",
+    "general",
+    "billing",
+    "locations",
+    "plan",
+    "languages",
+    "users",
+    "checkout",
+    "customer-accounts",
+  ])("calls notFound for %s (not one of the six unavailable ids)", async (section) => {
+    expect.hasAssertions();
+    await expect(SectionPage({ params: Promise.resolve({ section }) })).rejects.toThrow(
+      "NEXT_NOT_FOUND",
+    );
+    expect(mocks.notFound).toHaveBeenCalledTimes(1);
+  });
 });
