@@ -13,12 +13,17 @@ export default defineConfig({
       // are added; never lower them to make a red run green.
       // 2026-10-18 re-baseline (CI): this gate never ran in CI from August to October (earlier steps
       // failed first), so coverage fell unseen. Lowered to 1pt under the CI-measured value: lines 69->66 (CI 67.99%), statements 69->66 (CI 67.99%).
-      // A floor to raise again as tests are backfilled, not a new target.
+      // 2026-10-18 backfill: tests for the tracking registry (snapshot, store, hot-reload handle and
+      // watcher, seed), tracking adapters and wiring, health-server, entitlement telemetry/middleware/
+      // usage quota, the payment settlement source and security-instrumentation raised local
+      // (Windows, a lower bound for CI) coverage to lines 72.91%, statements 72.91%, functions
+      // 88.93%, branches 84.8% — back above the 2026-09-01 floors. Thresholds re-ratcheted to 1pt
+      // under that. Never lower them to make a red run green.
       thresholds: {
-        lines: 66,
-        statements: 66,
-        functions: 69,
-        branches: 78,
+        lines: 71,
+        statements: 71,
+        functions: 87,
+        branches: 83,
       },
     },
 
