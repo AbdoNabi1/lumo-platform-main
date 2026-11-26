@@ -38,6 +38,8 @@ export function activityTemplate(item: StaffActivityItem, t: Dictionary): string
       return s.backup_codes_regenerated;
     case "two_step_policy_changed":
       return item.detail.enabled === true ? s.two_step_policy_on : s.two_step_policy_off;
+    case "two_step_reset":
+      return s.two_step_reset;
     default:
       return t.usersActivity.unknownEvent;
   }

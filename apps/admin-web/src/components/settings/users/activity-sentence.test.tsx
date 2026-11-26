@@ -50,6 +50,7 @@ const EXPECTED_EN: Readonly<Record<StaffActivityKind, string>> = {
   two_step_off: "mona@shop.example turned off two-step verification.",
   backup_codes_regenerated: "mona@shop.example got new backup codes.",
   two_step_policy_changed: "sam@shop.example stopped requiring two-step verification.",
+  two_step_reset: "sam@shop.example reset two-step verification for mona@shop.example.",
 };
 
 describe("ActivitySentence", () => {
@@ -75,6 +76,7 @@ describe("ActivitySentence", () => {
         "deactivated",
         "reactivated",
         "two_step_policy_changed",
+        "two_step_reset",
       ] as const;
       if ((needs as readonly string[]).includes(kind))
         expect(sentence).toContain("sam@shop.example");
@@ -102,6 +104,28 @@ describe("ActivitySentence", () => {
     expect(text(item("two_step_policy_changed", { detail: { enabled: false } }), en)).toBe(
       "sam@shop.example stopped requiring two-step verification.",
     );
+  });
+
+  it("a two-step reset names who reset whose two-step, in both languages, emails isolated", () => {
+    const row = item("two_step_reset");
+    expect(text(row, en)).toBe(
+      "sam@shop.example reset two-step verification for mona@shop.example.",
+    );
+    const arabic = text(row, ar);
+    expect(arabic).toContain("sam@shop.example");
+    expect(arabic).toContain("mona@shop.example");
+    expect(arabic).toBe(
+      ar.usersActivity.sentences.two_step_reset
+        .replace("{actor}", "sam@shop.example")
+        .replace("{subject}", "mona@shop.example"),
+    );
+    const { container } = render(<ActivitySentence item={row} t={ar} />);
+    const emails = Array.from(container.querySelectorAll("bdi"));
+    expect(emails.map((node) => node.textContent)).toEqual([
+      "sam@shop.example",
+      "mona@shop.example",
+    ]);
+    for (const node of emails) expect(node).toHaveAttribute("dir", "auto");
   });
 
   it("isolates every email in a bdi dir=auto", () => {

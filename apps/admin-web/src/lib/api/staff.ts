@@ -109,6 +109,10 @@ function isActiveChanged(value: unknown): value is { readonly status: "active" |
   return isRecord(value) && (value["status"] === "active" || value["status"] === "deactivated");
 }
 
+function isReset(value: unknown): value is { readonly reset: true } {
+  return isRecord(value) && value["reset"] === true;
+}
+
 function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
@@ -128,7 +132,8 @@ export function isStaffSecurityPolicy(value: unknown): value is StaffSecurityPol
         typeof entry["principalExternalId"] === "string" &&
         typeof entry["email"] === "string",
     ) &&
-    isCount(value["pendingInvitations"])
+    isCount(value["pendingInvitations"]) &&
+    (value["platformRequired"] === undefined || typeof value["platformRequired"] === "boolean")
   );
 }
 
@@ -242,6 +247,21 @@ export function setStaffActive(
     `${memberPath(principalExternalId)}/active`,
     { method: "POST", body: { active }, idempotencyKey },
     isActiveChanged,
+  );
+}
+
+/**
+ * `POST /staff/:principalExternalId/two-step/reset` (`staff:reset_two_step`, idempotent, admin only) —
+ * their next sign-in sets two-step up again. 409 for the owner, for yourself and for a pending invitee.
+ */
+export function resetStaffTwoStep(
+  principalExternalId: string,
+  idempotencyKey: string,
+): Promise<MutationResult<{ reset: true }>> {
+  return mutateAdminApi(
+    `${memberPath(principalExternalId)}/two-step/reset`,
+    { method: "POST", body: {}, idempotencyKey },
+    isReset,
   );
 }
 

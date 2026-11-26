@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, CardContent, Input, Label } from "@platform/ui";
+import { AuthCodeInput, useAuthCode } from "@/components/auth/auth-code-input";
 import { BrandMark } from "@/components/brand-mark";
 
 /** Errors by `?error=`. The sign-in pages are not locale-switched: every line carries both languages. */
@@ -27,6 +28,8 @@ export function VerifyCodeForm({
 }) {
   const [backup, setBackup] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  // Wave 1f: the authenticator code is six digits, nothing else; a pasted setup key is caught, not sent.
+  const code = useAuthCode();
   // The one field is the whole page: focus it on arrival and whenever the kind of code changes.
   useEffect(() => {
     input.current?.focus();
@@ -57,31 +60,46 @@ export function VerifyCodeForm({
             </div>
           )}
 
-          <form action="/auth/native-login/verify" method="post" className="flex flex-col gap-4">
+          <form
+            action="/auth/native-login/verify"
+            method="post"
+            className="flex flex-col gap-4"
+            onSubmit={(event) => {
+              if (!backup && !code.ready) event.preventDefault();
+            }}
+          >
             <input type="hidden" name="return_to" defaultValue={returnTo ?? "/"} />
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="code">
                 {backup ? "Backup code / كود الطوارئ" : "Authentication code / كود المصادقة"}
               </Label>
-              <Input
-                key={backup ? "backup" : "totp"}
-                ref={input}
-                id="code"
-                name="code"
-                required
-                dir="ltr"
-                {...(backup
-                  ? { type: "text", autoComplete: "off", maxLength: 32, spellCheck: false }
-                  : {
-                      type: "text",
-                      inputMode: "numeric" as const,
-                      autoComplete: "one-time-code",
-                      maxLength: 8,
-                      pattern: "[0-9 ]*",
-                    })}
-              />
+              {backup ? (
+                <Input
+                  key="backup"
+                  ref={input}
+                  id="code"
+                  name="code"
+                  required
+                  dir="ltr"
+                  type="text"
+                  autoComplete="off"
+                  maxLength={32}
+                  spellCheck={false}
+                />
+              ) : (
+                <AuthCodeInput
+                  key="totp"
+                  inputRef={input}
+                  id="code"
+                  name="code"
+                  required
+                  code={code}
+                  hint="The 6-digit number from your app — not the setup key / الرقم المكوّن من 6 أرقام من تطبيقك — مش مفتاح الإعداد"
+                  keyWarning="This looks like the setup key. Enter the 6-digit number your app shows. / ده شكله مفتاح الإعداد. اكتب الرقم المكوّن من 6 أرقام اللي بيظهره التطبيق."
+                />
+              )}
             </div>
-            <Button type="submit" className="mt-2 w-full">
+            <Button type="submit" className="mt-2 w-full" disabled={!backup && !code.ready}>
               Verify / تأكيد
             </Button>
           </form>

@@ -62,6 +62,40 @@ describe("/login/verify", () => {
     expect(screen.getByLabelText(/Authentication code/)).toHaveFocus();
   });
 
+  it("the authenticator code is digits only with the 123456 placeholder and the not-the-key helper", async () => {
+    await open();
+    const input = screen.getByLabelText(/Authentication code/) as HTMLInputElement;
+    expect(input).toHaveAttribute("placeholder", "123456");
+    expect(
+      screen.getByText(/The 6-digit number from your app — not the setup key/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Verify/ })).toBeDisabled();
+    fireEvent.change(input, { target: { value: "12 34-56 78" } });
+    expect(input.value).toBe("123456");
+    expect(screen.getByRole("button", { name: /Verify/ })).toBeEnabled();
+  });
+
+  it("a pasted setup key shows the inline hint and the form does not submit", async () => {
+    await open();
+    const input = screen.getByLabelText(/Authentication code/) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "JBSWY3DPEHPK3PXP" } });
+    expect(screen.getByRole("alert")).toHaveTextContent(/This looks like the setup key/);
+    expect(screen.getByRole("button", { name: /Verify/ })).toBeDisabled();
+    // A native submit (Enter) is stopped too: the event is cancelled.
+    const form = input.closest("form") as HTMLFormElement;
+    expect(fireEvent.submit(form)).toBe(false);
+  });
+
+  it("the backup-code mode keeps its own free-text input (letters and dashes allowed)", async () => {
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: /Use a backup code/ }));
+    const backup = screen.getByLabelText(/Backup code/) as HTMLInputElement;
+    fireEvent.change(backup, { target: { value: "abcd-efgh-ijkl" } });
+    expect(backup.value).toBe("abcd-efgh-ijkl");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: /Verify/ })).toBeEnabled();
+  });
+
   it.each([
     ["code", /That code didn't work/],
     ["limited", /Too many attempts/],

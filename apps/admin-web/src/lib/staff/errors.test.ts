@@ -16,6 +16,8 @@ const EXACT: readonly (readonly [string, keyof typeof en.users.errors])[] = [
   ["This invitation was changed by someone else", "stale"],
   ["Only a pending invitation can be resent", "notPending"],
   ["Only a pending invitation can be revoked", "notPending"],
+  ["The store owner's two-step verification can't be reset", "ownerTwoStepReset"],
+  ["Reset your own two-step from your account page", "selfTwoStepReset"],
 ];
 
 describe("staffConflictMessage", () => {

@@ -467,6 +467,20 @@ describe("middleware role table for the orders screens", () => {
   });
 });
 
+describe("middleware — Wave 1f setup at sign-in", () => {
+  it.each([
+    "/login/setup",
+    "/login/setup?return_to=%2Forders",
+    "/auth/native-login/setup/start",
+    "/auth/native-login/setup/confirm",
+  ])("%s is public: setup happens before there is a session", async (path) => {
+    expect.hasAssertions();
+    const response = await middleware(requestFor(path));
+    expect(response.headers.get("location")).toBeNull();
+    expect(jwtVerifyMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("middleware — Wave 1e two-step routes", () => {
   it.each(["/login/verify", "/login/verify?error=code", "/auth/native-login/verify"])(
     "%s is public: the code step happens before there is a session",

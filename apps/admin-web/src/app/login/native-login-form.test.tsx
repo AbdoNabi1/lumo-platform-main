@@ -46,9 +46,11 @@ describe("NativeLoginForm sign-up entry", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
 
-  it("shows the store-ready notice after ?signup=done", () => {
+  it("shows the store-ready notice after ?signup=done, telling the merchant to set up two-step", () => {
     render(<NativeLoginForm error={undefined} returnTo={undefined} signup="done" />);
-    expect(screen.getByRole("status").textContent).toMatch(/Your store is ready/);
+    const notice = screen.getByRole("status").textContent ?? "";
+    expect(notice).toMatch(/Your store is ready\. Sign in to set up two-step verification\./);
+    expect(notice).toMatch(/[\u0600-\u06FF]/);
   });
 });
 

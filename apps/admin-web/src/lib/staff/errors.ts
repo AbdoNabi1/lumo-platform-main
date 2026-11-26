@@ -20,6 +20,9 @@ const CONFLICT_KEYS: Readonly<Record<string, keyof Dictionary["users"]["errors"]
   "This invitation was changed by someone else": "stale",
   "Only a pending invitation can be resent": "notPending",
   "Only a pending invitation can be revoked": "notPending",
+  // Wave 1f: an admin resets a colleague's two-step.
+  "The store owner's two-step verification can't be reset": "ownerTwoStepReset",
+  "Reset your own two-step from your account page": "selfTwoStepReset",
 };
 
 /** The locale's text for a 409 `message`, or `null` when this is not one of the known sentences. */
