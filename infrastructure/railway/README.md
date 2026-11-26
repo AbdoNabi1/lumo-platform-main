@@ -329,6 +329,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 Notes:
 
 - The token lasts 2 hours (`STAFF_TOKEN_TTL_SECONDS`, 300 to 86400). It cannot be revoked earlier: gap G-88.
+- Two-step verification is mandatory for every staff and merchant sign-in (`STAFF_TWO_STEP`, default
+  `required`): someone without it is taken to a setup screen at sign-in. It needs `MFA_TOTP_KEY`; the API
+  refuses to boot with `required` and no key. Set `STAFF_TWO_STEP=optional` only on purpose.
 - Staff sign-in is limited to 10 attempts per 15 minutes per shop and email, on top of the lockout
   after 10 failures. A staff login and a customer login are separate accounts even for the same email.
 - TOTP enrollments made before `MFA_TOTP_KEY` was set must be re-enrolled; none are known on the live
