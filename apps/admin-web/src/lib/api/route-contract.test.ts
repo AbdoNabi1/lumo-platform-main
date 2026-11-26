@@ -266,3 +266,28 @@ describe("admin-web route contract (T6.2)", () => {
     }
   });
 });
+
+describe("Settings > Notifications routes (Wave 2b2)", () => {
+  it("calls the five email-connection routes and no sender-domain route", async () => {
+    expect.hasAssertions();
+    if (captures.length === 0) await callEveryExportedFunction();
+    const notifications = captures.filter((capture) => capture.file === "notification-settings.ts");
+    const called = notifications.map((capture) => `${capture.method} ${capture.path}`);
+
+    expect(called).toEqual(
+      expect.arrayContaining([
+        "GET /api/v1/notifications/email-connection",
+        "PUT /api/v1/notifications/email-connection",
+        "DELETE /api/v1/notifications/email-connection",
+        "POST /api/v1/notifications/email-connection/test",
+        "POST /api/v1/notifications/email-connection/enabled",
+      ]),
+    );
+    expect(called.filter((call) => call.includes("sender-domain"))).toEqual([]);
+    expect(
+      loadRealRoutes()
+        .map((route) => route.path)
+        .filter((routePath) => routePath.includes("sender-domain")),
+    ).toEqual([]);
+  });
+});

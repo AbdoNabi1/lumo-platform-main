@@ -1,25 +1,32 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import {
+  deleteEmailConnection,
   fetchNotificationSettings,
   previewTemplateCopy,
   revertTemplateCopy,
+  saveEmailConnection,
   saveNotificationSettings,
   saveTemplateCopy,
   sendTemplateTest,
-  type startSenderDomain,
-  type verifySenderDomain,
+  setEmailConnectionEnabled,
+  testEmailConnection,
 } from "@/lib/api/notification-settings";
 import type { MutationResult } from "@/lib/api/client";
 import { newIdempotencyKey, toFormState } from "@/lib/api/mutation";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import {
+  isEmailConnectionKind,
+  isPlausibleEmail,
   isTemplateKey,
   isTemplateLocale,
+  normalizeEmail,
+  type EmailConnectionActionResult,
+  type EmailConnectionKind,
+  type EmailConnectionSnapshot,
   type NotificationSettingsPatch,
   type NotificationSettingsSaveResult,
   type PreviewActionResult,
-  type SenderDomainActionResult,
   type TemplateActionResult,
   type TemplateKey,
   type TemplateLocale,
@@ -33,8 +40,8 @@ export function templatePagePath(key: TemplateKey): string {
   return `${NOTIFICATION_SETTINGS_PATH}/${key}`;
 }
 
-const DOMAIN_USED_BY_ANOTHER_STORE = "This domain is used by another store";
-
+/** The page that shows whether the store can email customers: its sign-up warning reads the same state. */
+export const CUSTOMER_ACCOUNTS_PATH = "/settings/customer-accounts";
 export async function currentDictionary(): Promise<Dictionary> {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
   return dictionaryFor(isLocale(stored) ? stored : DEFAULT_LOCALE);
@@ -102,7 +109,6 @@ export async function savePatch(
     return { status: "error", message: copy.conflict, fieldErrors: {} };
   }
   return failure(result, dictionary, (field, message) => {
-    if (field === "senderEmail") return copy.senderInvalid;
     if (field === "staffRecipients") {
       return message.startsWith("at most")
         ? copy.recipientsFull.replace("{max}", "10")
@@ -112,42 +118,133 @@ export async function savePatch(
   });
 }
 
-/**
- * The server's refusals for the domain calls are plain English sentences. The two the page can
- * explain in either language are mapped; anything else (one domain per store, no usable email) is
- * shown as the server wrote it rather than guessed at.
- */
-function localizeDomainRefusal(message: string, copy: Dictionary["notificationSettings"]): string {
-  if (message === DOMAIN_USED_BY_ANOTHER_STORE) return copy.domainUsedByAnotherStore;
-  const freeMail = /^Emails from (\S+) can't be authenticated\./.exec(message);
-  if (freeMail?.[1] !== undefined) return copy.domainFreeMail.replace("{domain}", freeMail[1]);
-  return message;
+/** Every page that shows the state of the store's email account. */
+function refreshEmailConnection(): void {
+  revalidatePath(NOTIFICATION_SETTINGS_PATH);
+  revalidatePath(CUSTOMER_ACCOUNTS_PATH);
 }
 
-type DomainCall = typeof startSenderDomain | typeof verifySenderDomain;
+export interface EmailSaveInput {
+  readonly kind: EmailConnectionKind;
+  readonly fromEmail: string;
+  /** null = keep the stored key. */
+  readonly apiKey: string | null;
+  readonly expectedVersion: number | null;
+}
 
-/** Authenticate / verify: the domain as the server now has it, or a plain reason in the page's language. */
-export async function runDomainAction(
-  call: DomainCall,
+const MAX_KEY_LENGTH = 256;
+
+/**
+ * A client call is untrusted: only the four known fields, a known provider, a plausible From
+ * address and a version the page really had are let through. A blank key means "keep the stored
+ * one". The key is never echoed into an error.
+ */
+export function parseEmailSave(input: unknown): EmailSaveInput | null {
+  if (typeof input !== "object" || input === null) return null;
+  const raw = input as Record<string, unknown>;
+  for (const field of Object.keys(raw)) {
+    if (!["kind", "fromEmail", "apiKey", "expectedVersion"].includes(field)) return null;
+  }
+  const { kind, fromEmail, apiKey, expectedVersion } = raw;
+  if (!isEmailConnectionKind(kind)) return null;
+  if (typeof fromEmail !== "string" || !isPlausibleEmail(fromEmail)) return null;
+  if (apiKey !== undefined && apiKey !== null && typeof apiKey !== "string") return null;
+  const key = typeof apiKey === "string" ? apiKey.trim() : "";
+  if (key.length > MAX_KEY_LENGTH) return null;
+  const version = parseVersion(expectedVersion);
+  if (version === undefined) return null;
+  return {
+    kind,
+    fromEmail: normalizeEmail(fromEmail),
+    apiKey: key === "" ? null : key,
+    expectedVersion: version,
+  };
+}
+
+function parseVersion(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 ? value : undefined;
+}
+
+/** What an email-account call answered with, in the page's language. A refused test mail is a success. */
+function emailOutcome(
+  result: MutationResult<EmailConnectionSnapshot>,
   dictionary: Dictionary,
-): Promise<SenderDomainActionResult> {
+): EmailConnectionActionResult {
   const copy = dictionary.notificationSettings;
-  const result = await call(newIdempotencyKey());
-  refreshSettings();
-
   switch (result.outcome) {
     case "ok":
-      return { status: "success", domain: result.data };
+      return { status: "success", snapshot: result.data };
+    case "conflict":
+      return { status: "conflict", message: copy.conflict };
     case "error":
       if (result.status === 503) return { status: "unavailable" };
-      if (result.status === 502) return { status: "error", message: copy.domainProviderError };
-      return { status: "error", message: dictionary.formErrors.unexpected };
-    case "conflict":
-    case "invalid":
-      return { status: "error", message: localizeDomainRefusal(result.message, copy) };
-    default:
-      return { status: "error", message: failure(result, dictionary).message };
+      if (result.status === 429) return { status: "rate_limited" };
+      return { status: "error", message: dictionary.formErrors.unexpected, fieldErrors: {} };
+    default: {
+      const refused = failure(result, dictionary, (field) => {
+        if (field === "fromEmail") return copy.email.fromInvalid;
+        if (field === "apiKey") return copy.email.keyInvalid;
+        if (field === "kind") return copy.email.kindInvalid;
+        if (field === "actor") return copy.email.noAddress;
+        return undefined;
+      });
+      return refused.fieldErrors["actor"] === undefined
+        ? refused
+        : { ...refused, message: copy.email.noAddress };
+    }
   }
+}
+
+function invalidEmailInput(dictionary: Dictionary): EmailConnectionActionResult {
+  return { status: "error", message: dictionary.formErrors.invalid, fieldErrors: {} };
+}
+
+/** "Save": connects the account and sends a test mail to the signed-in member. */
+export async function runEmailSave(
+  input: unknown,
+  dictionary: Dictionary,
+): Promise<EmailConnectionActionResult> {
+  const parsed = parseEmailSave(input);
+  if (parsed === null) return invalidEmailInput(dictionary);
+  const result = await saveEmailConnection(
+    { kind: parsed.kind, fromEmail: parsed.fromEmail, apiKey: parsed.apiKey },
+    parsed.expectedVersion,
+    newIdempotencyKey(),
+  );
+  refreshEmailConnection();
+  return emailOutcome(result, dictionary);
+}
+
+/** The on/off switch: the version the page loaded, never a guessed one. */
+export async function runEmailEnabled(
+  input: unknown,
+  dictionary: Dictionary,
+): Promise<EmailConnectionActionResult> {
+  const raw = typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
+  const version = parseVersion(raw["expectedVersion"]);
+  if (typeof raw["enabled"] !== "boolean" || typeof version !== "number") {
+    return invalidEmailInput(dictionary);
+  }
+  const result = await setEmailConnectionEnabled(raw["enabled"], version, newIdempotencyKey());
+  refreshEmailConnection();
+  return emailOutcome(result, dictionary);
+}
+
+/** "Send test": a test mail to the signed-in member through the saved account. */
+export async function runEmailTest(dictionary: Dictionary): Promise<EmailConnectionActionResult> {
+  const result = await testEmailConnection(newIdempotencyKey());
+  refreshEmailConnection();
+  return emailOutcome(result, dictionary);
+}
+
+/** "Disconnect": the server deletes the sealed key. */
+export async function runEmailDisconnect(
+  dictionary: Dictionary,
+): Promise<EmailConnectionActionResult> {
+  const result = await deleteEmailConnection();
+  refreshEmailConnection();
+  return emailOutcome(result, dictionary);
 }
 
 export interface TemplateDraft {

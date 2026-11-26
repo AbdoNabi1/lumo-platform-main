@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SETTINGS } from "@/components/settings/notifications/test-fixtures";
+import {
+  EMAIL_CONNECTED,
+  EMAIL_FAILED,
+  EMAIL_NONE,
+  SETTINGS,
+} from "@/components/settings/notifications/test-fixtures";
 
 const api = vi.hoisted(() => ({
   fetchNotificationSettings: vi.fn(),
   saveNotificationSettings: vi.fn(),
-  startSenderDomain: vi.fn(),
-  verifySenderDomain: vi.fn(),
+  saveEmailConnection: vi.fn(),
+  setEmailConnectionEnabled: vi.fn(),
+  testEmailConnection: vi.fn(),
+  deleteEmailConnection: vi.fn(),
   previewTemplateCopy: vi.fn(),
   revertTemplateCopy: vi.fn(),
   saveTemplateCopy: vi.fn(),
@@ -59,15 +66,18 @@ describe("saveNotificationSettingsAction", () => {
     expect(refreshed()).toEqual(["/settings/notifications"]);
   });
 
-  it("sends null as the version while the shop has never saved, and a blank sender as null", async () => {
+  it("sends null as the version while the shop has never saved, and the sender email back as it was read", async () => {
     expect.hasAssertions();
     await actions.saveNotificationSettingsAction({
       expectedVersion: null,
-      patch: { senderEmail: "  " },
+      patch: { disabledTemplates: ["order_canceled"] },
     });
 
     expect(api.saveNotificationSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ senderEmail: null }),
+      expect.objectContaining({
+        senderEmail: "orders@shop.example",
+        disabledTemplates: ["order_canceled"],
+      }),
       null,
       expect.any(String),
     );
@@ -77,9 +87,12 @@ describe("saveNotificationSettingsAction", () => {
     ["no patch", { expectedVersion: 1 }],
     ["an empty patch", { expectedVersion: 1, patch: {} }],
     ["a field that is not part of the document", { expectedVersion: 1, patch: { version: 9 } }],
-    ["a missing version", { patch: { senderEmail: null } }],
-    ["a version of zero", { expectedVersion: 0, patch: { senderEmail: null } }],
-    ["a sender that is not an address", { expectedVersion: 1, patch: { senderEmail: "nope" } }],
+    ["a missing version", { patch: { disabledTemplates: [] } }],
+    ["a version of zero", { expectedVersion: 0, patch: { disabledTemplates: [] } }],
+    [
+      "the sender email (it belongs to the email account now)",
+      { expectedVersion: 1, patch: { senderEmail: "a@b.co" } },
+    ],
     [
       "a recipient that is not an address",
       { expectedVersion: 1, patch: { staffRecipients: ["x"] } },
@@ -123,17 +136,17 @@ describe("saveNotificationSettingsAction", () => {
     api.saveNotificationSettings.mockResolvedValue({
       outcome: "invalid",
       message: "Invalid notification settings",
-      fields: [{ field: "senderEmail", message: "must be a valid email address" }],
+      fields: [{ field: "staffRecipients", message: "must be a valid email address" }],
     });
     const result = await actions.saveNotificationSettingsAction({
       expectedVersion: 2,
-      patch: { senderEmail: "a@b.co" },
+      patch: { staffRecipients: ["a@b.co"] },
     });
 
     expect(result).toEqual({
       status: "error",
       message: en.formErrors.invalid,
-      fieldErrors: { senderEmail: copy.senderInvalid },
+      fieldErrors: { staffRecipients: copy.recipientInvalid },
     });
     expect(refreshed()).toEqual(["/settings/notifications"]);
   });
@@ -143,7 +156,7 @@ describe("saveNotificationSettingsAction", () => {
     api.fetchNotificationSettings.mockResolvedValue({ outcome: "unauthorized" });
     const result = await actions.saveNotificationSettingsAction({
       expectedVersion: 2,
-      patch: { senderEmail: null },
+      patch: { disabledTemplates: [] },
     });
 
     expect(result).toMatchObject({ status: "error", message: en.formErrors.unauthorized });
@@ -160,7 +173,7 @@ describe("saveNotificationSettingsAction", () => {
     });
     const result = await actions.saveNotificationSettingsAction({
       expectedVersion: 2,
-      patch: { senderEmail: null },
+      patch: { disabledTemplates: [] },
     });
 
     expect(result).toMatchObject({ status: "error", message: en.formErrors.unexpected });
@@ -168,74 +181,249 @@ describe("saveNotificationSettingsAction", () => {
   });
 });
 
-describe("sender domain actions", () => {
-  it("authenticate returns the domain and refreshes the page", async () => {
-    expect.hasAssertions();
-    api.startSenderDomain.mockResolvedValue({ outcome: "ok", data: { available: true } });
-    const result = await actions.startSenderDomainAction();
+const BOTH_PAGES = ["/settings/customer-accounts", "/settings/notifications"];
+const KEY = "re_abcdefghijklmnop1234";
 
-    expect(result).toEqual({ status: "success", domain: { available: true } });
-    expect(api.startSenderDomain).toHaveBeenCalledWith(expect.any(String));
-    expect(refreshed()).toEqual(["/settings/notifications"]);
+describe("email account actions", () => {
+  const save = {
+    kind: "resend",
+    fromEmail: " Orders@Shop.Example ",
+    apiKey: ` ${KEY} `,
+    expectedVersion: 2,
+  };
+
+  it("connects with the typed key, the normalized From and the version the page LOADED", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_CONNECTED });
+    const result = await actions.saveEmailConnectionAction(save);
+
+    expect(result).toEqual({ status: "success", snapshot: EMAIL_CONNECTED });
+    expect(api.saveEmailConnection).toHaveBeenCalledWith(
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: KEY },
+      2,
+      expect.any(String),
+    );
+    expect(refreshed()).toEqual(BOTH_PAGES);
   });
 
-  it("verify returns the domain and refreshes the page", async () => {
+  it("keeps the stored key when the key box is empty and sends null as the first version", async () => {
     expect.hasAssertions();
-    api.verifySenderDomain.mockResolvedValue({ outcome: "ok", data: { available: true } });
+    api.saveEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_CONNECTED });
+    await actions.saveEmailConnectionAction({ ...save, apiKey: "   ", expectedVersion: null });
+    await actions.saveEmailConnectionAction({
+      kind: "resend",
+      fromEmail: "a@shop.example",
+      expectedVersion: 4,
+    });
 
-    expect(await actions.verifySenderDomainAction()).toEqual({
+    expect(api.saveEmailConnection).toHaveBeenNthCalledWith(
+      1,
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: null },
+      null,
+      expect.any(String),
+    );
+    expect(api.saveEmailConnection).toHaveBeenNthCalledWith(
+      2,
+      { kind: "resend", fromEmail: "a@shop.example", apiKey: null },
+      4,
+      expect.any(String),
+    );
+  });
+
+  it("answers a refused test mail as a success whose connection is failed (shown honestly)", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_FAILED });
+    const result = await actions.saveEmailConnectionAction(save);
+
+    expect(result).toEqual({ status: "success", snapshot: EMAIL_FAILED });
+  });
+
+  it.each([
+    ["a non-object", "hello"],
+    ["an unknown provider", { ...save, kind: "sendgrid" }],
+    ["a From that is not an address", { ...save, fromEmail: "nope" }],
+    ["a key that is not a string", { ...save, apiKey: 12 }],
+    ["an enormous key", { ...save, apiKey: "x".repeat(300) }],
+    ["a missing version", { kind: "resend", fromEmail: "a@shop.example" }],
+    ["a version of zero", { ...save, expectedVersion: 0 }],
+    ["a field that is not part of the call", { ...save, enabled: true }],
+  ])("refuses %s before it reaches the API (and never echoes the key)", async (_label, input) => {
+    expect.hasAssertions();
+    const result = await actions.saveEmailConnectionAction(input);
+
+    expect(result).toEqual({ status: "error", message: en.formErrors.invalid, fieldErrors: {} });
+    expect(JSON.stringify(result)).not.toContain(KEY);
+    expect(api.saveEmailConnection).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("answers a 409 with the conflict message and still refreshes both pages", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({ outcome: "conflict", message: "stale" });
+
+    expect(await actions.saveEmailConnectionAction(save)).toEqual({
+      status: "conflict",
+      message: copy.conflict,
+    });
+    expect(refreshed()).toEqual(BOTH_PAGES);
+  });
+
+  it("maps the server's field issues to messages in the page's language, never the key", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({
+      outcome: "invalid",
+      message: "Invalid email connection",
+      fields: [
+        { field: "fromEmail", message: "bad" },
+        { field: "apiKey", message: `bad ${KEY}` },
+      ],
+    });
+    const result = await actions.saveEmailConnectionAction(save);
+
+    expect(result).toEqual({
+      status: "error",
+      message: en.formErrors.invalid,
+      fieldErrors: { fromEmail: copy.email.fromInvalid, apiKey: copy.email.keyInvalid },
+    });
+    expect(JSON.stringify(result)).not.toContain(KEY);
+    expect(refreshed()).toEqual(BOTH_PAGES);
+  });
+
+  it("explains a signed-in member with no email address", async () => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue({
+      outcome: "invalid",
+      message: "x",
+      fields: [{ field: "actor", message: "no email address" }],
+    });
+
+    expect(await actions.saveEmailConnectionAction(save)).toMatchObject({
+      status: "error",
+      message: copy.email.noAddress,
+      fieldErrors: { actor: copy.email.noAddress },
+    });
+  });
+
+  it.each([
+    [
+      "503 (the server cannot store keys)",
+      { outcome: "error", message: "x", status: 503 },
+      { status: "unavailable" },
+    ],
+    [
+      "429 (too many test mails)",
+      { outcome: "error", message: "x", status: 429 },
+      { status: "rate_limited" },
+    ],
+    [
+      "a server failure",
+      { outcome: "error", message: "boom", status: 500 },
+      { status: "error", message: en.formErrors.unexpected, fieldErrors: {} },
+    ],
+    [
+      "a signed-out session",
+      { outcome: "unauthorized" },
+      { status: "error", message: en.formErrors.unauthorized, fieldErrors: {} },
+    ],
+  ])("maps %s and refreshes both pages", async (_label, apiResult, expected) => {
+    expect.hasAssertions();
+    api.saveEmailConnection.mockResolvedValue(apiResult);
+
+    expect(await actions.saveEmailConnectionAction(save)).toEqual(expected);
+    expect(refreshed()).toEqual(BOTH_PAGES);
+  });
+
+  it("switches the account on or off with the loaded version, and refuses a malformed call", async () => {
+    expect.hasAssertions();
+    api.setEmailConnectionEnabled.mockResolvedValue({ outcome: "ok", data: EMAIL_CONNECTED });
+
+    expect(
+      await actions.setEmailConnectionEnabledAction({ enabled: false, expectedVersion: 2 }),
+    ).toEqual({ status: "success", snapshot: EMAIL_CONNECTED });
+    expect(api.setEmailConnectionEnabled).toHaveBeenCalledWith(false, 2, expect.any(String));
+    expect(refreshed()).toEqual(BOTH_PAGES);
+
+    revalidatePath.mockReset();
+    for (const input of [
+      null,
+      {},
+      { enabled: "yes", expectedVersion: 2 },
+      { enabled: true },
+      { enabled: true, expectedVersion: null },
+    ]) {
+      expect(await actions.setEmailConnectionEnabledAction(input)).toEqual({
+        status: "error",
+        message: en.formErrors.invalid,
+        fieldErrors: {},
+      });
+    }
+    expect(api.setEmailConnectionEnabled).toHaveBeenCalledTimes(1);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("turns a stale switch into the conflict message and refreshes both pages", async () => {
+    expect.hasAssertions();
+    api.setEmailConnectionEnabled.mockResolvedValue({ outcome: "conflict", message: "stale" });
+
+    expect(
+      await actions.setEmailConnectionEnabledAction({ enabled: true, expectedVersion: 1 }),
+    ).toEqual({
+      status: "conflict",
+      message: copy.conflict,
+    });
+    expect(refreshed()).toEqual(BOTH_PAGES);
+  });
+
+  it("sends a test and refreshes both pages (a refused test is a success with status failed)", async () => {
+    expect.hasAssertions();
+    api.testEmailConnection.mockResolvedValue({ outcome: "ok", data: EMAIL_FAILED });
+
+    expect(await actions.testEmailConnectionAction()).toEqual({
       status: "success",
-      domain: { available: true },
+      snapshot: EMAIL_FAILED,
     });
-    expect(refreshed()).toEqual(["/settings/notifications"]);
+    expect(api.testEmailConnection).toHaveBeenCalledWith(expect.any(String));
+    expect(refreshed()).toEqual(BOTH_PAGES);
   });
 
-  it("maps 503 NOT_CONFIGURED to unavailable and 502 to the provider message", async () => {
+  it("maps a test with no account (404), a rate limit and a missing key store", async () => {
     expect.hasAssertions();
-    api.startSenderDomain.mockResolvedValueOnce({ outcome: "error", message: "x", status: 503 });
-    expect(await actions.startSenderDomainAction()).toEqual({ status: "unavailable" });
-
-    api.verifySenderDomain.mockResolvedValueOnce({ outcome: "error", message: "x", status: 502 });
-    expect(await actions.verifySenderDomainAction()).toEqual({
+    api.testEmailConnection.mockResolvedValueOnce({ outcome: "not_found" });
+    expect(await actions.testEmailConnectionAction()).toEqual({
       status: "error",
-      message: copy.domainProviderError,
+      message: en.formErrors.notFound,
+      fieldErrors: {},
     });
-    expect(refreshed()).toEqual(["/settings/notifications", "/settings/notifications"]);
+    api.testEmailConnection.mockResolvedValueOnce({ outcome: "error", message: "x", status: 429 });
+    expect(await actions.testEmailConnectionAction()).toEqual({ status: "rate_limited" });
+    api.testEmailConnection.mockResolvedValueOnce({ outcome: "error", message: "x", status: 503 });
+    expect(await actions.testEmailConnectionAction()).toEqual({ status: "unavailable" });
+    expect(revalidatePath).toHaveBeenCalledTimes(6);
   });
 
-  it("shows 'used by another store' in the page's language", async () => {
+  it("disconnects and refreshes both pages, also when the API refuses", async () => {
     expect.hasAssertions();
-    api.startSenderDomain.mockResolvedValue({
-      outcome: "conflict",
-      message: "This domain is used by another store",
+    api.deleteEmailConnection.mockResolvedValueOnce({ outcome: "ok", data: EMAIL_NONE });
+    expect(await actions.disconnectEmailConnectionAction()).toEqual({
+      status: "success",
+      snapshot: EMAIL_NONE,
     });
+    expect(refreshed()).toEqual(BOTH_PAGES);
 
-    expect(await actions.startSenderDomainAction()).toEqual({
+    revalidatePath.mockReset();
+    api.deleteEmailConnection.mockResolvedValueOnce({ outcome: "forbidden" });
+    expect(await actions.disconnectEmailConnectionAction()).toEqual({
       status: "error",
-      message: copy.domainUsedByAnotherStore,
+      message: en.formErrors.forbidden,
+      fieldErrors: {},
     });
-    expect(refreshed()).toEqual(["/settings/notifications"]);
+    expect(refreshed()).toEqual(BOTH_PAGES);
   });
+});
 
-  it("localizes the free-mail refusal and passes other refusals through", async () => {
+describe("the sender-domain actions are gone", () => {
+  it("exports no sender-domain action", () => {
     expect.hasAssertions();
-    api.startSenderDomain.mockResolvedValueOnce({
-      outcome: "conflict",
-      message: "Emails from gmail.com can't be authenticated. Replies will still reach you.",
-    });
-    expect(await actions.startSenderDomainAction()).toEqual({
-      status: "error",
-      message: copy.domainFreeMail.replace("{domain}", "gmail.com"),
-    });
-
-    api.startSenderDomain.mockResolvedValueOnce({
-      outcome: "conflict",
-      message:
-        "Your store already sends from a.example. Only one domain per store is supported for now.",
-    });
-    expect(await actions.startSenderDomainAction()).toMatchObject({
-      status: "error",
-      message: expect.stringContaining("Only one domain per store"),
-    });
+    expect(Object.keys(actions).filter((name) => /domain/i.test(name))).toEqual([]);
   });
 });

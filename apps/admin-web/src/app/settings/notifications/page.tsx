@@ -6,17 +6,17 @@ import { NotificationSettingsPanel } from "@/components/settings/notifications/n
 import { SettingsFrame } from "@/components/settings/settings-frame";
 import {
   fetchNotificationSettings,
+  fetchEmailConnection,
   fetchNotificationTemplates,
-  fetchSenderDomain,
 } from "@/lib/api/notification-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 /**
- * Wave 2b - Settings → Notifications. Reads the settings document (with its version and whether
- * email really delivers), the templates and the sending domain, and renders the Sender email,
- * Authenticate domain, Customer notifications and Staff notifications sections. The domain read
- * failing alone does not hide the rest: that card says it could not load.
+ * Settings → Notifications. Reads the settings document (with its version and whether the store's
+ * own email account really delivers), the templates and the email account, and renders the Email
+ * account, Customer notifications and Staff notifications sections. The account read failing alone
+ * does not hide the rest: that card says it could not load.
  */
 export default async function NotificationSettingsPage() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -24,10 +24,10 @@ export default async function NotificationSettingsPage() {
   const t = dictionaryFor(locale);
   const copy = t.notificationSettings;
   const user = await getCurrentUser();
-  const [settings, templates, domain] = await Promise.all([
+  const [settings, templates, account] = await Promise.all([
     fetchNotificationSettings(),
     fetchNotificationTemplates(),
-    fetchSenderDomain(),
+    fetchEmailConnection(),
   ]);
 
   const failed =
@@ -49,7 +49,7 @@ export default async function NotificationSettingsPage() {
             <NotificationSettingsPanel
               settings={settings.settings}
               templates={templates.templates}
-              senderDomain={domain.outcome === "ok" ? domain.senderDomain : null}
+              emailConnection={account.outcome === "ok" ? account.emailConnection : null}
               t={t}
             />
           ) : (

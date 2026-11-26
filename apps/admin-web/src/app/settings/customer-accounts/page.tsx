@@ -5,12 +5,14 @@ import { AppShell } from "@/components/app-shell";
 import { SettingsFrame } from "@/components/settings/settings-frame";
 import { CustomerAccountsForm } from "@/components/settings/customer-accounts-form";
 import { fetchCheckoutSettings } from "@/lib/api/checkout-settings";
+import { fetchEmailConnection } from "@/lib/api/notification-settings";
 import { getCurrentUser } from "@/lib/auth/current-user";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 
 /**
  * Wave 2a - Settings → Customer accounts. The same settings document as Checkout, showing the
- * accounts switch and the account link.
+ * accounts switch and the account link. Wave 2b2: sign-up by email needs the store's own email
+ * account, so a store without a working one sees a warning linking to Notifications.
  */
 export default async function CustomerAccountsPage() {
   const stored = (await cookies()).get(LOCALE_COOKIE)?.value;
@@ -18,7 +20,10 @@ export default async function CustomerAccountsPage() {
   const t = dictionaryFor(locale);
   const copy = t.customerAccountSettings;
   const user = await getCurrentUser();
-  const result = await fetchCheckoutSettings();
+  const [result, account] = await Promise.all([fetchCheckoutSettings(), fetchEmailConnection()]);
+  // Only a read that worked can say "no working connection"; a failed read stays quiet, never guesses.
+  const noEmailAccount =
+    account.outcome === "ok" && account.emailConnection.connection?.state !== "connected";
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
@@ -31,6 +36,21 @@ export default async function CustomerAccountsPage() {
             <h1 className="mt-2 text-2xl font-semibold tracking-tight">{copy.title}</h1>
             <p className="text-muted-foreground mt-1 text-sm">{copy.subtitle}</p>
           </header>
+
+          {noEmailAccount && (
+            <div
+              role="status"
+              className="border-border bg-warning-subtle text-warning-foreground flex items-start gap-2 rounded-lg border p-3 text-sm"
+            >
+              <AlertTriangleIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              <p>
+                {copy.noEmailAccountWarning}{" "}
+                <Link href="/settings/notifications" className="font-medium underline">
+                  {copy.noEmailAccountLink}
+                </Link>
+              </p>
+            </div>
+          )}
 
           {result.outcome === "ok" ? (
             <CustomerAccountsForm settings={result.settings} t={t} />

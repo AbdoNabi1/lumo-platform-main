@@ -2,16 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { en } from "@/messages/en";
-import {
-  DOMAIN_NONE,
-  SETTINGS,
-  TEMPLATES,
-} from "@/components/settings/notifications/test-fixtures";
+import { EMAIL_NONE, SETTINGS, TEMPLATES } from "@/components/settings/notifications/test-fixtures";
 
 const mocks = vi.hoisted(() => ({
   fetchNotificationSettings: vi.fn(),
   fetchNotificationTemplates: vi.fn(),
-  fetchSenderDomain: vi.fn(),
+  fetchEmailConnection: vi.fn(),
   panel: vi.fn(),
 }));
 vi.mock("next/headers", () => ({ cookies: () => Promise.resolve({ get: () => undefined }) }));
@@ -19,7 +15,7 @@ vi.mock("@/lib/auth/current-user", () => ({ getCurrentUser: async () => ({ name:
 vi.mock("@/lib/api/notification-settings", () => ({
   fetchNotificationSettings: mocks.fetchNotificationSettings,
   fetchNotificationTemplates: mocks.fetchNotificationTemplates,
-  fetchSenderDomain: mocks.fetchSenderDomain,
+  fetchEmailConnection: mocks.fetchEmailConnection,
 }));
 vi.mock("@/components/app-shell", () => ({
   AppShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -43,9 +39,9 @@ beforeEach(() => {
   mocks.fetchNotificationTemplates
     .mockReset()
     .mockResolvedValue({ outcome: "ok", templates: TEMPLATES });
-  mocks.fetchSenderDomain
+  mocks.fetchEmailConnection
     .mockReset()
-    .mockResolvedValue({ outcome: "ok", senderDomain: DOMAIN_NONE });
+    .mockResolvedValue({ outcome: "ok", emailConnection: EMAIL_NONE });
 });
 
 describe("/settings/notifications page", () => {
@@ -64,17 +60,17 @@ describe("/settings/notifications page", () => {
       expect.objectContaining({
         settings: SETTINGS,
         templates: TEMPLATES,
-        senderDomain: DOMAIN_NONE,
+        emailConnection: EMAIL_NONE,
       }),
     );
   });
 
-  it("still shows the page when only the domain read fails", async () => {
+  it("still shows the page when only the email account read fails (the card says so)", async () => {
     expect.hasAssertions();
-    mocks.fetchSenderDomain.mockResolvedValue({ outcome: "error", message: "boom" });
+    mocks.fetchEmailConnection.mockResolvedValue({ outcome: "error", message: "boom" });
     render(await Page());
 
-    expect(mocks.panel).toHaveBeenCalledWith(expect.objectContaining({ senderDomain: null }));
+    expect(mocks.panel).toHaveBeenCalledWith(expect.objectContaining({ emailConnection: null }));
   });
 
   it.each([

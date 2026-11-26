@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DOMAIN_PENDING,
+  EMAIL_CONNECTED,
+  EMAIL_FAILED,
+  EMAIL_NONE,
   SETTINGS,
+  SETTINGS_NOT_CONNECTED,
   TEMPLATES,
   detail,
 } from "@/components/settings/notifications/test-fixtures";
@@ -77,19 +80,59 @@ describe("reads", () => {
     expect(request(fetchMock).url).toBe("http://runtime.test/api/v1/notifications/templates");
   });
 
-  it("reads the sender domain and refuses an unknown status", async () => {
+  it("reads the settings of a store with no email account (not_connected)", async () => {
     expect.hasAssertions();
-    const fetchMock = stubFetch(jsonResponse(200, DOMAIN_PENDING));
-    expect(await api.fetchSenderDomain()).toEqual({ outcome: "ok", senderDomain: DOMAIN_PENDING });
-    expect(request(fetchMock).url).toBe("http://runtime.test/api/v1/notifications/sender-domain");
+    stubFetch(jsonResponse(200, SETTINGS_NOT_CONNECTED));
 
+    expect(await api.fetchNotificationSettings()).toEqual({
+      outcome: "ok",
+      settings: SETTINGS_NOT_CONNECTED,
+    });
+  });
+
+  it.each([
+    [
+      "the old own_domain mode",
+      { sender: { mode: "own_domain", effectiveEmail: null, freeMail: false } },
+    ],
+    ["an unknown connection state", { emailConnection: "maybe" }],
+    ["a missing connection state", { emailConnection: undefined }],
+  ])("refuses a settings body with %s as an error, never as settings", async (_label, patch) => {
+    expect.hasAssertions();
+    stubFetch(jsonResponse(200, { ...SETTINGS, ...patch }));
+
+    expect((await api.fetchNotificationSettings()).outcome).toBe("error");
+  });
+
+  it("reads the email account and refuses a body that is not one", async () => {
+    expect.hasAssertions();
+    const fetchMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
+    expect(await api.fetchEmailConnection()).toEqual({
+      outcome: "ok",
+      emailConnection: EMAIL_CONNECTED,
+    });
+    expect(request(fetchMock).url).toBe(
+      "http://runtime.test/api/v1/notifications/email-connection",
+    );
+
+    stubFetch(jsonResponse(200, EMAIL_NONE));
+    expect(await api.fetchEmailConnection()).toEqual({
+      outcome: "ok",
+      emailConnection: EMAIL_NONE,
+    });
+
+    stubFetch(jsonResponse(200, EMAIL_FAILED));
+    expect((await api.fetchEmailConnection()).outcome).toBe("ok");
+
+    stubFetch(jsonResponse(200, { credentialsConfigured: true }));
+    expect((await api.fetchEmailConnection()).outcome).toBe("error");
     stubFetch(
       jsonResponse(200, {
-        ...DOMAIN_PENDING,
-        domain: { ...DOMAIN_PENDING.domain, status: "done" },
+        credentialsConfigured: true,
+        connection: { ...EMAIL_CONNECTED.connection, state: "weird" },
       }),
     );
-    expect((await api.fetchSenderDomain()).outcome).toBe("error");
+    expect((await api.fetchEmailConnection()).outcome).toBe("error");
   });
 
   it("passes a 401 and a 403 through as unauthorized", async () => {
@@ -189,36 +232,94 @@ describe("writes", () => {
     expect(sent.body).toEqual({ locale: "ar", subject: "s", body: "b" });
   });
 
-  it("authenticates and verifies the domain with an empty body and an idempotency key", async () => {
+  it("PUTs the account with the version and the key, and an idempotency key", async () => {
     expect.hasAssertions();
-    const startMock = stubFetch(jsonResponse(200, DOMAIN_PENDING));
-    await api.startSenderDomain("key-4");
-    expect(request(startMock)).toMatchObject({
-      method: "POST",
-      url: "http://runtime.test/api/v1/notifications/sender-domain",
-      body: {},
-    });
-    expect(request(startMock).headers["idempotency-key"]).toBe("key-4");
+    const fetchMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
 
-    const verifyMock = stubFetch(jsonResponse(200, DOMAIN_PENDING));
-    await api.verifySenderDomain("key-5");
-    expect(request(verifyMock)).toMatchObject({
-      method: "POST",
-      url: "http://runtime.test/api/v1/notifications/sender-domain/verify",
-      body: {},
+    const result = await api.saveEmailConnection(
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: "re_abcdefghijklmnop1234" },
+      2,
+      "key-4",
+    );
+
+    expect(result).toEqual({ outcome: "ok", data: EMAIL_CONNECTED });
+    const sent = request(fetchMock);
+    expect(sent.method).toBe("PUT");
+    expect(sent.url).toBe("http://runtime.test/api/v1/notifications/email-connection");
+    expect(sent.body).toEqual({
+      kind: "resend",
+      fromEmail: "orders@shop.example",
+      apiKey: "re_abcdefghijklmnop1234",
+      expectedVersion: 2,
+    });
+    expect(sent.headers["idempotency-key"]).toBe("key-4");
+  });
+
+  it("leaves the key out of the body when it is kept, and sends a null first version", async () => {
+    expect.hasAssertions();
+    const fetchMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
+
+    await api.saveEmailConnection(
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: null },
+      null,
+      "key-5",
+    );
+
+    expect(request(fetchMock).body).toEqual({
+      kind: "resend",
+      fromEmail: "orders@shop.example",
+      expectedVersion: null,
     });
   });
 
-  it("reports the provider's 502 and a missing key's 503 with their status", async () => {
+  it("switches, tests and disconnects on the committed paths", async () => {
     expect.hasAssertions();
-    stubFetch(jsonResponse(502, { code: "PROVIDER_ERROR", message: "x" }));
-    expect(await api.verifySenderDomain("k")).toMatchObject({ outcome: "error", status: 502 });
+    const enabledMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
+    await api.setEmailConnectionEnabled(false, 2, "key-6");
+    expect(request(enabledMock)).toMatchObject({
+      method: "POST",
+      url: "http://runtime.test/api/v1/notifications/email-connection/enabled",
+      body: { enabled: false, expectedVersion: 2 },
+    });
+
+    const testMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
+    await api.testEmailConnection("key-7");
+    expect(request(testMock)).toMatchObject({
+      method: "POST",
+      url: "http://runtime.test/api/v1/notifications/email-connection/test",
+      body: {},
+    });
+
+    const deleteMock = stubFetch(jsonResponse(200, EMAIL_NONE));
+    expect(await api.deleteEmailConnection()).toEqual({ outcome: "ok", data: EMAIL_NONE });
+    expect(request(deleteMock)).toMatchObject({
+      method: "DELETE",
+      url: "http://runtime.test/api/v1/notifications/email-connection",
+    });
+  });
+
+  it("reports a 409, a 429 and a missing key store with their status, and never the key", async () => {
+    expect.hasAssertions();
+    stubFetch(jsonResponse(409, { code: "CONFLICT", message: "stale" }));
+    expect(
+      await api.saveEmailConnection({ kind: "resend", fromEmail: "a@b.co", apiKey: null }, 1, "k"),
+    ).toMatchObject({ outcome: "conflict" });
+
+    stubFetch(jsonResponse(429, { code: "RATE_LIMITED", message: "x" }));
+    expect(await api.testEmailConnection("k")).toMatchObject({ outcome: "error", status: 429 });
 
     stubFetch(jsonResponse(503, { code: "NOT_CONFIGURED", message: "x" }));
-    expect(await api.startSenderDomain("k")).toMatchObject({
-      outcome: "error",
-      status: 503,
-      code: "NOT_CONFIGURED",
-    });
+    expect(
+      await api.saveEmailConnection(
+        { kind: "resend", fromEmail: "a@b.co", apiKey: "re_x" },
+        null,
+        "k",
+      ),
+    ).toMatchObject({ outcome: "error", status: 503, code: "NOT_CONFIGURED" });
+  });
+
+  it("has no sender-domain call any more", () => {
+    expect.hasAssertions();
+    expect(Object.keys(api).filter((name) => /domain/i.test(name))).toEqual([]);
   });
 });

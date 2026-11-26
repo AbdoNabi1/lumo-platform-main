@@ -4,8 +4,6 @@ import { detail, template } from "@/components/settings/notifications/test-fixtu
 const api = vi.hoisted(() => ({
   fetchNotificationSettings: vi.fn(),
   saveNotificationSettings: vi.fn(),
-  startSenderDomain: vi.fn(),
-  verifySenderDomain: vi.fn(),
   previewTemplateCopy: vi.fn(),
   revertTemplateCopy: vi.fn(),
   saveTemplateCopy: vi.fn(),

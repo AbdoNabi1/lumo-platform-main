@@ -1,6 +1,7 @@
 import type {
+  EmailConnectionDto,
+  EmailConnectionSnapshot,
   NotificationSettingsSnapshot,
-  SenderDomainDto,
   TemplateDetailDto,
   TemplateDto,
 } from "@/lib/notification-settings-model";
@@ -11,9 +12,59 @@ export const SETTINGS: NotificationSettingsSnapshot = {
   values: { senderEmail: "orders@shop.example", staffRecipients: [], disabledTemplates: [] },
   version: 3,
   deliveryConfigured: true,
+  emailConnection: "connected",
   storeName: "Nusuj Store",
   contactEmail: "hello@shop.example",
-  sender: { mode: "reply_to", effectiveEmail: "orders@shop.example", freeMail: false },
+  sender: { mode: "store_connection", effectiveEmail: "orders@shop.example", freeMail: false },
+};
+
+/** A store that has not connected an email account: customer emails are off. */
+export const SETTINGS_NOT_CONNECTED: NotificationSettingsSnapshot = {
+  ...SETTINGS,
+  deliveryConfigured: false,
+  emailConnection: "none",
+  sender: { mode: "not_connected", effectiveEmail: null, freeMail: false },
+};
+
+export const CONNECTION: EmailConnectionDto = {
+  kind: "resend",
+  fromEmail: "orders@shop.example",
+  secretLast4: "1234",
+  enabled: true,
+  status: "connected",
+  state: "connected",
+  lastError: null,
+  lastErrorAt: null,
+  verifiedAt: "2026-11-26T10:00:00.000Z",
+  version: 2,
+};
+
+export const EMAIL_NONE: EmailConnectionSnapshot = {
+  credentialsConfigured: true,
+  connection: null,
+};
+export const EMAIL_CONNECTED: EmailConnectionSnapshot = {
+  credentialsConfigured: true,
+  connection: CONNECTION,
+};
+export const EMAIL_FAILED: EmailConnectionSnapshot = {
+  credentialsConfigured: true,
+  connection: {
+    ...CONNECTION,
+    status: "failed",
+    state: "failed",
+    verifiedAt: null,
+    lastError: "The domain shop.example is not verified in Resend",
+    lastErrorAt: "2026-11-26T11:00:00.000Z",
+  },
+};
+export const EMAIL_OFF: EmailConnectionSnapshot = {
+  credentialsConfigured: true,
+  connection: { ...CONNECTION, enabled: false, state: "disabled", version: 3 },
+};
+export const EMAIL_UNAVAILABLE: EmailConnectionSnapshot = {
+  credentialsConfigured: false,
+  connection: null,
 };
 
 export function template(overrides: Partial<TemplateDto> = {}): TemplateDto {
@@ -58,50 +109,3 @@ export function detail(base: TemplateDto, locale: "en" | "ar"): TemplateDetailDt
     defaults: { subject: base.locales[locale].subject, body: base.locales[locale].body },
   };
 }
-
-export const DOMAIN_NONE: SenderDomainDto = {
-  available: true,
-  domain: null,
-  suggestion: { domain: "shop.example", freeMail: false },
-};
-
-export const DOMAIN_PENDING: SenderDomainDto = {
-  available: true,
-  domain: {
-    domain: "shop.example",
-    status: "pending",
-    verified: false,
-    verifiedAt: null,
-    records: [
-      {
-        record: "DKIM",
-        name: "resend._domainkey",
-        type: "TXT",
-        value: "p=MIGfMA0GCSq",
-        ttl: "Auto",
-        status: "not_started",
-        priority: null,
-      },
-      {
-        record: "Receiving",
-        name: "send",
-        type: "MX",
-        value: "feedback-smtp.example.com",
-        ttl: "Auto",
-        status: "not_started",
-        priority: 10,
-      },
-    ],
-  },
-  suggestion: { domain: "shop.example", freeMail: false },
-};
-
-export const DOMAIN_VERIFIED: SenderDomainDto = {
-  ...DOMAIN_PENDING,
-  domain: {
-    ...DOMAIN_PENDING.domain!,
-    status: "verified",
-    verified: true,
-    verifiedAt: "2026-11-26T10:00:00.000Z",
-  },
-};
