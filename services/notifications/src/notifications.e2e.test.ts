@@ -12,12 +12,28 @@ function sequentialIds(): IdGenerator {
 
 const clock: Clock = { now: () => new Date("2026-07-12T00:00:00.000Z") };
 
+/** Wave 2b: the email channel is real, so these lifecycle tests give it a delivering fake provider. */
 function wire() {
-  return wireNotifications({
-    serializer: new InMemoryEventSerializer(),
-    idGenerator: sequentialIds(),
-    clock,
-  });
+  return wireNotifications(
+    {
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock,
+    },
+    {
+      store: {
+        get: () => Promise.resolve({ storeName: "Shop", contactEmail: null, defaultLocale: "en" }),
+      },
+      delivery: {
+        deliveryConfigured: true,
+        platformFrom: "Morbeh <onboarding@resend.dev>",
+        send: () => Promise.resolve(),
+      },
+      recipients: {
+        resolve: () => Promise.resolve({ name: "Ada", email: "ada@example.com", language: null }),
+      },
+    },
+  );
 }
 
 function createInput(idempotencyKey: string) {

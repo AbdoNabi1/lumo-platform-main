@@ -44,6 +44,15 @@ export async function notifyBestEffort(
       fulfillmentOrder.orderRef,
       fulfillmentOrder.status.value,
       tenantId,
+      {
+        fulfillmentOrderId: fulfillmentOrder.id.toString(),
+        ...(fulfillmentOrder.trackingNumber === undefined
+          ? {}
+          : { trackingNumber: fulfillmentOrder.trackingNumber.value }),
+        ...(fulfillmentOrder.carrierReference === undefined
+          ? {}
+          : { carrier: fulfillmentOrder.carrierReference.carrier }),
+      },
     );
   } catch {
     // Best-effort: a reference-only notification failure never fails the transition's own result.

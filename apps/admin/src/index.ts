@@ -12,5 +12,6 @@ export { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email
 // Plan 1C: the platform's one email sender, with a Resend adapter and a logging fallback.
 export type { EmailSender } from "./interfaces/email-sender.port";
 export { ResendEmailSender } from "./infrastructure/resend-email-sender";
+export { ResendSenderDomainProvider } from "./infrastructure/resend-sender-domain-provider";
 export { LoggingEmailSender } from "./infrastructure/logging-email-sender";
 export { EmailSignupEmailAdapter } from "./infrastructure/email-signup-email-adapter";

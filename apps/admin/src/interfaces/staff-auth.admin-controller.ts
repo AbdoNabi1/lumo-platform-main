@@ -611,6 +611,16 @@ export class StaffAuthAdminController {
     return { status: 200, body: await this.deps.issuer.jwks() };
   }
 
+  /**
+   * Wave 2b: the signed-in member's OWN sign-in email, resolved server-side from the principal (never
+   * from a request). `null` when the server has no credential store or the member has no staff login.
+   */
+  async ownEmail(tenantId: string, principalExternalId: string): Promise<string | null> {
+    const { credentialStore } = this.deps;
+    if (credentialStore === undefined) return null;
+    return this.staffEmailOf(credentialStore, tenantId, principalExternalId);
+  }
+
   /** The member's sign-in email (the `staff:` credential), or `null` when they have none. */
   private async staffEmailOf(
     credentialStore: PasswordCredentialStore,

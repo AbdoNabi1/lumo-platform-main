@@ -44,7 +44,19 @@ export interface ShippingProviderPort {
 
 /** Sends a best-effort lifecycle notification — reference-only, never blocks a transition's own result. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface NotificationPort {
-  notify(orderRef: string, status: string, tenantId: string): Promise<void>;
+  /** `detail` (Wave 2b) carries what a customer mail needs: which fulfillment, and its tracking. */
+  notify(
+    orderRef: string,
+    status: string,
+    tenantId: string,
+    detail?: FulfillmentNotificationDetail,
+  ): Promise<void>;
+}
+
+export interface FulfillmentNotificationDetail {
+  readonly fulfillmentOrderId: string;
+  readonly trackingNumber?: string;
+  readonly carrier?: string;
 }
 
 /** Replay-safe carrier-webhook dedup — unique per `(tenant, carrier, event)`, backing `RecordCarrierWebhook`'s idempotency. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */

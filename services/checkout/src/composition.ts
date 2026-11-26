@@ -72,6 +72,7 @@ import type {
   DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
+  OrderPlacedPort,
   OrderStockReservationPort,
   OrderCreationPort,
   PaymentInitiationPort,
@@ -137,6 +138,8 @@ export interface CheckoutWiringDeps {
   readonly orderCreation?: OrderCreationPort;
   /** Wave 2a: records the marketing box the shopper ticked (Identity owns the consent). Absent => not recorded. */
   readonly marketingConsent?: ShopperMarketingConsentPort;
+  /** Wave 2b: announces a placed order (customer confirmation, staff new order). Absent => nobody is mailed. */
+  readonly orderPlaced?: OrderPlacedPort;
   /**
    * WP-13: the two seams to Payments — which methods the merchant offers, and opening the payment
    * for the shopper's selected method. Same `deps.X ?? new InMemoryXAdapter()` convention; `wireAdmin`
@@ -219,6 +222,7 @@ function buildController(
       ...(deps.draftCompletion === undefined ? {} : { draftCompletion: deps.draftCompletion }),
       settings,
       ...(deps.marketingConsent === undefined ? {} : { marketingConsent: deps.marketingConsent }),
+      ...(deps.orderPlaced === undefined ? {} : { orderPlaced: deps.orderPlaced }),
     }),
     failCheckout: new FailCheckout({
       sessions,

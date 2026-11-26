@@ -5,6 +5,7 @@ import type {
   StockReservationResult,
 } from "@platform/checkout";
 import type { OrderController } from "@platform/orders";
+import type { UnannouncedOrders } from "./notification-trigger";
 import type { OrdersInventoryAdapter } from "./orders-inventory.adapter";
 import type { OrdersStockReleaseAdapter } from "./orders-stock-release.adapter";
 
@@ -65,13 +66,26 @@ export class CheckoutStockReservationAdapter implements OrderStockReservationPor
  */
 export class CheckoutOrderCancellationAdapter implements OrderCancellationPort {
   private readonly orders: Pick<OrderController, "advance">;
+  private readonly unannounced: UnannouncedOrders | undefined;
 
-  constructor(orders: Pick<OrderController, "advance">) {
+  /**
+   * `unannounced` (Wave 2b): this order was never announced to the shopper (no confirmation was
+   * sent), so cancelling it must not mail "your order was canceled". The id is marked only while the
+   * cancel runs, which is when Orders' cancellation notification looks at it.
+   */
+  constructor(orders: Pick<OrderController, "advance">, unannounced?: UnannouncedOrders) {
     this.orders = orders;
+    this.unannounced = unannounced;
   }
 
   async cancel(orderId: string, tenantId: string): Promise<void> {
-    const response = await this.orders.advance({ tenantId, orderId, toStatus: "cancelled" });
+    this.unannounced?.mark(orderId);
+    let response;
+    try {
+      response = await this.orders.advance({ tenantId, orderId, toStatus: "cancelled" });
+    } finally {
+      this.unannounced?.clear(orderId);
+    }
     if (response.status !== 200) {
       throw new Error(
         `CheckoutOrderCancellationAdapter: could not cancel order "${orderId}" (status ${response.status})`,

@@ -16,6 +16,7 @@ import {
   type OrderCancellationPort as CheckoutOrderCancellationPort,
   type OrderStockReservationPort as CheckoutStockReservationPort,
   type OrderCreationPort,
+  type OrderPlacedPort,
   type ShopperMarketingConsentPort,
   type PaymentInitiationPort,
   type PaymentMethodPort,
@@ -45,7 +46,11 @@ import { wireFeatureFlags } from "@platform/feature-flags-service";
 import { wireFeatureRegistry } from "@platform/feature-registry";
 import { wireFinance } from "@platform/finance";
 import type { PostingAccounts } from "@platform/finance";
-import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
+import {
+  type FulfillmentController,
+  type FulfillmentNotificationPort,
+  wireFulfillment,
+} from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
 import {
@@ -64,7 +69,11 @@ import {
   type ObjectStoragePort,
   type ResolveMediaImages,
 } from "@platform/media";
-import { wireNotifications } from "@platform/notifications";
+import {
+  DEFAULT_PLATFORM_FROM,
+  wireNotifications,
+  type SenderDomainProvider,
+} from "@platform/notifications";
 import {
   wireOrders,
   type InventoryPort as OrdersInventoryPort,
@@ -114,6 +123,7 @@ import {
 import { wireSeo } from "@platform/seo";
 import {
   wireOnlineStore,
+  type OnlineStoreController,
   type OnlineStorePublicReads,
   type StorefrontPasswordHasher,
 } from "@platform/online-store";
@@ -152,6 +162,13 @@ import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-st
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { ShopperMarketingConsentAdapter } from "./infrastructure/cross-context/shopper-marketing-consent.adapter";
+import { SenderEmailDelivery } from "./infrastructure/cross-context/email-delivery.adapter";
+import { StoreProfileAdapter } from "./infrastructure/cross-context/store-profile.adapter";
+import { CustomerRecipientResolver } from "./infrastructure/cross-context/customer-recipient.adapter";
+import { DraftInvoiceNotificationAdapter } from "./infrastructure/cross-context/draft-invoice-notification.adapter";
+import { FulfillmentNotificationAdapter } from "./infrastructure/cross-context/fulfillment-notification.adapter";
+import { UnannouncedOrders } from "./infrastructure/cross-context/notification-trigger";
+import { OrderPlacedNotificationAdapter } from "./infrastructure/cross-context/order-placed-notification.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { PrismaStaffDirectoryAdapter } from "./infrastructure/cross-context/staff-directory.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
@@ -191,6 +208,8 @@ import {
   staffIdentifier,
 } from "./interfaces/staff-auth.admin-controller";
 import type { EmailSender } from "./interfaces/email-sender.port";
+import { NotificationSettingsAdminController } from "./interfaces/notification-settings.admin-controller";
+import { SenderDomainAdminController } from "./interfaces/sender-domain.admin-controller";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -393,6 +412,19 @@ export interface AdminWiringDeps {
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
   /**
+   * Wave 2b: `true` only when `emailSender` REALLY delivers (Resend). Settings > Notifications shows an
+   * honest banner when it is not, and every customer notification is then recorded as failed
+   * `EMAIL_NOT_CONFIGURED` instead of "sent" (D40). Absent ⇒ not configured.
+   */
+  readonly emailDeliveryConfigured?: boolean;
+  /** Wave 2b: the platform's sending mailbox (`EMAIL_FROM`), used as From until a store's own domain is verified. */
+  readonly emailFrom?: string;
+  /**
+   * Wave 2b (D43): the email provider's Domains API (Resend, needs `RESEND_DOMAINS_API_KEY`, a
+   * full-access key). Absent ⇒ "Authenticate domain" answers 503 NOT_CONFIGURED; Reply-To mode works.
+   */
+  readonly senderDomainProvider?: SenderDomainProvider;
+  /**
    * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
    * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
    * apart from `emailSender` on purpose: that one may be the logging fallback (reset requests still answer
@@ -542,6 +574,10 @@ export interface AdminWiringDeps {
   readonly ordersPort?: PaymentsOrdersPort;
   readonly financePort?: PaymentsFinancePort;
   readonly paymentsNotifications?: PaymentsNotificationPort;
+  /** Wave 2b: the shipping-confirmation mail (named apart from `notifications`/`paymentsNotifications`: one deps object feeds every context). */
+  readonly fulfillmentNotifications?: FulfillmentNotificationPort;
+  /** Wave 2b: announces a placed order (confirmation + staff new-order). Absent ⇒ the real adapter. */
+  readonly orderPlaced?: OrderPlacedPort;
   /**
    * G-72: dispatches the "complete your account" / "you already have an account" signup emails.
    * Absent ⇒ `LoggingSignupEmailAdapter` (logs instead of sending), same as before this field
@@ -643,6 +679,12 @@ export interface WiredAdmin {
   readonly securityAiGovernance: SecurityAiGovernanceAdminController;
   /** Notifications screen → Notifications (Sprint 4.12 — Notifications' first admin-transport wiring). */
   readonly notifications: NotificationsAdminController;
+  /** Wave 2b: Settings > Notifications (sender, templates, preview, test-send). */
+  readonly notificationSettings: NotificationSettingsAdminController;
+  /** Wave 2b (D43): authenticate the store's own sending domain. */
+  readonly senderDomain: SenderDomainAdminController;
+  /** Wave 2b: the draft order "Send invoice" customer mail (best effort, after the link is issued). */
+  readonly draftInvoiceNotifications: DraftInvoiceNotificationAdapter;
   /** Finance screen → Finance (ADR-0024). */
   readonly finance: FinanceAdminController;
   /** Plan 3C: Settings → Taxes and duties. */
@@ -928,7 +970,61 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // cannot receive a real NotificationPort adapter built from `notifications` if `notifications`
   // doesn't exist yet. Moved here (alongside `inventory` above) from its previous position much
   // further down (it used to be wired long after `orders`).
-  const notifications = wireNotifications(deps);
+  // Wave 2b: the store profile is read through closures over cells filled once Tenancy and the Online
+  // store are wired below (a closure, not the controller: the multi-tenant boot check walks the graph).
+  const storeProfileCells: {
+    tenancy?: Pick<TenancyController, "getStoreSettings">;
+    onlineStore?: Pick<OnlineStoreController, "getPreferences">;
+    customers?: Pick<CustomerController, "getCustomer">;
+  } = {};
+  const notifications = wireNotifications(deps, {
+    store: new StoreProfileAdapter(
+      {
+        getStoreSettings: (tenantId) => {
+          if (storeProfileCells.tenancy === undefined) {
+            throw new Error(
+              "StoreProfileAdapter: Tenancy requested before wireTenancy() completed",
+            );
+          }
+          return storeProfileCells.tenancy.getStoreSettings(tenantId);
+        },
+      },
+      {
+        getPreferences: (input) => {
+          if (storeProfileCells.onlineStore === undefined) {
+            throw new Error(
+              "StoreProfileAdapter: Online store requested before wireOnlineStore() completed",
+            );
+          }
+          return storeProfileCells.onlineStore.getPreferences(input);
+        },
+      },
+    ),
+    ...(deps.senderDomainProvider === undefined
+      ? {}
+      : { senderDomainProvider: deps.senderDomainProvider }),
+    delivery: new SenderEmailDelivery({
+      ...(deps.emailSender === undefined ? {} : { sender: deps.emailSender }),
+      deliveryConfigured: deps.emailDeliveryConfigured === true,
+      platformFrom: deps.emailFrom ?? DEFAULT_PLATFORM_FROM,
+    }),
+    // Customer name, address and language are read when a mail is sent, through a closure over the
+    // Identity cell (Identity is wired after Notifications). The logger gets short codes only.
+    recipients: new CustomerRecipientResolver({
+      getCustomer: (input) => {
+        if (storeProfileCells.customers === undefined) {
+          throw new Error(
+            "CustomerRecipientResolver: Identity requested before wireIdentity() completed",
+          );
+        }
+        return storeProfileCells.customers.getCustomer(input);
+      },
+    }),
+    log: adminLogger,
+  });
+  // Wave 2b: orders Checkout placed and undid for lack of stock were never announced, so cancelling
+  // them sends no "canceled" mail.
+  const unannouncedOrders = new UnannouncedOrders();
   // Phase 3 Task 12 (C-3): real `InventoryPort`/`NotificationPort` adapters for Orders' outbound
   // ports, wired here (after `inventory`/`notifications` above) rather than left to `wireOrders`'s
   // own `deps.inventoryPort ?? new InMemoryInventoryAdapter()` / `deps.notifications ?? new
@@ -1058,7 +1154,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         inventory.inventoryItemRepository,
         lazyOrdersController,
       ),
-    notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
+    // Wave 2b: the generic "status changed" mail is gone (D41); cancellation mails `order_canceled`.
+    notifications:
+      deps.notifications ??
+      new OrdersNotificationAdapter(
+        notifications.notifier,
+        lazyOrdersController,
+        unannouncedOrders,
+      ),
     // G-126: cancelling an unpaid order cancels its payment intent too (best-effort).
     paymentVoid: deps.paymentVoid ?? new OrdersPaymentVoidAdapter(lazyPaymentsController),
     // G-130: cancelling an order cancels its open fulfillment order and releases its held stock.
@@ -1103,6 +1206,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
   const identity = wireIdentity(deps);
+  storeProfileCells.customers = identity.customers;
   const customer360 = wireCustomer360(deps);
   const pricing = wirePricing(deps);
   const finance = wireFinance({ ...deps, postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS });
@@ -1200,7 +1304,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
               ),
             ),
           orderCancellation:
-            deps.orderCancellation ?? new CheckoutOrderCancellationAdapter(orders.orders),
+            deps.orderCancellation ??
+            new CheckoutOrderCancellationAdapter(orders.orders, unannouncedOrders),
+          // Wave 2b: the order confirmation and the staff new-order mail, after the checkout commits.
+          orderPlaced:
+            deps.orderPlaced ??
+            new OrderPlacedNotificationAdapter(notifications.notifier, orders.orders),
         }
       : {}),
   };
@@ -1239,14 +1348,21 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     ...deps,
     ordersPort: deps.ordersPort ?? new PaymentsOrdersAdapter(orders.orders),
     paymentsNotifications:
-      deps.paymentsNotifications ?? new PaymentsNotificationAdapter(notifications.notifications),
+      deps.paymentsNotifications ??
+      new PaymentsNotificationAdapter(notifications.notifier, orders.orders),
   };
   const payments = wirePayments(paymentsDeps);
   // Populates `paymentsControllerCell` (see its declaration above, alongside `ordersDeps`) — from
   // this point on, `lazyPaymentsController`/`OrdersPaymentAdapter` resolve to the real
   // `PaymentController` instead of throwing.
   paymentsControllerCell.controller = payments.payments;
-  const fulfillment = wireFulfillment(deps);
+  const fulfillment = wireFulfillment({
+    ...deps,
+    // Wave 2b: "your order is on its way" once a shipment has its tracking number.
+    fulfillmentNotifications:
+      deps.fulfillmentNotifications ??
+      new FulfillmentNotificationAdapter(notifications.notifier, orders.orders),
+  });
   fulfillmentControllerCell.controller = fulfillment.fulfillment;
   const recommendations = wireRecommendations(deps);
   const reporting = wireReporting(deps);
@@ -1459,6 +1575,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     staffAuth,
   });
 
+  storeProfileCells.tenancy = tenancy.tenancy;
+  storeProfileCells.onlineStore = onlineStore.controller;
   const tenancyAdmin = new TenancyAdminController({ tenancy: tenancy.tenancy, guard });
   return {
     collections: new CollectionsAdminController({
@@ -1587,6 +1705,20 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     notifications: new NotificationsAdminController({
       notifications: notifications.notifications,
+      guard,
+    }),
+    draftInvoiceNotifications: new DraftInvoiceNotificationAdapter(
+      notifications.notifier,
+      deps.storefrontPublicUrl,
+    ),
+    notificationSettings: new NotificationSettingsAdminController({
+      settings: notifications.settings,
+      guard,
+      actorEmail: (tenantId, principalExternalId) =>
+        staffAuth.ownEmail(tenantId, principalExternalId),
+    }),
+    senderDomain: new SenderDomainAdminController({
+      senderDomain: notifications.senderDomain,
       guard,
     }),
     content: new ContentAdminController({ content: content.content, guard }),

@@ -1,5 +1,55 @@
-export { wireNotifications } from "./composition";
-export type { NotificationsWiringDeps, WiredNotifications } from "./composition";
+export { DEFAULT_PLATFORM_FROM, wireNotifications } from "./composition";
+export type {
+  NotificationsMessagingDeps,
+  NotificationsWiringDeps,
+  WiredNotifications,
+} from "./composition";
+export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+export { SenderDomainController } from "./interfaces/sender-domain.controller";
+export { SenderDomainProviderError } from "./application/sender-domain-ports";
+export type {
+  ProviderDomain,
+  SenderDomainProvider,
+  SenderDomainProviderFailure,
+} from "./application/sender-domain-ports";
+export {
+  normalizeDomainStatus,
+  parseDnsRecords,
+  SENDER_DOMAIN_STATUSES,
+} from "./domain/messaging/sender-domain";
+export type { DnsRecord, SenderDomainStatus } from "./domain/messaging/sender-domain";
+export { SenderDomainTakenError } from "./domain/messaging/sender-domain";
+export { InMemorySenderDomainProvider } from "./infrastructure/in-memory-sender-domain-provider";
+export { TemplatedNotifier } from "./application/templated-notifier";
+export type {
+  TemplatedNotificationOutcome,
+  TemplatedNotificationRequest,
+} from "./application/templated-notifier";
+export type {
+  EmailDeliveryPort,
+  NotificationLog,
+  OutgoingMail,
+  RecipientContact,
+  RecipientResolverPort,
+  StoreProfile,
+  StoreProfilePort,
+} from "./application/messaging-ports";
+export {
+  chooseLocale,
+  isTemplateKey,
+  isTemplateLocale,
+  TEMPLATE_CATALOGUE,
+  TEMPLATE_KEYS,
+  TEMPLATE_LOCALES,
+} from "./domain/messaging/template-catalogue";
+export type { TemplateKey, TemplateLocale } from "./domain/messaging/template-catalogue";
+export {
+  emailDomain,
+  isFreeMailDomain,
+  isValidEmail,
+  resolveSender,
+} from "./domain/messaging/sender-resolution";
+export { escapeHtml, renderTemplate, formatMoney } from "./domain/messaging/template-renderer";
 export { NotificationsController } from "./interfaces/notifications.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Notification } from "./domain/notification";

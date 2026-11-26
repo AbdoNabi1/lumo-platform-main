@@ -50,6 +50,19 @@ export interface OrderStockReservationPort {
   release(orderId: string, tenantId: string): Promise<void>;
 }
 
+/**
+ * Wave 2b: told once an order has been placed and its checkout committed, so the customer and the
+ * staff can be mailed. Called AFTER the commit and best effort: a failure here never undoes or fails
+ * the order. Orders the checkout undid (no stock) never reach it. ADR-0014: explicit `tenantId`.
+ */
+export interface OrderPlacedPort {
+  orderPlaced(input: {
+    readonly tenantId: string;
+    readonly orderRef: string;
+    readonly customerRef: string | undefined;
+  }): Promise<void>;
+}
+
 /** Plan 3C: cancels an order Checkout just placed but could not reserve stock for. ADR-0014: explicit `tenantId`. */
 export interface OrderCancellationPort {
   cancel(orderId: string, tenantId: string): Promise<void>;

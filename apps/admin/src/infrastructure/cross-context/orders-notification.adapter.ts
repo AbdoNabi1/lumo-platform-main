@@ -1,48 +1,38 @@
-import type { NotificationsController } from "@platform/notifications";
+import type { OrderController } from "@platform/orders";
+import type { Order } from "@platform/orders";
 import type { NotificationPort } from "@platform/orders";
-
-interface CreateNotificationBody {
-  readonly notificationId: string;
-}
+import { orderMailVariables } from "./notification-mail-data";
+import { guardedTrigger, type MailNotifier, type UnannouncedOrders } from "./notification-trigger";
 
 /**
- * Real `NotificationPort` over Notifications' own create -> queue -> send lifecycle (Phase 3 Task
- * 12, C-3) — `Orders`' lifecycle use cases call this instead of the offline
- * `InMemoryNotificationAdapter` stub (`services/orders/src/infrastructure/in-memory-port-adapters.ts`),
- * which was a pure no-op. The exact 3-step sequence is Notifications' own real caller contract, not
- * invented here — read from `services/notifications/src/notifications.e2e.test.ts`.
+ * Wave 2b: Orders' `NotificationPort` over the templated notifier. It replaces the old generic
+ * "Order {{orderNumber}} status changed to {{status}}" mail (D41): only ONE order transition mails the
+ * customer from here, the cancellation (`order_canceled`). Every other status says nothing: the order
+ * confirmation is sent once when the order is placed (Checkout's `OrderPlacedPort`), and shipping and
+ * refund mails come from Fulfillment and Payments.
  *
- * `NotificationPort` is explicitly documented as best-effort — "reference-only, never blocks a
- * transition's own result" (`services/orders/src/application/ports.ts`) — and its one caller,
- * `notifyBestEffort` (`order-lifecycle.use-cases.ts`), already wraps every call in a swallowing
- * try/catch. So this adapter does no internal error handling of its own: a failure from any of the
- * 3 steps propagates straight out and is swallowed by the caller, exactly as designed.
+ * `notify` is called from inside the transition and is documented best-effort (the caller swallows
+ * everything); this adapter swallows and logs too, so the cancellation can never fail or roll back
+ * because of a mail (D42). The notification's idempotency key is `order_canceled:<orderId>`: a
+ * settle retry that notifies again mails nothing.
  *
- * This is deliberately minimal, generic glue content, not a templating/channel-selection system —
- * that would be over-engineering a port whose own contract says it may be dropped entirely without
- * consequence to the order:
- *  - `channels`: a single default, `["email"]` — no multi-channel selection logic.
- *  - `templateId`/`bodyPattern`/`subjectPattern`: a generic "order status changed" message; the
- *    order number/status are interpolated via `variables`, not baked into the pattern strings.
- *  - `maxAttempts`: 3 — Notifications' own domain model (`DeliveryPolicy`) takes any caller-supplied
- *    number and documents no house default anywhere, so this is a deliberately small, defensible
- *    constant, not a discovered convention.
- *  - `idempotencyKey`: `${orderNumber}:${status}`, not a freshly generated id per call —
- *    `notify()` may be invoked more than once for the SAME logical transition (e.g. Orders'
- *    `withConcurrencyRetry` re-running `notifyBestEffort` on a settle retry), and `CreateNotification`
- *    is itself idempotent by `idempotencyKey` (a replay returns the already-created notification
- *    rather than a duplicate) — a fresh id per call would defeat that and mint a new notification on
- *    every retry.
- *  - `sourceRef`: `orders:${orderNumber}` — identifies this as order-lifecycle-sourced.
+ * An order Checkout placed and then undid for lack of stock was never announced, so its cancellation is
+ * not mailed either (`UnannouncedOrders`).
  */
 export class OrdersNotificationAdapter implements NotificationPort {
-  private static readonly DEFAULT_MAX_ATTEMPTS = 3;
+  private readonly notifier: MailNotifier;
+  private readonly orders: Pick<OrderController, "getOrder">;
+  private readonly unannounced: UnannouncedOrders | undefined;
 
-  private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
-
-  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `NotificationPort.notify` carries `tenantId` per call. */
-  constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
-    this.notifications = notifications;
+  /** ADR-0014: stateless per tenant, `notify` carries `tenantId` per call. */
+  constructor(
+    notifier: MailNotifier,
+    orders: Pick<OrderController, "getOrder">,
+    unannounced?: UnannouncedOrders,
+  ) {
+    this.notifier = notifier;
+    this.orders = orders;
+    this.unannounced = unannounced;
   }
 
   async notify(
@@ -50,43 +40,41 @@ export class OrdersNotificationAdapter implements NotificationPort {
     orderNumber: string,
     status: string,
     tenantId: string,
+    orderId?: string,
   ): Promise<void> {
-    const idempotencyKey = `${orderNumber}:${status}`;
+    if (status !== "cancelled") return;
+    if (orderId !== undefined && this.unannounced?.has(orderId) === true) return;
+    await guardedTrigger(
+      "order_canceled",
+      { tenantId, orderRef: orderId ?? orderNumber },
+      async () => {
+        const variables = await this.variablesFor(orderId, orderNumber, tenantId);
+        return this.notifier.execute({
+          tenantId,
+          template: "order_canceled",
+          eventKey: orderId ?? orderNumber,
+          sourceRef: `orders:${orderNumber}`,
+          recipientRef: customerRef,
+          variables,
+        });
+      },
+    );
+  }
 
-    const createResponse = await this.notifications.create({
-      tenantId,
-      idempotencyKey,
-      sourceRef: `orders:${orderNumber}`,
-      recipientRef: customerRef,
-      channels: ["email"],
-      templateId: "order-status-changed",
-      bodyPattern: "Order {{orderNumber}} status changed to {{status}}.",
-      subjectPattern: "Order {{orderNumber}} update",
-      variables: { orderNumber, status },
-      maxAttempts: OrdersNotificationAdapter.DEFAULT_MAX_ATTEMPTS,
-    });
-    if (createResponse.status >= 400) {
-      throw new Error(
-        `OrdersNotificationAdapter: create failed for order "${orderNumber}" ` +
-          `(status ${createResponse.status}): ${JSON.stringify(createResponse.body)}`,
-      );
+  /** The order's lines and totals when it can be read; the bare order number when it cannot. */
+  private async variablesFor(
+    orderId: string | undefined,
+    orderNumber: string,
+    tenantId: string,
+  ): Promise<Record<string, string>> {
+    if (orderId !== undefined) {
+      try {
+        const response = await this.orders.getOrder({ tenantId, orderId });
+        if (response.status === 200) return orderMailVariables(response.body as Order);
+      } catch {
+        // fall through to the bare number
+      }
     }
-    const { notificationId } = createResponse.body as CreateNotificationBody;
-
-    const queueResponse = await this.notifications.queue({ notificationId, tenantId });
-    if (queueResponse.status >= 400) {
-      throw new Error(
-        `OrdersNotificationAdapter: queue failed for order "${orderNumber}" ` +
-          `(status ${queueResponse.status}): ${JSON.stringify(queueResponse.body)}`,
-      );
-    }
-
-    const sendResponse = await this.notifications.send({ notificationId, tenantId });
-    if (sendResponse.status >= 400) {
-      throw new Error(
-        `OrdersNotificationAdapter: send failed for order "${orderNumber}" ` +
-          `(status ${sendResponse.status}): ${JSON.stringify(sendResponse.body)}`,
-      );
-    }
+    return { order_number: orderNumber };
   }
 }

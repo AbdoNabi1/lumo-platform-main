@@ -36,6 +36,7 @@ export interface NotificationEventJson {
   readonly id: string;
   readonly status: NotificationStatusValue;
   readonly occurredAt: string;
+  readonly reason?: string;
 }
 
 export interface NotificationRow {
@@ -100,7 +101,12 @@ export class NotificationMapper {
           ),
         ),
         history: row.history.map((h) =>
-          NotificationEvent.create(UniqueEntityId.from(h.id), h.status, new Date(h.occurredAt)),
+          NotificationEvent.create(
+            UniqueEntityId.from(h.id),
+            h.status,
+            new Date(h.occurredAt),
+            h.reason,
+          ),
         ),
         deliveredAt: row.deliveredAt ?? undefined,
       },
@@ -138,6 +144,7 @@ export class NotificationMapper {
         id: h.id.toString(),
         status: h.status,
         occurredAt: h.occurredAt.toISOString(),
+        ...(h.reason === undefined ? {} : { reason: h.reason }),
       })),
       deliveredAt: notification.deliveredAt ?? null,
       version: 1,
