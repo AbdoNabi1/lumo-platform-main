@@ -25,6 +25,7 @@ model CheckoutSession {
   recoveredFromRef  String?  @map("recovered_from_ref") // Part 3: on a session a recovery link created — the abandoned session's id
   recoveredOrderRef String?  @map("recovered_order_ref") // Part 3: on the abandoned session once its recovery became an order
   draftTerms        Json     @default("{}") @map("draft_terms") // Part 4: a draft's fixed discount/shipping; {} = none
+  marketingOptIn    Boolean? @map("marketing_opt_in") // Wave 2a: the shopper's tick of the marketing box; null = not asked
   version           Int      @default(0)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
@@ -58,5 +59,26 @@ model CheckoutLink {
   @@index([tenantId, checkoutSessionId])
   @@index([tenantId, draftOrderRef])
   @@map("checkout_links")
+  @@schema("checkout")
+}
+
+// Wave 2a (Settings > Checkout and Customer accounts): one row per tenant, created on the first save.
+// A tenant with no row behaves exactly as before. The mode columns, the cart limit range and the
+// "no login requirement while accounts are off" rule are CHECK constraints in the migration; the
+// domain (`validateCheckoutSettings`) refuses the same combinations first, with a message.
+model CheckoutSettings {
+  tenantId             String   @id @map("tenant_id")
+  nameMode             String   @default("required") @map("name_mode") // required | optional
+  phoneMode            String   @default("required") @map("phone_mode") // required | optional
+  line2Mode            String   @default("optional") @map("line2_mode") // hidden | optional | required
+  marketingEmailPrompt String   @default("hidden") @map("marketing_email_prompt") // hidden | show | preselect
+  cartLineLimit        Int?     @map("cart_line_limit") // null = no limit; 1..999
+  requireLogin         Boolean  @default(false) @map("require_login")
+  accountsMode         String   @default("optional") @map("accounts_mode") // optional | disabled
+  showAccountLink      Boolean  @default(true) @map("show_account_link")
+  version              Int      @default(1)
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("checkout_settings")
   @@schema("checkout")
 }

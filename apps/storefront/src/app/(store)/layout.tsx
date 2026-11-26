@@ -9,6 +9,7 @@ import {
   getRequestShell,
   getReturnPath,
 } from "@/lib/request-locale";
+import { getAccountLinkVisible } from "@/lib/checkout-settings";
 import { safeReturnTo } from "@/lib/return-to";
 
 /** Spec 1.12 "Route structure": every store page renders inside the shop's shell. */
@@ -37,12 +38,15 @@ export default async function StoreLayout({ children }: { readonly children: Rea
     redirect(`/password?return_to=${encodeURIComponent(back)}`);
   }
   const previewToken = token !== null && shell.mode === "preview" ? token : null;
+  // Wave 2a: the header's account icon follows the shop's checkout settings (display only).
+  const showAccountLink = await getAccountLinkVisible();
   return (
     <StoreChrome
       shell={shell}
       locale={locale}
       previewToken={previewToken}
       previewExpired={token !== null && shell.previewExpired}
+      showAccountLink={showAccountLink}
     >
       {children}
     </StoreChrome>

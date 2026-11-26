@@ -25,6 +25,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { AddAddress } from "./application/add-address.use-case";
 import { ChangeConsent } from "./application/change-consent.use-case";
 import { ChangeMarketingConsent } from "./application/change-marketing-consent.use-case";
+import { RecordShopperMarketingConsent } from "./application/record-shopper-marketing-consent.use-case";
 import { CompleteSignup } from "./application/complete-signup.use-case";
 import { CreateCustomer } from "./application/create-customer.use-case";
 import { GetCustomerAnnotations } from "./application/get-customer-annotations.use-case";
@@ -174,6 +175,12 @@ function buildControllers(
     setCustomerNote: new SetCustomerNote({ annotations, unitOfWork }),
     setCustomerTags: new SetCustomerTags({ annotations, unitOfWork }),
     changeMarketingConsent: new ChangeMarketingConsent({
+      customers,
+      unitOfWork,
+      idGenerator: deps.idGenerator,
+      clock: deps.clock,
+    }),
+    recordShopperMarketingConsent: new RecordShopperMarketingConsent({
       customers,
       unitOfWork,
       idGenerator: deps.idGenerator,

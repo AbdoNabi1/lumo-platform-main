@@ -39,9 +39,11 @@ export function AuthForm({
   const copy = mode === "sign-in" ? t.account.signIn : t.account.register;
 
   function messageFor(
-    reason: "credentials" | "conflict" | "validation" | "mfa" | "network",
+    reason: "credentials" | "conflict" | "validation" | "mfa" | "network" | "accounts-disabled",
   ): string {
-    return t.account.errors[reason];
+    return reason === "accounts-disabled"
+      ? t.account.errors.accountsDisabled
+      : t.account.errors[reason];
   }
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>): void {

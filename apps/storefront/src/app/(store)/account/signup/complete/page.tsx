@@ -3,7 +3,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeftIcon } from "lucide-react";
 import { Card, CardContent } from "@platform/ui";
+import { AccountsDisabledNotice } from "@/components/accounts-disabled-notice";
 import { SignupCompleteForm } from "@/components/signup-complete-form";
+import { loadCheckoutSettings } from "@/lib/checkout-settings";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { dictionaryFor } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -30,6 +32,8 @@ export default async function SignupCompletePage({
 
   const result = await resolveCurrentCustomer(jar.get(CUSTOMER_SESSION_COOKIE)?.value);
   if (result.status === "signed-in") redirect("/account");
+  // Wave 2a (D37): a shop with customer accounts off shows why instead of a form that would be refused.
+  const accountsOff = (await loadCheckoutSettings()).accountsMode === "disabled";
 
   return (
     <main className="mx-auto flex max-w-md flex-col gap-6 p-8">
@@ -40,7 +44,9 @@ export default async function SignupCompletePage({
 
       <Card>
         <CardContent className="flex flex-col gap-6 py-8">
-          {token === undefined || token.length === 0 ? (
+          {accountsOff ? (
+            <AccountsDisabledNotice t={t} />
+          ) : token === undefined || token.length === 0 ? (
             <p className="text-destructive text-sm" role="alert">
               {t.account.signup.invalidLink}
             </p>

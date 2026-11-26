@@ -67,6 +67,11 @@ interface CheckoutSessionProps {
   shippingAddress?: CheckoutAddress;
   /** Where a guest's receipt goes; Identity resolves a guest customer from it (WP-1, G-52). Absent on sessions created before it existed. */
   contactEmail?: ContactEmail;
+  /**
+   * Wave 2a: whether the shopper ticked "email me news and offers". Kept only when the shop shows the
+   * prompt; absent when it was never asked (or the prompt is hidden).
+   */
+  marketingOptIn?: boolean;
   shippingSelection?: ShippingSelection;
   paymentSelection?: PaymentSelection;
   /** The payment intent opened for this session's order once the shopper paid/committed (WP-13). Set once. */
@@ -145,6 +150,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
       readonly billingAddress?: CheckoutAddress;
       readonly shippingAddress?: CheckoutAddress;
       readonly contactEmail?: ContactEmail;
+      readonly marketingOptIn?: boolean;
       readonly shippingSelection?: ShippingSelection;
       readonly paymentSelection?: PaymentSelection;
       readonly paymentIntentRef?: string;
@@ -173,6 +179,7 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
         billingAddress: extra.billingAddress,
         shippingAddress: extra.shippingAddress,
         contactEmail: extra.contactEmail,
+        marketingOptIn: extra.marketingOptIn,
         shippingSelection: extra.shippingSelection,
         paymentSelection: extra.paymentSelection,
         paymentIntentRef: extra.paymentIntentRef,
@@ -212,6 +219,12 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
   setContactEmail(email: ContactEmail): void {
     this.ensureOpen();
     this.props.contactEmail = email;
+  }
+
+  /** Wave 2a: the shopper's answer to the marketing box. Only called when the shop shows the prompt. */
+  setMarketingOptIn(optIn: boolean): void {
+    this.ensureOpen();
+    this.props.marketingOptIn = optIn;
   }
 
   selectShipping(selection: ShippingSelection): void {
@@ -587,6 +600,10 @@ export class CheckoutSession extends AggregateRoot<CheckoutSessionProps> {
 
   get contactEmail(): ContactEmail | undefined {
     return this.props.contactEmail;
+  }
+
+  get marketingOptIn(): boolean | undefined {
+    return this.props.marketingOptIn;
   }
 
   get shippingSelection(): ShippingSelection | undefined {

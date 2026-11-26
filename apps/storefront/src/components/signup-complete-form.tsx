@@ -27,9 +27,19 @@ export function SignupCompleteForm({
   const [error, setError] = useState<string | null>(null);
 
   function messageFor(
-    reason: "invalid-token" | "credentials" | "conflict" | "validation" | "mfa" | "network",
+    reason:
+      | "invalid-token"
+      | "credentials"
+      | "conflict"
+      | "validation"
+      | "mfa"
+      | "network"
+      | "accounts-disabled",
   ): string {
-    return reason === "invalid-token" ? t.account.errors.invalidToken : t.account.errors[reason];
+    if (reason === "invalid-token") return t.account.errors.invalidToken;
+    return reason === "accounts-disabled"
+      ? t.account.errors.accountsDisabled
+      : t.account.errors[reason];
   }
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>): void {

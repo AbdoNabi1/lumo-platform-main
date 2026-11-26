@@ -30,6 +30,7 @@ export type {
   PricingValidationResult,
   PromotionValidationPort,
   PromotionValidationResult,
+  ShopperMarketingConsentPort,
   ShippingCalculationPort,
   ShippingQuote,
   TaxCalculationPort,
@@ -91,3 +92,35 @@ export type {
   SelectDraftPaymentInput,
   StartDraftCheckoutInput,
 } from "./application/draft-checkout.use-cases";
+export {
+  ACCOUNTS_MODES,
+  CART_LINE_LIMIT_MAX,
+  CART_LINE_LIMIT_MIN,
+  DEFAULT_CHECKOUT_SETTINGS,
+  LINE2_MODES,
+  MARKETING_EMAIL_PROMPTS,
+  NAME_MODES,
+  PHONE_MODES,
+  SETTINGS_STALE_MESSAGE,
+  addressRuleIssues,
+  addressRulesFor,
+  cartLimitMessage,
+  cartLineLimitIssue,
+  effectiveCheckoutSettings,
+  normalizeAddressInput,
+  toPublicCheckoutSettings,
+  validateCheckoutSettings,
+  type AccountsMode,
+  type AddressRules,
+  type CheckoutSettingsValues,
+  type Line2Mode,
+  type MarketingEmailPrompt,
+  type NameMode,
+  type PhoneMode,
+  type PublicCheckoutSettings,
+  type StoredCheckoutSettings,
+} from "./domain/checkout-settings";
+export type { CheckoutSettingsRepository } from "./domain/checkout-settings-repository";
+export type { CheckoutSettingsOutput } from "./application/checkout-settings.use-cases";
+export { PrismaCheckoutSettingsRepository } from "./infrastructure/prisma-checkout-settings-repository";
+export { InMemoryCheckoutSettingsRepository } from "./infrastructure/in-memory-checkout-settings-repository";

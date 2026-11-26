@@ -29,8 +29,6 @@ const EXPECTED = [
 ] as const;
 
 const UNAVAILABLE = [
-  "checkout",
-  "customer-accounts",
   "markets",
   "apps",
   "customer-events",

@@ -3,8 +3,16 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import { BusinessRuleError, type DomainError, logger, NotFoundError } from "@platform/utils";
+import {
+  BusinessRuleError,
+  type DomainError,
+  logger,
+  NotFoundError,
+  ValidationError,
+} from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
+import { addressRuleIssues, addressRulesFor } from "../domain/checkout-settings";
+import type { CheckoutSettingsRepository } from "../domain/checkout-settings-repository";
 import { refreshDiscountsAndTax } from "./discount-code.use-cases";
 import type {
   DiscountUsagePort,
@@ -14,6 +22,7 @@ import type {
   OrderCreationPort,
   OrderStockReservationPort,
   PromotionValidationPort,
+  ShopperMarketingConsentPort,
   StockReservationResult,
   TaxCalculationPort,
 } from "./ports";
@@ -61,6 +70,17 @@ export interface CompleteCheckoutDeps {
   readonly discountUsage?: DiscountUsagePort;
   /** Part 4: when present, a draft order's checkout reports the order to Orders (best effort). */
   readonly draftCompletion?: DraftOrderCompletionPort;
+  /**
+   * Wave 2a: when present, the stored shipping address is checked against the shop's CURRENT
+   * checkout settings right before the order is placed - a setting changed while the shopper was
+   * mid-checkout still binds them. Absent => no settings check, as before.
+   */
+  readonly settings?: CheckoutSettingsRepository;
+  /**
+   * Wave 2a: when present, a shopper who ticked the marketing box has that consent recorded once the
+   * order is placed (best effort: a failure is logged and never fails the order).
+   */
+  readonly marketingConsent?: ShopperMarketingConsentPort;
 }
 
 /**
@@ -89,7 +109,11 @@ export class CompleteCheckout implements UseCase<
 
     // Parts 3 and 4: set inside the unit of work, read after it commits (properties, so TypeScript
     // does not narrow them to `undefined` across the callback).
-    const after: { from?: string; draftOrderRef?: string } = {};
+    const after: {
+      from?: string;
+      draftOrderRef?: string;
+      marketing?: { readonly customerRef: string | undefined; readonly checkoutSessionId: string };
+    } = {};
     const result = await this.deps.unitOfWork.run<Result<CompleteCheckoutOutput, DomainError>>(
       async (tx) => {
         const session = await this.deps.sessions.findById(
@@ -123,6 +147,20 @@ export class CompleteCheckout implements UseCase<
               `Checkout session is ${session.state.value} and can no longer be modified`,
             ),
           );
+        }
+
+        // Wave 2a: the shop may have changed what an address needs since the shopper typed theirs. A
+        // draft order's checkout (the merchant's own terms) and a merchant completing it are not held
+        // to it; a shopper's checkout is, with the same 422 fields the address step gives.
+        if (
+          this.deps.settings !== undefined &&
+          session.draftTerms === undefined &&
+          input.actorRef === undefined &&
+          session.shippingAddress !== undefined
+        ) {
+          const rules = addressRulesFor(await this.deps.settings.find(input.tenantId, tx));
+          const issues = addressRuleIssues(rules, session.shippingAddress);
+          if (issues.length > 0) return err(new ValidationError("Invalid address", issues));
         }
 
         // Phase 2: a code can run out, expire or stop qualifying between the last recalculation and
@@ -175,7 +213,7 @@ export class CompleteCheckout implements UseCase<
           }
         }
 
-        const { orderRef } = await this.deps.orderCreation.create({
+        const { orderRef, customerRef: orderCustomerRef } = await this.deps.orderCreation.create({
           tenantId: input.tenantId,
           checkoutSessionId: session.id.toString(),
           customerRef: draft.customerRef,
@@ -210,6 +248,12 @@ export class CompleteCheckout implements UseCase<
         }
 
         await this.deps.sessions.save(session, input.tenantId, tx);
+        if (session.marketingOptIn === true) {
+          after.marketing = {
+            customerRef: draft.customerRef ?? orderCustomerRef,
+            checkoutSessionId: session.id.toString(),
+          };
+        }
 
         // Phase 2: count each discount's use. The order already exists, so a failure here must not
         // undo it; Coupons dedupes by order, and a retried completion returns early above.
@@ -240,10 +284,46 @@ export class CompleteCheckout implements UseCase<
     if (result.ok && after.from !== undefined) {
       await this.markOriginalRecovered(after.from, result.value.orderRef, input.tenantId);
     }
+    if (result.ok && after.marketing !== undefined) {
+      await this.recordMarketingConsent(after.marketing, input.tenantId);
+    }
     if (result.ok && after.draftOrderRef !== undefined) {
       await this.reportDraftCompletion(after.draftOrderRef, result.value.orderRef, input);
     }
     return result;
+  }
+
+  /**
+   * Wave 2a (D35): the shopper ticked "email me news and offers", so the customer the order was placed
+   * for agrees to marketing email. After the commit and best effort, like the reports above: the order
+   * already exists, so a failure here is logged (warn) and never undoes or fails it. A shopper with no
+   * customer to attach the consent to (nothing resolved one) is logged at info and nothing is written.
+   */
+  private async recordMarketingConsent(
+    marketing: { readonly customerRef: string | undefined; readonly checkoutSessionId: string },
+    tenantId: string,
+  ): Promise<void> {
+    if (this.deps.marketingConsent === undefined) return;
+    if (marketing.customerRef === undefined) {
+      logger.info("marketing opt-in ticked but no customer to record it for", {
+        tenantId,
+        checkoutSessionId: marketing.checkoutSessionId,
+      });
+      return;
+    }
+    try {
+      await this.deps.marketingConsent.record({
+        tenantId,
+        customerRef: marketing.customerRef,
+        checkoutSessionId: marketing.checkoutSessionId,
+      });
+    } catch (error) {
+      logger.warn("could not record the shopper's marketing consent", {
+        tenantId,
+        checkoutSessionId: marketing.checkoutSessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

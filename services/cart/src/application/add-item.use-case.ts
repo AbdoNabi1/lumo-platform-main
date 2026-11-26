@@ -6,6 +6,7 @@ import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
 import type { CartLineMerchandise } from "../domain/cart-item";
+import { lineLimitError } from "../domain/line-limit";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface AddItemInput {
@@ -23,6 +24,11 @@ export interface AddItemInput {
   readonly metadata?: Readonly<Record<string, unknown>>;
   /** Plan 2A: the exact variant being sold, resolved server-side (never client-supplied). */
   readonly merchandise?: CartLineMerchandise;
+  /**
+   * Wave 2a: the shop's add-to-cart limit, passed by the caller. The quantity the LINE would hold
+   * after this add (existing + added) may not exceed it. Absent or null => no limit, as before.
+   */
+  readonly maxLineQuantity?: number | null;
 }
 
 export interface AddItemOutput {
@@ -57,6 +63,11 @@ export class AddItem implements UseCase<AddItemInput, AddItemOutput, DomainError
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
+
+      const lineKey = input.merchandise?.variantRef ?? productRef.value.value;
+      const held = cart.items.find((line) => line.lineKey === lineKey)?.quantity.value ?? 0;
+      const overLimit = lineLimitError(input.maxLineQuantity, held + quantity.value.value);
+      if (overLimit !== null) return err(overLimit);
 
       try {
         cart.addItem(

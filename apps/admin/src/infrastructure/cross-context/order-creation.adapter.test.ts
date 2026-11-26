@@ -154,7 +154,11 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2) — guest checkout (WP-
 
     const result = await adapter.create(guestInput());
 
-    expect(result).toEqual({ orderRef: "order-1" });
+    expect(result).toEqual({
+      orderRef: "order-1",
+      // Wave 2a: the customer the order was placed for (here the one resolved from the guest email).
+      customerRef: "customer:tenant-local:guest@example.com",
+    });
     expect(resolves).toHaveLength(1);
     expect(resolves[0]?.email).toBe("guest@example.com");
     expect(calls[0]?.customerRef).toBe("customer:tenant-local:guest@example.com");
@@ -233,7 +237,7 @@ describe("OrderCreationAdapter (Checkout -> Orders, C-2)", () => {
       idempotencyKey: "idem-1",
     });
 
-    expect(result).toEqual({ orderRef: "order-1" });
+    expect(result).toEqual({ orderRef: "order-1", customerRef: "customer-1" });
     expect(calls[0]?.checkoutRef).toBe("checkout-1");
     expect(calls[0]?.customerRef).toBe("customer-1");
     expect(calls[0]?.currency).toBe("USD");

@@ -216,11 +216,25 @@ describe("middleware role table for the Settings sub-navigation (Shopify parity 
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it("keeps the Checkout and Customer accounts pages admin-only (Wave 2a)", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "viewer"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      for (const section of ["checkout", "customer-accounts"]) {
+        const response = await middleware(requestFor(`/settings/${section}`, "good.token"));
+        expect(response.headers.get("location"), `${role} ${section}`).toContain("/forbidden");
+      }
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    for (const section of ["checkout", "customer-accounts"]) {
+      const response = await middleware(requestFor(`/settings/${section}`, "good.token"));
+      expect(response.headers.get("location"), section).toBeNull();
+    }
+  });
+
   it("keeps every coming-soon placeholder admin-only", async () => {
     expect.hasAssertions();
     const placeholders = [
-      "checkout",
-      "customer-accounts",
       "markets",
       "apps",
       "customer-events",

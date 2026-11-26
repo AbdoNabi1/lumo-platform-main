@@ -17,6 +17,14 @@ import {
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
+import {
+  addressRuleIssues,
+  addressRulesFor,
+  cartLineLimitIssue,
+  DEFAULT_CHECKOUT_SETTINGS,
+  normalizeAddressInput,
+} from "../domain/checkout-settings";
+import type { CheckoutSettingsRepository } from "../domain/checkout-settings-repository";
 import { provinceProblem } from "./address-province";
 import type { PaymentMethodPort, ShippingCalculationPort } from "./ports";
 
@@ -62,6 +70,12 @@ export interface LoadItemsInput {
     readonly title?: string;
     readonly variantTitle?: string | null;
   }[];
+  /**
+   * Wave 2a: the shop's add-to-cart limit. When given, a line over it is refused with the same
+   * 422 `quantity` message the cart gives, so a cart filled before the limit was lowered (or past
+   * the cart routes) cannot become an order. Absent => no limit.
+   */
+  readonly maxLineQuantity?: number | null;
 }
 
 /** The checkout lines for a cart snapshot, each validated (shared by LoadItems and the recovery claim). */
@@ -101,6 +115,15 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
   }
 
   async execute(input: LoadItemsInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+    const limit = input.maxLineQuantity ?? null;
+    const over = input.items.find((raw) => cartLineLimitIssue(limit, raw.quantity) !== null);
+    if (over !== undefined) {
+      return err(
+        new ValidationError("Cart limit exceeded", [
+          cartLineLimitIssue(limit, over.quantity) as { field: string; message: string },
+        ]),
+      );
+    }
     const built = checkoutItemsFrom(input.items);
     if (!built.ok) return err(built.error);
     const items = built.value;
@@ -153,19 +176,35 @@ export class SetBillingAddress implements UseCase<
   }
 }
 
+export interface SetShippingAddressDeps extends CheckoutDetailsDeps {
+  /**
+   * Wave 2a: when present, the address is held to the shop's checkout settings (name / phone /
+   * address line 2) ON THE SERVER, so a stale or hand-made request cannot skip what the storefront
+   * form would have asked for. Absent => no settings rules, exactly as before.
+   */
+  readonly settings?: CheckoutSettingsRepository;
+}
+
 /** Sets the session's shipping address snapshot. */
 export class SetShippingAddress implements UseCase<
   SetAddressInput,
   CheckoutDetailsOutput,
   DomainError
 > {
-  private readonly deps: CheckoutDetailsDeps;
+  private readonly deps: SetShippingAddressDeps;
 
-  constructor(deps: CheckoutDetailsDeps) {
+  constructor(deps: SetShippingAddressDeps) {
     this.deps = deps;
   }
 
-  async execute(input: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+  async execute(rawInput: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+    let input = rawInput;
+    if (this.deps.settings !== undefined) {
+      const rules = addressRulesFor(await this.deps.settings.find(input.tenantId));
+      const issues = addressRuleIssues(rules, input);
+      if (issues.length > 0) return err(new ValidationError("Invalid address", issues));
+      input = normalizeAddressInput(rules, input);
+    }
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
     const problem = provinceProblem(input.country, input.province);
@@ -188,6 +227,16 @@ export interface SetContactEmailInput {
   readonly tenantId: string;
   readonly checkoutSessionId: string;
   readonly email: string;
+  /**
+   * Wave 2a: the shopper's answer to "email me news and offers". Kept only while the shop's
+   * `marketingEmailPrompt` is not `hidden`; otherwise ignored (never stored). Absent = no answer sent.
+   */
+  readonly marketingOptIn?: boolean;
+}
+
+export interface SetContactEmailDeps extends CheckoutDetailsDeps {
+  /** Wave 2a: absent => the prompt is treated as hidden (today's behaviour), so the answer is ignored. */
+  readonly settings?: CheckoutSettingsRepository;
 }
 
 /**
@@ -199,9 +248,9 @@ export class SetContactEmail implements UseCase<
   CheckoutDetailsOutput,
   DomainError
 > {
-  private readonly deps: CheckoutDetailsDeps;
+  private readonly deps: SetContactEmailDeps;
 
-  constructor(deps: CheckoutDetailsDeps) {
+  constructor(deps: SetContactEmailDeps) {
     this.deps = deps;
   }
 
@@ -209,14 +258,25 @@ export class SetContactEmail implements UseCase<
     const email = ContactEmail.create(input.email);
     if (!email.ok) return err(email.error);
 
-    return withSession(this.deps, input.checkoutSessionId, input.tenantId, (session) => {
+    const { settings, sessions, unitOfWork } = this.deps;
+    return unitOfWork.run<Result<CheckoutDetailsOutput, DomainError>>(async (tx) => {
+      const session = await sessions.findById(input.checkoutSessionId, input.tenantId, tx);
+      if (session === null) return err(new NotFoundError("Checkout session not found"));
       try {
         session.setContactEmail(email.value);
-        return ok(undefined);
+        // Only a shop that SHOWS the box keeps the answer; a hidden prompt (or no settings row, whose
+        // default is hidden) drops it, so a forged field cannot create a consent nobody was asked for.
+        if (input.marketingOptIn !== undefined && settings !== undefined) {
+          const row = await settings.find(input.tenantId, tx);
+          const prompt = (row?.values ?? DEFAULT_CHECKOUT_SETTINGS).marketingEmailPrompt;
+          if (prompt !== "hidden") session.setMarketingOptIn(input.marketingOptIn);
+        }
       } catch (error) {
         if (isDomainError(error)) return err(error);
         throw error;
       }
+      await sessions.save(session, input.tenantId, tx);
+      return ok({ checkoutSessionId: session.id.toString() });
     });
   }
 }

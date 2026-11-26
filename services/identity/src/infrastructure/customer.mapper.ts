@@ -30,6 +30,8 @@ export interface ConsentRow {
   readonly scope: string;
   readonly granted: boolean;
   readonly occurredAt: Date;
+  /** Nullable column: absent on every row written before shopper consent was recorded. */
+  readonly source?: string | null;
 }
 
 function must<T>(result: Result<T, { message: string }>, what: string): T {
@@ -67,6 +69,7 @@ export class CustomerMapper {
           must(ConsentScope.create(c.scope), "consent scope"),
           c.granted,
           c.occurredAt,
+          c.source ?? undefined,
         ),
       ),
       row.version,
@@ -112,6 +115,7 @@ export class CustomerMapper {
       scope: c.scope.value,
       granted: c.granted,
       occurredAt: c.occurredAt,
+      source: c.source ?? null,
     }));
   }
 }

@@ -84,6 +84,8 @@ export interface CheckoutSessionRow {
   readonly sessionRef: string;
   /** Nullable: every session created before the WP-1 migration has none. */
   readonly contactEmail: string | null;
+  /** Wave 2a: null = never asked / prompt hidden. Optional so rows read before it still map. */
+  readonly marketingOptIn?: boolean | null;
   readonly currency: string;
   readonly state: string;
   readonly orderRef: string | null;
@@ -159,6 +161,7 @@ export class CheckoutSessionMapper {
           row.contactEmail === null
             ? undefined
             : must(ContactEmail.create(row.contactEmail), "contact email"),
+        marketingOptIn: row.marketingOptIn ?? undefined,
         shippingAddress: isSet(row.shippingAddress)
           ? must(CheckoutAddress.create(row.shippingAddress), "shipping address")
           : undefined,
@@ -228,6 +231,7 @@ export class CheckoutSessionMapper {
       customerRef: session.customerRef ?? null,
       sessionRef: session.sessionRef,
       contactEmail: session.contactEmail?.value ?? null,
+      marketingOptIn: session.marketingOptIn ?? null,
       currency: session.currency,
       state: session.state.value,
       orderRef: session.orderRef,

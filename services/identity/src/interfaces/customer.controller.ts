@@ -6,6 +6,10 @@ import type {
   GetCustomerContactsInput,
 } from "../application/get-customer-contacts.use-case";
 import type {
+  RecordShopperMarketingConsent,
+  RecordShopperMarketingConsentInput,
+} from "../application/record-shopper-marketing-consent.use-case";
+import type {
   ChangeMarketingConsent,
   ChangeMarketingConsentInput,
 } from "../application/change-marketing-consent.use-case";
@@ -57,6 +61,7 @@ export interface CustomerControllerDeps {
   readonly setCustomerNote: SetCustomerNote;
   readonly setCustomerTags: SetCustomerTags;
   readonly changeMarketingConsent: ChangeMarketingConsent;
+  readonly recordShopperMarketingConsent: RecordShopperMarketingConsent;
   readonly getCustomerAnnotations: GetCustomerAnnotations;
 }
 
@@ -127,6 +132,13 @@ export class CustomerController {
 
   async changeMarketingConsent(input: ChangeMarketingConsentInput): Promise<ControllerResponse> {
     return present(await this.deps.changeMarketingConsent.execute(input), 200);
+  }
+
+  /** The shopper ticked the marketing box at checkout (Wave 2a); never the staff assertion above. */
+  async recordShopperMarketingConsent(
+    input: RecordShopperMarketingConsentInput,
+  ): Promise<ControllerResponse> {
+    return present(await this.deps.recordShopperMarketingConsent.execute(input), 200);
   }
 
   /** The notes and tags of a set of customers in one read, in input order. */

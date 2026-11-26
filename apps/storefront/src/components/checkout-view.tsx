@@ -16,6 +16,7 @@ import {
   setContactEmail,
   setShippingAddress,
   type CheckoutActionResult,
+  type CheckoutFieldError,
 } from "@/app/(store)/checkout/actions";
 import { hasProvinces, PROVINCES } from "@platform/regions";
 import {
@@ -29,6 +30,11 @@ import {
   type CountryOption,
   type ShippableCountries,
 } from "@/lib/checkout-address";
+import {
+  DEFAULT_PUBLIC_CHECKOUT_SETTINGS,
+  type Line2Mode,
+  type PublicCheckoutSettings,
+} from "@/lib/checkout-settings-model";
 import { formatCurrency } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import type {
@@ -40,6 +46,7 @@ import type { Dictionary } from "@/messages/en";
 import { IsolatedText } from "./isolated-text";
 import { CheckoutDiscountCode } from "./checkout-discount-code";
 import { LineThumb } from "./line-thumb";
+import { LoginRequiredNotice } from "./login-required-notice";
 
 /** `"paymentOpen"` / `"handoff"` only ever follow a PLACED order — see `openPaymentFor`. */
 type ErrorReason =
@@ -49,6 +56,7 @@ type ErrorReason =
   | "out-of-stock"
   | "draft-locked"
   | "discounts-changed"
+  | "login-required"
   | "network"
   | "paymentOpen"
   | "handoff";
@@ -108,14 +116,15 @@ function formFrom(
  * The API input for a form. The phone is normalized (Arabic digits, spaces) the way the API will;
  * a blank name or phone is left out, so an optional billing phone is never sent as an empty string.
  */
-function toInput(form: AddressForm): CheckoutAddressInput {
+function toInput(form: AddressForm, line2Hidden = false): CheckoutAddressInput {
   const name = form.name.trim();
   const phone = normalizePhone(form.phone);
   return {
     ...(name === "" ? {} : { name }),
     ...(phone === "" ? {} : { phone }),
     line1: form.line1.trim(),
-    line2: form.line2.trim(),
+    // Wave 2a: a shop that hides the second line never receives one (the server drops it as well).
+    line2: line2Hidden ? "" : form.line2.trim(),
     city: form.city.trim(),
     postalCode: form.postalCode.trim(),
     country: form.country,
@@ -123,16 +132,65 @@ function toInput(form: AddressForm): CheckoutAddressInput {
   };
 }
 
-/** The shipping address is complete when everything the courier needs is there and the phone is valid. */
-function isShippingComplete(form: AddressForm): boolean {
+/** What the shop's checkout settings ask of the SHIPPING address (D33: the defaults are today's rules). */
+interface ShippingRules {
+  readonly nameRequired: boolean;
+  readonly phoneRequired: boolean;
+  readonly line2: Line2Mode;
+}
+
+function shippingRulesFor(settings: PublicCheckoutSettings): ShippingRules {
+  return {
+    nameRequired: settings.nameMode === "required",
+    phoneRequired: settings.phoneMode === "required",
+    line2: settings.line2Mode,
+  };
+}
+
+/** A required phone must be valid; an optional one may be left empty, but a typed one must still be valid. */
+function phoneAccepted(raw: string, required: boolean): boolean {
+  return required ? isValidPhone(raw) : raw.trim() === "" || isValidPhone(raw);
+}
+
+/**
+ * The shipping address is complete when everything the courier needs is there and the phone is
+ * valid, and the name and second line are there when the shop requires them.
+ */
+function isShippingComplete(form: AddressForm, rules: ShippingRules): boolean {
   return (
     form.line1.trim() !== "" &&
     form.city.trim() !== "" &&
     form.country !== "" &&
     (!hasProvinces(form.country) || form.province !== "") &&
-    form.name.trim() !== "" &&
-    isValidPhone(form.phone)
+    (!rules.nameRequired || form.name.trim() !== "") &&
+    phoneAccepted(form.phone, rules.phoneRequired) &&
+    (rules.line2 !== "required" || form.line2.trim() !== "")
   );
+}
+
+/** The errors whose input the shopper has not touched since: an edit answers the 422 about its own input. */
+function keepUnchanged(errors: FieldErrors, previous: AddressForm, next: AddressForm): FieldErrors {
+  const kept: { name?: string; phone?: string; line2?: string } = {};
+  if (errors.name !== undefined && next.name === previous.name) kept.name = errors.name;
+  if (errors.phone !== undefined && next.phone === previous.phone) kept.phone = errors.phone;
+  if (errors.line2 !== undefined && next.line2 === previous.line2) kept.line2 = errors.line2;
+  return kept;
+}
+
+/** The inputs a server 422 can point at, and the shopper-facing words for each (the server's are English). */
+type FieldErrors = Readonly<Partial<Record<"name" | "phone" | "line2", string>>>;
+
+function fieldMessages(
+  fields: readonly CheckoutFieldError[] | undefined,
+  t: Dictionary,
+): FieldErrors {
+  const messages: { name?: string; phone?: string; line2?: string } = {};
+  for (const { field } of fields ?? []) {
+    if (field === "name") messages.name = t.checkout.address.nameMissing;
+    else if (field === "phone") messages.phone = t.checkout.address.phoneInvalid;
+    else if (field === "line2") messages.line2 = t.checkout.address.line2Missing;
+  }
+  return messages;
 }
 
 function signature(form: AddressForm): string {
@@ -151,6 +209,7 @@ function errorBody(reason: ErrorReason, t: Dictionary, invoice: boolean): string
   if (reason === "unavailable") return t.checkout.unavailableErrorBody;
   if (reason === "out-of-stock") return t.checkout.outOfStock;
   if (reason === "discounts-changed") return t.checkout.discountsChanged;
+  if (reason === "login-required") return t.checkout.loginRequired.title;
   if (reason === "paymentOpen") return t.checkout.paymentOpenError;
   if (reason === "handoff") return t.checkout.paymentHandoffError;
   return t.checkout.networkErrorBody;
@@ -188,12 +247,22 @@ function ErrorBanner({
   t,
   bannerRef,
   invoice = false,
+  showRegister = true,
 }: {
   readonly reason: ErrorReason;
   readonly t: Dictionary;
   readonly bannerRef: React.RefObject<HTMLDivElement | null>;
   readonly invoice?: boolean;
+  readonly showRegister?: boolean;
 }) {
+  // Wave 2a: the shop only takes orders from signed-in customers; say so, with the way in.
+  if (reason === "login-required") {
+    return (
+      <div ref={bannerRef}>
+        <LoginRequiredNotice t={t} showRegister={showRegister} />
+      </div>
+    );
+  }
   return (
     <div
       ref={bannerRef}
@@ -248,10 +317,16 @@ export function CheckoutView({
   accountEmail = null,
   paymentMethods,
   shippableCountries,
+  settings = DEFAULT_PUBLIC_CHECKOUT_SETTINGS,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
   readonly locale: Locale;
+  /**
+   * Wave 2a: the shop's checkout settings (`GET /public/checkout-settings`, read fresh by the page).
+   * Left out, it is the defaults, which are today's form exactly (D33).
+   */
+  readonly settings?: PublicCheckoutSettings;
   /**
    * The countries the shop's shipping zones cover (`GET /public/shipping/countries`, Plan 3C).
    * `null` means the list could not be loaded; like a shop that ships nowhere yet, it fails closed.
@@ -280,6 +355,7 @@ export function CheckoutView({
       accountEmail={accountEmail}
       paymentMethods={paymentMethods}
       shippableCountries={shippableCountries}
+      settings={settings}
     />
   );
 }
@@ -348,6 +424,7 @@ function CheckoutForm({
   accountEmail,
   paymentMethods,
   shippableCountries,
+  settings,
 }: {
   readonly session: CheckoutSessionSummary;
   readonly t: Dictionary;
@@ -355,8 +432,14 @@ function CheckoutForm({
   readonly accountEmail: string | null;
   readonly paymentMethods: readonly string[] | null;
   readonly shippableCountries: ShippableCountries | null;
+  readonly settings: PublicCheckoutSettings;
 }) {
   const router = useRouter();
+  const rules = shippingRulesFor(settings);
+  const line2Hidden = settings.line2Mode === "hidden";
+  // Marketing consent: asked only when the shop chose to; never ticked for the shopper unless it chose "preselect".
+  const marketingShown = settings.marketingEmailPrompt !== "hidden";
+  const [marketing, setMarketing] = useState(settings.marketingEmailPrompt === "preselect");
   // Part 4: the merchant fixed this checkout's discount and shipping — shown, never quoted or chosen.
   const draftMode = session.draftInvoice != null;
   const countries = useMemo(
@@ -399,12 +482,16 @@ function CheckoutForm({
   );
   const [paymentChoice, setPaymentChoice] = useState<string | null>(null);
   const [phoneInvalid, setPhoneInvalid] = useState(false);
+  /** Wave 2a: what the server's 422 said about the saved address, shown at the input it names. */
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   // The address sync runs outside React's render cycle (a timer, a queue), so what it reads lives
   // in refs that the setters below keep current.
   const shippingRef = useRef(shipping);
   const selectedRef = useRef(selectedMethod);
   const contactSetRef = useRef<string | null>(session.contactEmail);
+  /** The marketing answer the server last got with the contact step (null: none sent yet). */
+  const contactMarketingRef = useRef<boolean | null>(null);
   const lastSavedRef = useRef<string | null>(
     session.shippingAddress === null ? null : signature(formFrom(session.shippingAddress, "")),
   );
@@ -427,6 +514,12 @@ function CheckoutForm({
   function fail(reason: ErrorReason): false {
     setError(reason);
     return false;
+  }
+
+  /** A refused action: its reason, and the inputs a 422 named. */
+  function failFrom(result: Extract<CheckoutActionResult, { readonly ok: false }>): false {
+    setFieldErrors(fieldMessages(result.fields, t));
+    return fail(result.reason);
   }
 
   /** Like choosing a shipping method: a change the shopper just made supersedes the old message. */
@@ -467,12 +560,13 @@ function CheckoutForm({
    */
   async function syncAddress(seq: number): Promise<boolean> {
     const form = shippingRef.current;
-    if (!isShippingComplete(form)) return true;
+    if (!isShippingComplete(form, rules)) return true;
     const sig = signature(form);
     if (sig === lastSavedRef.current) return true;
 
-    const saved = await setShippingAddress(session.id, toInput(form));
-    if (!saved.ok) return seq !== requestedRef.current ? true : fail(saved.reason);
+    const saved = await setShippingAddress(session.id, toInput(form, line2Hidden));
+    if (!saved.ok) return seq !== requestedRef.current ? true : failFrom(saved);
+    setFieldErrors({});
     lastSavedRef.current = sig;
     // Part 4: the merchant fixed the shipping — save the address (tax follows it), never quote.
     if (draftMode) return true;
@@ -509,7 +603,8 @@ function CheckoutForm({
   // does not carry the quotes), without saving anything. The job lives in a ref so the effect
   // below depends only on whether there is such an address, and runs once.
   const hasSavedAddress =
-    session.shippingAddress !== null && isShippingComplete(formFrom(session.shippingAddress, ""));
+    session.shippingAddress !== null &&
+    isShippingComplete(formFrom(session.shippingAddress, ""), rules);
   const loadQuotesRef = useRef<() => Promise<boolean>>(() => Promise.resolve(true));
   useEffect(() => {
     loadQuotesRef.current = () =>
@@ -552,7 +647,7 @@ function CheckoutForm({
       : (offered[0] ?? null);
   const paymentBlocked = paymentMethods === null || offered.length === 0;
   const offline = chosenPayment !== null && OFFLINE_METHODS.has(chosenPayment);
-  const addressComplete = isShippingComplete(shipping);
+  const addressComplete = isShippingComplete(shipping, rules);
   // An invoice's shipping is the merchant's: the shop's zones and rates do not gate it.
   const noDestinations = !draftMode && countries.length === 0;
   const noRates = !draftMode && addressComplete && quotesLoaded && quotes.length === 0;
@@ -583,14 +678,23 @@ function CheckoutForm({
       order: session.totals?.discountMinor ?? 0,
       shipping: session.totals?.shippingDiscountMinor ?? 0,
     };
-    // 1. Contact.
-    if (contactSetRef.current !== emailValue) {
-      const contact = await setContactEmail(session.id, emailValue);
+    // 1. Contact. Wave 2a: the marketing answer rides along only when the box was shown, and is
+    // sent again when the shopper changed it after the contact was first saved.
+    const answer = marketingShown ? marketing : undefined;
+    if (
+      contactSetRef.current !== emailValue ||
+      (answer !== undefined && contactMarketingRef.current !== answer)
+    ) {
+      const contact =
+        answer === undefined
+          ? await setContactEmail(session.id, emailValue)
+          : await setContactEmail(session.id, emailValue, answer);
       if (!contact.ok) {
         fail(contact.reason);
         return;
       }
       contactSetRef.current = emailValue;
+      if (answer !== undefined) contactMarketingRef.current = answer;
     }
     // 2. Shipping address, its quote and a method (all skipped when the page already did them).
     if (!(await requestSync())) return;
@@ -600,7 +704,7 @@ function CheckoutForm({
     }
     // 3. Billing: the shipping address when "same".
     const billingForm = billingMode === "same" ? shippingRef.current : billing;
-    const billed = await setBillingAddress(session.id, toInput(billingForm));
+    const billed = await setBillingAddress(session.id, toInput(billingForm, line2Hidden));
     if (!billed.ok) {
       fail(billed.reason);
       return;
@@ -641,7 +745,7 @@ function CheckoutForm({
     // 7. Completion.
     const completed: CheckoutActionResult = await completeCheckout(session.id);
     if (!completed.ok) {
-      fail(completed.reason);
+      failFrom(completed);
       return;
     }
     // 8. Strictly after completion: the API only opens a payment for a completed checkout.
@@ -660,9 +764,9 @@ function CheckoutForm({
     event.preventDefault();
     if (isPending || paymentBlocked || noDestinations || noRates) return;
     const emailValue = (accountEmail ?? email).trim();
-    const phoneOk = isValidPhone(shipping.phone);
+    const phoneOk = phoneAccepted(shipping.phone, rules.phoneRequired);
     setPhoneInvalid(!phoneOk);
-    if (emailValue === "" || !isShippingComplete(shipping) || !phoneOk) return;
+    if (emailValue === "" || !isShippingComplete(shipping, rules) || !phoneOk) return;
     if (billingMode === "different") {
       const complete =
         billing.line1.trim() !== "" &&
@@ -720,7 +824,13 @@ function CheckoutForm({
 
         <form onSubmit={onSubmit} noValidate className="flex flex-col gap-8">
           {error !== null && (
-            <ErrorBanner reason={error} t={t} bannerRef={bannerRef} invoice={draftMode} />
+            <ErrorBanner
+              reason={error}
+              t={t}
+              bannerRef={bannerRef}
+              invoice={draftMode}
+              showRegister={settings.accountsMode !== "disabled"}
+            />
           )}
 
           <Section title={t.checkout.sections.contact}>
@@ -741,6 +851,16 @@ function CheckoutForm({
                 />
                 <p className="text-muted-foreground text-xs">{t.checkout.contact.hint}</p>
               </div>
+            )}
+            {marketingShown && (
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={marketing}
+                  onChange={(event) => setMarketing(event.target.checked)}
+                />
+                <span>{t.checkout.marketing.label}</span>
+              </label>
             )}
           </Section>
 
@@ -763,11 +883,18 @@ function CheckoutForm({
                 idPrefix="shipping"
                 value={shipping}
                 onChange={(next) => {
+                  const previous = shippingRef.current;
                   updateShipping(next);
                   setPhoneInvalid(false);
+                  // An edit answers the 422 about that input.
+                  setFieldErrors((errors) => keepUnchanged(errors, previous, next));
                 }}
-                phoneRequired
-                phoneInvalid={phoneInvalid}
+                nameRequired={rules.nameRequired}
+                nameOptionalLabel={!rules.nameRequired}
+                phoneRequired={rules.phoneRequired}
+                line2Mode={rules.line2}
+                errors={fieldErrors}
+                phoneInvalid={phoneInvalid || fieldErrors.phone !== undefined}
                 countries={countries}
                 t={t}
                 locale={locale}
@@ -892,7 +1019,11 @@ function CheckoutForm({
                 idPrefix="billing"
                 value={billing}
                 onChange={setBilling}
+                nameRequired={false}
+                nameOptionalLabel={false}
                 phoneRequired={false}
+                line2Mode={line2Hidden ? "hidden" : "optional"}
+                errors={NO_FIELD_ERRORS}
                 phoneInvalid={false}
                 countries={billingCountries}
                 t={t}
@@ -997,7 +1128,11 @@ function AddressFields({
   idPrefix,
   value,
   onChange,
+  nameRequired,
+  nameOptionalLabel,
   phoneRequired,
+  line2Mode,
+  errors,
   phoneInvalid,
   countries,
   t,
@@ -1006,7 +1141,13 @@ function AddressFields({
   readonly idPrefix: string;
   readonly value: AddressForm;
   readonly onChange: (value: AddressForm) => void;
+  /** The name input's `required`; the shipping address follows the shop's setting, billing never requires it. */
+  readonly nameRequired: boolean;
+  /** Wave 2a: the shop made the SHIPPING name optional, so its label says so (billing's label never changes). */
+  readonly nameOptionalLabel: boolean;
   readonly phoneRequired: boolean;
+  readonly line2Mode: Line2Mode;
+  readonly errors: FieldErrors;
   readonly phoneInvalid: boolean;
   readonly countries: readonly CountryOption[];
   readonly t: Dictionary;
@@ -1069,14 +1210,23 @@ function AddressFields({
         </div>
       )}
       <div className="flex flex-col gap-1">
-        <Label htmlFor={id("name")}>{t.checkout.address.name}</Label>
+        <Label htmlFor={id("name")}>
+          {nameOptionalLabel ? t.checkout.address.nameOptional : t.checkout.address.name}
+        </Label>
         <Input
           id={id("name")}
-          required={phoneRequired}
+          required={nameRequired}
           autoComplete="name"
+          aria-invalid={errors.name === undefined ? undefined : "true"}
+          aria-describedby={errors.name === undefined ? undefined : `${id("name")}-error`}
           value={value.name}
           onChange={text("name")}
         />
+        {errors.name !== undefined && (
+          <p id={`${id("name")}-error`} role="alert" className="text-destructive text-xs">
+            {errors.name}
+          </p>
+        )}
       </div>
       <div className="flex flex-col gap-1">
         <Label htmlFor={id("line1")}>{t.checkout.address.line1}</Label>
@@ -1088,15 +1238,27 @@ function AddressFields({
           onChange={text("line1")}
         />
       </div>
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={id("line2")}>{t.checkout.address.line2}</Label>
-        <Input
-          id={id("line2")}
-          autoComplete="address-line2"
-          value={value.line2}
-          onChange={text("line2")}
-        />
-      </div>
+      {line2Mode !== "hidden" && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={id("line2")}>
+            {line2Mode === "required" ? t.checkout.address.line2Required : t.checkout.address.line2}
+          </Label>
+          <Input
+            id={id("line2")}
+            required={line2Mode === "required"}
+            autoComplete="address-line2"
+            aria-invalid={errors.line2 === undefined ? undefined : "true"}
+            aria-describedby={errors.line2 === undefined ? undefined : `${id("line2")}-error`}
+            value={value.line2}
+            onChange={text("line2")}
+          />
+          {errors.line2 !== undefined && (
+            <p id={`${id("line2")}-error`} role="alert" className="text-destructive text-xs">
+              {errors.line2}
+            </p>
+          )}
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1">
           <Label htmlFor={id("city")}>{t.checkout.address.city}</Label>
@@ -1143,6 +1305,8 @@ function AddressFields({
     </div>
   );
 }
+
+const NO_FIELD_ERRORS: FieldErrors = {};
 
 /** The sign shown before a discount amount (U+2212, a real minus). */
 const MINUS = "−";

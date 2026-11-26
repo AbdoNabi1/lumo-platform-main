@@ -37,13 +37,13 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     id: "checkout",
     label: (t) => t.settingsNav.checkout,
     href: "/settings/checkout",
-    available: false,
+    available: true,
   },
   {
     id: "customer-accounts",
     label: (t) => t.settingsNav.customerAccounts,
     href: "/settings/customer-accounts",
-    available: false,
+    available: true,
   },
   {
     id: "shipping",

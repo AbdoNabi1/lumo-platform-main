@@ -5,6 +5,7 @@ import { logger, NotFoundError, toErrorEnvelope, ValidationError } from "@platfo
 import type { WiredAdmin } from "../composition";
 import type { PageResponse } from "./public-catalog-routes";
 import { merchandiseUnresolvedResponse, resolveMerchandise } from "./merchandise-resolution";
+import { readCheckoutSettings } from "./checkout-settings-guard";
 import { withLineImages } from "./product-images";
 
 const cartIdParams = z.object({ cartId: z.string().min(1) });
@@ -294,6 +295,8 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           context.tenantId,
         );
         if (merchandise.status !== "ok") return merchandiseUnresolvedResponse(merchandise);
+        // Wave 2a: the shop's add-to-cart limit is enforced here, on the server, not in the page.
+        const settings = await readCheckoutSettings(admin, context.tenantId);
         const result = await admin.publicReads.cart.add({
           tenantId: context.tenantId,
           cartId: params.cartId,
@@ -309,6 +312,7 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
             title: merchandise.title,
             variantTitle: merchandise.variantTitle,
           },
+          ...(settings.cartLineLimit === null ? {} : { maxLineQuantity: settings.cartLineLimit }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapItem<Cart, PublicCartDto>(
@@ -334,12 +338,14 @@ export function publicCartRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           context.tenantId,
         );
         if (!owned.ok) return owned.response;
+        const settings = await readCheckoutSettings(admin, context.tenantId);
         const result = await admin.publicReads.cart.changeQuantity({
           tenantId: context.tenantId,
           cartId: params.cartId,
           productId: body.productId,
           variantId: body.variantId,
           quantity: body.quantity,
+          ...(settings.cartLineLimit === null ? {} : { maxLineQuantity: settings.cartLineLimit }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapItem<Cart, PublicCartDto>(

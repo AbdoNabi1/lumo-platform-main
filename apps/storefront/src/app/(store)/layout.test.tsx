@@ -18,6 +18,9 @@ vi.mock("@/lib/request-locale", () => ({
   getReturnPath: async () => request.returnPath,
   getLockedView: async () => request.lockedView,
 }));
+/** Wave 2a: the header's account icon reads the shop's checkout settings (display only). */
+const account = vi.hoisted(() => ({ visible: true }));
+vi.mock("@/lib/checkout-settings", () => ({ getAccountLinkVisible: async () => account.visible }));
 const redirect = vi.hoisted(() =>
   vi.fn((to: string) => {
     throw new Error(`REDIRECT:${to}`);
@@ -32,7 +35,12 @@ beforeEach(() => {
   request.token = null;
 });
 
-type ChromeProps = { previewToken: string | null; previewExpired: boolean; locale: string };
+type ChromeProps = {
+  previewToken: string | null;
+  previewExpired: boolean;
+  locale: string;
+  showAccountLink: boolean;
+};
 
 async function chromeProps(shell: Partial<StorefrontShell>, token: string | null) {
   request.shell = { ...FALLBACK_SHELL, ...shell };
@@ -41,6 +49,15 @@ async function chromeProps(shell: Partial<StorefrontShell>, token: string | null
   expect(isValidElement(element) && element.type === StoreChrome).toBe(true);
   return (element as { props: ChromeProps }).props;
 }
+
+describe("StoreLayout and the header's account icon (Wave 2a)", () => {
+  it("passes the shop's account-link switch on to the chrome", async () => {
+    account.visible = false;
+    expect((await chromeProps({ mode: "live" }, null)).showAccountLink).toBe(false);
+    account.visible = true;
+    expect((await chromeProps({ mode: "live" }, null)).showAccountLink).toBe(true);
+  });
+});
 
 describe("StoreLayout preview gate", () => {
   it("passes the token on only when the shell really is a preview", async () => {

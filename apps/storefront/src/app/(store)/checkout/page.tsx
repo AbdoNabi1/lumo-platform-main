@@ -2,8 +2,10 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { AlertTriangleIcon, ArrowLeftIcon, ShoppingCartIcon } from "lucide-react";
 import { CheckoutView } from "@/components/checkout-view";
+import { LoginRequiredNotice } from "@/components/login-required-notice";
 import { StatePanel } from "@/components/state-panel";
 import { CHECKOUT_SESSION_COOKIE, GUEST_SESSION_COOKIE, INVOICE_CHECKOUT_COOKIE } from "@/lib/cart";
+import { loadCheckoutSettings } from "@/lib/checkout-settings";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { dictionaryFor } from "@/lib/i18n";
 import { getPreviewToken, getRequestLocale } from "@/lib/request-locale";
@@ -71,6 +73,12 @@ export default async function CheckoutPage({
   const paymentMethods = await getPaymentMethods();
   // The countries the shop's shipping zones cover (Plan 3C); `null` (unreachable) fails closed in the form.
   const shippableCountries = await getShippableCountries();
+  // Wave 2a: the shop's checkout switches, read fresh on every render (never the 60 s shell cache) and
+  // falling back to the defaults, which are today's form, when the read fails (see `loadCheckoutSettings`).
+  const settings = await loadCheckoutSettings();
+  // Require login: a guest is told so up front. "error" (the account service could not be reached)
+  // is not "signed out": the form shows and the server, which enforces the rule itself, decides.
+  const mustSignIn = settings.requireLogin && customer.status === "signed-out";
 
   return (
     <main className="mx-auto flex max-w-5xl flex-col gap-6 p-8">
@@ -94,7 +102,9 @@ export default async function CheckoutPage({
         </p>
       )}
 
-      {lostInvoice ? (
+      {mustSignIn ? (
+        <LoginRequiredNotice t={t} showRegister={settings.accountsMode !== "disabled"} />
+      ) : lostInvoice ? (
         <StatePanel
           icon={<AlertTriangleIcon className="size-6" />}
           title={t.checkout.invoiceOwnershipErrorTitle}
@@ -116,6 +126,7 @@ export default async function CheckoutPage({
           accountEmail={accountEmail}
           paymentMethods={paymentMethods}
           shippableCountries={shippableCountries}
+          settings={settings}
         />
       )}
     </main>

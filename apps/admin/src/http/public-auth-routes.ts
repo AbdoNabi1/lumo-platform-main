@@ -4,6 +4,7 @@ import type { Cart } from "@platform/cart";
 import type { RateLimiter } from "@platform/contracts";
 import { NotFoundError, toErrorEnvelope } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
+import { accountsDisabledResponse, readCheckoutSettings } from "./checkout-settings-guard";
 
 /**
  * The public **customer authentication** surface (T5.17, implementing T5.16 §1/§2). Mounted exactly
@@ -128,6 +129,9 @@ export function publicAuthRoutes(
         "response either way (G-72, D2)",
       schema: { body: registerBody },
       handle: async ({ body, context }) => {
+        // Wave 2a (D37): a shop with customer accounts turned off takes no sign-ups.
+        const settings = await readCheckoutSettings(admin, context.tenantId);
+        if (settings.accountsMode === "disabled") return accountsDisabledResponse();
         if (rateLimiter !== undefined) {
           const key = `rl:${context.tenantId}:signup:${body.email.trim().toLowerCase()}`;
           const decision = await rateLimiter.consume(key, 5, 60 * 60 * 1000);
@@ -161,8 +165,11 @@ export function publicAuthRoutes(
       // same reasoning as `/login` above.
       summary: "Public: complete a guest-to-account signup upgrade using an emailed token (G-72)",
       schema: { body: completeSignupBody },
-      handle: ({ body, context }) =>
-        admin.customerAuth.completeSignup({ ...body, tenantId: context.tenantId }),
+      handle: async ({ body, context }) => {
+        const settings = await readCheckoutSettings(admin, context.tenantId);
+        if (settings.accountsMode === "disabled") return accountsDisabledResponse();
+        return admin.customerAuth.completeSignup({ ...body, tenantId: context.tenantId });
+      },
     }),
     defineRoute({
       method: "POST",
@@ -180,15 +187,18 @@ export function publicAuthRoutes(
        */
       summary: "Public: authenticate a customer and establish a session",
       schema: { body: loginBody },
-      handle: ({ body, context }) =>
-        admin.customerAuth.login({
+      handle: async ({ body, context }) => {
+        const settings = await readCheckoutSettings(admin, context.tenantId);
+        if (settings.accountsMode === "disabled") return accountsDisabledResponse();
+        return admin.customerAuth.login({
           tenantId: context.tenantId,
           email: body.email,
           password: body.password,
           ...(body.deviceFingerprint !== undefined
             ? { deviceFingerprint: body.deviceFingerprint }
             : {}),
-        }),
+        });
+      },
     }),
     defineRoute({
       method: "POST",

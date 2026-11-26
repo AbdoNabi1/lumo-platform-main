@@ -128,6 +128,15 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(viewer, "finance:read")).toBe(false);
   });
 
+  it("settings:read and settings:update (the checkout and customer-account settings) are admin-only (Wave 2a)", async () => {
+    for (const permission of ["settings:read", "settings:update"]) {
+      expect(await acl.authorize(who(["admin"]), permission)).toBe(true);
+      expect(await acl.authorize(who(["platform-admin"]), permission)).toBe(true);
+      expect(await acl.authorize(who(["operator"]), permission)).toBe(false);
+      expect(await acl.authorize(who(["viewer"]), permission)).toBe(false);
+    }
+  });
+
   it("no role, an unknown role, or a customer gets nothing", async () => {
     expect(await acl.authorize(who([]), "orders:read")).toBe(false);
     expect(await acl.authorize(who(["superuser"]), "orders:read")).toBe(false);

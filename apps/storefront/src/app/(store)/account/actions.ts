@@ -40,7 +40,8 @@ export type AuthActionResult =
        * account-enumeration oracle the backend just closed). `"conflict"`: the email is already
        * registered. `"validation"`: the Runtime API 422'd. `"mfa"`: an additional factor is
        * required and this surface cannot yet collect one. `"network"`: unreachable/unexpected. */
-      readonly reason: "credentials" | "conflict" | "validation" | "mfa" | "network";
+      readonly reason:
+        "credentials" | "conflict" | "validation" | "mfa" | "network" | "accounts-disabled";
     };
 
 /**
@@ -53,7 +54,8 @@ export type RegisterActionResult =
   | { readonly ok: true; readonly checkEmail: true }
   | {
       readonly ok: false;
-      readonly reason: "credentials" | "conflict" | "validation" | "mfa" | "network";
+      readonly reason:
+        "credentials" | "conflict" | "validation" | "mfa" | "network" | "accounts-disabled";
     };
 
 /**
@@ -68,10 +70,30 @@ export type CompleteSignupActionResult =
   | {
       readonly ok: false;
       readonly reason:
-        "invalid-token" | "credentials" | "conflict" | "validation" | "mfa" | "network";
+        | "invalid-token"
+        | "credentials"
+        | "conflict"
+        | "validation"
+        | "mfa"
+        | "network"
+        | "accounts-disabled";
     };
 
-function mapAuthFailure(status: number): AuthActionResult {
+/**
+ * Wave 2a: the shop turned customer accounts off. Its refusal is a 403 like the MFA one, told apart
+ * by the body's code, so it is checked first and never shown as "needs extra verification".
+ */
+function isAccountsDisabled(status: number, body: unknown): boolean {
+  return (
+    status === 403 &&
+    typeof body === "object" &&
+    body !== null &&
+    (body as { readonly code?: unknown }).code === "ACCOUNTS_DISABLED"
+  );
+}
+
+function mapAuthFailure(status: number, body?: unknown): AuthActionResult {
+  if (isAccountsDisabled(status, body)) return { ok: false, reason: "accounts-disabled" };
   if (status === 401) return { ok: false, reason: "credentials" };
   if (status === 403) return { ok: false, reason: "mfa" };
   if (status === 409) return { ok: false, reason: "conflict" };
@@ -80,7 +102,8 @@ function mapAuthFailure(status: number): AuthActionResult {
 }
 
 /** G-72: `completeAccountSignup`'s status set differs from `mapAuthFailure`'s — 404 means "this link doesn't work anymore" (Identity's own indistinguishable rejection for unknown/expired/reused/wrong-tenant/tampered tokens), not "not found" in the generic sense. */
-function mapCompleteSignupFailure(status: number): CompleteSignupActionResult {
+function mapCompleteSignupFailure(status: number, body?: unknown): CompleteSignupActionResult {
+  if (isAccountsDisabled(status, body)) return { ok: false, reason: "accounts-disabled" };
   if (status === 404) return { ok: false, reason: "invalid-token" };
   if (status === 403) return { ok: false, reason: "mfa" };
   if (status === 422) return { ok: false, reason: "validation" };
@@ -145,7 +168,7 @@ export async function registerAccount(
     return { ok: true, checkEmail: true };
   }
   if (registered.status < 200 || registered.status >= 300) {
-    return mapAuthFailure(registered.status);
+    return mapAuthFailure(registered.status, registered.body);
   }
   return signIn(email, password);
 }
@@ -164,7 +187,7 @@ export async function completeAccountSignup(
 ): Promise<AuthActionResult | CompleteSignupActionResult> {
   const completed = await completeSignup(token, name, password, crypto.randomUUID());
   if (completed.status < 200 || completed.status >= 300 || completed.body === null) {
-    return mapCompleteSignupFailure(completed.status);
+    return mapCompleteSignupFailure(completed.status, completed.body);
   }
   return signIn(completed.body.email, password);
 }
@@ -173,7 +196,7 @@ export async function completeAccountSignup(
 export async function signIn(email: string, password: string): Promise<AuthActionResult> {
   const response = await loginCustomer(email, password);
   if (response.status < 200 || response.status >= 300 || response.body === null) {
-    return mapAuthFailure(response.status);
+    return mapAuthFailure(response.status, response.body);
   }
 
   await persistSession(response.body.sessionId);
