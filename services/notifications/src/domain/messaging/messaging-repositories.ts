@@ -2,7 +2,7 @@ import type {
   StoredNotificationSettings,
   NotificationSettingsValues,
 } from "./notification-settings";
-import type { StoredSenderDomain } from "./sender-domain";
+import type { StoredEmailConnection } from "./email-connection";
 import type { TemplateKey, TemplateLocale } from "./template-catalogue";
 
 /** Persistence port for a shop's notification settings (Wave 2b). One row per tenant; every call names `tenantId` (ADR-0014). */
@@ -41,32 +41,27 @@ export interface TemplateOverrideRepository {
   remove(tenantId: string, key: TemplateKey, locale: TemplateLocale, tx?: unknown): Promise<void>;
 }
 
-/** What sender resolution needs from the store's own sending domains: the verified ones. */
-export interface SenderDomainReader {
-  listVerifiedDomains(tenantId: string, tx?: unknown): Promise<readonly string[]>;
-}
+/** A connection as it is written: the repository assigns the version. */
+export type EmailConnectionWrite = Omit<StoredEmailConnection, "version">;
 
-/**
- * The store's sending domain (one per store in v1) as the email provider reports it. Every call
- * names `tenantId` (ADR-0014) except `isVerifiedByAnotherStore`, the one deliberate cross-store read.
- */
-export interface SenderDomainRepository extends SenderDomainReader {
-  /** The store's domain row, or null. */
-  find(tenantId: string, tx?: unknown): Promise<StoredSenderDomain | null>;
+/** Persistence port for a store's own email account (Wave 2b2). One row per tenant; every call names `tenantId` (ADR-0014). */
+export interface EmailConnectionRepository {
+  find(tenantId: string, tx?: unknown): Promise<StoredEmailConnection | null>;
   /**
-   * Writes `row` (insert or update by domain). `replacing` is the old domain to drop in the SAME
-   * transaction (the store moved to another domain). A racing first write of the same domain is a
-   * `ConcurrencyError`.
+   * Writes the connection. `expectedVersion` is null to create the row, else the version that was
+   * read; anything else stale throws `ConcurrencyError`. Returns the new version.
    */
   save(
     tenantId: string,
-    row: StoredSenderDomain,
-    options?: { readonly replacing?: string },
-  ): Promise<void>;
+    connection: EmailConnectionWrite,
+    expectedVersion: number | null,
+    tx?: unknown,
+  ): Promise<number>;
+  /** Idempotent: removing what is not there is not an error. */
+  remove(tenantId: string, tx?: unknown): Promise<void>;
   /**
-   * True when a store OTHER than `tenantId` has `domain` VERIFIED. Deliberately not tenant-scoped:
-   * the question is "does anyone else own this domain", which no per-store read can answer.
-   * Returns only a yes/no, never another store's row.
+   * Records a real send failure (`last_error`, `last_error_at`) without touching the version, status
+   * or key: a transient provider hiccup must not race a merchant's save. `message` is already sanitized.
    */
-  isVerifiedByAnotherStore(domain: string, tenantId: string): Promise<boolean>;
+  recordFailure(tenantId: string, message: string, at: Date, tx?: unknown): Promise<void>;
 }

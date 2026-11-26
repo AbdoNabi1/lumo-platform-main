@@ -1,7 +1,8 @@
 import { ConcurrencyError } from "@platform/utils";
 import type {
+  EmailConnectionRepository,
+  EmailConnectionWrite,
   NotificationSettingsRepository,
-  SenderDomainRepository,
   TemplateOverride,
   TemplateOverrideRepository,
 } from "../domain/messaging/messaging-repositories";
@@ -9,7 +10,7 @@ import type {
   NotificationSettingsValues,
   StoredNotificationSettings,
 } from "../domain/messaging/notification-settings";
-import { SenderDomainTakenError, type StoredSenderDomain } from "../domain/messaging/sender-domain";
+import type { StoredEmailConnection } from "../domain/messaging/email-connection";
 import type { TemplateKey, TemplateLocale } from "../domain/messaging/template-catalogue";
 
 /** In-memory settings with the SAME version contract as the Prisma repository (stale = `ConcurrencyError`). */
@@ -93,63 +94,42 @@ export class InMemoryTemplateOverrideRepository implements TemplateOverrideRepos
   }
 }
 
-/** In-memory sending domains per store, with the same one-row-per-domain contract as the Prisma repository. */
-export class InMemorySenderDomainRepository implements SenderDomainRepository {
-  private readonly rows = new Map<string, Map<string, StoredSenderDomain>>();
+/** In-memory email connections with the SAME version contract as the Prisma repository (stale = `ConcurrencyError`). */
+export class InMemoryEmailConnectionRepository implements EmailConnectionRepository {
+  private readonly rows = new Map<string, StoredEmailConnection>();
 
-  /** Test seed: these domains are verified for the store. */
-  setVerified(tenantId: string, domains: readonly string[]): void {
-    const own = new Map<string, StoredSenderDomain>();
-    for (const domain of domains) {
-      own.set(domain, {
-        domain,
-        providerDomainId: `seed-${domain}`,
-        status: "verified",
-        records: [],
-        verifiedAt: new Date(0),
-      });
-    }
-    this.rows.set(tenantId, own);
-  }
-
-  find(tenantId: string): Promise<StoredSenderDomain | null> {
-    const first = [...(this.rows.get(tenantId)?.values() ?? [])][0];
-    return Promise.resolve(first === undefined ? null : { ...first, records: [...first.records] });
+  find(tenantId: string): Promise<StoredEmailConnection | null> {
+    const row = this.rows.get(tenantId);
+    return Promise.resolve(row === undefined ? null : { ...row });
   }
 
   save(
     tenantId: string,
-    row: StoredSenderDomain,
-    options: { readonly replacing?: string } = {},
-  ): Promise<void> {
-    // The database's partial unique index: one verified owner per domain.
-    if (row.status === "verified") {
-      for (const [owner, others] of this.rows) {
-        if (owner !== tenantId && others.get(row.domain)?.status === "verified") {
-          return Promise.reject(new SenderDomainTakenError());
-        }
-      }
+    connection: EmailConnectionWrite,
+    expectedVersion: number | null,
+  ): Promise<number> {
+    const current = this.rows.get(tenantId)?.version ?? null;
+    if (current !== expectedVersion) {
+      return Promise.reject(new ConcurrencyError("Email connection changed since it was read"));
     }
-    const own = this.rows.get(tenantId) ?? new Map<string, StoredSenderDomain>();
-    if (options.replacing !== undefined) own.delete(options.replacing);
-    own.set(row.domain, { ...row, records: [...row.records] });
-    this.rows.set(tenantId, own);
+    const version = (current ?? 0) + 1;
+    this.rows.set(tenantId, { ...connection, version });
+    return Promise.resolve(version);
+  }
+
+  remove(tenantId: string): Promise<void> {
+    this.rows.delete(tenantId);
     return Promise.resolve();
   }
 
-  isVerifiedByAnotherStore(domain: string, tenantId: string): Promise<boolean> {
-    for (const [owner, own] of this.rows) {
-      if (owner !== tenantId && own.get(domain)?.status === "verified")
-        return Promise.resolve(true);
-    }
-    return Promise.resolve(false);
+  recordFailure(tenantId: string, message: string, at: Date): Promise<void> {
+    const row = this.rows.get(tenantId);
+    if (row !== undefined) this.rows.set(tenantId, { ...row, lastError: message, lastErrorAt: at });
+    return Promise.resolve();
   }
 
-  listVerifiedDomains(tenantId: string): Promise<readonly string[]> {
-    return Promise.resolve(
-      [...(this.rows.get(tenantId)?.values() ?? [])]
-        .filter((row) => row.status === "verified")
-        .map((row) => row.domain),
-    );
+  /** Test read: the raw stored row (to prove what a row holds and what it never holds). */
+  peek(tenantId: string): StoredEmailConnection | undefined {
+    return this.rows.get(tenantId);
   }
 }
