@@ -81,7 +81,11 @@ async function setPolicy(kit: StaffKit, mfaRequired: boolean): Promise<void> {
 const login = (
   ctx: ReturnType<typeof build>,
   email: string,
-  extra: { requireEnrolledFactor?: boolean; mfaSatisfied?: boolean } = {},
+  extra: {
+    requireEnrolledFactor?: boolean;
+    requireFactorEnrollment?: boolean;
+    mfaSatisfied?: boolean;
+  } = {},
 ) =>
   ctx.authenticate.execute({
     tenantId: T,
@@ -279,5 +283,121 @@ describe("tenant policy profile lookup (staff-only tenantRef ?? tenantId)", () =
     });
 
     expect(decided.ok && decided.value.requirement).not.toBe("required");
+  });
+});
+
+describe("Authenticate requireFactorEnrollment (Wave 1f, mandatory two-step)", () => {
+  it("unenrolled + flag: no session, requirement required, hasActiveEnrollment false, audit mfa=required", async () => {
+    const ctx = build();
+    const id = await seedMember(ctx, "p-1", "sam@x.com");
+
+    const out = outcome(await login(ctx, "sam@x.com", { requireFactorEnrollment: true }));
+
+    expect(out.authenticated).toBe(true);
+    expect(out.sessionId).toBeNull();
+    expect(out.mfaRequirement).toBe("required");
+    expect(out.hasActiveEnrollment).toBe(false);
+    expect((await authAudits(ctx.kit))[0]!.content.metadata?.mfa).toBe("required");
+    expect(await ctx.kit.sessions.listByPrincipal(id, T)).toHaveLength(0);
+  });
+
+  it("a claimed mfaSatisfied cannot stand in for the missing enrolment", async () => {
+    const ctx = build();
+    await seedMember(ctx, "p-1", "sam@x.com");
+
+    const out = outcome(
+      await login(ctx, "sam@x.com", { requireFactorEnrollment: true, mfaSatisfied: true }),
+    );
+
+    expect(out.sessionId).toBeNull();
+    expect(out.mfaRequirement).toBe("required");
+  });
+
+  it("a pending (unconfirmed) enrolment is not an enrolment: still no session", async () => {
+    const ctx = build();
+    const id = await seedMember(ctx, "p-1", "sam@x.com");
+    await ctx.kit.mfaEnrollments.save(
+      MfaEnrollment.enroll(
+        ctx.kit.id(),
+        { principalRef: id, method: "totp", secretRef: "totp:x" },
+        ctx.kit.deps.idGenerator.generate(),
+        ctx.kit.clock.now(),
+      ),
+      T,
+    );
+
+    const out = outcome(await login(ctx, "sam@x.com", { requireFactorEnrollment: true }));
+
+    expect(out.sessionId).toBeNull();
+    expect(out.hasActiveEnrollment).toBe(false);
+  });
+
+  it("enrolled + both flags: the 1e code path (no session until mfaSatisfied)", async () => {
+    const ctx = build();
+    const id = await seedMember(ctx, "p-1", "sam@x.com");
+    await enrolActive(ctx.kit, id);
+    const both = { requireEnrolledFactor: true, requireFactorEnrollment: true };
+
+    const first = outcome(await login(ctx, "sam@x.com", both));
+    expect(first.sessionId).toBeNull();
+    expect(first.mfaRequirement).toBe("required");
+    expect(first.hasActiveEnrollment).toBe(true);
+
+    const second = outcome(await login(ctx, "sam@x.com", { ...both, mfaSatisfied: true }));
+    expect(second.sessionId).not.toBeNull();
+  });
+
+  it("flag absent: unchanged (an unenrolled member gets a session, as in 1e)", async () => {
+    const ctx = build();
+    await seedMember(ctx, "p-1", "sam@x.com");
+
+    const out = outcome(await login(ctx, "sam@x.com", { requireEnrolledFactor: true }));
+
+    expect(out.sessionId).not.toBeNull();
+    expect(out.mfaRequirement).toBe("optional");
+  });
+
+  it("a customer principal that never passes the flag signs in, with the store policy on too", async () => {
+    const ctx = build();
+    const customer = Principal.register(
+      ctx.kit.id(),
+      { externalId: "c-1", kind: "human", displayName: "cust@x.com", subjectRef: "c-1" },
+      ctx.kit.deps.idGenerator.generate(),
+      ctx.kit.clock.now(),
+    );
+    await ctx.kit.principals.save(customer, T);
+    ctx.provider.register("customer:cust@x.com", PASSWORD, "c-1");
+    await setPolicy(ctx.kit, true);
+
+    const out = outcome(
+      await ctx.authenticate.execute({
+        tenantId: T,
+        method: "password",
+        identifier: "customer:cust@x.com",
+        credential: PASSWORD,
+      }),
+    );
+
+    expect(out.authenticated).toBe(true);
+    expect(out.sessionId).not.toBeNull();
+    expect(out.hasActiveEnrollment).toBe(false);
+  });
+
+  it("a failed password with the flag stays a plain failure (no setup is offered)", async () => {
+    const ctx = build();
+    await seedMember(ctx, "p-1", "sam@x.com");
+
+    const out = outcome(
+      await ctx.authenticate.execute({
+        tenantId: T,
+        method: "password",
+        identifier: "staff:sam@x.com",
+        credential: "wrong",
+        requireFactorEnrollment: true,
+      }),
+    );
+
+    expect(out.authenticated).toBe(false);
+    expect(out.sessionId).toBeNull();
   });
 });

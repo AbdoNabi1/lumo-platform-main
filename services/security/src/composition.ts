@@ -37,6 +37,7 @@ import {
   ChangeStaffRole,
   CreateStaffInvitation,
   RenewStaffInvitation,
+  ResetStaffTwoStep,
   RevokeStaffInvitation,
   SetStaffActive,
 } from "./application/staff-commands.use-cases";
@@ -664,6 +665,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const staffAccess = new StaffAccess(securityDeps);
   const changeStaffRole = new ChangeStaffRole(securityDeps);
   const setStaffActive = new SetStaffActive(securityDeps);
+  const resetStaffTwoStep = new ResetStaffTwoStep(securityDeps);
   const createStaffInvitation = new CreateStaffInvitation(securityDeps);
   const renewStaffInvitation = new RenewStaffInvitation(securityDeps);
   const revokeStaffInvitation = new RevokeStaffInvitation(securityDeps);
@@ -751,6 +753,7 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     staffAccess,
     changeStaffRole,
     setStaffActive,
+    resetStaffTwoStep,
     createStaffInvitation,
     renewStaffInvitation,
     revokeStaffInvitation,

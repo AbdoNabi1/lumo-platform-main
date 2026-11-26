@@ -66,7 +66,12 @@ describe("RoleTableAccessControl", () => {
   });
 
   it("the Wave 1e policy and activity permissions are admin-only; every staff role may set up its own two-step", async () => {
-    for (const permission of ["staff:read_policy", "staff:set_policy", "staff:read_activity"]) {
+    for (const permission of [
+      "staff:read_policy",
+      "staff:set_policy",
+      "staff:read_activity",
+      "staff:reset_two_step",
+    ]) {
       expect([permission, await acl.authorize(who(["admin"]), permission)]).toEqual([
         permission,
         true,
