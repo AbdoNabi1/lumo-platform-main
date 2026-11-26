@@ -46,18 +46,14 @@ describe("/settings/[section] coming-soon page", () => {
     ).toEqual(["/settings/markets"]);
   });
 
-  it.each([
-    "markets",
-    "apps",
-    "customer-events",
-    "notifications",
-    "custom-data",
-    "customer-privacy",
-  ])("accepts the unavailable section %s", async (section) => {
-    expect.hasAssertions();
-    render(await SectionPage({ params: Promise.resolve({ section }) }));
-    expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
-  });
+  it.each(["markets", "apps", "customer-events", "custom-data", "customer-privacy"])(
+    "accepts the unavailable section %s",
+    async (section) => {
+      expect.hasAssertions();
+      render(await SectionPage({ params: Promise.resolve({ section }) }));
+      expect(screen.getByText(en.settingsNav.comingSoon)).toBeInTheDocument();
+    },
+  );
 
   it.each([
     "nope",
@@ -69,7 +65,8 @@ describe("/settings/[section] coming-soon page", () => {
     "users",
     "checkout",
     "customer-accounts",
-  ])("calls notFound for %s (not one of the six unavailable ids)", async (section) => {
+    "notifications",
+  ])("calls notFound for %s (not one of the five unavailable ids)", async (section) => {
     expect.hasAssertions();
     await expect(SectionPage({ params: Promise.resolve({ section }) })).rejects.toThrow(
       "NEXT_NOT_FOUND",

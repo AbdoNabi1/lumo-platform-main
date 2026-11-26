@@ -232,16 +232,26 @@ describe("middleware role table for the Settings sub-navigation (Shopify parity 
     }
   });
 
+  it("keeps Settings > Notifications and a template editor admin-only (Wave 2b)", async () => {
+    expect.hasAssertions();
+    const paths = ["/settings/notifications", "/settings/notifications/order_confirmation"];
+    for (const role of ["operator", "viewer"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      for (const path of paths) {
+        const response = await middleware(requestFor(path, "good.token"));
+        expect(response.headers.get("location"), `${role} ${path}`).toContain("/forbidden");
+      }
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    for (const path of paths) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
   it("keeps every coming-soon placeholder admin-only", async () => {
     expect.hasAssertions();
-    const placeholders = [
-      "markets",
-      "apps",
-      "customer-events",
-      "notifications",
-      "custom-data",
-      "customer-privacy",
-    ];
+    const placeholders = ["markets", "apps", "customer-events", "custom-data", "customer-privacy"];
     jwtVerifyMock.mockResolvedValue({ payload: { roles: ["operator"] } });
     for (const section of placeholders) {
       const response = await middleware(requestFor(`/settings/${section}`, "good.token"));

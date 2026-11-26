@@ -76,7 +76,7 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     id: "notifications",
     label: (t) => t.settingsNav.notifications,
     href: "/settings/notifications",
-    available: false,
+    available: true,
   },
   {
     id: "custom-data",

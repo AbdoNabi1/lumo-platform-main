@@ -28,14 +28,7 @@ const EXPECTED = [
   ["policies", "Policies", "/settings/policies"],
 ] as const;
 
-const UNAVAILABLE = [
-  "markets",
-  "apps",
-  "customer-events",
-  "notifications",
-  "custom-data",
-  "customer-privacy",
-];
+const UNAVAILABLE = ["markets", "apps", "customer-events", "custom-data", "customer-privacy"];
 
 function labelOf(link: HTMLElement): string | null | undefined {
   return link.querySelector("span")?.textContent;
