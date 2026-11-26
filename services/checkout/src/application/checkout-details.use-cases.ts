@@ -17,6 +17,13 @@ import {
 import { CheckoutItem } from "../domain/value-objects/checkout-item";
 import { ContactEmail } from "../domain/value-objects/contact-email";
 import { PaymentSelection, ShippingSelection } from "../domain/value-objects/selections";
+import {
+  addressRuleIssues,
+  addressRulesFor,
+  cartLineLimitIssue,
+  normalizeAddressInput,
+} from "../domain/checkout-settings";
+import type { CheckoutSettingsRepository } from "../domain/checkout-settings-repository";
 import { provinceProblem } from "./address-province";
 import type { PaymentMethodPort, ShippingCalculationPort } from "./ports";
 
@@ -62,6 +69,12 @@ export interface LoadItemsInput {
     readonly title?: string;
     readonly variantTitle?: string | null;
   }[];
+  /**
+   * Wave 2a: the shop's add-to-cart limit. When given, a line over it is refused with the same
+   * 422 `quantity` message the cart gives, so a cart filled before the limit was lowered (or past
+   * the cart routes) cannot become an order. Absent => no limit.
+   */
+  readonly maxLineQuantity?: number | null;
 }
 
 /** The checkout lines for a cart snapshot, each validated (shared by LoadItems and the recovery claim). */
@@ -101,6 +114,15 @@ export class LoadItems implements UseCase<LoadItemsInput, CheckoutDetailsOutput,
   }
 
   async execute(input: LoadItemsInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+    const limit = input.maxLineQuantity ?? null;
+    const over = input.items.find((raw) => cartLineLimitIssue(limit, raw.quantity) !== null);
+    if (over !== undefined) {
+      return err(
+        new ValidationError("Cart limit exceeded", [
+          cartLineLimitIssue(limit, over.quantity) as { field: string; message: string },
+        ]),
+      );
+    }
     const built = checkoutItemsFrom(input.items);
     if (!built.ok) return err(built.error);
     const items = built.value;
@@ -153,19 +175,35 @@ export class SetBillingAddress implements UseCase<
   }
 }
 
+export interface SetShippingAddressDeps extends CheckoutDetailsDeps {
+  /**
+   * Wave 2a: when present, the address is held to the shop's checkout settings (name / phone /
+   * address line 2) ON THE SERVER, so a stale or hand-made request cannot skip what the storefront
+   * form would have asked for. Absent => no settings rules, exactly as before.
+   */
+  readonly settings?: CheckoutSettingsRepository;
+}
+
 /** Sets the session's shipping address snapshot. */
 export class SetShippingAddress implements UseCase<
   SetAddressInput,
   CheckoutDetailsOutput,
   DomainError
 > {
-  private readonly deps: CheckoutDetailsDeps;
+  private readonly deps: SetShippingAddressDeps;
 
-  constructor(deps: CheckoutDetailsDeps) {
+  constructor(deps: SetShippingAddressDeps) {
     this.deps = deps;
   }
 
-  async execute(input: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+  async execute(rawInput: SetAddressInput): Promise<Result<CheckoutDetailsOutput, DomainError>> {
+    let input = rawInput;
+    if (this.deps.settings !== undefined) {
+      const rules = addressRulesFor(await this.deps.settings.find(input.tenantId));
+      const issues = addressRuleIssues(rules, input);
+      if (issues.length > 0) return err(new ValidationError("Invalid address", issues));
+      input = normalizeAddressInput(rules, input);
+    }
     const address = CheckoutAddress.create(input);
     if (!address.ok) return err(address.error);
     const problem = provinceProblem(input.country, input.province);

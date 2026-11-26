@@ -3,8 +3,16 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import { BusinessRuleError, type DomainError, logger, NotFoundError } from "@platform/utils";
+import {
+  BusinessRuleError,
+  type DomainError,
+  logger,
+  NotFoundError,
+  ValidationError,
+} from "@platform/utils";
 import type { CheckoutSessionRepository } from "../domain/checkout-session-repository";
+import { addressRuleIssues, addressRulesFor } from "../domain/checkout-settings";
+import type { CheckoutSettingsRepository } from "../domain/checkout-settings-repository";
 import { refreshDiscountsAndTax } from "./discount-code.use-cases";
 import type {
   DiscountUsagePort,
@@ -61,6 +69,12 @@ export interface CompleteCheckoutDeps {
   readonly discountUsage?: DiscountUsagePort;
   /** Part 4: when present, a draft order's checkout reports the order to Orders (best effort). */
   readonly draftCompletion?: DraftOrderCompletionPort;
+  /**
+   * Wave 2a: when present, the stored shipping address is checked against the shop's CURRENT
+   * checkout settings right before the order is placed - a setting changed while the shopper was
+   * mid-checkout still binds them. Absent => no settings check, as before.
+   */
+  readonly settings?: CheckoutSettingsRepository;
 }
 
 /**
@@ -123,6 +137,20 @@ export class CompleteCheckout implements UseCase<
               `Checkout session is ${session.state.value} and can no longer be modified`,
             ),
           );
+        }
+
+        // Wave 2a: the shop may have changed what an address needs since the shopper typed theirs. A
+        // draft order's checkout (the merchant's own terms) and a merchant completing it are not held
+        // to it; a shopper's checkout is, with the same 422 fields the address step gives.
+        if (
+          this.deps.settings !== undefined &&
+          session.draftTerms === undefined &&
+          input.actorRef === undefined &&
+          session.shippingAddress !== undefined
+        ) {
+          const rules = addressRulesFor(await this.deps.settings.find(input.tenantId, tx));
+          const issues = addressRuleIssues(rules, session.shippingAddress);
+          if (issues.length > 0) return err(new ValidationError("Invalid address", issues));
         }
 
         // Phase 2: a code can run out, expire or stop qualifying between the last recalculation and

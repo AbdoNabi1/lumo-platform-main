@@ -214,6 +214,7 @@ function buildController(
       taxCalculation,
       ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
       ...(deps.draftCompletion === undefined ? {} : { draftCompletion: deps.draftCompletion }),
+      settings,
     }),
     failCheckout: new FailCheckout({
       sessions,
@@ -223,7 +224,7 @@ function buildController(
     }),
     loadItems: new LoadItems({ sessions, unitOfWork }),
     setBillingAddress: new SetBillingAddress({ sessions, unitOfWork }),
-    setShippingAddress: new SetShippingAddress({ sessions, unitOfWork }),
+    setShippingAddress: new SetShippingAddress({ sessions, unitOfWork, settings }),
     setContactEmail: new SetContactEmail({ sessions, unitOfWork }),
     selectShipping: new SelectShipping({ sessions, unitOfWork, shippingCalculation }),
     selectPayment: new SelectPayment({ sessions, unitOfWork, paymentMethods }),

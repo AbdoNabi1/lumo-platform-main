@@ -4,6 +4,7 @@ import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, NotFoundError } from "@platform/utils";
 import type { CartRepository } from "../domain/cart-repository";
+import { lineLimitError } from "../domain/line-limit";
 import { Quantity } from "../domain/value-objects/quantity";
 
 export interface ChangeItemQuantityInput {
@@ -14,6 +15,8 @@ export interface ChangeItemQuantityInput {
   /** Plan 2A: the variant line to change; absent addresses a legacy line by `productId`. */
   readonly variantId?: string;
   readonly quantity: number;
+  /** Wave 2a: the shop's add-to-cart limit, passed by the caller; the new quantity may not exceed it. Absent or null => no limit. */
+  readonly maxLineQuantity?: number | null;
 }
 
 export interface ChangeItemQuantityOutput {
@@ -51,6 +54,9 @@ export class ChangeItemQuantity implements UseCase<
       if (cart === null) {
         return err(new NotFoundError("Cart not found"));
       }
+
+      const overLimit = lineLimitError(input.maxLineQuantity, quantity.value.value);
+      if (overLimit !== null) return err(overLimit);
 
       try {
         cart.changeItemQuantity(input.variantId ?? productRef.value.value, quantity.value);

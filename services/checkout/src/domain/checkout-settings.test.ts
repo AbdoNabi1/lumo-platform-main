@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  addressRuleIssues,
+  addressRulesFor,
+  cartLineLimitIssue,
   DEFAULT_CHECKOUT_SETTINGS,
   effectiveCheckoutSettings,
+  normalizeAddressInput,
   toPublicCheckoutSettings,
   validateCheckoutSettings,
   type CheckoutSettingsValues,
@@ -133,5 +137,73 @@ describe("toPublicCheckoutSettings", () => {
       "requireLogin",
       "showAccountLink",
     ]);
+  });
+});
+
+describe("address rules", () => {
+  it("a shop with no row keeps today's server rules (nothing required, nothing dropped)", () => {
+    const rules = addressRulesFor(null);
+    expect(addressRuleIssues(rules, {})).toEqual([]);
+    const input = { name: "", phone: "", line2: "Flat 2" };
+    expect(normalizeAddressInput(rules, input)).toEqual(input);
+  });
+
+  it("saved defaults require name and phone and leave line 2 optional", () => {
+    const rules = addressRulesFor({ values: DEFAULT_CHECKOUT_SETTINGS, version: 1 });
+    expect(addressRuleIssues(rules, {}).map((i) => i.field)).toEqual(["name", "phone"]);
+    expect(addressRuleIssues(rules, { name: "  ", phone: " " }).map((i) => i.field)).toEqual([
+      "name",
+      "phone",
+    ]);
+    expect(addressRuleIssues(rules, { name: "Mona", phone: "0100" })).toEqual([]);
+  });
+
+  it("optional name/phone are not required and blanks become absent", () => {
+    const rules = addressRulesFor({
+      values: { ...DEFAULT_CHECKOUT_SETTINGS, nameMode: "optional", phoneMode: "optional" },
+      version: 2,
+    });
+    expect(addressRuleIssues(rules, {})).toEqual([]);
+    expect(normalizeAddressInput(rules, { name: " ", phone: "", line2: "" })).toEqual({
+      name: undefined,
+      phone: undefined,
+      line2: undefined,
+    });
+  });
+
+  it("line2 required and empty is refused; filled is fine", () => {
+    const rules = addressRulesFor({
+      values: {
+        ...DEFAULT_CHECKOUT_SETTINGS,
+        nameMode: "optional",
+        phoneMode: "optional",
+        line2Mode: "required",
+      },
+      version: 1,
+    });
+    expect(addressRuleIssues(rules, { line2: "" }).map((i) => i.field)).toEqual(["line2"]);
+    expect(addressRuleIssues(rules, { line2: "Floor 3" })).toEqual([]);
+  });
+
+  it("line2 hidden drops anything sent", () => {
+    const rules = addressRulesFor({
+      values: { ...DEFAULT_CHECKOUT_SETTINGS, line2Mode: "hidden" },
+      version: 1,
+    });
+    expect(normalizeAddressInput(rules, { name: "A", line2: "Flat 2" }).line2).toBeUndefined();
+    expect(addressRuleIssues(rules, { name: "A", phone: "1", line2: "Flat 2" })).toEqual([]);
+  });
+});
+
+describe("cartLineLimitIssue", () => {
+  it("is null with no limit or when the quantity fits", () => {
+    expect(cartLineLimitIssue(null, 500)).toBeNull();
+    expect(cartLineLimitIssue(3, 3)).toBeNull();
+  });
+  it("names the quantity field and the limit when it does not", () => {
+    expect(cartLineLimitIssue(3, 4)).toEqual({
+      field: "quantity",
+      message: "You can add up to 3 of this item",
+    });
   });
 });
