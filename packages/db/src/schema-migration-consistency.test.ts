@@ -968,3 +968,106 @@ describe("security mfa last used step (20261127000000)", () => {
     expect(schema).toMatch(/lastUsedStep\s+Int\?\s+@map\("last_used_step"\)/);
   });
 });
+
+describe("checkout settings (20261128000000)", () => {
+  const migration = join(migrationsDir, "20261128000000_checkout_settings", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+
+  it("creates checkout.checkout_settings with exactly the planned columns", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_settings", readSql())].sort()).toEqual([
+      "accounts_mode",
+      "cart_line_limit",
+      "line2_mode",
+      "marketing_email_prompt",
+      "name_mode",
+      "phone_mode",
+      "require_login",
+      "show_account_link",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+  });
+
+  it("types every column and gives it today's behaviour as its default", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      `"name_mode" TEXT NOT NULL DEFAULT 'required' CHECK ("name_mode" IN ('required','optional'))`,
+      `"phone_mode" TEXT NOT NULL DEFAULT 'required' CHECK ("phone_mode" IN ('required','optional'))`,
+      `"line2_mode" TEXT NOT NULL DEFAULT 'optional' CHECK ("line2_mode" IN ('hidden','optional','required'))`,
+      `"marketing_email_prompt" TEXT NOT NULL DEFAULT 'hidden' CHECK ("marketing_email_prompt" IN ('hidden','show','preselect'))`,
+      '"cart_line_limit" INTEGER CHECK ("cart_line_limit" IS NULL OR "cart_line_limit" BETWEEN 1 AND 999)',
+      '"require_login" BOOLEAN NOT NULL DEFAULT false',
+      `"accounts_mode" TEXT NOT NULL DEFAULT 'optional' CHECK ("accounts_mode" IN ('optional','disabled'))`,
+      '"show_account_link" BOOLEAN NOT NULL DEFAULT true',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("refuses require_login while accounts are disabled", () => {
+    expect(readSql()).toContain(
+      `CONSTRAINT "checkout_settings_login_needs_accounts" CHECK (NOT ("require_login" AND "accounts_mode" = 'disabled'))`,
+    );
+  });
+
+  it("forces tenant isolation on checkout settings for reads and writes", () => {
+    const sql = readSql();
+    expect(sql).toContain('ALTER TABLE "checkout"."checkout_settings" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "checkout"."checkout_settings" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "checkout"."checkout_settings" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+
+  it("adds the nullable marketing_opt_in column to checkout_sessions with no default", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_sessions", readSql())]).toEqual([
+      "marketing_opt_in",
+    ]);
+    const statement =
+      /ALTER TABLE "checkout"\."checkout_sessions" ADD COLUMN "marketing_opt_in"([^;]*);/.exec(
+        readSql(),
+      );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("BOOLEAN");
+  });
+
+  it("is purely additive", () => {
+    expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+    expect(code()).not.toMatch(/ALTER COLUMN/);
+  });
+
+  it("matches the Prisma models", () => {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "checkout.prisma"),
+      "utf-8",
+    );
+    const model = /model CheckoutSettings \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /nameMode\s+String\s+@default\("required"\)\s+@map\("name_mode"\)/,
+      /phoneMode\s+String\s+@default\("required"\)\s+@map\("phone_mode"\)/,
+      /line2Mode\s+String\s+@default\("optional"\)\s+@map\("line2_mode"\)/,
+      /marketingEmailPrompt\s+String\s+@default\("hidden"\)\s+@map\("marketing_email_prompt"\)/,
+      /cartLineLimit\s+Int\?\s+@map\("cart_line_limit"\)/,
+      /requireLogin\s+Boolean\s+@default\(false\)\s+@map\("require_login"\)/,
+      /accountsMode\s+String\s+@default\("optional"\)\s+@map\("accounts_mode"\)/,
+      /showAccountLink\s+Boolean\s+@default\(true\)\s+@map\("show_account_link"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("checkout_settings"\)/,
+      /@@schema\("checkout"\)/,
+    ])
+      expect(model).toMatch(field);
+    expect(schema).toMatch(/marketingOptIn\s+Boolean\?\s+@map\("marketing_opt_in"\)/);
+  });
+});

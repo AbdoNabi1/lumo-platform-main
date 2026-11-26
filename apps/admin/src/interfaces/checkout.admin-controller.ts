@@ -26,6 +26,26 @@ export class CheckoutAdminController {
     this.guard = deps.guard;
   }
 
+  /** Settings > Checkout and Customer accounts: read (`settings:read`). Defaults when never saved. */
+  async getSettings(
+    principal: Principal,
+    input: Parameters<CheckoutController["getSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:read");
+    if (denied) return denied;
+    return this.checkout.getSettings(input);
+  }
+
+  /** Settings > Checkout and Customer accounts: save (`settings:update`); a stale version is a 409. */
+  async updateSettings(
+    principal: Principal,
+    input: Parameters<CheckoutController["updateSettings"]>[0],
+  ): Promise<AdminResponse> {
+    const denied = await this.guard.ensure(principal, "settings:update");
+    if (denied) return denied;
+    return this.checkout.updateSettings(input);
+  }
+
   async start(
     principal: Principal,
     input: Parameters<CheckoutController["start"]>[0],

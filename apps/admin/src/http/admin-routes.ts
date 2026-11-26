@@ -113,6 +113,7 @@ import { taxesRoutes } from "./taxes-routes";
 import { storeBillingRoutes } from "./store-billing-routes";
 import { storeDomainsRoutes } from "./store-domains-routes";
 import { storeSettingsRoutes } from "./store-settings-routes";
+import { checkoutSettingsRoutes } from "./checkout-settings-routes";
 import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
@@ -2350,6 +2351,7 @@ export function adminRoutes(
     // Store settings are per request tenant (the repository takes the tenant per call), so they sit
     // outside the pinned tenancy family and work for every merchant under TENANT_MODE=multi.
     ...storeSettingsRoutes(admin),
+    ...checkoutSettingsRoutes(admin),
     ...storeDomainsRoutes(admin),
     ...storeBillingRoutes(admin),
     ...licensingRoutes(admin),
