@@ -11,7 +11,15 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
-import type { EmailDeliveryPort, StoreProfilePort } from "./application/messaging-ports";
+import type {
+  EmailDeliveryPort,
+  NotificationLog,
+  RecipientResolverPort,
+  StoreProfilePort,
+} from "./application/messaging-ports";
+import { TemplatedNotifier } from "./application/templated-notifier";
+import { TemplatedEmailProvider } from "./infrastructure/templated-email-provider";
+import type { EmailProviderPort } from "./application/ports";
 import type {
   NotificationSettingsRepository,
   SenderDomainReader,
@@ -42,7 +50,6 @@ import { RecordProviderCallback } from "./application/record-provider-callback.u
 import type { NotificationRepository } from "./domain/notification-repository";
 import { InMemoryNotificationRepository } from "./infrastructure/in-memory-notification-repository";
 import {
-  InMemoryEmailProvider,
   InMemoryProcessedProviderCallbackStore,
   InMemoryPushProvider,
   InMemorySmsProvider,
@@ -80,6 +87,10 @@ export interface NotificationsMessagingDeps {
   readonly delivery: EmailDeliveryPort;
   /** Tests seed verified domains here; production reads `notifications.sender_domains`. */
   readonly senderDomains?: SenderDomainReader;
+  /** Resolves a customer reference to a name, address and language at send time. Absent ⇒ nobody is found. */
+  readonly recipients?: RecipientResolverPort;
+  /** Failure logging for the email channel: short codes only, never an address or a body. */
+  readonly log?: NotificationLog;
 }
 
 export interface NotificationsWiringDeps {
@@ -100,11 +111,12 @@ export interface WiredNotifications {
   readonly notifications: NotificationsController;
   /** Settings > Notifications: sender, templates, preview, test-send (Wave 2b). */
   readonly settings: NotificationSettingsController;
+  /** The one entry the order/payment/fulfilment/draft triggers use to send a templated mail (Wave 2b). */
+  readonly notifier: TemplatedNotifier;
   readonly drainOutbox: () => Promise<number>;
   readonly deliveredEventTypes: readonly string[];
 }
 
-/** Builds the `NotificationsController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
 interface MessagingRepositories {
   readonly settings: NotificationSettingsRepository;
   readonly overrides: TemplateOverrideRepository;
@@ -153,12 +165,21 @@ function buildSettingsController(
   });
 }
 
+interface BuiltController {
+  readonly controller: NotificationsController;
+  readonly create: CreateNotification;
+  readonly queue: QueueNotification;
+  readonly send: SendNotification;
+  readonly advance: AdvanceNotification;
+}
+
+/** Builds the `NotificationsController` from an already-wired repo + unit of work — shared by both branches so the use-case wiring is written exactly once. */
 function buildController(
   notifications: NotificationRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: NotificationsWiringDeps,
-): NotificationsController {
-  const emailProvider = new InMemoryEmailProvider();
+  emailProvider: EmailProviderPort,
+): BuiltController {
   const smsProvider = new InMemorySmsProvider();
   const pushProvider = new InMemoryPushProvider();
   const webhookProvider = new InMemoryWebhookProvider();
@@ -171,18 +192,22 @@ function buildController(
     clock: deps.clock,
   };
 
-  return new NotificationsController({
-    createNotification: new CreateNotification(lifecycleDeps),
-    queueNotification: new QueueNotification(lifecycleDeps),
-    sendNotification: new SendNotification({
-      ...lifecycleDeps,
-      emailProvider,
-      smsProvider,
-      pushProvider,
-      webhookProvider,
-    }),
+  const create = new CreateNotification(lifecycleDeps);
+  const queue = new QueueNotification(lifecycleDeps);
+  const send = new SendNotification({
+    ...lifecycleDeps,
+    emailProvider,
+    smsProvider,
+    pushProvider,
+    webhookProvider,
+  });
+  const advance = new AdvanceNotification(lifecycleDeps);
+  const controller = new NotificationsController({
+    createNotification: create,
+    queueNotification: queue,
+    sendNotification: send,
     retryNotification: new RetryNotification(lifecycleDeps),
-    advanceNotification: new AdvanceNotification(lifecycleDeps),
+    advanceNotification: advance,
     recordProviderCallback: new RecordProviderCallback({
       ...lifecycleDeps,
       processedProviderCallbacks,
@@ -190,6 +215,43 @@ function buildController(
     listNotifications: new ListNotifications({ notifications }),
     getNotification: new GetNotification({ notifications }),
   });
+  return { controller, create, queue, send, advance };
+}
+
+const NO_RECIPIENTS: RecipientResolverPort = { resolve: () => Promise.resolve(null) };
+const SILENT_LOG: NotificationLog = { warn: () => undefined };
+
+/** Everything both persistence branches share once their repositories exist. */
+function assemble(
+  deps: NotificationsWiringDeps,
+  notifications: NotificationRepository,
+  unitOfWork: TransactionalUnitOfWork<unknown>,
+  repos: MessagingRepositories,
+  messaging: NotificationsMessagingDeps,
+): Pick<WiredNotifications, "notifications" | "settings" | "notifier"> {
+  const senderDomains = messaging.senderDomains ?? repos.senderDomains;
+  const emailProvider = new TemplatedEmailProvider({
+    settings: repos.settings,
+    overrides: repos.overrides,
+    store: messaging.store,
+    senderDomains,
+    platformFrom: messaging.delivery.platformFrom,
+    recipients: messaging.recipients ?? NO_RECIPIENTS,
+    delivery: messaging.delivery,
+    log: messaging.log ?? SILENT_LOG,
+  });
+  const built = buildController(notifications, unitOfWork, deps, emailProvider);
+  return {
+    notifications: built.controller,
+    settings: buildSettingsController(repos, unitOfWork, messaging),
+    notifier: new TemplatedNotifier({
+      settings: repos.settings,
+      create: built.create,
+      queue: built.queue,
+      send: built.send,
+      advance: built.advance,
+    }),
+  };
 }
 
 /**
@@ -220,14 +282,15 @@ export function wireNotifications(
     const unitOfWork = new PrismaUnitOfWork(deps.prisma);
 
     return {
-      notifications: buildController(notifications, unitOfWork, deps),
-      settings: buildSettingsController(
+      ...assemble(
+        deps,
+        notifications,
+        unitOfWork,
         {
           settings: new PrismaNotificationSettingsRepository(deps.prisma),
           overrides: new PrismaTemplateOverrideRepository(deps.prisma),
           senderDomains: new PrismaSenderDomainReader(deps.prisma),
         },
-        unitOfWork,
         messaging,
       ),
       drainOutbox: async () => 0,
@@ -247,7 +310,17 @@ export function wireNotifications(
 
   const notifications = new InMemoryNotificationRepository({ outbox: outboxWriter, context });
   const unitOfWork = new InMemoryUnitOfWork();
-  const controller = buildController(notifications, unitOfWork, deps);
+  const wired = assemble(
+    deps,
+    notifications,
+    unitOfWork,
+    {
+      settings: new InMemoryNotificationSettingsRepository(),
+      overrides: new InMemoryTemplateOverrideRepository(),
+      senderDomains: new InMemorySenderDomainReader(),
+    },
+    messaging,
+  );
 
   const bus = new InMemoryEventBus();
   const delivered: string[] = [];
@@ -265,16 +338,7 @@ export function wireNotifications(
   });
 
   return {
-    notifications: controller,
-    settings: buildSettingsController(
-      {
-        settings: new InMemoryNotificationSettingsRepository(),
-        overrides: new InMemoryTemplateOverrideRepository(),
-        senderDomains: new InMemorySenderDomainReader(),
-      },
-      unitOfWork,
-      messaging,
-    ),
+    ...wired,
     drainOutbox: () => relay.drainOnce(),
     deliveredEventTypes: delivered,
   };

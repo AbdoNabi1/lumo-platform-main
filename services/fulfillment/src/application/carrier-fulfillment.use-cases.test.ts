@@ -86,7 +86,13 @@ function harness(reserve: ReservationResult, extras: { failingNotify?: boolean }
       return Promise.resolve();
     },
   };
-  const notifications: NotificationPort = { notify: () => Promise.resolve() };
+  const notified: unknown[][] = [];
+  const notifications: NotificationPort = {
+    notify: (...args) => {
+      notified.push(args);
+      return Promise.resolve();
+    },
+  };
   const inventory = new ScriptedInventory(reserve);
   const deps = {
     fulfillmentOrders: repo,
@@ -101,6 +107,7 @@ function harness(reserve: ReservationResult, extras: { failingNotify?: boolean }
     repo,
     inventory,
     reported,
+    notified,
     prepare: new PrepareForCarrierShipment({ ...deps, requestReservation }),
     attach: new AttachCarrierShipment(deps),
     detach: new DetachCarrierShipment(deps),
@@ -270,6 +277,33 @@ describe("PrepareForCarrierShipment (9a.3)", () => {
     const result = await h.prepare.execute({ tenantId: T, fulfillmentOrderId: id });
     expect(result.ok && result.value.status).toBe("packing_completed");
     expect(h.reported).toEqual([]);
+  });
+});
+
+describe("shipping notification detail (Wave 2b)", () => {
+  it("tells Notifications which fulfillment shipped and its tracking number and carrier", async () => {
+    expect.hasAssertions();
+    const h = harness({ confirmed: true });
+    const id = await h.packedOrder("order-9");
+    expect((await h.attach.execute(attachInput(id))).ok).toBe(true);
+    const tracked = h.notified.filter((call) => call[1] === "tracking_assigned");
+    expect(tracked).toEqual([
+      [
+        "order-9",
+        "tracking_assigned",
+        T,
+        { fulfillmentOrderId: id, trackingNumber: "5108002", carrier: "bosta" },
+      ],
+    ]);
+  });
+
+  it("a status without tracking carries only the fulfillment id", async () => {
+    expect.hasAssertions();
+    const h = harness({ confirmed: true });
+    const id = await h.createOrder("order-10");
+    await h.prepare.execute({ tenantId: T, fulfillmentOrderId: id });
+    expect(h.notified.length).toBeGreaterThan(0);
+    for (const call of h.notified) expect(call[3]).toEqual({ fulfillmentOrderId: id });
   });
 });
 

@@ -11,7 +11,12 @@ import {
   RefundPaymentLifecycle,
   type PaymentLifecycleDeps,
 } from "./application/payment-lifecycle.use-cases";
-import type { FinancePort, NotificationPort, OrdersPort } from "./application/ports";
+import type {
+  FinancePort,
+  NotificationPort,
+  OrdersPort,
+  PaymentNotificationEvent,
+} from "./application/ports";
 import { PaymentIntentMapper, type PaymentIntentRow } from "./infrastructure/payment-intent.mapper";
 
 /**
@@ -149,8 +154,15 @@ class RecordingFinancePort implements FinancePort {
 
 class RecordingNotificationPort implements NotificationPort {
   readonly calls: Array<{ orderRef: string; status: string }> = [];
-  async notify(orderRef: string, status: string): Promise<void> {
+  readonly events: Array<PaymentNotificationEvent | undefined> = [];
+  async notify(
+    orderRef: string,
+    status: string,
+    _tenantId: string,
+    event?: PaymentNotificationEvent,
+  ): Promise<void> {
     this.calls.push({ orderRef, status });
+    this.events.push(event);
   }
 }
 
@@ -262,6 +274,40 @@ describe("Task 2 — RefundPaymentLifecycle duplicate side-effect exploit (Phase
     // per racing settle() call.
     expect(notifications.calls).toHaveLength(1);
     expect(orders.calls).toHaveLength(1);
+  });
+
+  it("Wave 2b: a completed refund tells Notifications which refund it was, how much and in what currency", async () => {
+    const repo = new PostgresLikePaymentIntentRepository();
+    seedCapturedIntent(repo, "pi-evt", 1000);
+    const notifications = new RecordingNotificationPort();
+    const lifecycle = new RefundPaymentLifecycle(
+      buildDeps(repo, new RecordingPaymentProvider(), { notifications }),
+    );
+
+    const first = await lifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-evt",
+      amountMinor: 400,
+      currency: "USD",
+      idempotencyKey: "evt-1:refund",
+    });
+    const second = await lifecycle.execute({
+      tenantId: "tenant-a",
+      paymentIntentId: "pi-evt",
+      amountMinor: 100,
+      currency: "USD",
+      idempotencyKey: "evt-2:refund",
+    });
+    expect(first.ok && second.ok).toBe(true);
+
+    const final = await repo.findById("pi-evt", "tenant-a");
+    const [one, two] = final?.refunds ?? [];
+    expect(notifications.events).toEqual([
+      { kind: "refund_completed", refundId: one?.id.toString(), amountMinor: 400, currency: "USD" },
+      { kind: "refund_completed", refundId: two?.id.toString(), amountMinor: 100, currency: "USD" },
+    ]);
+    // Two partial refunds are two events even though both leave the intent "partially_refunded".
+    expect(one?.id.toString()).not.toBe(two?.id.toString());
   });
 
   it("EXPLOIT Scenario C: the SAME completed refund settled twice sequentially is a pure no-op the second time", async () => {

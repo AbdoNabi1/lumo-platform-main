@@ -1,163 +1,102 @@
-import { describe, expect, it } from "vitest";
-import type { NotificationsController } from "@platform/notifications";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  fakeNotifier,
+  fakeOrder,
+  ordersReturning,
+  spyLogger,
+} from "./testing/notification-test-support";
+import { UnannouncedOrders } from "./notification-trigger";
 import { OrdersNotificationAdapter } from "./orders-notification.adapter";
 
-interface CreateCall {
-  readonly tenantId: string;
-  readonly idempotencyKey: string;
-  readonly sourceRef: string;
-  readonly recipientRef: string;
-  readonly channels: readonly string[];
-  readonly templateId: string;
-  readonly bodyPattern: string;
-  readonly subjectPattern?: string;
-  readonly variables: Readonly<Record<string, string>>;
-  readonly maxAttempts: number;
-}
+/** Wave 2b: the order cancellation mail; every other order status says nothing (D41). */
+describe("OrdersNotificationAdapter", () => {
+  let log: ReturnType<typeof spyLogger> | undefined;
+  afterEach(() => log?.restore());
 
-interface FakeCalls {
-  readonly sequence: string[];
-  readonly create: CreateCall[];
-  readonly queue: { notificationId: string; tenantId: string }[];
-  readonly send: { notificationId: string; tenantId: string }[];
-}
-
-/** A fake `NotificationsController` narrowed to `create`/`queue`/`send` — the 3 methods this adapter calls — recording both the sequence and the arguments of every call. */
-function fakeNotificationsController(
-  calls: FakeCalls,
-  options: { failAt?: "create" | "queue" | "send" } = {},
-): Pick<NotificationsController, "create" | "queue" | "send"> {
-  let counter = 0;
-  return {
-    async create(input) {
-      calls.sequence.push("create");
-      calls.create.push(input);
-      if (options.failAt === "create") {
-        return { status: 422, body: { code: "VALIDATION", message: "bad input" } };
-      }
-      counter += 1;
-      return { status: 201, body: { notificationId: `notif-${counter}`, status: "created" } };
-    },
-    async queue(input) {
-      calls.sequence.push("queue");
-      calls.queue.push(input);
-      if (options.failAt === "queue") {
-        return { status: 409, body: { code: "CONFLICT", message: "cannot queue" } };
-      }
-      return { status: 200, body: { notificationId: input.notificationId, status: "queued" } };
-    },
-    async send(input) {
-      calls.sequence.push("send");
-      calls.send.push(input);
-      if (options.failAt === "send") {
-        return { status: 409, body: { code: "CONFLICT", message: "cannot send" } };
-      }
-      return { status: 200, body: { notificationId: input.notificationId, status: "sent" } };
-    },
-  };
-}
-
-function emptyCalls(): FakeCalls {
-  return { sequence: [], create: [], queue: [], send: [] };
-}
-
-describe("OrdersNotificationAdapter (Orders -> Notifications, C-3)", () => {
-  it("follows the create -> queue -> send sequence in order", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await adapter.notify("customer-1", "ORD-1001", "fulfillment_requested", "tenant-a");
-
-    expect(calls.sequence).toEqual(["create", "queue", "send"]);
-    expect(calls.queue[0]?.notificationId).toBe("notif-1");
-    expect(calls.send[0]?.notificationId).toBe("notif-1");
-    expect(
-      [calls.create[0], calls.queue[0], calls.send[0]].map(
-        (c) => (c as { tenantId?: string } | undefined)?.tenantId,
-      ),
-    ).toEqual(["tenant-a", "tenant-a", "tenant-a"]);
-  });
-
-  it("one adapter instance serves two tenants, each call carrying its own tenant (ADR-0014)", async () => {
-    const calls = emptyCalls();
-    const adapter = new OrdersNotificationAdapter(fakeNotificationsController(calls));
-
-    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-a");
-    await adapter.notify("customer-1", "ORD-1001", "shipped", "tenant-b");
-
-    expect(calls.send.map((c) => c.tenantId)).toEqual(["tenant-a", "tenant-b"]);
-  });
-
-  it("maps customerRef/orderNumber/status into a minimal, sane CreateNotificationInput", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await adapter.notify("customer-42", "ORD-2002", "fulfillment_requested", "tenant-a");
-
-    const created = calls.create[0];
-    expect(created).toBeDefined();
-    expect(created?.recipientRef).toBe("customer-42");
-    expect(created?.sourceRef).toContain("ORD-2002");
-    expect(created?.channels).toEqual(["email"]);
-    expect(created?.templateId.length).toBeGreaterThan(0);
-    expect(created?.bodyPattern).toContain("{{orderNumber}}");
-    expect(created?.bodyPattern).toContain("{{status}}");
-    expect(created?.variables).toEqual({
-      orderNumber: "ORD-2002",
-      status: "fulfillment_requested",
+  it("cancelled: one order_canceled for the customer, keyed by the order id, with the order's facts", async () => {
+    expect.hasAssertions();
+    const { notifier, requests } = fakeNotifier();
+    const adapter = new OrdersNotificationAdapter(notifier, ordersReturning(fakeOrder()));
+    await adapter.notify("cust-1", "#1042", "cancelled", "t1", "order-7");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      tenantId: "t1",
+      template: "order_canceled",
+      eventKey: "order-7",
+      sourceRef: "orders:#1042",
+      recipientRef: "cust-1",
+      variables: {
+        order_number: "#1042",
+        currency: "EGP",
+        total_minor: "95000",
+        customer_ref: "cust-1",
+      },
     });
-    expect(created?.maxAttempts).toBeGreaterThan(0);
+    // The raw product name is stored; it is HTML-escaped only when the mail is rendered.
+    expect(requests[0]?.variables["order_json"]).toContain("<script>");
+    expect(JSON.stringify(requests[0])).not.toContain("@");
   });
 
-  it("idempotencyKey is stable across repeated calls with the same customerRef/orderNumber/status", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
-    await adapter.notify("customer-1", "ORD-3003", "shipped", "tenant-a");
-
-    expect(calls.create).toHaveLength(2);
-    expect(calls.create[0]?.idempotencyKey).toBe(calls.create[1]?.idempotencyKey);
+  it("says nothing for every other status: the generic 'status changed' mail is gone", async () => {
+    expect.hasAssertions();
+    const { notifier, requests } = fakeNotifier();
+    const adapter = new OrdersNotificationAdapter(notifier, ordersReturning(fakeOrder()));
+    for (const status of [
+      "created",
+      "confirmed",
+      "awaiting_payment",
+      "payment_requested",
+      "payment_received",
+      "ready_for_fulfillment",
+      "fulfillment_requested",
+      "fulfilled",
+      "delivered",
+      "paid",
+      "refunded",
+      "closed",
+    ]) {
+      await adapter.notify("cust-1", "#1042", status, "t1", "order-7");
+    }
+    expect(requests).toEqual([]);
   });
 
-  it("idempotencyKey differs across different statuses for the same order", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls);
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await adapter.notify("customer-1", "ORD-4004", "fulfillment_requested", "tenant-a");
-    await adapter.notify("customer-1", "ORD-4004", "shipped", "tenant-a");
-
-    expect(calls.create[0]?.idempotencyKey).not.toBe(calls.create[1]?.idempotencyKey);
+  it("does not mail the cancellation of an order Checkout placed and undid (never announced)", async () => {
+    expect.hasAssertions();
+    const { notifier, requests } = fakeNotifier();
+    const unannounced = new UnannouncedOrders();
+    const adapter = new OrdersNotificationAdapter(
+      notifier,
+      ordersReturning(fakeOrder()),
+      unannounced,
+    );
+    unannounced.mark("order-7");
+    await adapter.notify("cust-1", "#1042", "cancelled", "t1", "order-7");
+    expect(requests).toEqual([]);
+    unannounced.clear("order-7");
+    await adapter.notify("cust-1", "#1042", "cancelled", "t1", "order-7");
+    expect(requests).toHaveLength(1);
   });
 
-  it("propagates a create failure (no swallowing here — the call site already swallows)", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls, { failAt: "create" });
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await expect(adapter.notify("customer-1", "ORD-5005", "shipped", "tenant-a")).rejects.toThrow();
-    expect(calls.sequence).toEqual(["create"]);
+  it("falls back to the bare order number when the order cannot be read", async () => {
+    expect.hasAssertions();
+    const { notifier, requests } = fakeNotifier();
+    const adapter = new OrdersNotificationAdapter(notifier, ordersReturning(null));
+    await adapter.notify("cust-1", "#1042", "cancelled", "t1", "order-7");
+    expect(requests[0]?.variables).toEqual({ order_number: "#1042" });
   });
 
-  it("propagates a queue failure after a successful create", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls, { failAt: "queue" });
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await expect(adapter.notify("customer-1", "ORD-6006", "shipped", "tenant-a")).rejects.toThrow();
-    expect(calls.sequence).toEqual(["create", "queue"]);
-  });
-
-  it("propagates a send failure after a successful create+queue", async () => {
-    const calls = emptyCalls();
-    const notifications = fakeNotificationsController(calls, { failAt: "send" });
-    const adapter = new OrdersNotificationAdapter(notifications);
-
-    await expect(adapter.notify("customer-1", "ORD-7007", "shipped", "tenant-a")).rejects.toThrow();
-    expect(calls.sequence).toEqual(["create", "queue", "send"]);
+  it("never throws; a failing or refusing notifier is logged with a short reason, no address", async () => {
+    expect.hasAssertions();
+    log = spyLogger();
+    for (const options of [{ throws: true }, { refuses: true }]) {
+      const { notifier } = fakeNotifier(options);
+      const adapter = new OrdersNotificationAdapter(notifier, ordersReturning(fakeOrder()));
+      await expect(
+        adapter.notify("cust-1", "#1042", "cancelled", "t1", "order-7"),
+      ).resolves.toBeUndefined();
+    }
+    expect(log.warn).toHaveBeenCalledTimes(2);
+    expect(log.dumped()).not.toContain("a@b.test");
+    expect(log.dumped()).toContain("order_canceled");
   });
 });

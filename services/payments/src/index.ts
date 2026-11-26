@@ -16,6 +16,7 @@ export { PAYMENTS_PUBLISHED_EVENTS } from "./infrastructure/payment-event-transl
 export type {
   FinancePort,
   NotificationPort,
+  PaymentNotificationEvent,
   OrdersPort,
   PaymentCredentialVault,
   PaymentProviderResolver,

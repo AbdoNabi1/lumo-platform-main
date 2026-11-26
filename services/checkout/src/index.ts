@@ -20,6 +20,7 @@ export type {
   DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
+  OrderPlacedPort,
   OrderStockReservationPort,
   StockReservationResult,
   InventoryValidationResult,

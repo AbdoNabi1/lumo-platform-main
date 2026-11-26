@@ -54,7 +54,13 @@ async function notifyBestEffort(
 ): Promise<void> {
   if (notifications === undefined) return;
   try {
-    await notifications.notify(order.customerRef, order.orderNumber.value, order.status, tenantId);
+    await notifications.notify(
+      order.customerRef,
+      order.orderNumber.value,
+      order.status,
+      tenantId,
+      order.id.toString(),
+    );
   } catch {
     // Best-effort: a notification failure never fails the order's own transition.
   }

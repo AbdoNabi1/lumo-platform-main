@@ -94,7 +94,17 @@ export interface ShippingPort {
 
 /** Sends a best-effort lifecycle notification — reference-only, never blocks a transition's own result. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface NotificationPort {
-  notify(customerRef: string, orderNumber: string, status: string, tenantId: string): Promise<void>;
+  /**
+   * `orderId` (Wave 2b) lets a trigger read the order it is mailing about. Optional so every older
+   * caller and adapter keeps working.
+   */
+  notify(
+    customerRef: string,
+    orderNumber: string,
+    status: string,
+    tenantId: string,
+    orderId?: string,
+  ): Promise<void>;
 }
 
 /**

@@ -5,8 +5,14 @@ export type {
   WiredNotifications,
 } from "./composition";
 export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+export { TemplatedNotifier } from "./application/templated-notifier";
+export type {
+  TemplatedNotificationOutcome,
+  TemplatedNotificationRequest,
+} from "./application/templated-notifier";
 export type {
   EmailDeliveryPort,
+  NotificationLog,
   OutgoingMail,
   RecipientContact,
   RecipientResolverPort,

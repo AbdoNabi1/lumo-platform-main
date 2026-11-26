@@ -19,6 +19,7 @@ import type {
   DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
+  OrderPlacedPort,
   OrderCreationPort,
   OrderStockReservationPort,
   PromotionValidationPort,
@@ -62,6 +63,8 @@ export interface CompleteCheckoutDeps {
   readonly stockReservation?: OrderStockReservationPort;
   /** Plan 3C: cancels the order when its stock could not be reserved. Optional, like the port above. */
   readonly orderCancellation?: OrderCancellationPort;
+  /** Wave 2b: the order-confirmation and staff new-order mails, after the commit and best effort. */
+  readonly orderPlaced?: OrderPlacedPort;
   /** Phase 2: when present, the discounts are worked out once more right before the order exists. */
   readonly promotionValidation?: PromotionValidationPort;
   /** Phase 2: when present, a change of discounts re-works the tax that was already requested. */
@@ -113,6 +116,7 @@ export class CompleteCheckout implements UseCase<
       from?: string;
       draftOrderRef?: string;
       marketing?: { readonly customerRef: string | undefined; readonly checkoutSessionId: string };
+      placed?: { readonly orderRef: string; readonly customerRef: string | undefined };
     } = {};
     const result = await this.deps.unitOfWork.run<Result<CompleteCheckoutOutput, DomainError>>(
       async (tx) => {
@@ -248,6 +252,7 @@ export class CompleteCheckout implements UseCase<
         }
 
         await this.deps.sessions.save(session, input.tenantId, tx);
+        after.placed = { orderRef, customerRef: draft.customerRef ?? orderCustomerRef };
         if (session.marketingOptIn === true) {
           after.marketing = {
             customerRef: draft.customerRef ?? orderCustomerRef,
@@ -287,10 +292,34 @@ export class CompleteCheckout implements UseCase<
     if (result.ok && after.marketing !== undefined) {
       await this.recordMarketingConsent(after.marketing, input.tenantId);
     }
+    if (result.ok && after.placed !== undefined) {
+      await this.announceOrderPlaced(after.placed, input.tenantId);
+    }
     if (result.ok && after.draftOrderRef !== undefined) {
       await this.reportDraftCompletion(after.draftOrderRef, result.value.orderRef, input);
     }
     return result;
+  }
+
+  /**
+   * Wave 2b: the order exists and its checkout committed, so it can be announced (customer confirmation,
+   * staff new-order). After the commit and best effort: a failure is logged without any address and
+   * never undoes or fails the order. A retried completion returns early above and never re-announces.
+   */
+  private async announceOrderPlaced(
+    placed: { readonly orderRef: string; readonly customerRef: string | undefined },
+    tenantId: string,
+  ): Promise<void> {
+    if (this.deps.orderPlaced === undefined) return;
+    try {
+      await this.deps.orderPlaced.orderPlaced({ tenantId, ...placed });
+    } catch (error) {
+      logger.warn("could not announce the placed order", {
+        tenantId,
+        orderRef: placed.orderRef,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
