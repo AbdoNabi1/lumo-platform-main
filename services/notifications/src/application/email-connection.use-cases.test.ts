@@ -228,7 +228,7 @@ describe("SaveEmailConnection (D47-D49)", () => {
     expect.hasAssertions();
     const ctx = setup();
     await save(ctx);
-    const next = "re_newkey_ZyXwVuTsRqPoNmLkJiHgFe9876";
+    const next = "re_newkey_xxxxxxxxxxxxxxxxxx9876";
     const again = await save(ctx, { expectedVersion: 1, apiKey: next });
     expect(again).toMatchObject({ value: { connection: { secretLast4: "9876", version: 2 } } });
     expect(

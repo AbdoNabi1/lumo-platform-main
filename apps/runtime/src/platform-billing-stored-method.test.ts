@@ -357,5 +357,6 @@ describe("the production boot guard counts stored-method billing as real billing
         platformBillingStoredMethod: undefined,
       }),
     ).toThrow(/PLATFORM_BILLING_STRIPE_SECRET_KEY/);
-  });
+    // The first dynamic import of ./api loads the whole runtime graph; on CI that alone can pass 5 s.
+  }, 30_000);
 });

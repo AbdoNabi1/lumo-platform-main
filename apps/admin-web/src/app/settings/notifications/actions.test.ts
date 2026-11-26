@@ -182,7 +182,7 @@ describe("saveNotificationSettingsAction", () => {
 });
 
 const BOTH_PAGES = ["/settings/customer-accounts", "/settings/notifications"];
-const KEY = "re_abcdefghijklmnop1234";
+const KEY = "re_xxxxxxxxxxxxxxxx1234";
 
 describe("email account actions", () => {
   const save = {

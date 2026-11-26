@@ -239,7 +239,7 @@ describe("writes", () => {
     const fetchMock = stubFetch(jsonResponse(200, EMAIL_CONNECTED));
 
     const result = await api.saveEmailConnection(
-      { kind: "resend", fromEmail: "orders@shop.example", apiKey: "re_abcdefghijklmnop1234" },
+      { kind: "resend", fromEmail: "orders@shop.example", apiKey: "re_xxxxxxxxxxxxxxxx1234" },
       2,
       "key-4",
     );
@@ -251,7 +251,7 @@ describe("writes", () => {
     expect(sent.body).toEqual({
       kind: "resend",
       fromEmail: "orders@shop.example",
-      apiKey: "re_abcdefghijklmnop1234",
+      apiKey: "re_xxxxxxxxxxxxxxxx1234",
       expectedVersion: 2,
     });
     expect(sent.headers["idempotency-key"]).toBe("key-4");

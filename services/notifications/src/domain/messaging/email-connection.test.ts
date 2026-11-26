@@ -7,7 +7,7 @@ import {
   type StoredEmailConnection,
 } from "./email-connection";
 
-const KEY = "re_AbCdEfGhIjKlMnOpQrStUv123456";
+const KEY = "re_xxxxxxxxxxxxxxxxxxxxxx123456";
 
 function connection(overrides: Partial<StoredEmailConnection> = {}): StoredEmailConnection {
   return {
@@ -51,7 +51,7 @@ describe("validateEmailConnectionDraft", () => {
 
   it("refuses a malformed key, listing the field but never the value", () => {
     expect.hasAssertions();
-    for (const apiKey of ["sk_live_123456789012345678", "re_tiny", `re_${"x".repeat(200)}`, 42]) {
+    for (const apiKey of ["pk_xxxxxxxxxxxxxxxx5678", "re_tiny", `re_${"x".repeat(200)}`, 42]) {
       const result = validateEmailConnectionDraft({ kind: "resend", fromEmail: "a@b.co", apiKey });
       expect(result.ok).toBe(false);
       expect(JSON.stringify(result)).not.toContain("sk_live");

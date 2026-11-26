@@ -92,7 +92,7 @@ describe("SMTP connection: the server flag (EMAIL_SMTP_ENABLED)", () => {
       kind: "resend",
       smtp: undefined,
       password: undefined,
-      apiKey: "re_store_AbCdEfGhIjKlMnOpQrStUv1234",
+      apiKey: "re_store_xxxxxxxxxxxxxxxxxxxx1234",
     });
     expect(result).toMatchObject({
       ok: true,
@@ -364,7 +364,7 @@ describe("SMTP connection: saving", () => {
       kind: "resend",
       smtp: undefined,
       password: undefined,
-      apiKey: "re_store_AbCdEfGhIjKlMnOpQrStUv1234",
+      apiKey: "re_store_xxxxxxxxxxxxxxxxxxxx1234",
     });
     const result = await save(ctx, { password: null }, 1);
     expect(result).toMatchObject({ ok: false, error: { fields: [{ field: "password" }] } });

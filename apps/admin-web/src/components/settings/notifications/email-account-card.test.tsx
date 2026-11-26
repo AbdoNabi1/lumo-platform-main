@@ -33,7 +33,7 @@ vi.mock("@/app/settings/notifications/actions", () => actions);
 const { EmailAccountCard } = await import("./email-account-card");
 
 const copy = en.notificationSettings.email;
-const KEY = "re_abcdefghijklmnop5678";
+const KEY = "re_xxxxxxxxxxxxxxxx5678";
 const body = () => within(document.body);
 
 beforeEach(() => {

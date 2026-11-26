@@ -10,8 +10,8 @@ import type { SignupEmailPort } from "../interfaces/signup-email.port";
  */
 export class LoggingSignupEmailAdapter implements SignupEmailPort {
   /** The dev adapter has nothing to connect: it always "can" log. */
-  async isAvailable(): Promise<boolean> {
-    return true;
+  isAvailable(): Promise<boolean> {
+    return Promise.resolve(true);
   }
 
   async sendCompleteAccountEmail(input: {
