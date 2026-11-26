@@ -275,20 +275,26 @@ describe.runIf(Boolean(databaseUrl))("sender_domains (integration)", () => {
     await prisma.$disconnect();
   });
 
-  it("two concurrent first saves of one domain: one wins, the other is a ConcurrencyError", async () => {
+  it("two concurrent saves of one domain leave exactly one row; a loser may only be a ConcurrencyError", async () => {
     const tenantId = newTenant();
     const domain = unique();
     const prisma = createTestPrismaClient(databaseUrl);
     const repo = new PrismaSenderDomainRepository(prisma);
 
+    // `save` is an upsert (update, else create). When the two transactions serialize, the second
+    // one simply updates the first one's row and also succeeds; when they race on the create, the
+    // loser gets a ConcurrencyError. Either is correct; what must hold is the end state.
     const settled = await Promise.allSettled([
       repo.save(tenantId, row(domain)),
       repo.save(tenantId, row(domain)),
     ]);
 
-    expect(settled.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    const lost = settled.find((r) => r.status === "rejected");
-    expect(lost?.status === "rejected" && lost.reason).toBeInstanceOf(ConcurrencyError);
+    expect(settled.some((r) => r.status === "fulfilled")).toBe(true);
+    for (const result of settled) {
+      if (result.status === "rejected") expect(result.reason).toBeInstanceOf(ConcurrencyError);
+    }
+    expect(await prisma.senderDomain.count({ where: { tenantId, domain } })).toBe(1);
+    expect(await repo.find(tenantId)).toEqual(row(domain));
     await prisma.$disconnect();
   });
 

@@ -55,8 +55,8 @@ export function mailboxAddress(mailbox: string): string {
 
 /** A display name that cannot break a header: no quotes, angle brackets, backslash or control characters. */
 export function safeDisplayName(name: string): string {
-  // eslint-disable-next-line no-control-regex
   const cleaned = name
+    // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F"<>\\]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
