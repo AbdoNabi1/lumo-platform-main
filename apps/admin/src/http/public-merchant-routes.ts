@@ -14,7 +14,14 @@ import {
 } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./public-staff-auth-routes";
-import { finishStaffLogin, loginVerifyBody } from "./staff-login-verify";
+import {
+  confirmStaffSetup,
+  finishStaffLogin,
+  loginVerifyBody,
+  setupConfirmBody,
+  setupStartBody,
+  startStaffSetup,
+} from "./staff-login-verify";
 
 const signupBody = z
   .object({
@@ -232,7 +239,11 @@ export function publicMerchantRoutes(
         });
         if (session.status === 200) return session;
         const error = (session.body as { error?: { code?: string } } | null)?.error;
-        if (session.status === 403 && error?.code === "MFA_REQUIRED") return session;
+        if (
+          session.status === 403 &&
+          (error?.code === "MFA_REQUIRED" || error?.code === "MFA_SETUP_REQUIRED")
+        )
+          return session;
         if (session.status === 503 || error?.code === "NOT_CONFIGURED") {
           // The client still gets the ordinary 401 (nothing about the deployment on the wire), but
           // every merchant sign-in is failing, so the operator has to hear about it.
@@ -258,6 +269,46 @@ export function publicMerchantRoutes(
         // The challenge names the store (signed when the merchant's password was right): no tenant
         // check against the request, which is the platform tenant by the gate above.
         return await finishStaffLogin({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/setup/start",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: start two-step setup at merchant sign-in (returns the key ONCE; never cached)",
+      schema: { body: setupStartBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // The setup challenge names the store (signed when the password was right): no tenant check against
+        // the request, which is the platform tenant by the gate above.
+        return await startStaffSetup({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/setup/confirm",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish setup at merchant sign-in with the first code; returns the token and backup codes ONCE",
+      schema: { body: setupConfirmBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        return await confirmStaffSetup({
           admin,
           body,
           ...(rateLimiter === undefined ? {} : { rateLimiter }),

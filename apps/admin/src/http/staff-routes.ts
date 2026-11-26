@@ -12,6 +12,7 @@ const inviteBody = z.object({ email: z.string().max(320), role: roleSchema }).st
 const versionBody = z.object({ expectedVersion: z.number().int().min(1) }).strict();
 const roleBody = z.object({ role: roleSchema }).strict();
 const activeBody = z.object({ active: z.boolean() }).strict();
+const resetTwoStepBody = z.object({}).strict();
 const policyBody = z.object({ requireTwoStep: z.boolean() }).strict();
 // `limit` 1..50 like Security's own check; a malformed `cursor` is Security's 422 on field `cursor`.
 const activityQuery = z.object({
@@ -130,6 +131,18 @@ export function staffRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
           params.principalExternalId,
           body.role,
         ),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/staff/:principalExternalId/two-step/reset",
+      version: 1,
+      permission: "staff:reset_two_step",
+      idempotent: true,
+      summary:
+        "Reset a colleague's two-step verification (they set it up again at their next sign-in; never the owner's or your own)",
+      schema: { params: memberParams, body: resetTwoStepBody },
+      handle: ({ params, context }) =>
+        admin.staff.resetTwoStep(context.principal, context.tenantId, params.principalExternalId),
     }),
     defineRoute({
       method: "POST",

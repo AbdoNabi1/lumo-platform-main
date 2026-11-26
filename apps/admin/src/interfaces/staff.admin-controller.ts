@@ -57,6 +57,12 @@ export interface StaffAdminControllerDeps {
    * Without it "require two-step" can't be turned on and the policy read says so.
    */
   readonly codeStepAvailable: boolean;
+  /**
+   * Wave 1f (D25/D29): two-step is required for everyone on the platform (rule on AND the code step
+   * available). While true the per-store switch is read-only: the policy read says `platformRequired`
+   * and the policy write is a 409.
+   */
+  readonly twoStepRequired: boolean;
 }
 
 /** A failure with a fixed wire code that the client may retry (an email that bounced, say). */
@@ -75,6 +81,15 @@ const NOT_CONFIGURED: AdminResponse = {
   status: 503,
   body: toErrorEnvelope(
     new AppError("Email isn't set up, so invitations can't be sent", { code: "NOT_CONFIGURED" }),
+  ),
+};
+
+const POLICY_PLATFORM_REQUIRED: AdminResponse = {
+  status: 409,
+  body: toErrorEnvelope(
+    new AppError("Two-step verification is required for everyone on Morbeh", {
+      code: "TWO_STEP_REQUIRED",
+    }),
   ),
 };
 
@@ -127,10 +142,15 @@ export class StaffAdminController {
   async securityPolicy(principal: Principal, tenantId: string): Promise<AdminResponse> {
     const denied = await this.deps.guard.ensure(principal, "staff:read_policy");
     if (denied) return denied;
-    return this.deps.security.getStaffSecurityPolicy({
+    const policy = await this.deps.security.getStaffSecurityPolicy({
       tenantId,
       codeStepAvailable: this.deps.codeStepAvailable,
     });
+    if (policy.status !== 200) return policy;
+    return {
+      ...policy,
+      body: { ...(policy.body as object), platformRequired: this.deps.twoStepRequired },
+    };
   }
 
   async setRequireTwoStep(
@@ -140,6 +160,7 @@ export class StaffAdminController {
   ): Promise<AdminResponse> {
     const denied = await this.deps.guard.ensure(principal, "staff:set_policy");
     if (denied) return denied;
+    if (this.deps.twoStepRequired) return POLICY_PLATFORM_REQUIRED;
     return this.deps.security.setRequireTwoStep({
       tenantId,
       actorExternalId: principal.id,
@@ -324,6 +345,26 @@ export class StaffAdminController {
     });
     if (changed.status === 200) this.deps.liveAccess.invalidate(tenantId, targetExternalId);
     return changed;
+  }
+
+  /**
+   * Wave 1f (D28): an admin resets a colleague's two-step. Security refuses the owner and the actor's own;
+   * on success the target's enrolments are gone and their sessions revoked, so the live check forgets them.
+   */
+  async resetTwoStep(
+    principal: Principal,
+    tenantId: string,
+    targetExternalId: string,
+  ): Promise<AdminResponse> {
+    const denied = await this.deps.guard.ensure(principal, "staff:reset_two_step");
+    if (denied) return denied;
+    const done = await this.deps.security.resetStaffTwoStep({
+      tenantId,
+      actorExternalId: principal.id,
+      targetExternalId,
+    });
+    if (done.status === 200) this.deps.liveAccess.invalidate(tenantId, targetExternalId);
+    return done;
   }
 
   /**

@@ -390,6 +390,7 @@ describe("self-service two-step: /auth/staff/two-step", () => {
         activatedAt: null,
         backupCodesLeft: 0,
         policyRequired: false,
+        platformRequired: false,
       });
     }
   });
