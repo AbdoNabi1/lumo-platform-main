@@ -18,6 +18,17 @@ vi.mock("@/lib/runtime-api", () => ({
   getCheckoutSession: vi.fn().mockResolvedValue({ status: 200, body: { id: "cs-1" } }),
   getPaymentMethods: vi.fn().mockResolvedValue([]),
   getShippableCountries: vi.fn().mockResolvedValue(null),
+  // Wave 2a: the page now reads the shop's checkout settings; the defaults are today's page.
+  getPublicCheckoutSettings: vi.fn().mockResolvedValue({
+    nameMode: "required",
+    phoneMode: "required",
+    line2Mode: "optional",
+    marketingEmailPrompt: "hidden",
+    cartLineLimit: null,
+    requireLogin: false,
+    accountsMode: "optional",
+    showAccountLink: true,
+  }),
 }));
 vi.mock("@/lib/customer-session", () => ({
   CUSTOMER_SESSION_COOKIE: "customer",

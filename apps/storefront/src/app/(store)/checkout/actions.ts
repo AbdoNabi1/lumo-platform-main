@@ -7,6 +7,7 @@ import {
   CHECKOUT_SESSION_COOKIE_OPTIONS,
   GUEST_SESSION_COOKIE,
 } from "@/lib/cart";
+import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-session";
 import {
   applyCheckoutDiscountCode,
   completeCheckout as completeCheckoutApi,
@@ -38,10 +39,18 @@ import {
  * not a reason to create one.
  */
 
+/** One field the server refused on a 422 (`fields: [{ field, message }]`), message as the server wrote it. */
+export interface CheckoutFieldError {
+  readonly field: string;
+  readonly message: string;
+}
+
 export type CheckoutActionResult =
   | { readonly ok: true; readonly checkoutSessionId: string }
   | {
       readonly ok: false;
+      /** Wave 2a: on `"validation"`, the fields the server named (name, phone, line2, quantity), when it did. */
+      readonly fields?: readonly CheckoutFieldError[];
       /** `"ownership"`: no session cookie, or the Runtime API 404'd (stale/cross-session cookie).
        * `"validation"`: the Runtime API 422'd. `"unavailable"`: the Runtime API 409'd (the session
        * can no longer be modified). `"out-of-stock"` (Plan 2B-3): completion refused because a line
@@ -49,6 +58,8 @@ export type CheckoutActionResult =
        * discount or shipping of an invoice checkout was fixed by the merchant (409 `DRAFT_LOCKED`).
        * `"discounts-changed"` (Discounts Part 3): completion refused because the discounts no longer
        * give the total the shopper reviewed; the session was revalidated, so the new total is on screen.
+       * `"login-required"` (Wave 2a): the shop only takes orders from signed-in customers (403
+       * `LOGIN_REQUIRED`).
        * `"network"`: unreachable or an unexpected status. */
       readonly reason:
         | "ownership"
@@ -57,6 +68,7 @@ export type CheckoutActionResult =
         | "out-of-stock"
         | "draft-locked"
         | "discounts-changed"
+        | "login-required"
         | "network";
     };
 
@@ -158,13 +170,63 @@ function isDraftLocked(body: unknown): boolean {
   );
 }
 
+/** A 403 with the code the server gives a guest when the shop requires sign-in to check out. */
+function isLoginRequired(response: { readonly status: number; readonly body: unknown }): boolean {
+  return (
+    response.status === 403 &&
+    typeof response.body === "object" &&
+    response.body !== null &&
+    (response.body as { readonly code?: unknown }).code === "LOGIN_REQUIRED"
+  );
+}
+
+/**
+ * The `{ field, message }` pairs of a 422 envelope. Messages are the server's own words and are
+ * only ever shown through the dictionary for the fields the form knows; anything else is dropped.
+ */
+function fieldErrors(body: unknown): readonly CheckoutFieldError[] {
+  if (typeof body !== "object" || body === null) return [];
+  const { fields } = body as { readonly fields?: unknown };
+  if (!Array.isArray(fields)) return [];
+  const found: CheckoutFieldError[] = [];
+  for (const entry of fields as readonly unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { field, message } = entry as { readonly field?: unknown; readonly message?: unknown };
+    if (typeof field === "string" && field !== "" && typeof message === "string") {
+      found.push({ field, message });
+    }
+  }
+  return found;
+}
+
 /** The reason for a failed mutating call; only a 409 body is ever read (never echoed). */
 function mutationFailure(response: {
   readonly status: number;
   readonly body: unknown;
-}): "ownership" | "validation" | "unavailable" | "draft-locked" | "network" {
+}): "ownership" | "validation" | "unavailable" | "draft-locked" | "login-required" | "network" {
   if (response.status === 409 && isDraftLocked(response.body)) return "draft-locked";
+  if (isLoginRequired(response)) return "login-required";
   return mapFailureStatus(response.status);
+}
+
+/** A failed call as the action reports it: the reason, plus the named fields of a 422 when there are any. */
+function failure(response: {
+  readonly status: number;
+  readonly body: unknown;
+}): Extract<CheckoutActionResult, { readonly ok: false }> {
+  const reason = mutationFailure(response);
+  if (reason === "validation") {
+    const fields = fieldErrors(response.body);
+    if (fields.length > 0) return { ok: false, reason, fields };
+  }
+  return { ok: false, reason };
+}
+
+/** The signed-in customer's session id (opaque, from the HttpOnly cookie), or `undefined` for a guest. */
+async function customerSessionId(): Promise<string | undefined> {
+  const jar = await cookies();
+  const value = jar.get(CUSTOMER_SESSION_COOKIE)?.value;
+  return value !== undefined && value.length > 0 ? value : undefined;
 }
 
 function isDiscountsChanged(body: unknown): boolean {
@@ -219,9 +281,7 @@ async function withSession(
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
   const response = await call(sessionRef);
-  if (response.status < 200 || response.status >= 300) {
-    return { ok: false, reason: mutationFailure(response) };
-  }
+  if (response.status < 200 || response.status >= 300) return failure(response);
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };
 }
@@ -288,16 +348,19 @@ export async function startCheckout(cartId: string): Promise<CheckoutActionResul
     return { ok: false, reason: "network" };
   }
 
-  const started = await startCheckoutApi(sessionRef, cartId, current.body.cart.currency);
+  // Wave 2a: a shop that requires sign-in wants the customer's session on create (and on complete).
+  const customerSession = await customerSessionId();
+  const started =
+    customerSession === undefined
+      ? await startCheckoutApi(sessionRef, cartId, current.body.cart.currency)
+      : await startCheckoutApi(sessionRef, cartId, current.body.cart.currency, customerSession);
   if (started.status < 200 || started.status >= 300 || started.body === null) {
-    return { ok: false, reason: mapFailureStatus(started.status) };
+    return failure(started);
   }
   const checkoutSessionId = started.body.id;
 
   const withItems = await loadCheckoutItems(checkoutSessionId, sessionRef, cartId);
-  if (withItems.status < 200 || withItems.status >= 300) {
-    return { ok: false, reason: mapFailureStatus(withItems.status) };
-  }
+  if (withItems.status < 200 || withItems.status >= 300) return failure(withItems);
 
   const jar = await cookies();
   jar.set(CHECKOUT_SESSION_COOKIE, checkoutSessionId, CHECKOUT_SESSION_COOKIE_OPTIONS);
@@ -314,9 +377,13 @@ export async function startCheckout(cartId: string): Promise<CheckoutActionResul
 export async function setContactEmail(
   checkoutSessionId: string,
   email: string,
+  marketingOptIn?: boolean,
 ): Promise<CheckoutActionResult> {
+  // Wave 2a: the answer is sent only when the shop showed the box (the caller passes it then).
   return withSession(checkoutSessionId, (sessionRef) =>
-    setCheckoutContact(checkoutSessionId, sessionRef, email),
+    marketingOptIn === undefined
+      ? setCheckoutContact(checkoutSessionId, sessionRef, email)
+      : setCheckoutContact(checkoutSessionId, sessionRef, email, marketingOptIn),
   );
 }
 
@@ -408,7 +475,11 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
   if (sessionRef === undefined) return { ok: false, reason: "ownership" };
 
   const idempotencyKey = crypto.randomUUID();
-  const response = await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey);
+  const customerSession = await customerSessionId();
+  const response =
+    customerSession === undefined
+      ? await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey)
+      : await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey, customerSession);
   if (response.status < 200 || response.status >= 300) {
     // Plan 2B-3: the API refuses a completion whose stock is not there with a 409 whose message
     // starts `OUT_OF_STOCK:` — a different outcome from "the session can no longer be modified".
@@ -421,7 +492,7 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
       revalidatePath("/checkout");
       return { ok: false, reason: "discounts-changed" };
     }
-    return { ok: false, reason: mutationFailure(response) };
+    return failure(response);
   }
   revalidatePath("/checkout");
   return { ok: true, checkoutSessionId };

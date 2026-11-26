@@ -21,12 +21,15 @@ export function StoreChrome({
   locale,
   previewToken,
   previewExpired,
+  showAccountLink = true,
   children,
 }: {
   readonly shell: StorefrontShell;
   readonly locale: Locale;
   readonly previewToken: string | null;
   readonly previewExpired: boolean;
+  /** Wave 2a: the header's account icon (checkout settings: link shown AND accounts on). */
+  readonly showAccountLink?: boolean;
   readonly children: ReactNode;
 }) {
   const t = dictionaryFor(locale);
@@ -60,7 +63,13 @@ export function StoreChrome({
           )}
         >
           <div className="mx-auto max-w-5xl px-4 py-3">
-            <SiteHeader t={t} locale={locale} shell={shell} previewToken={previewToken} />
+            <SiteHeader
+              t={t}
+              locale={locale}
+              shell={shell}
+              previewToken={previewToken}
+              showAccountLink={showAccountLink}
+            />
           </div>
         </div>
         <div className="flex-1">{children}</div>

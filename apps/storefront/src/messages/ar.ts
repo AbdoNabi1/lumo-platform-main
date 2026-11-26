@@ -190,6 +190,7 @@ export const ar: Dictionary = {
     proceedToCheckout: "المتابعة إلى الدفع",
     startingCheckout: "جارٍ بدء الدفع…",
     checkoutErrorBody: "تعذّر بدء عملية الدفع. حاول مرة أخرى.",
+    lineLimit: "تقدر تضيف لحد {limit} من هذا المنتج",
   },
   checkout: {
     title: "الدفع",
@@ -206,8 +207,12 @@ export const ar: Dictionary = {
       country: "الدولة/المنطقة",
       selectCountry: "اختار الدولة",
       name: "الاسم بالكامل",
+      nameOptional: "الاسم بالكامل (اختياري)",
       line1: "العنوان",
       line2: "شقة، دور، علامة مميزة (اختياري)",
+      line2Required: "شقة، دور، علامة مميزة",
+      nameMissing: "اكتب اسمك بالكامل.",
+      line2Missing: "اكتب الشقة أو الدور أو العلامة المميزة.",
       city: "المدينة",
       postalCode: "الرمز البريدي (اختياري)",
       phone: "رقم الموبايل",
@@ -222,6 +227,15 @@ export const ar: Dictionary = {
     contact: {
       label: "عنوان البريد الإلكتروني",
       hint: "هنبعت تأكيد الطلب على الإيميل ده.",
+    },
+    marketing: {
+      label: "ابعتوا لي أخبار وعروض على الإيميل",
+    },
+    loginRequired: {
+      title: "سجّل الدخول لإتمام الطلب",
+      body: "المتجر ده بيطلب من العملاء تسجيل الدخول قبل ما يعملوا طلب.",
+      signIn: "تسجيل الدخول",
+      register: "إنشاء حساب",
     },
     shippingMethodHint: "اكتب عنوان الشحن عشان تظهر طرق الشحن.",
     noShippingRates: "الشحن مش متاح للعنوان ده.",
@@ -397,6 +411,11 @@ export const ar: Dictionary = {
       mfa: "يحتاج هذا الحساب إلى خطوة تحقّق إضافية غير متاحة هنا بعد.",
       network: "تعذّر الوصول إلى خدمة الحسابات. حاول مرة أخرى.",
       invalidToken: "هذا الرابط غير صالح أو انتهت صلاحيته.",
+      accountsDisabled: "حسابات العملاء متوقفة في هذا المتجر",
+    },
+    accountsDisabled: {
+      title: "حسابات العملاء متوقفة في هذا المتجر",
+      body: "ما زال بإمكانك إتمام الطلب كضيف.",
     },
     signup: {
       checkEmailTitle: "تحقّق من بريدك الإلكتروني",

@@ -4,6 +4,8 @@ import { AlertTriangleIcon, ArrowLeftIcon, ShoppingCartIcon } from "lucide-react
 import { CartView } from "@/components/cart-view";
 import { StatePanel } from "@/components/state-panel";
 import { GUEST_SESSION_COOKIE, resolveCurrentCart } from "@/lib/cart";
+import { loadCheckoutSettings } from "@/lib/checkout-settings";
+import { DEFAULT_PUBLIC_CHECKOUT_SETTINGS } from "@/lib/checkout-settings-model";
 import { dictionaryFor } from "@/lib/i18n";
 import { getPreviewToken, getRequestLocale } from "@/lib/request-locale";
 
@@ -36,6 +38,11 @@ export default async function CartPage() {
   const sessionRef = jar.get(GUEST_SESSION_COOKIE)?.value;
 
   const result = await resolveCurrentCart(sessionRef);
+  // Wave 2a: the shop's add-to-cart limit caps the quantity stepper; read fresh, defaults if it fails.
+  const settings =
+    result.status === "error" || result.status === "empty"
+      ? DEFAULT_PUBLIC_CHECKOUT_SETTINGS
+      : await loadCheckoutSettings();
 
   return (
     <main className="mx-auto flex max-w-2xl flex-col gap-6 p-8">
@@ -59,7 +66,13 @@ export default async function CartPage() {
           action={{ href: "/", label: t.cart.backToShop }}
         />
       ) : (
-        <CartView cart={result.cart} lines={result.lines} t={t} locale={locale} />
+        <CartView
+          cart={result.cart}
+          lines={result.lines}
+          t={t}
+          locale={locale}
+          settings={settings}
+        />
       )}
     </main>
   );

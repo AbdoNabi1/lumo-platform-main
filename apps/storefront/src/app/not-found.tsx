@@ -2,6 +2,7 @@ import { CompassIcon } from "lucide-react";
 import { StatePanel } from "@/components/state-panel";
 import { LockedFrame } from "@/components/locked-frame";
 import { StoreChrome } from "@/components/store-chrome";
+import { getAccountLinkVisible } from "@/lib/checkout-settings";
 import { dictionaryFor } from "@/lib/i18n";
 import {
   getLockedView,
@@ -55,6 +56,7 @@ export default async function NotFound() {
       locale={locale}
       previewToken={previewToken}
       previewExpired={token !== null && shell.previewExpired}
+      showAccountLink={await getAccountLinkVisible()}
     >
       {panel}
     </StoreChrome>

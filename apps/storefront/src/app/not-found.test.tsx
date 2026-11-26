@@ -24,6 +24,8 @@ vi.mock("@/lib/online-store", async (original) => ({
   ...(await original<typeof OnlineStore>()),
   getPublicAccess: access.read,
 }));
+/** Wave 2a: the header's account icon reads the shop's checkout settings (display only). */
+vi.mock("@/lib/checkout-settings", () => ({ getAccountLinkVisible: async () => true }));
 const jar = vi.hoisted(() => ({ cookie: undefined as string | undefined }));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
