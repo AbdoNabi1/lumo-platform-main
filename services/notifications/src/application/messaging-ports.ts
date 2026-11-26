@@ -23,23 +23,25 @@ export interface RecipientResolverPort {
   resolve(tenantId: string, customerRef: string): Promise<RecipientContact | null>;
 }
 
+/** A store's mail, without a From: the store's own email account decides that (D46). */
 export interface OutgoingMail {
   readonly to: string;
   readonly subject: string;
   readonly text: string;
   readonly html: string;
-  readonly from: string;
-  readonly replyTo?: string;
   readonly idempotencyKey?: string;
 }
 
-/** The one way the Notifications context sends a real email (the admin app implements it over `EmailSender`). */
-export interface EmailDeliveryPort {
-  /** `false` when the runtime has no real provider: nothing is ever delivered, and the UI says so (D40). */
-  readonly deliveryConfigured: boolean;
-  /** The platform's sending mailbox, e.g. `Morbeh <onboarding@resend.dev>`. */
-  readonly platformFrom: string;
-  send(message: OutgoingMail): Promise<void>;
+/**
+ * The one way the Notifications context sends a store's mail (D45/D46): through the STORE's own email
+ * connection, resolved per call. There is no platform fallback: no connection, a switched-off one or
+ * one that fails means nothing is sent and `send` throws a `StoreEmailError`.
+ */
+export interface StoreMailSender {
+  /** True when the store has a connected, switched-on connection the server can open and use. */
+  isConnected(tenantId: string): Promise<boolean>;
+  /** `storeName` becomes the display name of the From (the merchant's own address). */
+  send(tenantId: string, storeName: string, mail: OutgoingMail): Promise<void>;
 }
 
 /** Logs without bodies or addresses (ADR-0006). */

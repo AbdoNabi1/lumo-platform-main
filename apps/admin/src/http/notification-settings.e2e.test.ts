@@ -14,17 +14,20 @@ import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { permissionMatches, ROLE_PERMISSIONS } from "@platform/auth";
 import { notificationSettingsRoutes } from "./notification-settings-routes";
 import { createAdminHttpApi } from "./server";
+import { STORE_API_KEY, storeEmailHarness } from "./testing/store-email-harness";
 
 /**
- * Wave 2b: Settings > Notifications over the REAL admin pipeline (`createAdminHttpApi`, multi-tenant,
+ * Wave 2b/2b2: Settings > Notifications over the REAL admin pipeline (`createAdminHttpApi`, multi-tenant,
  * real permission guard and error mapping), exactly as the admin page calls it.
  */
 
 const clock: Clock = { now: () => new Date("2026-11-26T00:00:00.000Z") };
 const admin: AuthenticatedIdentity = { id: "staff-1", kind: "staff", roles: ["admin"] };
+const noAddress: AuthenticatedIdentity = { id: "staff-2", kind: "staff", roles: ["admin"] };
 const sessions: Record<string, AuthenticatedContext> = {
   "tok-a": { principal: admin, claims: { tenant_id: "tenant-a" } },
   "tok-b": { principal: admin, claims: { tenant_id: "tenant-b" } },
+  "tok-noaddr": { principal: noAddress, claims: { tenant_id: "tenant-a" } },
 };
 
 type Fixture = ReturnType<typeof infra>;
@@ -111,15 +114,16 @@ describe("notification settings routes (Wave 2b)", () => {
       ...(payload === undefined ? {} : { payload: payload as object }),
     });
 
-  it("reads the defaults (deliveryConfigured false: the banner case) and saves with a version", async () => {
+  it("reads the defaults (not connected: deliveryConfigured false, the banner case) and saves with a version", async () => {
     expect.hasAssertions();
     const read = await call("GET", "/notifications/settings", "tok-a");
     expect(read.statusCode).toBe(200);
     expect(read.json()).toMatchObject({
       version: null,
       deliveryConfigured: false,
+      emailConnection: "none",
       values: { senderEmail: null, staffRecipients: [], disabledTemplates: [] },
-      sender: { mode: "platform_only" },
+      sender: { mode: "not_connected", effectiveEmail: null },
     });
 
     const saved = await call("POST", "/notifications/settings", "tok-a", {
@@ -132,7 +136,7 @@ describe("notification settings routes (Wave 2b)", () => {
     expect(saved.json()).toMatchObject({
       version: 1,
       values: { senderEmail: "hello@shop.com", disabledTemplates: ["order_canceled"] },
-      sender: { mode: "reply_to", effectiveEmail: "hello@shop.com" },
+      sender: { mode: "not_connected", effectiveEmail: null },
     });
   });
 
@@ -267,13 +271,13 @@ describe("notification settings routes (Wave 2b)", () => {
     ).toBe(false);
   });
 
-  it("test send: 503 NOT_CONFIGURED while the runtime has no real provider, with no recipient field accepted", async () => {
+  it("test send: 503 EMAIL_NOT_CONNECTED while the store has no email account, with no recipient field accepted", async () => {
     expect.hasAssertions();
     const res = await call("POST", "/notifications/templates/order_confirmation/test", "tok-a", {
       locale: "en",
     });
     expect(res.statusCode).toBe(503);
-    expect(res.json()).toMatchObject({ code: "NOT_CONFIGURED" });
+    expect(res.json()).toMatchObject({ code: "EMAIL_NOT_CONNECTED" });
     const withRecipient = await call(
       "POST",
       "/notifications/templates/order_confirmation/test",
@@ -306,36 +310,72 @@ describe("notification settings routes (Wave 2b)", () => {
   it("test send: a staff member with no resolvable address of their own gets 422, never someone else's mail", async () => {
     expect.hasAssertions();
     const local = infra("allow");
-    const sent: unknown[] = [];
-    const api = await build(local, {
-      emailSender: { send: async (message: unknown) => void sent.push(message) },
-      emailDeliveryConfigured: true,
+    const mail = await storeEmailHarness({
+      tenantId: "tenant-a",
+      staffId: "staff-1",
+      staffEmail: "owner@shop.test",
+      clock,
     });
+    const api = await build(local, { ...mail.deps });
+    const connected = await api.inject({
+      method: "PUT",
+      url: "/api/v1/notifications/email-connection",
+      headers: headers("tok-a"),
+      payload: {
+        kind: "resend",
+        fromEmail: "shop@shop.test",
+        apiKey: STORE_API_KEY,
+        expectedVersion: null,
+      },
+    });
+    expect(connected.statusCode).toBe(200);
+    mail.storeMail.length = 0;
     const res = await api.inject({
       method: "POST",
       url: "/api/v1/notifications/templates/order_confirmation/test",
-      headers: headers("tok-a"),
+      headers: headers("tok-noaddr"),
       payload: {},
     });
     expect(res.statusCode).toBe(422);
-    expect(sent).toHaveLength(0);
+    expect(mail.storeMail).toHaveLength(0);
+    expect(mail.platformMail).toHaveLength(0);
     await api.close();
   });
 
-  it("reports deliveryConfigured true when the runtime really delivers", async () => {
+  it("reports deliveryConfigured true only when the store has a connected, switched-on email account", async () => {
     expect.hasAssertions();
     const local = infra("allow");
-    const api = await build(local, {
-      emailSender: { send: async () => undefined },
-      emailDeliveryConfigured: true,
-      emailFrom: "Morbeh <mail@morbeh.test>",
+    const mail = await storeEmailHarness({
+      tenantId: "tenant-a",
+      staffId: "staff-1",
+      staffEmail: "owner@shop.test",
+      clock,
     });
-    const res = await api.inject({
-      method: "GET",
-      url: "/api/v1/notifications/settings",
+    // The platform's own sender being configured does NOT make delivery configured.
+    const api = await build(local, { ...mail.deps });
+    const read = () =>
+      api.inject({
+        method: "GET",
+        url: "/api/v1/notifications/settings",
+        headers: headers("tok-a"),
+      });
+    expect((await read()).json()).toMatchObject({ deliveryConfigured: false });
+    await api.inject({
+      method: "PUT",
+      url: "/api/v1/notifications/email-connection",
       headers: headers("tok-a"),
+      payload: {
+        kind: "resend",
+        fromEmail: "shop@shop.test",
+        apiKey: STORE_API_KEY,
+        expectedVersion: null,
+      },
     });
-    expect(res.json()).toMatchObject({ deliveryConfigured: true });
+    expect((await read()).json()).toMatchObject({
+      deliveryConfigured: true,
+      emailConnection: "connected",
+      sender: { mode: "store_connection", effectiveEmail: "shop@shop.test" },
+    });
     await api.close();
   });
 });

@@ -1,30 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { Clock } from "@platform/contracts";
 import { runInTenantTransaction } from "@platform/db";
 import { createTestPrismaClient } from "@platform/db/testing";
 import { ConcurrencyError } from "@platform/utils";
-import {
-  GetSenderDomain,
-  StartSenderDomain,
-  VerifySenderDomain,
-} from "../application/sender-domain.use-cases";
 import { UpdateNotificationSettings } from "../application/notification-settings.use-cases";
-import { loadSenderContext } from "../application/messaging-support";
-import { SenderDomainTakenError, type StoredSenderDomain } from "../domain/messaging/sender-domain";
 import {
+  PrismaEmailConnectionRepository,
   PrismaNotificationSettingsRepository,
-  PrismaSenderDomainRepository,
   PrismaTemplateOverrideRepository,
 } from "./prisma-messaging-repositories";
-import { InMemorySenderDomainProvider } from "./in-memory-sender-domain-provider";
 
 /**
- * Wave 2b - real-PostgreSQL coverage for the three notification tables the migration
- * `20261129000000_notification_settings` creates: `notification_settings` (round trip, version check,
- * two first saves racing), `notification_template_overrides` (put/get/delete per language, isolation)
- * and `sender_domains` (round trip, replace, verified lookups, the cross-store check, and the
- * authenticate -> verify -> From flow over the real tables). Gated on `DATABASE_URL_TEST` with the
- * migration applied:
+ * Real-PostgreSQL coverage for the notification tables: `notification_settings` (round trip, version
+ * check, two first saves racing) and `notification_template_overrides` (put/get/delete per language,
+ * isolation) from `20261129000000_notification_settings`, and `email_connections` (round trip, the
+ * version check, a second first save racing, failure notes, delete, isolation) from
+ * `20261130000000_store_email_connections`. Gated on `DATABASE_URL_TEST` with both migrations applied:
  *
  *   DATABASE_URL_TEST=postgresql://lumo:***@localhost:5432/lumo_test pnpm --filter @platform/notifications test
  */
@@ -54,10 +44,8 @@ describe.runIf(Boolean(databaseUrl))("notification_settings (integration)", () =
     const update = new UpdateNotificationSettings({
       settings,
       store,
-      senderDomains: new PrismaSenderDomainRepository(prisma),
-      platformFrom: "Morbeh <onboarding@resend.dev>",
+      connections: new PrismaEmailConnectionRepository(prisma),
       unitOfWork,
-      deliveryConfigured: false,
     });
     return { prisma, settings, unitOfWork, update };
   }
@@ -190,192 +178,90 @@ describe.runIf(Boolean(databaseUrl))("notification_template_overrides (integrati
   });
 });
 
-describe.runIf(Boolean(databaseUrl))("sender_domains (integration)", () => {
-  const records = [
-    {
-      record: "DKIM",
-      name: "resend._domainkey",
-      type: "TXT",
-      value: "p=abc",
-      ttl: "Auto",
-      status: "pending",
-      priority: null,
-    },
-    {
-      record: "SPF",
-      name: "send",
-      type: "MX",
-      value: "feedback-smtp.example",
-      ttl: "Auto",
-      status: "pending",
-      priority: 10,
-    },
-  ];
-  const row = (
-    domain: string,
-    status: StoredSenderDomain["status"] = "pending",
-  ): StoredSenderDomain => ({
-    domain,
-    providerDomainId: `dom_${domain}`,
-    status,
-    records,
-    verifiedAt: status === "verified" ? new Date("2026-11-26T10:00:00.000Z") : null,
-  });
-  const unique = () => `${crypto.randomUUID().slice(0, 8)}.example`;
+describe.runIf(Boolean(databaseUrl))("email_connections (integration)", () => {
+  const row = {
+    kind: "resend" as const,
+    fromEmail: "shop@brand.example",
+    sealedCredentials: JSON.stringify({
+      v: 1,
+      alias: "email-credentials",
+      wrappedDek: "w",
+      ciphertext: "c",
+    }),
+    secretLast4: "1234",
+    enabled: true,
+    status: "connected" as const,
+    lastError: null,
+    lastErrorAt: null,
+    verifiedAt: new Date("2026-11-26T10:00:00.000Z"),
+  };
 
-  it("round trips a row (records and verified_at), updates it in place and lists only verified", async () => {
+  it("a shop with no row reads null; the first save is version 1 and reads back exactly", async () => {
     const tenantId = newTenant();
-    const domain = unique();
     const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
+    const repo = new PrismaEmailConnectionRepository(prisma);
     expect(await repo.find(tenantId)).toBeNull();
-
-    await repo.save(tenantId, row(domain));
-    expect(await repo.find(tenantId)).toEqual(row(domain));
-    expect(await repo.listVerifiedDomains(tenantId)).toEqual([]);
-
-    await repo.save(tenantId, row(domain, "verified"));
-    expect(await repo.find(tenantId)).toEqual(row(domain, "verified"));
-    expect(await repo.listVerifiedDomains(tenantId)).toEqual([domain]);
-
-    await repo.save(tenantId, { ...row(domain, "failed"), verifiedAt: null });
-    expect(await repo.listVerifiedDomains(tenantId)).toEqual([]);
-    expect((await repo.find(tenantId))?.verifiedAt).toBeNull();
+    expect(await repo.save(tenantId, row, null)).toBe(1);
+    expect(await repo.find(tenantId)).toEqual({ ...row, version: 1 });
     await prisma.$disconnect();
   });
 
-  it("refuses a second verified owner of the same domain; unverified rows may coexist", async () => {
-    const [tenantA, tenantB] = [newTenant(), newTenant()];
-    const domain = unique();
-    const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
-    await repo.save(tenantA, row(domain, "verified"));
-    await repo.save(tenantB, row(domain));
-
-    await expect(repo.save(tenantB, row(domain, "verified"))).rejects.toBeInstanceOf(
-      SenderDomainTakenError,
-    );
-    expect((await repo.find(tenantB))?.status).toBe("pending");
-    await prisma.$disconnect();
-  });
-
-  it("replacing moves the store to the new domain in one write", async () => {
+  it("updates at the version that was read, bumps it, and refuses a stale one with ConcurrencyError", async () => {
     const tenantId = newTenant();
-    const oldDomain = unique();
-    const newDomain = unique();
     const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
-    await repo.save(tenantId, row(oldDomain));
-
-    await repo.save(tenantId, row(newDomain), { replacing: oldDomain });
-
-    expect(await repo.find(tenantId)).toMatchObject({ domain: newDomain });
-    const remaining = await prisma.senderDomain.count({ where: { tenantId } });
-    expect(remaining).toBe(1);
+    const repo = new PrismaEmailConnectionRepository(prisma);
+    await repo.save(tenantId, row, null);
+    expect(await repo.save(tenantId, { ...row, enabled: false }, 1)).toBe(2);
+    await expect(repo.save(tenantId, row, 1)).rejects.toBeInstanceOf(ConcurrencyError);
+    await expect(repo.save(tenantId, row, null)).rejects.toBeInstanceOf(ConcurrencyError);
+    expect((await repo.find(tenantId))?.enabled).toBe(false);
     await prisma.$disconnect();
   });
 
-  it("two concurrent saves of one domain leave exactly one row; a loser may only be a ConcurrencyError", async () => {
+  it("two concurrent FIRST saves: exactly one wins, the other is a ConcurrencyError", async () => {
     const tenantId = newTenant();
-    const domain = unique();
     const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
-
-    // `save` is an upsert (update, else create). When the two transactions serialize, the second
-    // one simply updates the first one's row and also succeeds; when they race on the create, the
-    // loser gets a ConcurrencyError. Either is correct; what must hold is the end state.
-    const settled = await Promise.allSettled([
-      repo.save(tenantId, row(domain)),
-      repo.save(tenantId, row(domain)),
+    const repo = new PrismaEmailConnectionRepository(prisma);
+    const results = await Promise.allSettled([
+      repo.save(tenantId, row, null),
+      repo.save(tenantId, { ...row, fromEmail: "other@brand.example" }, null),
     ]);
-
-    expect(settled.some((r) => r.status === "fulfilled")).toBe(true);
-    for (const result of settled) {
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const result of results) {
       if (result.status === "rejected") expect(result.reason).toBeInstanceOf(ConcurrencyError);
     }
-    expect(await prisma.senderDomain.count({ where: { tenantId, domain } })).toBe(1);
-    expect(await repo.find(tenantId)).toEqual(row(domain));
     await prisma.$disconnect();
   });
 
-  it("another store's rows are invisible to find and the verified list", async () => {
-    const a = newTenant();
-    const b = newTenant();
-    const domain = unique();
+  it("a send failure is noted without touching the version, status or key; delete removes the row", async () => {
+    const tenantId = newTenant();
     const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
-    await repo.save(a, row(domain, "verified"));
-
-    expect(await repo.find(b)).toBeNull();
-    expect(await repo.listVerifiedDomains(b)).toEqual([]);
-    await prisma.$disconnect();
-  });
-
-  it("isVerifiedByAnotherStore: true only for a DIFFERENT store's verified row", async () => {
-    const a = newTenant();
-    const b = newTenant();
-    const verified = unique();
-    const pending = unique();
-    const prisma = createTestPrismaClient(databaseUrl);
-    const repo = new PrismaSenderDomainRepository(prisma);
-    await repo.save(a, row(verified, "verified"));
-    await repo.save(a, row(pending));
-
-    expect(await repo.isVerifiedByAnotherStore(verified, b)).toBe(true);
-    expect(await repo.isVerifiedByAnotherStore(verified, a)).toBe(false);
-    expect(await repo.isVerifiedByAnotherStore(pending, b)).toBe(false);
-    expect(await repo.isVerifiedByAnotherStore(unique(), b)).toBe(false);
-    await prisma.$disconnect();
-  });
-
-  it("authenticate -> verify -> From over the real tables, and back to Reply-To on a regression", async () => {
-    const a = newTenant();
-    const b = newTenant();
-    const domain = unique();
-    const prisma = createTestPrismaClient(databaseUrl);
-    const senderDomains = new PrismaSenderDomainRepository(prisma);
-    const settings = new PrismaNotificationSettingsRepository(prisma);
-    const store = {
-      get: () =>
-        Promise.resolve({
-          storeName: "Brand",
-          contactEmail: `hello@${domain}`,
-          defaultLocale: "en",
-        }),
-    };
-    const twin = new InMemorySenderDomainProvider();
-    const clock: Clock = { now: () => new Date("2026-11-26T10:00:00.000Z") };
-    const deps = { settings, store, senderDomains, provider: twin, clock };
-    const resolve = (tenantId: string) =>
-      loadSenderContext(
-        { settings, store, senderDomains, platformFrom: "Morbeh <onboarding@resend.dev>" },
-        tenantId,
-      );
-
-    const started = await new StartSenderDomain(deps).execute({ tenantId: a });
-    expect(started.ok && started.value.domain?.domain).toBe(domain);
-    expect((await resolve(a)).sender.mode).toBe("reply_to");
-
-    twin.setStatus(twin.idOf(domain) ?? "", "verified");
-    const verified = await new VerifySenderDomain(deps).execute({ tenantId: a });
-    expect(verified.ok && verified.value.domain?.verified).toBe(true);
-    expect((await resolve(a)).sender).toMatchObject({
-      mode: "own_domain",
-      from: `"Brand" <hello@${domain}>`,
+    const repo = new PrismaEmailConnectionRepository(prisma);
+    await repo.save(tenantId, row, null);
+    const at = new Date("2026-11-26T11:00:00.000Z");
+    await repo.recordFailure(tenantId, "The domain is not verified", at);
+    expect(await repo.find(tenantId)).toEqual({
+      ...row,
+      lastError: "The domain is not verified",
+      lastErrorAt: at,
+      version: 1,
     });
+    await repo.remove(tenantId);
+    await repo.remove(tenantId);
+    expect(await repo.find(tenantId)).toBeNull();
+    await prisma.$disconnect();
+  });
 
-    // The same domain on another store is refused.
-    const refused = await new StartSenderDomain(deps).execute({ tenantId: b });
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.error.message).toBe("This domain is used by another store");
-
-    twin.setStatus(twin.idOf(domain) ?? "", "failed");
-    await new VerifySenderDomain(deps).execute({ tenantId: a });
-    expect((await resolve(a)).sender.mode).toBe("reply_to");
-    expect(await new GetSenderDomain(deps).execute({ tenantId: a })).toMatchObject({
-      ok: true,
-      value: { domain: { status: "failed", verifiedAt: null } },
-    });
+  it("connections are per shop: another shop sees none and cannot change or delete them", async () => {
+    const tenantId = newTenant();
+    const other = newTenant();
+    const prisma = createTestPrismaClient(databaseUrl);
+    const repo = new PrismaEmailConnectionRepository(prisma);
+    await repo.save(tenantId, row, null);
+    expect(await repo.find(other)).toBeNull();
+    await repo.remove(other);
+    await repo.recordFailure(other, "x", new Date());
+    expect(await repo.find(tenantId)).toEqual({ ...row, version: 1 });
     await prisma.$disconnect();
   });
 });

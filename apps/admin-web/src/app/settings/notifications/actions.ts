@@ -1,40 +1,41 @@
 "use server";
 
-import { startSenderDomain, verifySenderDomain } from "@/lib/api/notification-settings";
-import { currentDictionary, runDomainAction, savePatch } from "@/lib/notification-settings-actions";
 import {
-  isTemplateKey,
+  currentDictionary,
+  runEmailDisconnect,
+  runEmailEnabled,
+  runEmailSave,
+  runEmailTest,
+  savePatch,
+} from "@/lib/notification-settings-actions";
+import {
   isPlausibleEmail,
+  isTemplateKey,
   MAX_STAFF_RECIPIENTS,
   normalizeEmail,
+  type EmailConnectionActionResult,
   type NotificationSettingsPatch,
   type NotificationSettingsSaveResult,
-  type SenderDomainActionResult,
 } from "@/lib/notification-settings-model";
 
 function isStringList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
-/** The edit a card sends: a client call is untrusted, so anything unexpected is refused, never guessed. */
+/**
+ * The edit a card sends: a client call is untrusted, so anything unexpected is refused, never
+ * guessed. The sender email is no longer editable here (the From address belongs to the email
+ * account), so it is not an accepted field.
+ */
 function parsePatch(value: unknown): NotificationSettingsPatch | null {
   if (typeof value !== "object" || value === null) return null;
   const raw = value as Record<string, unknown>;
   const patch: {
-    senderEmail?: string | null;
     staffRecipients?: readonly string[];
     disabledTemplates?: readonly string[];
   } = {};
   for (const field of Object.keys(raw)) {
-    if (!["senderEmail", "staffRecipients", "disabledTemplates"].includes(field)) return null;
-  }
-  if ("senderEmail" in raw) {
-    const email = raw["senderEmail"];
-    if (email !== null && typeof email !== "string") return null;
-    // Blank means "use the store email"; anything else must look like an address.
-    if (typeof email === "string" && email.trim() !== "" && !isPlausibleEmail(email)) return null;
-    patch.senderEmail =
-      typeof email === "string" && email.trim() !== "" ? normalizeEmail(email) : null;
+    if (!["staffRecipients", "disabledTemplates"].includes(field)) return null;
   }
   if ("staffRecipients" in raw) {
     const list = raw["staffRecipients"];
@@ -56,9 +57,9 @@ function parseVersion(value: unknown): number | null | undefined {
 }
 
 /**
- * Settings > Notifications. Saves one part of the document (the sender email, the template
- * switches or the staff recipients) with the version the page loaded; the other parts are read
- * fresh and sent back unchanged. A malformed call is refused before it reaches the API.
+ * Settings > Notifications. Saves one part of the document (the template switches or the staff
+ * recipients) with the version the page loaded; the other parts are read fresh and sent back
+ * unchanged. A malformed call is refused before it reaches the API.
  */
 export async function saveNotificationSettingsAction(
   input: unknown,
@@ -73,12 +74,30 @@ export async function saveNotificationSettingsAction(
   return savePatch(patch, expectedVersion, dictionary);
 }
 
-/** "Authenticate domain": registers the sender email's domain and returns the DNS records to add. */
-export async function startSenderDomainAction(): Promise<SenderDomainActionResult> {
-  return runDomainAction(startSenderDomain, await currentDictionary());
+/**
+ * "Save" on the Email account card: connects the store's own account (or updates it) and sends a
+ * test email to the signed-in member. `{ kind, fromEmail, apiKey?, expectedVersion }`; an empty
+ * key keeps the stored one.
+ */
+export async function saveEmailConnectionAction(
+  input: unknown,
+): Promise<EmailConnectionActionResult> {
+  return runEmailSave(input, await currentDictionary());
 }
 
-/** "Verify": asks the provider to check the DNS records. */
-export async function verifySenderDomainAction(): Promise<SenderDomainActionResult> {
-  return runDomainAction(verifySenderDomain, await currentDictionary());
+/** The on/off switch: `{ enabled, expectedVersion }`. */
+export async function setEmailConnectionEnabledAction(
+  input: unknown,
+): Promise<EmailConnectionActionResult> {
+  return runEmailEnabled(input, await currentDictionary());
+}
+
+/** "Send test": a test email to the signed-in member's own address. */
+export async function testEmailConnectionAction(): Promise<EmailConnectionActionResult> {
+  return runEmailTest(await currentDictionary());
+}
+
+/** "Disconnect": removes the email account and its stored key. */
+export async function disconnectEmailConnectionAction(): Promise<EmailConnectionActionResult> {
+  return runEmailDisconnect(await currentDictionary());
 }

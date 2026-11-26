@@ -20,6 +20,23 @@ export interface CustomerProfileDto {
   readonly name: string;
 }
 
+/**
+ * 503 `EMAIL_NOT_CONNECTED` (D51): the store has no working email connection, so sign-up by email
+ * can't work and the platform's own account is NEVER used instead. The same answer for every email, so
+ * it tells a visitor nothing about any account.
+ */
+export function emailNotConnectedResponse(): AdminResponse {
+  return {
+    status: 503,
+    body: {
+      code: "EMAIL_NOT_CONNECTED",
+      message: "Sign-up by email isn't available for this store yet",
+      retryable: false,
+      fields: [],
+    },
+  };
+}
+
 export interface CustomerAuthAdminControllerDeps {
   readonly security: SecurityController;
   readonly customers: CustomerController;
@@ -220,6 +237,10 @@ export class CustomerAuthAdminController {
     readonly password: string;
     readonly tenantId: string;
   }): Promise<AdminResponse> {
+    // D51: no working email connection for this store, no sign-up (before anything is looked up).
+    if (!(await this.deps.signupEmail.isAvailable(input.tenantId))) {
+      return emailNotConnectedResponse();
+    }
     const requested = await this.deps.customers.requestSignupLink({
       email: input.email,
       tenantId: input.tenantId,
@@ -230,20 +251,26 @@ export class CustomerAuthAdminController {
     if (outcome.kind === "new") {
       return this.register(input);
     }
-    if (outcome.kind === "already-registered") {
-      await this.deps.signupEmail.sendAlreadyRegisteredEmail({
+    try {
+      if (outcome.kind === "already-registered") {
+        await this.deps.signupEmail.sendAlreadyRegisteredEmail({
+          email: input.email,
+          tenantId: input.tenantId,
+        });
+        return CustomerAuthAdminController.SIGNUP_LINK_SENT_RESPONSE;
+      }
+
+      const link = `${this.deps.signupCompletionUrlBase}?token=${encodeURIComponent(outcome.token)}`;
+      await this.deps.signupEmail.sendCompleteAccountEmail({
         email: input.email,
+        link,
         tenantId: input.tenantId,
       });
-      return CustomerAuthAdminController.SIGNUP_LINK_SENT_RESPONSE;
+    } catch {
+      // The store's own account refused or failed: nothing was sent, and we say so rather than
+      // pretending a link is on its way. Nothing the failure carried (address, key) is kept.
+      return emailNotConnectedResponse();
     }
-
-    const link = `${this.deps.signupCompletionUrlBase}?token=${encodeURIComponent(outcome.token)}`;
-    await this.deps.signupEmail.sendCompleteAccountEmail({
-      email: input.email,
-      link,
-      tenantId: input.tenantId,
-    });
     return CustomerAuthAdminController.SIGNUP_LINK_SENT_RESPONSE;
   }
 

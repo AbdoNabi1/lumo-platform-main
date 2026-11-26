@@ -3,14 +3,25 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { ar } from "@/messages/ar";
 import { en, type Dictionary } from "@/messages/en";
 import type { NotificationSettingsSnapshot } from "@/lib/notification-settings-model";
-import { DOMAIN_NONE, SETTINGS, TEMPLATES, template } from "./test-fixtures";
+import type { EmailConnectionSnapshot } from "@/lib/notification-settings-model";
+import {
+  EMAIL_CONNECTED,
+  EMAIL_FAILED,
+  EMAIL_NONE,
+  EMAIL_OFF,
+  SETTINGS,
+  TEMPLATES,
+  template,
+} from "./test-fixtures";
 import { NotificationSettingsPanel } from "./notification-settings-panel";
 
 const saveAction = vi.hoisted(() => vi.fn());
 vi.mock("@/app/settings/notifications/actions", () => ({
   saveNotificationSettingsAction: saveAction,
-  startSenderDomainAction: vi.fn(),
-  verifySenderDomainAction: vi.fn(),
+  saveEmailConnectionAction: vi.fn(),
+  setEmailConnectionEnabledAction: vi.fn(),
+  testEmailConnectionAction: vi.fn(),
+  disconnectEmailConnectionAction: vi.fn(),
 }));
 
 const copy = en.notificationSettings;
@@ -37,32 +48,140 @@ function renderPanel(
   settings: NotificationSettingsSnapshot = SETTINGS,
   templates = TEMPLATES,
   t: Dictionary = en,
+  emailConnection: EmailConnectionSnapshot | null = EMAIL_CONNECTED,
 ) {
   return render(
     <NotificationSettingsPanel
       settings={settings}
       templates={templates}
-      senderDomain={DOMAIN_NONE}
+      emailConnection={emailConnection}
       t={t}
     />,
   );
 }
 
 describe("NotificationSettingsPanel (Wave 2b)", () => {
-  it("shows no banner when email really delivers", () => {
+  it("shows no banner while the store's email account is connected", () => {
     expect.hasAssertions();
     renderPanel();
 
     expect(screen.queryByText(copy.deliveryOff)).toBeNull();
+    expect(screen.queryByText(copy.deliveryOffDisabled)).toBeNull();
+    expect(screen.queryByText(copy.deliveryOffFailed)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("shows the 'delivery isn't set up' banner when it does not", () => {
+  it("tells the store that customer emails are off until it connects its email account", () => {
     expect.hasAssertions();
-    renderPanel({ ...SETTINGS, deliveryConfigured: false });
+    renderPanel(
+      { ...SETTINGS, deliveryConfigured: false, emailConnection: "none" },
+      TEMPLATES,
+      en,
+      EMAIL_NONE,
+    );
 
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Email delivery isn't set up yet, so no emails are being sent.",
+      "Customer emails are off until you connect your store's email account.",
     );
+  });
+
+  it.each([
+    ["switched off", EMAIL_OFF, "disabled", "deliveryOffDisabled"],
+    ["failing", EMAIL_FAILED, "failed", "deliveryOffFailed"],
+  ] as const)(
+    "says why customer emails are off when the account is %s",
+    (_label, account, state, key) => {
+      expect.hasAssertions();
+      renderPanel(
+        { ...SETTINGS, deliveryConfigured: false, emailConnection: state },
+        TEMPLATES,
+        en,
+        account,
+      );
+
+      expect(screen.getByRole("status")).toHaveTextContent(copy[key]);
+    },
+  );
+
+  it("falls back to the settings' own summary when the account could not be read", () => {
+    expect.hasAssertions();
+    renderPanel(
+      { ...SETTINGS, deliveryConfigured: false, emailConnection: "failed" },
+      TEMPLATES,
+      en,
+      null,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(copy.deliveryOffFailed);
+    expect(screen.getByText(copy.email.loadError)).toBeInTheDocument();
+  });
+
+  it("puts the Email account first and no sender-domain section anywhere", () => {
+    expect.hasAssertions();
+    renderPanel();
+
+    const html = document.body.innerHTML;
+    const order = [copy.email.title, copy.customerTitle, copy.staffTitle].map((title) =>
+      html.indexOf(title),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(document.body.textContent).not.toMatch(/authenticate|sender email|dns/i);
+  });
+
+  it("follows the account live: disconnecting turns the banner on at once", async () => {
+    expect.hasAssertions();
+    const actions = await import("@/app/settings/notifications/actions");
+    vi.mocked(actions.disconnectEmailConnectionAction).mockResolvedValue({
+      status: "success",
+      snapshot: EMAIL_NONE,
+    });
+    renderPanel();
+    expect(screen.queryByRole("status")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: copy.email.disconnect }));
+    fireEvent.click(
+      await within(await screen.findByRole("dialog")).findByRole("button", {
+        name: copy.email.disconnectConfirm,
+      }),
+    );
+
+    await vi.waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("status")
+          .some((node) => node.textContent?.includes(copy.deliveryOff) === true),
+      ).toBe(true),
+    );
+  });
+
+  it("replaces the account with a newer version from the server", () => {
+    expect.hasAssertions();
+    const { rerender } = renderPanel();
+    expect(screen.getByTestId("email-status")).toHaveTextContent(copy.email.statusConnected);
+
+    rerender(
+      <NotificationSettingsPanel
+        settings={SETTINGS}
+        templates={TEMPLATES}
+        emailConnection={EMAIL_FAILED}
+        t={en}
+      />,
+    );
+    expect(screen.getByTestId("email-status")).toHaveTextContent(copy.email.statusConnected);
+
+    rerender(
+      <NotificationSettingsPanel
+        settings={SETTINGS}
+        templates={TEMPLATES}
+        emailConnection={{
+          ...EMAIL_FAILED,
+          connection: { ...EMAIL_FAILED.connection!, version: 9 },
+        }}
+        t={en}
+      />,
+    );
+    expect(screen.getByTestId("email-status")).toHaveTextContent(copy.email.statusFailed);
   });
 
   it("links to the delivery log", () => {
@@ -284,12 +403,7 @@ describe("NotificationSettingsPanel (Wave 2b)", () => {
     const { container } = renderPanel(SETTINGS, TEMPLATES, ar);
     const arCopy = ar.notificationSettings;
 
-    for (const title of [
-      arCopy.senderTitle,
-      arCopy.domainTitle,
-      arCopy.customerTitle,
-      arCopy.staffTitle,
-    ]) {
+    for (const title of [arCopy.email.title, arCopy.customerTitle, arCopy.staffTitle]) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
     expect(screen.getByRole("link", { name: arCopy.deliveryLogLink })).toBeInTheDocument();

@@ -33,11 +33,25 @@ export function isTemplateLocale(value: unknown): value is TemplateLocale {
   return typeof value === "string" && (TEMPLATE_LOCALES as readonly string[]).includes(value);
 }
 
-export type SenderMode = "own_domain" | "reply_to" | "platform_only";
+/** `store_connection`: customer mail goes out through the store's own email account. */
+export type SenderMode = "store_connection" | "not_connected";
 
-/** The three things the page edits; the API takes them as one document. */
+/** What the store's email account is doing right now (`GET /notifications/settings`). */
+export const EMAIL_CONNECTION_STATES = ["none", "disabled", "failed", "connected"] as const;
+export type EmailConnectionState = (typeof EMAIL_CONNECTION_STATES)[number];
+
+export function isEmailConnectionState(value: unknown): value is EmailConnectionState {
+  return (
+    typeof value === "string" && (EMAIL_CONNECTION_STATES as readonly string[]).includes(value)
+  );
+}
+
+/** The document the page edits; the API takes it as one document. */
 export interface NotificationSettingsValues {
-  /** The Sender email; null = the store contact email is used. */
+  /**
+   * Kept by the server, validated, but no longer edited here: the From address is the email
+   * account's. It is sent back exactly as it was read.
+   */
   readonly senderEmail: string | null;
   /** Who gets "New order" (the merchant's own addresses). */
   readonly staffRecipients: readonly string[];
@@ -50,9 +64,9 @@ export type NotificationSettingsPatch = Partial<NotificationSettingsValues>;
 
 export interface SenderSummary {
   readonly mode: SenderMode;
-  /** The merchant address in effect: the Sender email, else the store contact email. */
+  /** The From address of the store's email account; null while none is connected. */
   readonly effectiveEmail: string | null;
-  /** A free-mail address can never be authenticated, so it is always Reply-To. */
+  /** A free-mail address (Gmail, Yahoo...) cannot send through an API provider such as Resend. */
   readonly freeMail: boolean;
 }
 
@@ -61,8 +75,10 @@ export interface NotificationSettingsSnapshot {
   readonly values: NotificationSettingsValues;
   /** The version a save must send back; null while the shop has never saved any (no row yet). */
   readonly version: number | null;
-  /** Whether the server really delivers email (D40). */
+  /** True only while the store has a connected, switched-on email account (D46). */
   readonly deliveryConfigured: boolean;
+  /** none | disabled | failed | connected: so the banner can say which. */
+  readonly emailConnection: EmailConnectionState;
   readonly storeName: string;
   readonly contactEmail: string | null;
   readonly sender: SenderSummary;
@@ -106,60 +122,171 @@ export function insertVariable(
   return { text: text.slice(0, start) + token + text.slice(end), caret: start + token.length };
 }
 
-/** Provider domain statuses (`services/notifications/src/domain/messaging/sender-domain.ts`). */
-export const DOMAIN_STATUSES = [
-  "not_started",
-  "pending",
-  "verified",
-  "failed",
-  "temporary_failure",
+/** The email providers a store can connect: a Resend API key, or its own mailbox over SMTP. */
+export const EMAIL_CONNECTION_KINDS = ["resend", "smtp"] as const;
+export type EmailConnectionKind = (typeof EMAIL_CONNECTION_KINDS)[number];
+
+/**
+ * Every provider the picker lists, in order. `kind` is what the server can connect; `null` means
+ * "Coming soon" (shown, disabled). `needsSmtp` marks a provider that also needs the server's
+ * `EMAIL_SMTP_ENABLED` switch (`smtpAvailable` on the account): without it the option is disabled
+ * and says "Needs a server upgrade". Adding a provider is a change to this list plus its
+ * `EMAIL_CONNECTION_KINDS` entry, never to the component. Brand names are not translated.
+ */
+export interface EmailProviderChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: EmailConnectionKind | null;
+  readonly needsSmtp: boolean;
+}
+
+export const EMAIL_PROVIDER_CHOICES: readonly EmailProviderChoice[] = [
+  { id: "resend", label: "Resend", kind: "resend", needsSmtp: false },
+  { id: "smtp", label: "Gmail / other mailbox (SMTP)", kind: "smtp", needsSmtp: true },
+  { id: "sendgrid", label: "SendGrid", kind: null, needsSmtp: false },
+  { id: "brevo", label: "Brevo", kind: null, needsSmtp: false },
+];
+
+export function isEmailConnectionKind(value: unknown): value is EmailConnectionKind {
+  return typeof value === "string" && (EMAIL_CONNECTION_KINDS as readonly string[]).includes(value);
+}
+
+export const SMTP_PRESET_IDS = ["gmail", "outlook", "zoho", "custom"] as const;
+export type SmtpPresetId = (typeof SMTP_PRESET_IDS)[number];
+export type SmtpSecurity = "tls" | "starttls";
+
+export function isSmtpPresetId(value: unknown): value is SmtpPresetId {
+  return typeof value === "string" && (SMTP_PRESET_IDS as readonly string[]).includes(value);
+}
+
+export function isSmtpSecurity(value: unknown): value is SmtpSecurity {
+  return value === "tls" || value === "starttls";
+}
+
+/**
+ * The mailbox presets, mirroring the server's (it is the authority: it pins the server for a preset
+ * and ignores what we send). `host` is null for "other mail server": the person types it. Brand
+ * names are not translated.
+ */
+export interface SmtpPresetChoice {
+  readonly id: SmtpPresetId;
+  readonly label: string | null;
+  readonly host: string | null;
+  readonly port: number | null;
+  readonly security: SmtpSecurity | null;
+  /** The From address must be the mailbox itself (the server refuses anything else for a preset). */
+  readonly fromIsUsername: boolean;
+}
+
+export const SMTP_PRESET_CHOICES: readonly SmtpPresetChoice[] = [
+  {
+    id: "gmail",
+    label: "Gmail",
+    host: "smtp.gmail.com",
+    port: 465,
+    security: "tls",
+    fromIsUsername: true,
+  },
+  {
+    id: "outlook",
+    label: "Outlook / Hotmail",
+    host: "smtp-mail.outlook.com",
+    port: 587,
+    security: "starttls",
+    fromIsUsername: true,
+  },
+  {
+    id: "zoho",
+    label: "Zoho Mail",
+    host: "smtp.zoho.com",
+    port: 465,
+    security: "tls",
+    fromIsUsername: true,
+  },
+  { id: "custom", label: null, host: null, port: null, security: null, fromIsUsername: false },
+];
+
+/** The ports a custom mail server may use: the SMTP submission ports (the server checks this too). */
+export const CUSTOM_SMTP_PORTS: readonly number[] = [25, 465, 587, 2525];
+
+/** The fixed failure a mailbox can report; the page words each one itself, in both languages. */
+export const SMTP_ERROR_CODES = [
+  "AUTH_FAILED",
+  "DAILY_LIMIT",
+  "CONNECTION_FAILED",
+  "TLS_FAILED",
+  "REJECTED",
 ] as const;
-export type DomainStatus = (typeof DOMAIN_STATUSES)[number];
+export type SmtpErrorCode = (typeof SMTP_ERROR_CODES)[number];
 
-export function isDomainStatus(value: unknown): value is DomainStatus {
-  return typeof value === "string" && (DOMAIN_STATUSES as readonly string[]).includes(value);
+export function isSmtpErrorCode(value: unknown): value is SmtpErrorCode {
+  return typeof value === "string" && (SMTP_ERROR_CODES as readonly string[]).includes(value);
 }
 
-/** One DNS record the merchant adds at their DNS host. */
-export interface DnsRecordDto {
-  readonly record: string;
-  readonly name: string;
-  readonly type: string;
-  readonly value: string;
-  readonly ttl: string;
-  readonly status: string;
-  readonly priority: number | null;
+/** Where a mailbox connection goes and as whom. Never the password. */
+export interface SmtpConnectionDto {
+  readonly preset: SmtpPresetId;
+  readonly host: string;
+  readonly port: number;
+  readonly security: SmtpSecurity;
+  readonly username: string;
 }
 
-export interface SenderDomainViewDto {
-  readonly domain: string;
-  readonly status: DomainStatus;
-  readonly verified: boolean;
-  readonly records: readonly DnsRecordDto[];
+/** What the page sends for a mailbox: the preset and username; a custom server adds its own details. */
+export interface EmailSaveSmtp {
+  readonly preset: SmtpPresetId;
+  readonly username: string;
+  readonly host?: string;
+  readonly port?: number;
+  readonly security?: SmtpSecurity;
+}
+
+/** The store's own email account as the server shows it. Never the key: only its last four. */
+export interface EmailConnectionDto {
+  readonly kind: EmailConnectionKind;
+  readonly fromEmail: string;
+  readonly secretLast4: string;
+  readonly enabled: boolean;
+  /** The result of the last test send. */
+  readonly status: "connected" | "failed";
+  readonly state: EmailConnectionState;
+  /** The provider's refusal, sanitized by the server (no addresses, no keys). */
+  readonly lastError: string | null;
+  /** A mailbox's fixed failure, so the page can use its own sentence; null for anything else. */
+  readonly lastErrorCode: SmtpErrorCode | null;
+  readonly lastErrorAt: string | null;
   readonly verifiedAt: string | null;
+  readonly version: number;
+  /** Mailbox (SMTP) connections only; null for Resend. */
+  readonly smtp: SmtpConnectionDto | null;
 }
 
-/** `GET/POST /notifications/sender-domain`. */
-export interface SenderDomainDto {
-  /** false when the server has no provider key: the page says "Not available yet". */
-  readonly available: boolean;
-  readonly domain: SenderDomainViewDto | null;
-  /** The domain the sender email (else the contact email) would authenticate. */
-  readonly suggestion: { readonly domain: string; readonly freeMail: boolean } | null;
+/** `GET /notifications/email-connection` and what every write answers with. */
+export interface EmailConnectionSnapshot {
+  /** false: the server cannot store keys, so the page says "Not available yet". */
+  readonly credentialsConfigured: boolean;
+  /** false: the server's `EMAIL_SMTP_ENABLED` is off, so mailbox accounts say "Needs a server upgrade". */
+  readonly smtpAvailable: boolean;
+  /** null while the store has not connected an email account. */
+  readonly connection: EmailConnectionDto | null;
 }
 
-/** What a domain action answers with. `unavailable` is the 503 (no provider key on the server). */
-export type SenderDomainActionResult =
-  | { readonly status: "success"; readonly domain: SenderDomainDto }
+/** The state banners and warnings go by: no account at all is `none`. */
+export function connectionStateOf(snapshot: EmailConnectionSnapshot): EmailConnectionState {
+  return snapshot.connection?.state ?? "none";
+}
+
+/** What an email-account action answers with. A refused test mail is still `success` (status failed). */
+export type EmailConnectionActionResult =
+  | { readonly status: "success"; readonly snapshot: EmailConnectionSnapshot }
   | { readonly status: "unavailable" }
-  | { readonly status: "error"; readonly message: string };
-
-/** The badge tone for a domain status: verified is healthy, failed is failed, the rest is waiting. */
-export function domainStatusTone(status: DomainStatus): "success" | "warning" | "destructive" {
-  if (status === "verified") return "success";
-  if (status === "failed") return "destructive";
-  return "warning";
-}
+  | { readonly status: "rate_limited" }
+  | { readonly status: "conflict"; readonly message: string }
+  | {
+      readonly status: "error";
+      readonly message: string;
+      readonly fieldErrors: Readonly<Record<string, string>>;
+    };
 
 /** One template as the list and the editor read it. */
 export interface TemplateLocaleDto {

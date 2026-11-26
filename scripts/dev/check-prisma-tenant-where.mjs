@@ -119,15 +119,6 @@ export const EXEMPTIONS = {
     cls: "typed-where",
     reason: "PromotionsController.update, not Prisma; tenantId is a required field of its input",
   },
-  // Wave 2b (D43): a domain may be verified by ONE store only. "Does another store already have this
-  // domain verified" cannot be asked through a per-store read, so this one query is deliberately not
-  // tenant-scoped. It selects only the owner ids and the method returns a boolean, never a row.
-  "services/notifications/src/infrastructure/prisma-messaging-repositories.ts|senderDomain.findMany":
-    {
-      cls: "platform-global",
-      reason:
-        "isVerifiedByAnotherStore: one verified owner per domain across stores; returns a boolean only",
-    },
   // G-75 and G-76 (both classes of "a row addressed by id alone") closed 2026-09-27: the tracking
   // store's findFirst now names the tenant, and the two upserts became updateMany-scoped-to-tenant +
   // create-on-miss. No open exemptions remain — see docs/plans/phase-7/WP-10-guard-verification.md.

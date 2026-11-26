@@ -73,19 +73,23 @@ model NotificationTemplateOverride {
   @@schema("notifications")
 }
 
-// The store's own sending domain as the email provider sees it (Task 2 fills it).
-// "One verified owner per domain" is a PARTIAL unique index that exists only in SQL
-// (`sender_domains_verified_domain_key` ... WHERE "status" = 'verified'); Prisma cannot express it.
-model SenderDomain {
-  tenantId         String    @map("tenant_id")
-  domain           String
-  providerDomainId String    @map("provider_domain_id")
-  status           String
-  records          Json
-  verifiedAt       DateTime? @map("verified_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+// Wave 2b2: the store's OWN email account (D46-D50). One row per tenant. `sealed_credentials` is the
+// sealed envelope JSON `{v, alias, wrappedDek, ciphertext}` only: no key reference, never the key in
+// clear. `secret_last4` is all of the key that is ever shown. kind/status CHECKs live in the migration.
+model EmailConnection {
+  tenantId          String    @id @map("tenant_id")
+  kind              String // resend (CHECK in the migration)
+  fromEmail         String    @map("from_email")
+  sealedCredentials String    @map("sealed_credentials")
+  secretLast4       String    @map("secret_last4")
+  enabled           Boolean   @default(true)
+  status            String // connected | failed (CHECK in the migration)
+  lastError         String?   @map("last_error")
+  lastErrorAt       DateTime? @map("last_error_at")
+  verifiedAt        DateTime? @map("verified_at")
+  version           Int       @default(1)
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  @@id([tenantId, domain])
-  @@map("sender_domains")
+  @@map("email_connections")
   @@schema("notifications")
 }

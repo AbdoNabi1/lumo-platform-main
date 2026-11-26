@@ -1,87 +1,43 @@
 import { describe, expect, it } from "vitest";
 import {
+  emailDomain,
+  formatFrom,
   isFreeMailDomain,
   isValidEmail,
-  mailboxAddress,
-  resolveSender,
+  normalizeEmail,
   safeDisplayName,
 } from "./sender-resolution";
 
-const platformFrom = "Morbeh <onboarding@resend.dev>";
-const base = { storeName: "Nusuj Store", platformFrom, verifiedDomains: ["nusuj.com"] };
-
-describe("resolveSender (D38 matrix)", () => {
-  it("verified custom domain: the merchant address is From, no Reply-To", () => {
+describe("formatFrom (D46): the store's name at the merchant's own address", () => {
+  it("is a quoted store name and the lower-cased address", () => {
     expect.hasAssertions();
-    const sender = resolveSender({ ...base, senderEmail: "Hello@Nusuj.com" });
-    expect(sender).toEqual({
-      from: '"Nusuj Store" <hello@nusuj.com>',
-      mode: "own_domain",
-      effectiveEmail: "hello@nusuj.com",
-    });
+    expect(formatFrom("Nusuj Store", "Hello@Nusuj.com")).toBe('"Nusuj Store" <hello@nusuj.com>');
   });
 
-  it("unverified custom domain: platform From with the store name, merchant address as Reply-To", () => {
+  it("keeps an Arabic store name", () => {
     expect.hasAssertions();
-    const sender = resolveSender({ ...base, senderEmail: "hello@other.com" });
-    expect(sender.from).toBe('"Nusuj Store" <onboarding@resend.dev>');
-    expect(sender.replyTo).toBe("hello@other.com");
-    expect(sender.mode).toBe("reply_to");
-    expect(sender.from).not.toContain("other.com");
-  });
-
-  it("gmail: always Reply-To, even if someone 'verified' gmail.com", () => {
-    expect.hasAssertions();
-    const sender = resolveSender({
-      ...base,
-      verifiedDomains: ["gmail.com", "nusuj.com"],
-      senderEmail: "shop@gmail.com",
-    });
-    expect(sender.from).toBe('"Nusuj Store" <onboarding@resend.dev>');
-    expect(sender.replyTo).toBe("shop@gmail.com");
-  });
-
-  it("no sender email: the store contact email takes its place", () => {
-    expect.hasAssertions();
-    const sender = resolveSender({ ...base, senderEmail: null, contactEmail: "contact@other.com" });
-    expect(sender.replyTo).toBe("contact@other.com");
-    expect(sender.from).toContain("onboarding@resend.dev");
-    const verified = resolveSender({
-      ...base,
-      senderEmail: null,
-      contactEmail: "contact@nusuj.com",
-    });
-    expect(verified.from).toBe('"Nusuj Store" <contact@nusuj.com>');
-  });
-
-  it("no sender and no contact email: platform From, no Reply-To", () => {
-    expect.hasAssertions();
-    const sender = resolveSender({ ...base, senderEmail: null, contactEmail: null });
-    expect(sender).toEqual({
-      from: '"Nusuj Store" <onboarding@resend.dev>',
-      mode: "platform_only",
-      effectiveEmail: null,
-    });
-    expect("replyTo" in sender).toBe(false);
+    expect(formatFrom("متجر النيل", "hello@nile.example")).toBe(
+      '"متجر النيل" <hello@nile.example>',
+    );
   });
 
   it("never lets a store name break out of the header", () => {
     expect.hasAssertions();
-    const sender = resolveSender({
-      ...base,
-      storeName: 'Evil" <attacker@x.com>\r\nBcc: z@z.com',
-      senderEmail: null,
-    });
-    expect(sender.from).not.toMatch(/[\r\n]/);
-    expect(sender.from.match(/</g)).toHaveLength(1);
-    expect(sender.from).toMatch(/<onboarding@resend\.dev>$/);
+    const from = formatFrom('Evil" <attacker@x.com>\r\nBcc: z@z.com', "shop@store.example");
+    expect(from).not.toMatch(/[\r\n]/);
+    expect(from.match(/</g)).toHaveLength(1);
+    expect(from.match(/"/g)).toHaveLength(2);
+    expect(from.endsWith("<shop@store.example>")).toBe(true);
   });
 
-  it("falls back to the bare platform address for an empty store name", () => {
+  it("falls back to the bare address for an empty store name", () => {
     expect.hasAssertions();
-    expect(resolveSender({ ...base, storeName: "  ", senderEmail: null }).from).toBe(
-      "<onboarding@resend.dev>",
-    );
+    expect(formatFrom("  ", "shop@store.example")).toBe("<shop@store.example>");
+  });
+
+  it("bounds a very long name", () => {
+    expect.hasAssertions();
+    expect(safeDisplayName("x".repeat(300))).toHaveLength(80);
   });
 });
 
@@ -121,10 +77,10 @@ describe("sender helpers", () => {
     expect(isValidEmail("a@b.com\r\nBcc: x@y.com")).toBe(false);
   });
 
-  it("extracts the address from a mailbox and cleans a display name", () => {
+  it("normalizes an address, reads its domain and cleans a display name", () => {
     expect.hasAssertions();
-    expect(mailboxAddress("Morbeh <onboarding@resend.dev>")).toBe("onboarding@resend.dev");
-    expect(mailboxAddress("plain@x.com")).toBe("plain@x.com");
+    expect(normalizeEmail("  A@B.Co ")).toBe("a@b.co");
+    expect(emailDomain("A@Store.Example")).toBe("store.example");
     expect(safeDisplayName('A"B<C>')).toBe("A B C");
   });
 });

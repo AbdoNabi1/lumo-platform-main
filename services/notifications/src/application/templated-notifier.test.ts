@@ -3,7 +3,10 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireNotifications } from "../composition";
 import type { Notification } from "../domain/notification";
-import type { OutgoingMail } from "./messaging-ports";
+import type { StoreEmailMessage } from "./email-connection-ports";
+import { InMemoryStoreEmailProvider } from "../infrastructure/in-memory-store-email-provider";
+import { STORE_KEY } from "../testing/store-email-fixture";
+import { testEmailVault } from "../testing/email-connection-doubles";
 import { staffRecipientRef } from "./staff-recipient-ref";
 
 const TENANT = "tenant-a";
@@ -15,17 +18,27 @@ function ids(): IdGenerator {
 }
 
 interface Options {
-  readonly configured?: boolean;
+  /** false: the store never connected an email account. */
+  readonly connected?: boolean;
+  /** true: connected, then switched off. */
+  readonly disabled?: boolean;
   readonly language?: string | null;
-  readonly sendError?: Error;
   readonly storeLocale?: string | null;
-  readonly contactEmail?: string | null;
-  readonly verified?: readonly string[];
   readonly customers?: Record<string, { name: string; email: string; language: string | null }>;
 }
 
-function setup(options: Options = {}) {
-  const sent: OutgoingMail[] = [];
+/**
+ * Wires the real notifications context with a store's email account connected through the real
+ * `SaveEmailConnection` use case (real envelope sealing, recording provider twin).
+ */
+async function setup(options: Options = {}) {
+  const provider = new InMemoryStoreEmailProvider();
+  const sent: StoreEmailMessage[] = [];
+  const originalSend = provider.send.bind(provider);
+  provider.send = (credentials, message) => {
+    sent.push(message);
+    return originalSend(credentials, message);
+  };
   const logs: { message: string; fields?: unknown }[] = [];
   const customers = options.customers ?? {
     "cust-1": { name: "Sara", email: "sara@customer.test", language: options.language ?? null },
@@ -37,26 +50,38 @@ function setup(options: Options = {}) {
         get: () =>
           Promise.resolve({
             storeName: "Nusuj Store",
-            contactEmail:
-              options.contactEmail === undefined ? "shop@gmail.com" : options.contactEmail,
+            contactEmail: "shop@gmail.com",
             defaultLocale: options.storeLocale === undefined ? "en" : options.storeLocale,
           }),
       },
-      delivery: {
-        deliveryConfigured: options.configured ?? true,
-        platformFrom: "Morbeh <onboarding@resend.dev>",
-        send: (message) => {
-          if (options.sendError !== undefined) return Promise.reject(options.sendError);
-          sent.push(message);
-          return Promise.resolve();
-        },
-      },
-      senderDomains: { listVerifiedDomains: () => Promise.resolve(options.verified ?? []) },
+      emailVault: testEmailVault(),
+      emailProvider: provider,
       recipients: { resolve: (_tenant, ref) => Promise.resolve(customers[ref] ?? null) },
       log: { warn: (message, fields) => void logs.push({ message, fields }) },
     },
   );
-  return { app, sent, logs };
+  if (options.connected !== false) {
+    const saved = await app.emailConnection.save({
+      tenantId: TENANT,
+      expectedVersion: null,
+      kind: "resend",
+      fromEmail: "shop@nusuj.com",
+      apiKey: STORE_KEY,
+      actorEmail: "staff@nusuj.com",
+    });
+    expect(saved.status).toBe(200);
+    if (options.disabled === true) {
+      await app.emailConnection.setEnabled({
+        tenantId: TENANT,
+        expectedVersion: 1,
+        enabled: false,
+      });
+    }
+  }
+  // The connection's own test mail is not a customer mail.
+  provider.calls.length = 0;
+  sent.length = 0;
+  return { app, provider, logs, sent };
 }
 
 const ORDER_JSON = JSON.stringify({
@@ -73,7 +98,9 @@ const orderVars = {
 };
 
 function request(
-  overrides: Partial<Parameters<ReturnType<typeof setup>["app"]["notifier"]["execute"]>[0]> = {},
+  overrides: Partial<
+    Parameters<Awaited<ReturnType<typeof setup>>["app"]["notifier"]["execute"]>[0]
+  > = {},
 ) {
   return {
     tenantId: TENANT,
@@ -87,7 +114,7 @@ function request(
 }
 
 async function row(
-  app: ReturnType<typeof setup>["app"],
+  app: Awaited<ReturnType<typeof setup>>["app"],
   notificationId: string,
 ): Promise<Notification> {
   const response = await app.notifications.get({ tenantId: TENANT, notificationId });
@@ -95,18 +122,20 @@ async function row(
 }
 
 describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
-  it("sends the confirmation once: store name as From, merchant address as Reply-To, escaped HTML", async () => {
+  it("sends the confirmation once through the STORE's account: its name at its own address, escaped HTML", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const ctx = await setup();
+    const { app, sent } = ctx;
     const result = await app.notifier.execute(request());
     expect(result).toMatchObject({ ok: true, value: { status: "sent", deduplicated: false } });
     expect(sent).toHaveLength(1);
+    expect(ctx.provider.calls[0]?.credentials).toEqual({ kind: "resend", apiKey: STORE_KEY });
     const mail = sent[0]!;
     expect(mail).toMatchObject({
       to: "sara@customer.test",
-      from: '"Nusuj Store" <onboarding@resend.dev>',
-      replyTo: "shop@gmail.com",
+      from: '"Nusuj Store" <shop@nusuj.com>',
     });
+    expect("replyTo" in mail).toBe(false);
     expect(mail.subject).toBe("Order #1042 confirmed");
     expect(mail.html).not.toContain("<script>");
     expect(mail.html).toContain("&lt;script&gt;alert(1)&lt;/script&gt; Shirt");
@@ -116,7 +145,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("a retried event never mails twice (idempotent)", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     await app.notifier.execute(request());
     const again = await app.notifier.execute(request());
     expect(again).toMatchObject({ ok: true, value: { status: "sent", deduplicated: true } });
@@ -125,30 +154,22 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
     expect(sent).toHaveLength(2);
   });
 
-  it("uses the verified own domain as From, and no Reply-To", async () => {
-    expect.hasAssertions();
-    const { app, sent } = setup({ contactEmail: "hello@nusuj.com", verified: ["nusuj.com"] });
-    await app.notifier.execute(request());
-    expect(sent[0]).toMatchObject({ from: '"Nusuj Store" <hello@nusuj.com>' });
-    expect("replyTo" in sent[0]!).toBe(false);
-  });
-
   it("writes in the customer's language, else the store's default, and uses the merchant's override", async () => {
     expect.hasAssertions();
-    const arabic = setup({ language: "ar" });
+    const arabic = await setup({ language: "ar" });
     await arabic.app.notifier.execute(request());
     expect(arabic.sent[0]!.subject).toBe("تم تأكيد طلبك #1042");
     expect(arabic.sent[0]!.html).toContain('dir="rtl"');
 
-    const storeDefault = setup({ language: null, storeLocale: "ar" });
+    const storeDefault = await setup({ language: null, storeLocale: "ar" });
     await storeDefault.app.notifier.execute(request());
     expect(storeDefault.sent[0]!.subject).toBe("تم تأكيد طلبك #1042");
 
-    const english = setup({ language: "fr", storeLocale: null });
+    const english = await setup({ language: "fr", storeLocale: null });
     await english.app.notifier.execute(request());
     expect(english.sent[0]!.subject).toBe("Order #1042 confirmed");
 
-    const custom = setup();
+    const custom = await setup();
     await custom.app.settings.putTemplate({
       tenantId: TENANT,
       key: "order_confirmation",
@@ -163,7 +184,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("a switched-off template sends nothing and leaves a cancelled row with reason DISABLED", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     await app.settings.updateSettings({
       tenantId: TENANT,
       expectedVersion: null,
@@ -184,40 +205,120 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
     });
   });
 
-  it("with no real provider every notification is failed EMAIL_NOT_CONFIGURED, never sent", async () => {
+  it("no connection: the notification is recorded failed EMAIL_NOT_CONNECTED and nothing is sent", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup({ configured: false });
+    const { app, sent, provider } = await setup({ connected: false });
     const result = await app.notifier.execute(request());
     expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
     expect(sent).toHaveLength(0);
+    expect(provider.calls).toHaveLength(0);
     const notification = await row(app, result.ok ? result.value.notificationId : "");
-    expect(notification.attempts.at(-1)?.providerRef).toBe("EMAIL_NOT_CONFIGURED");
-    expect(notification.history.at(-1)?.reason).toBe("EMAIL_NOT_CONFIGURED");
+    expect(notification.attempts.at(-1)?.providerRef).toBe("EMAIL_NOT_CONNECTED");
+    expect(notification.history.at(-1)?.reason).toBe("EMAIL_NOT_CONNECTED");
   });
 
-  it("a provider failure is recorded as a short code: no address, no body, nothing leaks to the log", async () => {
+  it("a switched-off connection: failed EMAIL_NOT_CONNECTED, nothing sent; switching it back on mails again", async () => {
     expect.hasAssertions();
-    const { app, logs } = setup({
-      sendError: new Error("550 mailbox sara@customer.test rejected: Hi Sara body"),
+    const { app, sent } = await setup({ disabled: true });
+    const first = await app.notifier.execute(request());
+    expect(first).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(sent).toHaveLength(0);
+    const notification = await row(app, first.ok ? first.value.notificationId : "");
+    expect(notification.history.at(-1)?.reason).toBe("EMAIL_NOT_CONNECTED");
+    await app.emailConnection.setEnabled({ tenantId: TENANT, expectedVersion: 2, enabled: true });
+    const second = await app.notifier.execute(request({ eventKey: "order-2" }));
+    expect(second).toMatchObject({ ok: true, value: { status: "sent" } });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a connection whose last test failed is not used: failed EMAIL_NOT_CONNECTED, nothing sent", async () => {
+    expect.hasAssertions();
+    const provider = new InMemoryStoreEmailProvider();
+    provider.failNext("EMAIL_KEY_REJECTED", "API key is invalid");
+    const app = wireNotifications(
+      { serializer: new InMemoryEventSerializer(), idGenerator: ids(), clock },
+      {
+        store: {
+          get: () => Promise.resolve({ storeName: "S", contactEmail: null, defaultLocale: "en" }),
+        },
+        emailVault: testEmailVault(),
+        emailProvider: provider,
+        recipients: {
+          resolve: () => Promise.resolve({ name: "Sara", email: "sara@c.test", language: null }),
+        },
+      },
+    );
+    const saved = await app.emailConnection.save({
+      tenantId: TENANT,
+      expectedVersion: null,
+      kind: "resend",
+      fromEmail: "shop@nusuj.com",
+      apiKey: STORE_KEY,
+      actorEmail: "staff@nusuj.com",
     });
+    expect(saved).toMatchObject({ status: 200, body: { connection: { status: "failed" } } });
+    provider.calls.length = 0;
+    const result = await app.notifier.execute(request());
+    expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("a provider that refuses is a sanitized code on the row and the connection's last error: never the address, body or key", async () => {
+    expect.hasAssertions();
+    const { app, provider, logs } = await setup();
+    provider.failNext(
+      "EMAIL_SENDER_REJECTED",
+      `The nusuj.com domain is not verified. to sara@customer.test key ${STORE_KEY}`,
+    );
     const result = await app.notifier.execute(request());
     expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
     const notification = await row(app, result.ok ? result.value.notificationId : "");
-    expect(notification.attempts.at(-1)?.providerRef).toBe("EMAIL_SEND_FAILED");
+    expect(notification.attempts.at(-1)?.providerRef).toBe("EMAIL_SENDER_REJECTED");
+    const connection = await app.emailConnection.get({ tenantId: TENANT });
+    const body = JSON.stringify(connection.body);
+    expect(body).toContain("domain is not verified");
+    expect(body).not.toContain("sara@customer.test");
+    expect(body).not.toContain(STORE_KEY);
+    expect(connection.body).toMatchObject({
+      connection: { status: "connected", lastErrorAt: "2026-11-26T10:00:00.000Z" },
+    });
     const everything = JSON.stringify({ logs, history: notification.history.map((h) => h.reason) });
     expect(everything).not.toContain("sara@customer.test");
-    expect(everything).not.toContain("Hi Sara");
+    expect(everything).not.toContain(STORE_KEY);
     expect(logs).toEqual([
       {
         message: "notification email not sent",
-        fields: { template: "order_confirmation", reason: "EMAIL_SEND_FAILED" },
+        fields: { template: "order_confirmation", reason: "EMAIL_SENDER_REJECTED" },
       },
     ]);
   });
 
+  it("an adapter that throws becomes a short code: nothing it said is kept", async () => {
+    expect.hasAssertions();
+    const { app, provider, logs } = await setup();
+    provider.throwNext();
+    const result = await app.notifier.execute(request());
+    expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
+    const notification = await row(app, result.ok ? result.value.notificationId : "");
+    expect(notification.attempts.at(-1)?.providerRef).toBe("EMAIL_PROVIDER_UNAVAILABLE");
+    const everything = JSON.stringify({ logs, history: notification.history.map((h) => h.reason) });
+    expect(everything).not.toContain(STORE_KEY);
+    expect(everything).not.toContain("boom");
+    const connection = await app.emailConnection.get({ tenantId: TENANT });
+    expect(JSON.stringify(connection.body)).not.toContain(STORE_KEY);
+  });
+
+  it("one tenant's connection is never used for another tenant's mail", async () => {
+    expect.hasAssertions();
+    const { app, sent } = await setup();
+    const result = await app.notifier.execute(request({ tenantId: "tenant-b" }));
+    expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
+    expect(sent).toHaveLength(0);
+  });
+
   it("stores no address and no rendered body on the notification row", async () => {
     expect.hasAssertions();
-    const { app } = setup();
+    const { app } = await setup();
     const result = await app.notifier.execute(request());
     const notification = await row(app, result.ok ? result.value.notificationId : "");
     const stored = JSON.stringify({
@@ -234,7 +335,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("fails RECIPIENT_NOT_FOUND for an unknown customer and sends nothing", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     const result = await app.notifier.execute(request({ recipientRef: "ghost" }));
     expect(result).toMatchObject({ ok: true, value: { status: "failed" } });
     expect(sent).toHaveLength(0);
@@ -244,7 +345,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("draft invoice: the link is used for the send and never stored; without it the send fails", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     const link = "https://shop.example/c/SECRET-TOKEN";
     const result = await app.notifier.execute(
       request({
@@ -271,7 +372,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("a draft with no customer record is mailed at the one-off address that exists only for the send", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     const result = await app.notifier.execute(
       request({
         template: "draft_order_invoice",
@@ -291,7 +392,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("staff new order: one mail per configured recipient, addressed by hash on the rows", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     await app.settings.updateSettings({
       tenantId: TENANT,
       expectedVersion: null,
@@ -330,7 +431,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("staff new order with nobody configured records nothing", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     const results = await app.notifier.executeForStaff({
       tenantId: TENANT,
       template: "staff_new_order",
@@ -344,7 +445,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("a staff recipient removed after the row was created fails RECIPIENT_NOT_FOUND", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     const result = await app.notifier.execute({
       ...request({ template: "staff_new_order" }),
       recipientRef: staffRecipientRef("gone@shop.test"),
@@ -355,7 +456,7 @@ describe("TemplatedNotifier + TemplatedEmailProvider (Wave 2b)", () => {
 
   it("keeps each tenant's mail, settings and templates apart", async () => {
     expect.hasAssertions();
-    const { app, sent } = setup();
+    const { app, sent } = await setup();
     await app.settings.putTemplate({
       tenantId: "tenant-b",
       key: "order_confirmation",

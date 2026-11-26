@@ -1,15 +1,9 @@
 import { effectiveNotificationSettings } from "../domain/messaging/notification-settings";
 import type {
   NotificationSettingsRepository,
-  SenderDomainReader,
   TemplateOverride,
 } from "../domain/messaging/messaging-repositories";
-import {
-  emailDomain,
-  isFreeMailDomain,
-  resolveSender,
-  type ResolvedSender,
-} from "../domain/messaging/sender-resolution";
+import { emailDomain, isFreeMailDomain } from "../domain/messaging/sender-resolution";
 import {
   isTemplateEnabled,
   TEMPLATE_CATALOGUE,
@@ -33,38 +27,26 @@ export function copyFor(
   return override ?? TEMPLATE_CATALOGUE[key].defaults[locale];
 }
 
-export interface SenderContext {
+export interface StoreContext {
   readonly profile: StoreProfile;
-  readonly sender: ResolvedSender;
   readonly disabledTemplates: readonly string[];
 }
 
-export interface SenderContextDeps {
+export interface StoreContextDeps {
   readonly settings: NotificationSettingsRepository;
   readonly store: StoreProfilePort;
-  readonly senderDomains: SenderDomainReader;
-  readonly platformFrom: string;
 }
 
-/** Everything a mail needs to know about the store: its name, the resolved From/Reply-To and what is switched off. */
-export async function loadSenderContext(
-  deps: SenderContextDeps,
+/** What a mail needs to know about the store: its name and language, and which templates are switched off. */
+export async function loadStoreContext(
+  deps: StoreContextDeps,
   tenantId: string,
-): Promise<SenderContext> {
-  const [stored, profile, verifiedDomains] = await Promise.all([
+): Promise<StoreContext> {
+  const [stored, profile] = await Promise.all([
     deps.settings.find(tenantId),
     deps.store.get(tenantId),
-    deps.senderDomains.listVerifiedDomains(tenantId),
   ]);
-  const settings = effectiveNotificationSettings(stored);
-  const sender = resolveSender({
-    storeName: profile.storeName,
-    senderEmail: settings.senderEmail,
-    contactEmail: profile.contactEmail,
-    verifiedDomains,
-    platformFrom: deps.platformFrom,
-  });
-  return { profile, sender, disabledTemplates: settings.disabledTemplates };
+  return { profile, disabledTemplates: effectiveNotificationSettings(stored).disabledTemplates };
 }
 
 export function isFreeMailAddress(email: string | null): boolean {

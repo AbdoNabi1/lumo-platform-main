@@ -1170,9 +1170,6 @@ describe("notification settings (20261129000000)", () => {
     expect(sql).toContain(
       `CREATE UNIQUE INDEX "sender_domains_verified_domain_key" ON "notifications"."sender_domains" ("domain") WHERE "status" = 'verified';`,
     );
-    // Prisma cannot model it: the schema must not claim a plain unique on domain.
-    const domains = /model SenderDomain \{([\s\S]*?)\n\}/.exec(schema())?.[1] ?? "";
-    expect(domains).not.toMatch(/@@unique|@unique/);
   });
 
   it("is purely additive", () => {
@@ -1214,14 +1211,172 @@ describe("notification settings (20261129000000)", () => {
       /@@map\("notification_template_overrides"\)/,
     ])
       expect(overrides).toMatch(field);
-    const domains = /model SenderDomain \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
-    for (const field of [
-      /providerDomainId\s+String\s+@map\("provider_domain_id"\)/,
-      /records\s+Json/,
-      /verifiedAt\s+DateTime\?\s+@map\("verified_at"\)/,
-      /@@id\(\[tenantId, domain\]\)/,
-      /@@map\("sender_domains"\)/,
+    // sender_domains is dropped by 20261130000000 (D50): the model is gone.
+    expect(text).not.toMatch(/model SenderDomain\b/);
+  });
+});
+
+describe("store email connections (20261130000000)", () => {
+  const migration = join(migrationsDir, "20261130000000_store_email_connections", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+  const schema = () =>
+    readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+
+  it("creates notifications.email_connections with exactly the planned columns", () => {
+    expect([...columnsEverAddedTo("notifications", "email_connections", readSql())].sort()).toEqual(
+      [
+        "enabled",
+        "from_email",
+        "kind",
+        "last_error",
+        "last_error_at",
+        "sealed_credentials",
+        "secret_last4",
+        "status",
+        "tenant_id",
+        "updated_at",
+        "verified_at",
+        "version",
+      ],
+    );
+  });
+
+  it("types and constrains every column as planned", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      `"kind" TEXT NOT NULL CHECK ("kind" IN ('resend'))`,
+      '"from_email" TEXT NOT NULL',
+      '"sealed_credentials" TEXT NOT NULL',
+      '"secret_last4" TEXT NOT NULL',
+      '"enabled" BOOLEAN NOT NULL DEFAULT true',
+      `"status" TEXT NOT NULL CHECK ("status" IN ('connected','failed'))`,
+      '"last_error" TEXT,',
+      '"last_error_at" TIMESTAMP(3),',
+      '"verified_at" TIMESTAMP(3),',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
     ])
-      expect(domains).toMatch(field);
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation for reads and writes", () => {
+    const sql = readSql();
+    const table = '"notifications"."email_connections"';
+    expect(sql).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+    expect(sql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
+    expect(sql).toContain(`CREATE POLICY tenant_isolation ON ${table} FOR ALL`);
+    expect(
+      sql.match(/USING \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(1);
+    expect(
+      sql.match(/WITH CHECK \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(1);
+  });
+
+  it("drops only the empty sender_domains table and is otherwise additive", () => {
+    const sql = code();
+    expect(sql.match(/\bDROP TABLE\b[^;]*;/g)).toEqual([
+      'DROP TABLE IF EXISTS "notifications"."sender_domains";',
+    ]);
+    expect(sql).not.toMatch(/\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b|ALTER COLUMN/);
+    expect(sql).not.toMatch(/ALTER TABLE (?!"notifications"\."email_connections")/);
+  });
+
+  it("has no column for a key reference or a plain key", () => {
+    const columns = [...columnsEverAddedTo("notifications", "email_connections", readSql())];
+    expect(columns.filter((name) => /kek|api_key|secret_key|password/.test(name))).toEqual([]);
+  });
+
+  it("sorts after the notification settings migration", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((name) => /^\d{14}_/.test(name))
+      .sort();
+    expect(names.indexOf("20261130000000_store_email_connections")).toBeGreaterThan(
+      names.indexOf("20261129000000_notification_settings"),
+    );
+  });
+
+  it("matches the Prisma model and no sender domain model remains", () => {
+    const text = schema();
+    const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /kind\s+String/,
+      /fromEmail\s+String\s+@map\("from_email"\)/,
+      /sealedCredentials\s+String\s+@map\("sealed_credentials"\)/,
+      /secretLast4\s+String\s+@map\("secret_last4"\)/,
+      /enabled\s+Boolean\s+@default\(true\)/,
+      /status\s+String/,
+      /lastError\s+String\?\s+@map\("last_error"\)/,
+      /lastErrorAt\s+DateTime\?\s+@map\("last_error_at"\)/,
+      /verifiedAt\s+DateTime\?\s+@map\("verified_at"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("email_connections"\)/,
+      /@@schema\("notifications"\)/,
+    ])
+      expect(model).toMatch(field);
+    expect(text).not.toMatch(/model SenderDomain\b/);
+    expect(text).not.toMatch(/sender_domains/);
+  });
+});
+
+describe("email connection SMTP kind (20261201000000)", () => {
+  const name = "20261201000000_email_connection_smtp";
+  const migration = join(migrationsDir, name, "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+
+  it("widens only the kind CHECK, by dropping and re-adding the one named constraint", () => {
+    const sql = code();
+    expect(sql).toContain(
+      'ALTER TABLE "notifications"."email_connections"\n  DROP CONSTRAINT IF EXISTS "email_connections_kind_check";',
+    );
+    expect(sql).toContain(
+      `ADD CONSTRAINT "email_connections_kind_check" CHECK ("kind" IN ('resend','smtp'));`,
+    );
+    expect(sql.match(/\bALTER TABLE\b/g)).toHaveLength(2);
+    expect(sql).not.toMatch(
+      /\bCREATE\b|\bDROP TABLE\b|\bDROP COLUMN\b|\bADD COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b|ALTER COLUMN|POLICY/,
+    );
+    expect(sql).not.toMatch(/ALTER TABLE (?!"notifications"\."email_connections")/);
+  });
+
+  it("adds no column: the mailbox details live in the sealed blob", () => {
+    expect(readSql()).not.toMatch(/ADD COLUMN/i);
+    const columns = [...columnsEverAddedTo("notifications", "email_connections", readSql())];
+    expect(columns).toEqual([]);
+  });
+
+  it("sorts after the store email connections migration, last of all", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((entry) => /^\d{14}_/.test(entry))
+      .sort();
+    expect(names.indexOf(name)).toBeGreaterThan(
+      names.indexOf("20261130000000_store_email_connections"),
+    );
+    expect(names.at(-1)).toBe(name);
+  });
+
+  it("the Prisma model keeps `kind` a plain string (the CHECK is the rule)", () => {
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+    const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    expect(model).toMatch(/kind\s+String/);
   });
 });

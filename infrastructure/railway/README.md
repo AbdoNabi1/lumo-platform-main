@@ -341,9 +341,10 @@ Notes:
 
 ### 4c. Email and password reset (Plan 1C) — off until a key is set
 
-Every email the platform sends goes through one sender, which uses [Resend](https://resend.com) when
-`RESEND_API_KEY` is set. Without the key nothing changes: emails are written to the log, **recipient
-and subject only, never the body or any link**.
+Morbeh's own emails (staff invitations and password reset) go through one sender, which uses
+[Resend](https://resend.com) when `RESEND_API_KEY` is set. That is **Morbeh's own account**: it is never
+used for a store's customer mail (see 4d). Without the key nothing changes: emails are written to the
+log, **recipient and subject only, never the body or any link**.
 
 With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
 
@@ -351,21 +352,18 @@ With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
   expires after **30 minutes**. The page answers the same way whether or not the email has an account.
   Requests are limited to 5 per hour per email, and completions to 10 per 15 minutes per shop.
 - **Change password:** "Change password" in the account menu (needs the current password).
-- **Customer signup email** (G-72): the "complete your account" link is actually emailed instead of
-  logged.
 
-| Service | Variable                 | Value                                                                  |
-| ------- | ------------------------ | ---------------------------------------------------------------------- |
-| API     | `RESEND_API_KEY`         | secret, from Resend. Paste it straight into Railway; never into a chat |
-| API     | `EMAIL_FROM`             | optional; default `Morbeh <onboarding@resend.dev>`                     |
-| API     | `RESEND_DOMAINS_API_KEY` | optional, secret; a Resend **full-access** key (see 4d)                |
-| API     | `ADMIN_PUBLIC_URL`       | `https://<admin-web domain>`, used to build the reset link             |
+| Service | Variable           | Value                                                                  |
+| ------- | ------------------ | ---------------------------------------------------------------------- |
+| API     | `RESEND_API_KEY`   | secret, from Resend. Paste it straight into Railway; never into a chat |
+| API     | `EMAIL_FROM`       | optional; default `Morbeh <onboarding@resend.dev>`                     |
+| API     | `ADMIN_PUBLIC_URL` | `https://<admin-web domain>`, used to build the reset link             |
 
 Notes:
 
 - Resend's sandbox sender (`onboarding@resend.dev`) delivers **only to the email address the Resend
-  account was created with**. That is enough for the owner's own password reset. Sending to customers
-  needs a verified sending domain, which means buying a domain.
+  account was created with**. That is enough for the owner's own password reset. Customer mail does
+  not use this account at all (4d).
 - Only a SHA-256 hash of each reset token is stored; the table is `security.password_reset_tokens`.
   Expired and used rows are never deleted yet (G-90).
 - **Deploy the migration first** (or together with the release), from the API Console:
@@ -375,33 +373,57 @@ Notes:
 
 **Rollback:** delete `RESEND_API_KEY`. Emails go back to the log; the table stays, unused.
 
-### 4d. Store emails from the merchant's own domain (Wave 2b) — optional
+### 4d. Each store's customer email comes from the store's OWN email account (Wave 2b2)
 
-Customer emails (order confirmation, shipping, refunds ...) come from the store's name at the
-platform address (`EMAIL_FROM`), with **Reply-To** set to the store's Sender email. A store whose
-Sender email is on its own domain (not Gmail, Yahoo, Outlook ...) can press **Authenticate domain**
-in Settings > Notifications, add the DNS records Morbeh shows, press **Verify**, and from then on its
-mail comes from its own address.
+Order, shipping, refund and invoice emails, customer sign-up emails and template test sends are sent
+**only** through the merchant's own email account, as `"<Store name>" <the merchant's address>`.
+Morbeh's account (`RESEND_API_KEY`, `EMAIL_FROM`) is never used for them, under any fallback: a store
+with no connected account sends nothing, its notifications are recorded as failed `EMAIL_NOT_CONNECTED`,
+and customer sign-up answers 503 `EMAIL_NOT_CONNECTED`.
 
-That needs one more secret on the API service:
+The merchant connects their own [Resend](https://resend.com) account in Settings > Notifications >
+Email account (an API key from their Resend account, and a From address on a domain **they verified in
+their Resend account**). Saving sends a test email to the person saving; the account shows
+**Connected** only when that works. The key is write-only (the page shows its last four characters)
+and is sealed before it is stored. That needs one secret on the API service:
 
-| Service | Variable                 | Value                                                                               |
-| ------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| API     | `RESEND_DOMAINS_API_KEY` | secret, a Resend **full-access** API key. A sending-only key cannot manage domains. |
+| Service | Variable                    | Value                                                                              |
+| ------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| API     | `EMAIL_CREDENTIALS_KEK_REF` | secret, 32+ characters. Separate from the payment and shipping key-encryption keys |
 
 Notes:
 
-- Optional. Without it "Authenticate domain" answers 503 and the page says "Not available yet";
-  Reply-To mode keeps working. The key is never logged or returned.
-- Each store's domain is created in YOUR Resend account and counts against its plan cap (Free 3,
-  Pro 10, Scale 1000; +100 for $20/month on paid plans). A domain a merchant replaces before it was
-  verified is not deleted at Resend; remove unused ones in the Resend dashboard.
-- `EMAIL_FROM` itself must be on a domain verified in Resend, or customers' mail will not deliver.
-- **Deploy the migration first:** `20261129000000_notification_settings` (creates
-  `notifications.sender_domains`).
+- Without it, outside `APP_ENV=local`, saving an email account answers 503 "Not available yet" and no
+  customer email is sent. The API refuses to boot outside `local` with the in-memory vault.
+- Rotating the value strands the keys sealed under the old one: merchants would have to enter their key
+  again. Treat it like the payment key-encryption key.
+- SMTP (Gmail / Outlook / Zoho / custom mailbox with an app password) is built but **off by default**:
+  Railway only allows outbound SMTP on the Pro plan and above, while the HTTPS API (Resend) works on
+  every plan. See `EMAIL_SMTP_ENABLED` below.
+- **Deploy the migrations first:** `20261129000000_notification_settings`, then
+  `20261130000000_store_email_connections` (creates `notifications.email_connections` and drops the
+  empty `notifications.sender_domains`), then `20261201000000_email_connection_smtp` (widens the
+  `kind` CHECK to `('resend','smtp')`; nothing else changes).
 
-**Rollback:** delete `RESEND_DOMAINS_API_KEY`. Stores keep their rows; mail falls back to Reply-To only
-for stores whose domain stops being verified, otherwise it still uses the verified domain.
+#### 4e. Mailbox (SMTP) accounts, `EMAIL_SMTP_ENABLED`
+
+| Service | Variable             | Value                                           |
+| ------- | -------------------- | ----------------------------------------------- |
+| API     | `EMAIL_SMTP_ENABLED` | `true` or `false` (default `false`; not secret) |
+
+- Turn it on **only after upgrading Railway to the Pro plan** (Hobby blocks outbound SMTP ports, so a
+  mailbox could never connect). It is a plain Variable: change it and redeploy, no migration.
+- Off: the Email account page shows the mailbox option as "Needs a server upgrade"; saving one answers
+  503 `NOT_CONFIGURED`; a mailbox connection that already exists sends nothing (customer mail is
+  recorded `EMAIL_NOT_CONNECTED`). Resend accounts are unaffected.
+- On: the API connects out to the merchant's mail server (465 TLS, 587 STARTTLS; certificates are
+  verified; the password is only ever sent over an encrypted connection). Private and loopback
+  addresses are refused, so a merchant cannot aim it at the platform's own network.
+- Gmail needs an **app password** (Google Account > Security > 2-Step Verification on > App
+  passwords), never the normal password. Gmail limits a normal account to about 500 emails a day.
+
+**Rollback:** delete `EMAIL_CREDENTIALS_KEK_REF`. Saved accounts stay in the table but can no longer be
+opened, so no customer mail is sent until it is set again.
 
 ## 5. Deploy order
 

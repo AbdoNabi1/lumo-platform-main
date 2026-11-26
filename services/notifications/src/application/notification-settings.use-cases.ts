@@ -8,21 +8,27 @@ import {
   validateNotificationSettings,
   type NotificationSettingsValues,
 } from "../domain/messaging/notification-settings";
-import type { SenderMode } from "../domain/messaging/sender-resolution";
-import { isFreeMailAddress, loadSenderContext, type SenderContextDeps } from "./messaging-support";
+import {
+  connectionState,
+  isUsableConnection,
+  type ConnectionState,
+} from "../domain/messaging/email-connection";
+import type { EmailConnectionRepository } from "../domain/messaging/messaging-repositories";
+import { isFreeMailAddress, loadStoreContext, type StoreContextDeps } from "./messaging-support";
 
-export interface NotificationSettingsDeps extends SenderContextDeps {
+export interface NotificationSettingsDeps extends StoreContextDeps {
   readonly unitOfWork: TransactionalUnitOfWork<unknown>;
-  /** Whether the runtime really delivers email (D40). */
-  readonly deliveryConfigured: boolean;
+  /** The store's own email account: customer mail goes ONLY through it (D46). */
+  readonly connections: EmailConnectionRepository;
 }
 
-/** How the store's mail will look to customers, so the page can say it in a sentence. */
+/** How the store's mail will reach customers, so the page can say it in a sentence. */
 export interface SenderSummary {
-  readonly mode: SenderMode;
-  /** The merchant address in effect: the Sender email, else the store contact email. */
+  /** `store_connection`: mail goes from the merchant's own account; `not_connected`: nothing is sent. */
+  readonly mode: "store_connection" | "not_connected";
+  /** The From address of the store's email connection, or null when it has none. */
   readonly effectiveEmail: string | null;
-  /** A free-mail address can never be authenticated, so it is always Reply-To. */
+  /** Free-mail addresses (gmail.com ...) can't be sent from through an API provider such as Resend. */
   readonly freeMail: boolean;
 }
 
@@ -30,7 +36,10 @@ export interface NotificationSettingsOutput {
   readonly values: NotificationSettingsValues;
   /** null while the shop has never saved any. */
   readonly version: number | null;
+  /** true only when the store has a connected, switched-on email connection (D46). */
   readonly deliveryConfigured: boolean;
+  /** none | disabled | failed | connected: so the banner can say which. */
+  readonly emailConnection: ConnectionState;
   readonly storeName: string;
   readonly contactEmail: string | null;
   readonly sender: SenderSummary;
@@ -40,20 +49,22 @@ async function describe(
   deps: NotificationSettingsDeps,
   tenantId: string,
 ): Promise<NotificationSettingsOutput> {
-  const [stored, context] = await Promise.all([
+  const [stored, context, connection] = await Promise.all([
     deps.settings.find(tenantId),
-    loadSenderContext(deps, tenantId),
+    loadStoreContext(deps, tenantId),
+    deps.connections.find(tenantId),
   ]);
   return {
     values: effectiveNotificationSettings(stored),
     version: stored?.version ?? null,
-    deliveryConfigured: deps.deliveryConfigured,
+    deliveryConfigured: isUsableConnection(connection),
+    emailConnection: connectionState(connection),
     storeName: context.profile.storeName,
     contactEmail: context.profile.contactEmail,
     sender: {
-      mode: context.sender.mode,
-      effectiveEmail: context.sender.effectiveEmail,
-      freeMail: isFreeMailAddress(context.sender.effectiveEmail),
+      mode: connection === null ? "not_connected" : "store_connection",
+      effectiveEmail: connection?.fromEmail ?? null,
+      freeMail: isFreeMailAddress(connection?.fromEmail ?? null),
     },
   };
 }

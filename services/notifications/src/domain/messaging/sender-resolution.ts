@@ -1,12 +1,8 @@
 /**
- * Wave 2b (D38): who a customer's mail comes from. Shopify's model, honestly:
- *
- * - The store's Sender email defaults to its contact email.
- * - Only when that address's domain is VERIFIED for the store is it used as the From address.
- * - Otherwise the mail comes from the store's name at the PLATFORM's own sending address, and the
- *   Sender email becomes Reply-To, so replies still reach the merchant.
- * - A free-mail domain (gmail.com ...) can never be verified (its DMARC rejects third-party senders),
- *   so it is always the Reply-To mode. An unverified merchant address is NEVER put in From.
+ * Wave 2b2 (D46): who a customer's mail comes from. Only ever the store's OWN email account:
+ * `"<Store name>" <merchant's address>`. There is no platform mailbox, no Reply-To mode and no
+ * domain authentication here: the merchant's own provider decides whether it will send from that
+ * address, and we show its answer.
  */
 
 const FREE_MAIL_EXACT: ReadonlySet<string> = new Set([
@@ -47,12 +43,6 @@ export function isFreeMailDomain(domain: string): boolean {
   );
 }
 
-/** The address inside `Name <address>`, or the bare value. */
-export function mailboxAddress(mailbox: string): string {
-  const match = /<([^<>]+)>\s*$/.exec(mailbox);
-  return (match?.[1] ?? mailbox).trim();
-}
-
 /** A display name that cannot break a header: no quotes, angle brackets, backslash or control characters. */
 export function safeDisplayName(name: string): string {
   const cleaned = name
@@ -63,46 +53,9 @@ export function safeDisplayName(name: string): string {
   return cleaned.slice(0, 80);
 }
 
-export type SenderMode = "own_domain" | "reply_to" | "platform_only";
-
-export interface ResolveSenderInput {
-  readonly storeName: string;
-  /** The merchant's chosen Sender email (null = not set). */
-  readonly senderEmail: string | null;
-  /** The store contact email, used when no Sender email is set. */
-  readonly contactEmail?: string | null;
-  /** Domains the store has verified at the email provider (lower case). */
-  readonly verifiedDomains: readonly string[];
-  /** The platform's sending mailbox, e.g. `Morbeh <onboarding@resend.dev>`. */
-  readonly platformFrom: string;
-}
-
-export interface ResolvedSender {
-  readonly from: string;
-  readonly replyTo?: string;
-  readonly mode: SenderMode;
-  /** The merchant address in effect (the Sender email, else the contact email), or null. */
-  readonly effectiveEmail: string | null;
-}
-
-export function resolveSender(input: ResolveSenderInput): ResolvedSender {
-  const name = safeDisplayName(input.storeName);
-  const platformAddress = mailboxAddress(input.platformFrom);
-  const display = name === "" ? "" : `"${name}" `;
-  const platformFrom = `${display}<${platformAddress}>`.trim();
-
-  const candidate = [input.senderEmail, input.contactEmail ?? null].find(
-    (value): value is string => value !== null && value !== undefined && isValidEmail(value),
-  );
-  if (candidate === undefined) {
-    return { from: platformFrom, mode: "platform_only", effectiveEmail: null };
-  }
-  const email = normalizeEmail(candidate);
-  const domain = emailDomain(email);
-  const verified =
-    !isFreeMailDomain(domain) && input.verifiedDomains.some((d) => d.toLowerCase() === domain);
-  if (verified) {
-    return { from: `${display}<${email}>`.trim(), mode: "own_domain", effectiveEmail: email };
-  }
-  return { from: platformFrom, replyTo: email, mode: "reply_to", effectiveEmail: email };
+/** The From header for a store's mail: its (safe) name at the merchant's own address. */
+export function formatFrom(storeName: string, fromEmail: string): string {
+  const name = safeDisplayName(storeName);
+  const address = normalizeEmail(fromEmail);
+  return name === "" ? `<${address}>` : `"${name}" <${address}>`;
 }

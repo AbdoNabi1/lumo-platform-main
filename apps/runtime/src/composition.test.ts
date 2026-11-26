@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
+import { InMemoryEmailConnectionVault } from "@platform/notifications";
 import type { Database } from "@platform/db";
 import type { PaymentController } from "@platform/payments";
 import { loadRuntimeConfig } from "./config";
@@ -11,6 +11,7 @@ import {
   PrismaPaymentVerificationAdapter,
   PrismaRefundVerificationAdapter,
 } from "./composition";
+import { buildEmailConnectionVault } from "./email-wiring";
 import { buildJobs, startJobLoop } from "./scheduler";
 import {
   assertProductionCarriersConfigured,
@@ -19,7 +20,7 @@ import {
   assertProductionLicensingBillingConfigured,
   assertProductionObjectStorageConfigured,
   assertProductionPaymentProviderConfigured,
-  assertProductionSignupEmailConfigured,
+  assertProductionEmailVaultConfigured,
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
@@ -341,8 +342,8 @@ describe("api entrypoint", () => {
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
     // The default local composition core has no production PSP/Licensing/ObjectStorage/
-    // integration-port/SignupEmail adapters wired at all, and dunning notifications have no real
-    // delivery path anywhere (T14.5, unconditional) — every one of the 6 still-open guards should
+    // integration-port adapters wired at all, and dunning notifications have no real
+    // delivery path anywhere (T14.5, unconditional) — every one of the 5 still-open guards should
     // fail together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
@@ -350,12 +351,11 @@ describe("api entrypoint", () => {
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.morbeh.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/6 production guards failed/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/5 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/still offline in-memory/);
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/dunning is enabled/);
   });
 
@@ -650,29 +650,28 @@ describe("api entrypoint", () => {
     ).not.toThrow();
   });
 
-  it("G-72: FAILS CLOSED outside local while the resolved SignupEmailPort is still the logging adapter", () => {
+  it("D48: the in-memory email credential vault FAILS CLOSED outside local", () => {
     expect(() =>
-      assertProductionSignupEmailConfigured("production", new LoggingSignupEmailAdapter()),
-    ).toThrow(/SignupEmailPort/);
+      assertProductionEmailVaultConfigured("production", new InMemoryEmailConnectionVault()),
+    ).toThrow(/EMAIL_CREDENTIALS_KEK_REF/);
+    expect(() =>
+      assertProductionEmailVaultConfigured("staging", new InMemoryEmailConnectionVault()),
+    ).toThrow(/in-memory email credential vault/);
   });
 
-  it("G-72: stays permissive in local while still the logging adapter", () => {
+  it("D48: the in-memory vault is permitted in local; a real vault, or none (503 NOT_CONFIGURED), is fine anywhere", () => {
     expect(() =>
-      assertProductionSignupEmailConfigured("local", new LoggingSignupEmailAdapter()),
+      assertProductionEmailVaultConfigured("local", new InMemoryEmailConnectionVault()),
+    ).not.toThrow();
+    expect(() => assertProductionEmailVaultConfigured("production", undefined)).not.toThrow();
+    expect(() =>
+      assertProductionEmailVaultConfigured("production", buildEmailConnectionVault("k".repeat(32))),
     ).not.toThrow();
   });
 
-  it("G-72: does NOT throw outside local once a non-logging adapter is resolved", () => {
-    const realish: SignupEmailPort = {
-      sendCompleteAccountEmail: async () => undefined,
-      sendAlreadyRegisteredEmail: async () => undefined,
-    };
-    expect(() => assertProductionSignupEmailConfigured("production", realish)).not.toThrow();
-  });
-
-  it("G-72: buildRuntimeCore always resolves the logging adapter (no real provider is wired anywhere — D4, out of scope)", () => {
+  it("D45: buildRuntimeCore has no sign-up email adapter any more (customer mail is the store's own connection)", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
-    expect(core.signupEmail).toBeInstanceOf(LoggingSignupEmailAdapter);
+    expect("signupEmail" in core).toBe(false);
   });
 
   it("T14.5: dunning is enabled + no real notification delivery path ⇒ FAILS CLOSED outside local", () => {

@@ -1,9 +1,6 @@
-import {
-  createAdminHttpApi,
-  LoggingSignupEmailAdapter,
-  type SignupEmailPort,
-} from "@platform/admin";
+import { createAdminHttpApi } from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
+import type { EmailConnectionVault } from "@platform/notifications";
 import type { CarrierCredentialVault } from "@platform/shipping";
 import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
@@ -18,7 +15,7 @@ import {
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
-import { resolveEmailWiring, senderDomainDelivery, staffInviteDelivery } from "./email-wiring";
+import { resolveEmailWiring, staffInviteDelivery, storeEmailDelivery } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -300,31 +297,27 @@ export function assertProductionObjectStorageConfigured(
 }
 
 /**
- * G-72: no real `SignupEmailPort` provider is wired anywhere in this codebase (D4 — "the user's
- * choice", deliberately out of scope) — `buildRuntimeCore` always resolves `LoggingSignupEmailAdapter`
- * (logs the signup-completion link instead of emailing it). This guard fails closed outside `local`
- * while that is still the resolved adapter, same `instanceof`-based shape as
- * `assertProductionMfaConfigured`/`assertProductionObjectStorageConfigured` above. Once a real
- * provider (Resend/SendGrid/SES/...) is chosen and wired through `AdminWiringDeps.signupEmail`, this
- * guard passes without any change to it.
+ * Wave 2b2 (D48): a merchant's email key is sealed with `@platform/secrets`' envelope encryption under
+ * `EMAIL_CREDENTIALS_KEK_REF`. The in-memory stub vault is NOT encryption, so it must never seal a
+ * merchant's key outside `APP_ENV=local` (same rule as the carrier vault, §8.1). A missing vault
+ * outside local is fine: saving a connection then answers 503 NOT_CONFIGURED and no customer mail is
+ * sent. `local` only warns.
  */
-export function assertProductionSignupEmailConfigured(
+export function assertProductionEmailVaultConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
-  signupEmail: SignupEmailPort,
+  vault: EmailConnectionVault | undefined,
 ): void {
-  if (!(signupEmail instanceof LoggingSignupEmailAdapter)) return;
+  if (vault?.backing !== "stub") return;
   if (appEnv === "local") {
     logger.warn(
-      "Signup verification email is permissive: no production SignupEmailPort configured, APP_ENV=local",
+      "Email credentials guard (APP_ENV=local, not enforced): the in-memory email credential vault is in use",
     );
-  } else {
-    throw new Error(
-      "api: no production SignupEmailPort is configured (G-72). The logging dev adapter (writes " +
-        "the signup-completion link to the log instead of emailing it) must never back account " +
-        "verification outside APP_ENV=local. Pass signupEmail in createAdminHttpApi's deps once a " +
-        "real provider (Resend/SendGrid/SES/...) is chosen and wired.",
-    );
+    return;
   }
+  throw new Error(
+    "api: the in-memory email credential vault must never seal merchants' email keys outside " +
+      "APP_ENV=local (§8.1). Set EMAIL_CREDENTIALS_KEK_REF.",
+  );
 }
 
 /**
@@ -491,10 +484,12 @@ export function assertProductionIntegrationPortsConfigured(
  */
 export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promise<void> {
   const runtime = core ?? buildRuntimeCore(config);
-  // Plan 1C: Resend when RESEND_API_KEY is set, else a logging sender. A real signupEmail is passed
-  // ONLY with a key, so the G-72 guard below keeps refusing a non-local boot that has no real sender.
+  // Plan 1C: Morbeh's OWN account: Resend when RESEND_API_KEY is set, else a logging sender. It backs
+  // staff invitations and password reset only (D45); a store's customer mail never goes through it.
   const email = resolveEmailWiring(runtime.config);
-  const signupEmail = email.signupEmail ?? runtime.signupEmail;
+  // Wave 2b2: a store's customer mail (templates, test sends, sign-up) goes ONLY through the store's own
+  // email connection: the merchant's key, sealed under EMAIL_CREDENTIALS_KEK_REF.
+  const storeEmail = storeEmailDelivery(config);
 
   // Stage 5 (C-03 partial): none of these 12 ports have a real adapter yet (Stage 6) — this object
   // is the single source of truth for both the guard below and the deps spread into
@@ -581,7 +576,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     collectGuardFailure(() =>
       assertProductionIntegrationPortsConfigured(config.APP_ENV, integrationPorts),
     ),
-    collectGuardFailure(() => assertProductionSignupEmailConfigured(config.APP_ENV, signupEmail)),
+    collectGuardFailure(() =>
+      assertProductionEmailVaultConfigured(config.APP_ENV, storeEmail.emailVault),
+    ),
     collectGuardFailure(() => assertProductionDunningNotificationsConfigured(config.APP_ENV)),
   ].filter((message): message is string => message !== undefined);
 
@@ -699,17 +696,12 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention
     // `platform.audit.entry_recorded.v1` topic all already existed — only this wiring was missing.
     auditTrail: new PrismaAuditTrail(runtime.prisma, runtime.idGenerator),
-    // G-72: guarded above by assertProductionSignupEmailConfigured; real once RESEND_API_KEY is set.
-    signupEmail,
     // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
     // request endpoint still answers 202 and sends nothing.
     emailSender: email.emailSender,
-    // Wave 2b: Settings > Notifications tells the merchant honestly whether email really delivers, and
-    // From is the platform mailbox until a store's own domain is verified.
-    emailDeliveryConfigured: email.deliveryConfigured,
-    emailFrom: config.EMAIL_FROM,
-    // Wave 2b (D43): own-domain sending needs the full-access Resend key; absent ⇒ 503 NOT_CONFIGURED.
-    ...senderDomainDelivery(runtime.config),
+    // Wave 2b2 (D45-D48): each store's customer mail goes through ITS OWN email account. The vault seals
+    // the merchant's key; absent (no KEK outside local) ⇒ saving a connection is 503 NOT_CONFIGURED.
+    ...storeEmail,
     // Wave 1d: staff invitations go only through a REAL delivery (Resend) and need ADMIN_PUBLIC_URL;
     // otherwise inviting answers 503 NOT_CONFIGURED before anything is written.
     ...staffInviteDelivery(email, runtime.config),

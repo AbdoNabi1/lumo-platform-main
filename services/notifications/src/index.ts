@@ -1,36 +1,60 @@
-export { DEFAULT_PLATFORM_FROM, wireNotifications } from "./composition";
+export { wireNotifications } from "./composition";
 export type {
   NotificationsMessagingDeps,
   NotificationsWiringDeps,
   WiredNotifications,
 } from "./composition";
 export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
-export { SenderDomainController } from "./interfaces/sender-domain.controller";
-export { SenderDomainProviderError } from "./application/sender-domain-ports";
+export { EmailConnectionController } from "./interfaces/email-connection.controller";
 export type {
-  ProviderDomain,
-  SenderDomainProvider,
-  SenderDomainProviderFailure,
-} from "./application/sender-domain-ports";
+  EmailConnectionVault,
+  StoreEmailCredentials,
+  SmtpStoreEmailFailureCode,
+  StoreEmailFailureCode,
+  StoreEmailMessage,
+  StoreEmailProvider,
+  StoreEmailResult,
+} from "./application/email-connection-ports";
+export { StoreEmailDelivery, StoreEmailError } from "./application/store-email-delivery";
+export type { StoreEmailErrorCode } from "./application/store-email-delivery";
+export type {
+  EmailConnectionOutput,
+  EmailConnectionView,
+} from "./application/email-connection.use-cases";
 export {
-  normalizeDomainStatus,
-  parseDnsRecords,
-  SENDER_DOMAIN_STATUSES,
-} from "./domain/messaging/sender-domain";
-export type { DnsRecord, SenderDomainStatus } from "./domain/messaging/sender-domain";
-export { SenderDomainTakenError } from "./domain/messaging/sender-domain";
-export { InMemorySenderDomainProvider } from "./infrastructure/in-memory-sender-domain-provider";
+  EMAIL_CONNECTION_KINDS,
+  isUsableConnection,
+  sanitizeProviderMessage,
+} from "./domain/messaging/email-connection";
+export type {
+  EmailConnectionKind,
+  EmailConnectionStatus,
+  StoredEmailConnection,
+} from "./domain/messaging/email-connection";
+export {
+  EMAIL_CREDENTIALS_KEY_ALIAS,
+  EnvelopeEmailConnectionVault,
+  InMemoryEmailConnectionVault,
+} from "./infrastructure/envelope-email-connection-vault";
+export type { KekRefResolver } from "./infrastructure/envelope-email-connection-vault";
+export { InMemoryStoreEmailProvider } from "./infrastructure/in-memory-store-email-provider";
+export {
+  RoutingStoreEmailProvider,
+  SmtpStoreEmailProvider,
+} from "./infrastructure/smtp-store-email-provider";
+export type { SmtpClientOptions } from "./infrastructure/smtp-client";
+export type { RecordedStoreEmail } from "./infrastructure/in-memory-store-email-provider";
 export { TemplatedNotifier } from "./application/templated-notifier";
 export type {
   TemplatedNotificationOutcome,
   TemplatedNotificationRequest,
 } from "./application/templated-notifier";
 export type {
-  EmailDeliveryPort,
   NotificationLog,
   OutgoingMail,
   RecipientContact,
   RecipientResolverPort,
+  StoreMailSender,
   StoreProfile,
   StoreProfilePort,
 } from "./application/messaging-ports";
@@ -45,9 +69,9 @@ export {
 export type { TemplateKey, TemplateLocale } from "./domain/messaging/template-catalogue";
 export {
   emailDomain,
+  formatFrom,
   isFreeMailDomain,
   isValidEmail,
-  resolveSender,
 } from "./domain/messaging/sender-resolution";
 export { escapeHtml, renderTemplate, formatMoney } from "./domain/messaging/template-renderer";
 export { NotificationsController } from "./interfaces/notifications.controller";

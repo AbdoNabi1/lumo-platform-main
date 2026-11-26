@@ -1,14 +1,19 @@
 import {
-  isDomainStatus,
+  isEmailConnectionKind,
+  isEmailConnectionState,
+  isSmtpErrorCode,
+  isSmtpPresetId,
+  isSmtpSecurity,
   isTemplateKey,
   isTemplateLocale,
   TEMPLATE_LOCALES,
-  type DnsRecordDto,
+  type EmailConnectionDto,
+  type EmailConnectionKind,
+  type EmailConnectionSnapshot,
+  type EmailSaveSmtp,
   type NotificationSettingsSnapshot,
   type NotificationSettingsValues,
   type PreviewDto,
-  type SenderDomainDto,
-  type SenderDomainViewDto,
   type TemplateDetailDto,
   type TemplateDto,
   type TemplateKey,
@@ -18,8 +23,8 @@ import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
 /**
  * Wave 2b - Settings > Notifications. Server-only calls to the committed routes
- * (`apps/admin/src/http/notification-settings-routes.ts` and `sender-domain-routes.ts`):
- * settings, templates, preview, test send and the sender domain. Client components take the
+ * (`apps/admin/src/http/notification-settings-routes.ts` and `email-connection-routes.ts`):
+ * settings, templates, preview, test send and the store's own email account. Client components take the
  * shapes from `lib/notification-settings-model.ts` (pure data), never from here.
  */
 
@@ -54,9 +59,8 @@ function isSettingsSnapshot(value: unknown): value is NotificationSettingsSnapsh
     typeof value["storeName"] === "string" &&
     isNullableString(value["contactEmail"]) &&
     isRecord(sender) &&
-    (sender["mode"] === "own_domain" ||
-      sender["mode"] === "reply_to" ||
-      sender["mode"] === "platform_only") &&
+    isEmailConnectionState(value["emailConnection"]) &&
+    (sender["mode"] === "store_connection" || sender["mode"] === "not_connected") &&
     isNullableString(sender["effectiveEmail"]) &&
     typeof sender["freeMail"] === "boolean"
   );
@@ -116,41 +120,41 @@ function isPreview(value: unknown): value is PreviewDto {
   );
 }
 
-function isDnsRecord(value: unknown): value is DnsRecordDto {
+function isEmailConnection(value: unknown): value is EmailConnectionDto {
   return (
     isRecord(value) &&
-    typeof value["record"] === "string" &&
-    typeof value["name"] === "string" &&
-    typeof value["type"] === "string" &&
-    typeof value["value"] === "string" &&
-    typeof value["ttl"] === "string" &&
-    typeof value["status"] === "string" &&
-    (value["priority"] === null || typeof value["priority"] === "number")
+    isEmailConnectionKind(value["kind"]) &&
+    typeof value["fromEmail"] === "string" &&
+    typeof value["secretLast4"] === "string" &&
+    typeof value["enabled"] === "boolean" &&
+    (value["status"] === "connected" || value["status"] === "failed") &&
+    isEmailConnectionState(value["state"]) &&
+    isNullableString(value["lastError"]) &&
+    (value["lastErrorCode"] === null || isSmtpErrorCode(value["lastErrorCode"])) &&
+    isNullableString(value["lastErrorAt"]) &&
+    isNullableString(value["verifiedAt"]) &&
+    typeof value["version"] === "number" &&
+    (value["smtp"] === null || isSmtpConnection(value["smtp"]))
   );
 }
 
-function isDomainView(value: unknown): value is SenderDomainViewDto {
+function isSmtpConnection(value: unknown): boolean {
   return (
     isRecord(value) &&
-    typeof value["domain"] === "string" &&
-    isDomainStatus(value["status"]) &&
-    typeof value["verified"] === "boolean" &&
-    Array.isArray(value["records"]) &&
-    value["records"].every(isDnsRecord) &&
-    isNullableString(value["verifiedAt"])
+    isSmtpPresetId(value["preset"]) &&
+    typeof value["host"] === "string" &&
+    typeof value["port"] === "number" &&
+    isSmtpSecurity(value["security"]) &&
+    typeof value["username"] === "string"
   );
 }
 
-function isSenderDomain(value: unknown): value is SenderDomainDto {
-  if (!isRecord(value)) return false;
-  const suggestion = value["suggestion"];
+function isEmailConnectionSnapshot(value: unknown): value is EmailConnectionSnapshot {
   return (
-    typeof value["available"] === "boolean" &&
-    (value["domain"] === null || isDomainView(value["domain"])) &&
-    (suggestion === null ||
-      (isRecord(suggestion) &&
-        typeof suggestion["domain"] === "string" &&
-        typeof suggestion["freeMail"] === "boolean"))
+    isRecord(value) &&
+    typeof value["credentialsConfigured"] === "boolean" &&
+    typeof value["smtpAvailable"] === "boolean" &&
+    (value["connection"] === null || isEmailConnection(value["connection"]))
   );
 }
 
@@ -263,32 +267,82 @@ export function sendTemplateTest(
   );
 }
 
-/** `GET /notifications/sender-domain`: the stored domain (no provider call) and whether it can be set up. */
-export async function fetchSenderDomain(): Promise<FetchResult<SenderDomainDto, "senderDomain">> {
-  const result = await getAdminApi("/api/v1/notifications/sender-domain", isSenderDomain);
-  if (result.outcome === "ok") return { outcome: "ok", senderDomain: result.data };
+const EMAIL_CONNECTION_PATH = "/api/v1/notifications/email-connection";
+
+/** `GET /notifications/email-connection`: the store's own email account (never its key). */
+export async function fetchEmailConnection(): Promise<
+  FetchResult<EmailConnectionSnapshot, "emailConnection">
+> {
+  const result = await getAdminApi(EMAIL_CONNECTION_PATH, isEmailConnectionSnapshot);
+  if (result.outcome === "ok") return { outcome: "ok", emailConnection: result.data };
   if (result.outcome === "error") return { outcome: "error", message: result.message };
   return result;
 }
 
-/** `POST /notifications/sender-domain`: "Authenticate domain" (idempotent; the domain is never client-chosen). */
-export function startSenderDomain(
+/**
+ * `PUT /notifications/email-connection`: connects (or updates) the account and sends a test mail to
+ * the signed-in member. The key is write-only: an omitted `apiKey` keeps the stored one, and it is
+ * never read back. A refused test mail is still a 200 whose connection has `status: "failed"`.
+ */
+export function saveEmailConnection(
+  input: {
+    readonly kind: EmailConnectionKind;
+    readonly fromEmail: string;
+    /** Resend: the API key. null = keep the stored one. */
+    readonly apiKey: string | null;
+    /** Mailbox: which server and as whom (custom adds host, port, security). */
+    readonly smtp?: EmailSaveSmtp | null;
+    /** Mailbox: the app password, write-only. null = keep the stored one. */
+    readonly password?: string | null;
+  },
+  expectedVersion: number | null,
   idempotencyKey: string,
-): Promise<MutationResult<SenderDomainDto>> {
+): Promise<MutationResult<EmailConnectionSnapshot>> {
   return mutateAdminApi(
-    "/api/v1/notifications/sender-domain",
-    { method: "POST", body: {}, idempotencyKey },
-    isSenderDomain,
+    EMAIL_CONNECTION_PATH,
+    {
+      method: "PUT",
+      body: {
+        kind: input.kind,
+        fromEmail: input.fromEmail,
+        ...(input.apiKey === null ? {} : { apiKey: input.apiKey }),
+        ...(input.smtp === undefined || input.smtp === null ? {} : { smtp: input.smtp }),
+        ...(input.password === undefined || input.password === null
+          ? {}
+          : { password: input.password }),
+        expectedVersion,
+      },
+      idempotencyKey,
+    },
+    isEmailConnectionSnapshot,
   );
 }
 
-/** `POST /notifications/sender-domain/verify`: asks the provider to check the DNS records. */
-export function verifySenderDomain(
+/** `POST /notifications/email-connection/enabled`: switches customer email on or off. */
+export function setEmailConnectionEnabled(
+  enabled: boolean,
+  expectedVersion: number,
   idempotencyKey: string,
-): Promise<MutationResult<SenderDomainDto>> {
+): Promise<MutationResult<EmailConnectionSnapshot>> {
   return mutateAdminApi(
-    "/api/v1/notifications/sender-domain/verify",
-    { method: "POST", body: {}, idempotencyKey },
-    isSenderDomain,
+    `${EMAIL_CONNECTION_PATH}/enabled`,
+    { method: "POST", body: { enabled, expectedVersion }, idempotencyKey },
+    isEmailConnectionSnapshot,
   );
+}
+
+/** `POST /notifications/email-connection/test`: a test mail to the signed-in member's own address. */
+export function testEmailConnection(
+  idempotencyKey: string,
+): Promise<MutationResult<EmailConnectionSnapshot>> {
+  return mutateAdminApi(
+    `${EMAIL_CONNECTION_PATH}/test`,
+    { method: "POST", body: {}, idempotencyKey },
+    isEmailConnectionSnapshot,
+  );
+}
+
+/** `DELETE /notifications/email-connection`: disconnects; the server deletes the sealed key. */
+export function deleteEmailConnection(): Promise<MutationResult<EmailConnectionSnapshot>> {
+  return mutateAdminApi(EMAIL_CONNECTION_PATH, { method: "DELETE" }, isEmailConnectionSnapshot);
 }

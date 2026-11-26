@@ -70,9 +70,9 @@ import {
   type ResolveMediaImages,
 } from "@platform/media";
 import {
-  DEFAULT_PLATFORM_FROM,
   wireNotifications,
-  type SenderDomainProvider,
+  type EmailConnectionVault,
+  type StoreEmailProvider,
 } from "@platform/notifications";
 import {
   wireOrders,
@@ -162,7 +162,7 @@ import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-st
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { ShopperMarketingConsentAdapter } from "./infrastructure/cross-context/shopper-marketing-consent.adapter";
-import { SenderEmailDelivery } from "./infrastructure/cross-context/email-delivery.adapter";
+import { StoreSignupEmailAdapter } from "./infrastructure/store-signup-email-adapter";
 import { StoreProfileAdapter } from "./infrastructure/cross-context/store-profile.adapter";
 import { CustomerRecipientResolver } from "./infrastructure/cross-context/customer-recipient.adapter";
 import { DraftInvoiceNotificationAdapter } from "./infrastructure/cross-context/draft-invoice-notification.adapter";
@@ -209,7 +209,7 @@ import {
 } from "./interfaces/staff-auth.admin-controller";
 import type { EmailSender } from "./interfaces/email-sender.port";
 import { NotificationSettingsAdminController } from "./interfaces/notification-settings.admin-controller";
-import { SenderDomainAdminController } from "./interfaces/sender-domain.admin-controller";
+import { EmailConnectionAdminController } from "./interfaces/email-connection.admin-controller";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -412,18 +412,15 @@ export interface AdminWiringDeps {
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
   /**
-   * Wave 2b: `true` only when `emailSender` REALLY delivers (Resend). Settings > Notifications shows an
-   * honest banner when it is not, and every customer notification is then recorded as failed
-   * `EMAIL_NOT_CONFIGURED` instead of "sent" (D40). Absent ⇒ not configured.
+   * Wave 2b2 (D45/D46): a store's customer mail NEVER goes through `emailSender` (Morbeh's own
+   * account, for Morbeh -> merchant/staff mail only). It goes through the store's own email connection:
+   * `emailVault` seals the merchant's key (absent: saving a connection answers 503 NOT_CONFIGURED and
+   * nothing is sent) and `emailProvider` calls the merchant's own provider with THEIR key.
    */
-  readonly emailDeliveryConfigured?: boolean;
-  /** Wave 2b: the platform's sending mailbox (`EMAIL_FROM`), used as From until a store's own domain is verified. */
-  readonly emailFrom?: string;
-  /**
-   * Wave 2b (D43): the email provider's Domains API (Resend, needs `RESEND_DOMAINS_API_KEY`, a
-   * full-access key). Absent ⇒ "Authenticate domain" answers 503 NOT_CONFIGURED; Reply-To mode works.
-   */
-  readonly senderDomainProvider?: SenderDomainProvider;
+  readonly emailVault?: EmailConnectionVault;
+  readonly emailProvider?: StoreEmailProvider;
+  /** Wave 2b2 Task 3: mailbox (SMTP) accounts may be connected and used (`EMAIL_SMTP_ENABLED`). */
+  readonly smtpEnabled?: boolean;
   /**
    * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
    * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
@@ -682,7 +679,7 @@ export interface WiredAdmin {
   /** Wave 2b: Settings > Notifications (sender, templates, preview, test-send). */
   readonly notificationSettings: NotificationSettingsAdminController;
   /** Wave 2b (D43): authenticate the store's own sending domain. */
-  readonly senderDomain: SenderDomainAdminController;
+  readonly emailConnection: EmailConnectionAdminController;
   /** Wave 2b: the draft order "Send invoice" customer mail (best effort, after the link is issued). */
   readonly draftInvoiceNotifications: DraftInvoiceNotificationAdapter;
   /** Finance screen → Finance (ADR-0024). */
@@ -977,37 +974,32 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     onlineStore?: Pick<OnlineStoreController, "getPreferences">;
     customers?: Pick<CustomerController, "getCustomer">;
   } = {};
+  const storeProfile = new StoreProfileAdapter(
+    {
+      getStoreSettings: (tenantId) => {
+        if (storeProfileCells.tenancy === undefined) {
+          throw new Error("StoreProfileAdapter: Tenancy requested before wireTenancy() completed");
+        }
+        return storeProfileCells.tenancy.getStoreSettings(tenantId);
+      },
+    },
+    {
+      getPreferences: (input) => {
+        if (storeProfileCells.onlineStore === undefined) {
+          throw new Error(
+            "StoreProfileAdapter: Online store requested before wireOnlineStore() completed",
+          );
+        }
+        return storeProfileCells.onlineStore.getPreferences(input);
+      },
+    },
+  );
   const notifications = wireNotifications(deps, {
-    store: new StoreProfileAdapter(
-      {
-        getStoreSettings: (tenantId) => {
-          if (storeProfileCells.tenancy === undefined) {
-            throw new Error(
-              "StoreProfileAdapter: Tenancy requested before wireTenancy() completed",
-            );
-          }
-          return storeProfileCells.tenancy.getStoreSettings(tenantId);
-        },
-      },
-      {
-        getPreferences: (input) => {
-          if (storeProfileCells.onlineStore === undefined) {
-            throw new Error(
-              "StoreProfileAdapter: Online store requested before wireOnlineStore() completed",
-            );
-          }
-          return storeProfileCells.onlineStore.getPreferences(input);
-        },
-      },
-    ),
-    ...(deps.senderDomainProvider === undefined
-      ? {}
-      : { senderDomainProvider: deps.senderDomainProvider }),
-    delivery: new SenderEmailDelivery({
-      ...(deps.emailSender === undefined ? {} : { sender: deps.emailSender }),
-      deliveryConfigured: deps.emailDeliveryConfigured === true,
-      platformFrom: deps.emailFrom ?? DEFAULT_PLATFORM_FROM,
-    }),
+    store: storeProfile,
+    // Customer mail goes only through the store's own email connection (D46); there is no platform sender here.
+    ...(deps.emailVault === undefined ? {} : { emailVault: deps.emailVault }),
+    ...(deps.emailProvider === undefined ? {} : { emailProvider: deps.emailProvider }),
+    ...(deps.smtpEnabled === undefined ? {} : { smtpEnabled: deps.smtpEnabled }),
     // Customer name, address and language are read when a mail is sent, through a closure over the
     // Identity cell (Identity is wired after Notifications). The logger gets short codes only.
     recipients: new CustomerRecipientResolver({
@@ -1474,7 +1466,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   };
   // G-72: absent ⇒ the logging dev adapter, guarded out of production by
   // `apps/runtime/src/api.ts`'s `assertProductionSignupEmailConfigured`.
-  const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
+  // Wave 2b2 (D51): with the store email provider wired (production), sign-up mail goes through the
+  // store's own connection and never through the platform's sender. The logging dev adapter remains
+  // only when nothing is wired (tests, bare in-memory wiring) or a test injects its own.
+  const signupEmail: SignupEmailPort =
+    deps.signupEmail ??
+    (deps.emailProvider === undefined
+      ? new LoggingSignupEmailAdapter()
+      : new StoreSignupEmailAdapter(notifications.storeMail, storeProfile));
   const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
   // Project 4. Every port is a closure (Ruling 13): no tenancy, media, catalog or pages object hangs
@@ -1717,9 +1716,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       actorEmail: (tenantId, principalExternalId) =>
         staffAuth.ownEmail(tenantId, principalExternalId),
     }),
-    senderDomain: new SenderDomainAdminController({
-      senderDomain: notifications.senderDomain,
+    emailConnection: new EmailConnectionAdminController({
+      emailConnection: notifications.emailConnection,
       guard,
+      actorEmail: (tenantId, principalExternalId) =>
+        staffAuth.ownEmail(tenantId, principalExternalId),
     }),
     content: new ContentAdminController({ content: content.content, guard }),
     coupons: new CouponsAdminController({ coupons: coupons.coupons, guard }),
