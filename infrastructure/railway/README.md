@@ -354,11 +354,12 @@ With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
 - **Customer signup email** (G-72): the "complete your account" link is actually emailed instead of
   logged.
 
-| Service | Variable           | Value                                                                  |
-| ------- | ------------------ | ---------------------------------------------------------------------- |
-| API     | `RESEND_API_KEY`   | secret, from Resend. Paste it straight into Railway; never into a chat |
-| API     | `EMAIL_FROM`       | optional; default `Morbeh <onboarding@resend.dev>`                     |
-| API     | `ADMIN_PUBLIC_URL` | `https://<admin-web domain>`, used to build the reset link             |
+| Service | Variable                 | Value                                                                  |
+| ------- | ------------------------ | ---------------------------------------------------------------------- |
+| API     | `RESEND_API_KEY`         | secret, from Resend. Paste it straight into Railway; never into a chat |
+| API     | `EMAIL_FROM`             | optional; default `Morbeh <onboarding@resend.dev>`                     |
+| API     | `RESEND_DOMAINS_API_KEY` | optional, secret; a Resend **full-access** key (see 4d)                |
+| API     | `ADMIN_PUBLIC_URL`       | `https://<admin-web domain>`, used to build the reset link             |
 
 Notes:
 
@@ -373,6 +374,34 @@ Notes:
   the same way but no link is sent.
 
 **Rollback:** delete `RESEND_API_KEY`. Emails go back to the log; the table stays, unused.
+
+### 4d. Store emails from the merchant's own domain (Wave 2b) — optional
+
+Customer emails (order confirmation, shipping, refunds ...) come from the store's name at the
+platform address (`EMAIL_FROM`), with **Reply-To** set to the store's Sender email. A store whose
+Sender email is on its own domain (not Gmail, Yahoo, Outlook ...) can press **Authenticate domain**
+in Settings > Notifications, add the DNS records Morbeh shows, press **Verify**, and from then on its
+mail comes from its own address.
+
+That needs one more secret on the API service:
+
+| Service | Variable                 | Value                                                                               |
+| ------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| API     | `RESEND_DOMAINS_API_KEY` | secret, a Resend **full-access** API key. A sending-only key cannot manage domains. |
+
+Notes:
+
+- Optional. Without it "Authenticate domain" answers 503 and the page says "Not available yet";
+  Reply-To mode keeps working. The key is never logged or returned.
+- Each store's domain is created in YOUR Resend account and counts against its plan cap (Free 3,
+  Pro 10, Scale 1000; +100 for $20/month on paid plans). A domain a merchant replaces before it was
+  verified is not deleted at Resend; remove unused ones in the Resend dashboard.
+- `EMAIL_FROM` itself must be on a domain verified in Resend, or customers' mail will not deliver.
+- **Deploy the migration first:** `20261129000000_notification_settings` (creates
+  `notifications.sender_domains`).
+
+**Rollback:** delete `RESEND_DOMAINS_API_KEY`. Stores keep their rows; mail falls back to Reply-To only
+for stores whose domain stops being verified, otherwise it still uses the verified domain.
 
 ## 5. Deploy order
 

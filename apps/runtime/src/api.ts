@@ -18,7 +18,7 @@ import {
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
-import { resolveEmailWiring, staffInviteDelivery } from "./email-wiring";
+import { resolveEmailWiring, senderDomainDelivery, staffInviteDelivery } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -708,6 +708,8 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // From is the platform mailbox until a store's own domain is verified.
     emailDeliveryConfigured: email.deliveryConfigured,
     emailFrom: config.EMAIL_FROM,
+    // Wave 2b (D43): own-domain sending needs the full-access Resend key; absent ⇒ 503 NOT_CONFIGURED.
+    ...senderDomainDelivery(runtime.config),
     // Wave 1d: staff invitations go only through a REAL delivery (Resend) and need ADMIN_PUBLIC_URL;
     // otherwise inviting answers 503 NOT_CONFIGURED before anything is written.
     ...staffInviteDelivery(email, runtime.config),

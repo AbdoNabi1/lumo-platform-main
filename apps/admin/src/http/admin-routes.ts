@@ -115,6 +115,7 @@ import { storeDomainsRoutes } from "./store-domains-routes";
 import { storeSettingsRoutes } from "./store-settings-routes";
 import { checkoutSettingsRoutes } from "./checkout-settings-routes";
 import { notificationSettingsRoutes } from "./notification-settings-routes";
+import { senderDomainRoutes } from "./sender-domain-routes";
 import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
@@ -2354,6 +2355,7 @@ export function adminRoutes(
     ...storeSettingsRoutes(admin),
     ...checkoutSettingsRoutes(admin),
     ...notificationSettingsRoutes(admin, options.rateLimiter),
+    ...senderDomainRoutes(admin),
     ...storeDomainsRoutes(admin),
     ...storeBillingRoutes(admin),
     ...licensingRoutes(admin),

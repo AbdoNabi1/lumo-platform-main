@@ -28,6 +28,17 @@ describe("email config (Plan 1C)", () => {
     expect(c.ADMIN_PUBLIC_URL).toBe("https://admin.example.test");
   });
 
+  it("RESEND_DOMAINS_API_KEY (Wave 2b) is optional and must look like a key", () => {
+    expect(loadRuntimeConfig({ ...base, APP_ENV: "local" }).RESEND_DOMAINS_API_KEY).toBeUndefined();
+    expect(
+      loadRuntimeConfig({ ...base, APP_ENV: "local", RESEND_DOMAINS_API_KEY: "re_full_access_1" })
+        .RESEND_DOMAINS_API_KEY,
+    ).toBe("re_full_access_1");
+    expect(() =>
+      loadRuntimeConfig({ ...base, APP_ENV: "local", RESEND_DOMAINS_API_KEY: "short" }),
+    ).toThrow();
+  });
+
   it("rejects a non-URL admin address and a too-short key", () => {
     expect(() =>
       loadRuntimeConfig({ ...base, APP_ENV: "local", ADMIN_PUBLIC_URL: "admin" }),

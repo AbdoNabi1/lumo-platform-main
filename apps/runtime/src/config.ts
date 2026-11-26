@@ -86,6 +86,12 @@ const schema = z
     RESEND_API_KEY: z.string().min(10).optional(),
     /** Plan 1C: the From header. The default is Resend's sandbox sender, which only delivers to the Resend account's own address. */
     EMAIL_FROM: z.string().min(3).default("Morbeh <onboarding@resend.dev>"),
+    /**
+     * Wave 2b (D43): Resend FULL-ACCESS key, used only to create and verify merchants' sending domains
+     * (the sending key above cannot manage domains). SECRET. Optional: absent ⇒ "Authenticate domain"
+     * answers 503 NOT_CONFIGURED and every store's mail uses its name with Reply-To.
+     */
+    RESEND_DOMAINS_API_KEY: z.string().min(10).optional(),
     /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
     ADMIN_PUBLIC_URL: z.string().url().optional(),
     /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */

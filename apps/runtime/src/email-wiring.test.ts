@@ -3,12 +3,13 @@ import {
   EmailSignupEmailAdapter,
   LoggingEmailSender,
   ResendEmailSender,
+  ResendSenderDomainProvider,
   wireAdmin,
 } from "@platform/admin";
 import type { Clock, IdGenerator, Principal } from "@platform/contracts";
 import { JsonEventSerializer } from "@platform/domain-events";
 import { PLATFORM_ADMIN_ROLE } from "@platform/security";
-import { resolveEmailWiring, staffInviteDelivery } from "./email-wiring";
+import { resolveEmailWiring, senderDomainDelivery, staffInviteDelivery } from "./email-wiring";
 
 describe("resolveEmailWiring (Plan 1C)", () => {
   it("without a key: a logging sender and NO signup adapter (the G-72 guard keeps refusing)", () => {
@@ -156,5 +157,29 @@ describe("staff invitation delivery capability (Wave 1d, R1)", () => {
       expect(calls[0]?.url).toBe("https://api.resend.com/emails");
       expect(calls[0]?.body).toContain("accept-invite?token=");
     });
+  });
+});
+
+describe("senderDomainDelivery (Wave 2b, D43)", () => {
+  it("without RESEND_DOMAINS_API_KEY: no provider, so authenticating a domain answers NOT_CONFIGURED", () => {
+    expect(senderDomainDelivery({ RESEND_DOMAINS_API_KEY: undefined })).toEqual({});
+  });
+
+  it("with the full-access key: the Resend Domains provider, using that key only", async () => {
+    const seen: string[] = [];
+    const wiring = senderDomainDelivery({ RESEND_DOMAINS_API_KEY: "re_full_access_1" }, ((
+      _url: string,
+      init: RequestInit,
+    ) => {
+      seen.push((init.headers as Record<string, string>)["authorization"] ?? "");
+      return Promise.resolve(
+        new Response(JSON.stringify({ id: "d1", status: "pending", records: [] }), {
+          status: 200,
+        }),
+      );
+    }) as typeof fetch);
+    expect(wiring.senderDomainProvider).toBeInstanceOf(ResendSenderDomainProvider);
+    await wiring.senderDomainProvider?.get("d1");
+    expect(seen).toEqual(["Bearer re_full_access_1"]);
   });
 });

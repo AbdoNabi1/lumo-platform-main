@@ -15,7 +15,7 @@ import {
 } from "./notification-templates.use-cases";
 import {
   InMemoryNotificationSettingsRepository,
-  InMemorySenderDomainReader,
+  InMemorySenderDomainRepository,
   InMemoryTemplateOverrideRepository,
 } from "../infrastructure/in-memory-messaging-repositories";
 import { InMemoryUnitOfWork } from "../infrastructure/in-memory-unit-of-work";
@@ -27,7 +27,7 @@ const OTHER = "tenant-b";
 function setup(options: { configured?: boolean; contactEmail?: string | null } = {}) {
   const settings = new InMemoryNotificationSettingsRepository();
   const overrides = new InMemoryTemplateOverrideRepository();
-  const senderDomains = new InMemorySenderDomainReader();
+  const senderDomains = new InMemorySenderDomainRepository();
   const sent: OutgoingMail[] = [];
   const store: StoreProfilePort = {
     get: () =>
@@ -138,7 +138,7 @@ describe("settings", () => {
       store: {
         get: () => Promise.resolve({ storeName: "S", contactEmail: null, defaultLocale: null }),
       },
-      senderDomains: new InMemorySenderDomainReader(),
+      senderDomains: new InMemorySenderDomainRepository(),
       platformFrom: "M <a@b.co>",
       deliveryConfigured: true,
       unitOfWork: {

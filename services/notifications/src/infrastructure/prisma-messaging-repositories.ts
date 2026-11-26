@@ -7,7 +7,7 @@ import {
 import { ConcurrencyError } from "@platform/utils";
 import type {
   NotificationSettingsRepository,
-  SenderDomainReader,
+  SenderDomainRepository,
   TemplateOverride,
   TemplateOverrideRepository,
 } from "../domain/messaging/messaging-repositories";
@@ -15,6 +15,11 @@ import type {
   NotificationSettingsValues,
   StoredNotificationSettings,
 } from "../domain/messaging/notification-settings";
+import {
+  normalizeDomainStatus,
+  parseDnsRecords,
+  type StoredSenderDomain,
+} from "../domain/messaging/sender-domain";
 import {
   isTemplateKey,
   isTemplateLocale,
@@ -189,12 +194,78 @@ export class PrismaTemplateOverrideRepository implements TemplateOverrideReposit
   }
 }
 
-/** Reads the store's VERIFIED sending domains from `notifications.sender_domains` (Task 2 writes them). */
-export class PrismaSenderDomainReader implements SenderDomainReader {
+/**
+ * Production {@link SenderDomainRepository} on `notifications.sender_domains` (primary key tenant +
+ * domain). Sender resolution reads the VERIFIED domains from here, so a domain only authenticates a
+ * store's From address after the provider said so (D38/D43).
+ */
+export class PrismaSenderDomainRepository implements SenderDomainRepository {
   private readonly prisma: Database;
 
   constructor(prisma: Database) {
     this.prisma = prisma;
+  }
+
+  async find(tenantId: string, tx?: unknown): Promise<StoredSenderDomain | null> {
+    const run = (client: TransactionClient) =>
+      client.senderDomain.findFirst({ where: { tenantId }, orderBy: { updatedAt: "desc" } });
+    const row =
+      tx !== undefined && tx !== null
+        ? await run(tx as TransactionClient)
+        : await runReadScoped(this.prisma, tenantId, run);
+    if (row === null) return null;
+    return {
+      domain: row.domain,
+      providerDomainId: row.providerDomainId,
+      status: normalizeDomainStatus(row.status),
+      records: parseDnsRecords(row.records),
+      verifiedAt: row.verifiedAt,
+    };
+  }
+
+  async save(
+    tenantId: string,
+    row: StoredSenderDomain,
+    options: { readonly replacing?: string } = {},
+  ): Promise<void> {
+    const data = {
+      providerDomainId: row.providerDomainId,
+      status: row.status,
+      records: row.records.map((record) => ({ ...record })),
+      verifiedAt: row.verifiedAt,
+    };
+    await runInTenantTransaction(this.prisma, tenantId, async (client) => {
+      if (options.replacing !== undefined && options.replacing !== row.domain) {
+        await client.senderDomain.deleteMany({ where: { tenantId, domain: options.replacing } });
+      }
+      const { count } = await client.senderDomain.updateMany({
+        where: { tenantId, domain: row.domain },
+        data,
+      });
+      if (count > 0) return;
+      try {
+        await client.senderDomain.create({ data: { tenantId, domain: row.domain, ...data } });
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          throw new ConcurrencyError("Sender domain was saved concurrently", { cause: error });
+        }
+        throw error;
+      }
+    });
+  }
+
+  async isVerifiedByAnotherStore(domain: string, tenantId: string): Promise<boolean> {
+    // DELIBERATELY NOT TENANT-SCOPED (tenant-scanner exemption `platform-global`). The question
+    // "does another store already have this domain verified" cannot be asked through a per-store
+    // read. Only the owner's id leaves this query and it is compared here; no other store's row
+    // is returned to the caller. NOTE: this relies on the connection role seeing every tenant's
+    // rows (ADR-0014: BYPASSRLS today). Under an RLS-enforcing role it would see nothing; the
+    // domain is then still unique at the provider (one account cannot register it twice).
+    const owners = await this.prisma.senderDomain.findMany({
+      where: { domain, status: "verified" },
+      select: { tenantId: true },
+    });
+    return owners.some((owner) => owner.tenantId !== tenantId);
   }
 
   async listVerifiedDomains(tenantId: string, tx?: unknown): Promise<readonly string[]> {

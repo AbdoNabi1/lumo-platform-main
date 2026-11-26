@@ -23,6 +23,7 @@ import type { EmailProviderPort } from "./application/ports";
 import type {
   NotificationSettingsRepository,
   SenderDomainReader,
+  SenderDomainRepository,
   TemplateOverrideRepository,
 } from "./domain/messaging/messaging-repositories";
 import {
@@ -37,6 +38,12 @@ import {
   RevertNotificationTemplate,
   SendTestEmail,
 } from "./application/notification-templates.use-cases";
+import {
+  GetSenderDomain,
+  StartSenderDomain,
+  VerifySenderDomain,
+} from "./application/sender-domain.use-cases";
+import type { SenderDomainProvider } from "./application/sender-domain-ports";
 import { CreateNotification } from "./application/create-notification.use-case";
 import { GetNotification } from "./application/get-notification.use-case";
 import { ListNotifications } from "./application/list-notifications.use-case";
@@ -58,12 +65,12 @@ import {
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
 import {
   InMemoryNotificationSettingsRepository,
-  InMemorySenderDomainReader,
+  InMemorySenderDomainRepository,
   InMemoryTemplateOverrideRepository,
 } from "./infrastructure/in-memory-messaging-repositories";
 import {
   PrismaNotificationSettingsRepository,
-  PrismaSenderDomainReader,
+  PrismaSenderDomainRepository,
   PrismaTemplateOverrideRepository,
 } from "./infrastructure/prisma-messaging-repositories";
 import {
@@ -72,6 +79,7 @@ import {
 } from "./infrastructure/notifications-event-translator";
 import { PrismaNotificationRepository } from "./infrastructure/prisma-notification-repository";
 import { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+import { SenderDomainController } from "./interfaces/sender-domain.controller";
 import { NotificationsController } from "./interfaces/notifications.controller";
 
 /** The default platform mailbox: the same as the runtime's `EMAIL_FROM` default. */
@@ -91,6 +99,11 @@ export interface NotificationsMessagingDeps {
   readonly recipients?: RecipientResolverPort;
   /** Failure logging for the email channel: short codes only, never an address or a body. */
   readonly log?: NotificationLog;
+  /**
+   * The email provider's Domains API (D43). Absent (no `RESEND_DOMAINS_API_KEY`) ⇒ authenticating a
+   * domain answers 503 NOT_CONFIGURED and Reply-To mode keeps working.
+   */
+  readonly senderDomainProvider?: SenderDomainProvider;
 }
 
 export interface NotificationsWiringDeps {
@@ -111,6 +124,8 @@ export interface WiredNotifications {
   readonly notifications: NotificationsController;
   /** Settings > Notifications: sender, templates, preview, test-send (Wave 2b). */
   readonly settings: NotificationSettingsController;
+  /** Authenticate the store's own sending domain and read its status (D43). */
+  readonly senderDomain: SenderDomainController;
   /** The one entry the order/payment/fulfilment/draft triggers use to send a templated mail (Wave 2b). */
   readonly notifier: TemplatedNotifier;
   readonly drainOutbox: () => Promise<number>;
@@ -120,7 +135,7 @@ export interface WiredNotifications {
 interface MessagingRepositories {
   readonly settings: NotificationSettingsRepository;
   readonly overrides: TemplateOverrideRepository;
-  readonly senderDomains: SenderDomainReader;
+  readonly senderDomains: SenderDomainRepository;
 }
 
 const UNCONFIGURED_MESSAGING: NotificationsMessagingDeps = {
@@ -162,6 +177,27 @@ function buildSettingsController(
     revertTemplate: new RevertNotificationTemplate(templateDeps),
     previewTemplate: new PreviewNotificationTemplate(templateDeps),
     sendTest: new SendTestEmail({ ...templateDeps, delivery: messaging.delivery }),
+  });
+}
+
+function buildSenderDomainController(
+  deps: NotificationsWiringDeps,
+  repos: MessagingRepositories,
+  messaging: NotificationsMessagingDeps,
+): SenderDomainController {
+  const domainDeps = {
+    settings: repos.settings,
+    store: messaging.store,
+    senderDomains: repos.senderDomains,
+    clock: deps.clock,
+    ...(messaging.senderDomainProvider === undefined
+      ? {}
+      : { provider: messaging.senderDomainProvider }),
+  };
+  return new SenderDomainController({
+    getDomain: new GetSenderDomain(domainDeps),
+    startDomain: new StartSenderDomain(domainDeps),
+    verifyDomain: new VerifySenderDomain(domainDeps),
   });
 }
 
@@ -228,7 +264,7 @@ function assemble(
   unitOfWork: TransactionalUnitOfWork<unknown>,
   repos: MessagingRepositories,
   messaging: NotificationsMessagingDeps,
-): Pick<WiredNotifications, "notifications" | "settings" | "notifier"> {
+): Pick<WiredNotifications, "notifications" | "settings" | "senderDomain" | "notifier"> {
   const senderDomains = messaging.senderDomains ?? repos.senderDomains;
   const emailProvider = new TemplatedEmailProvider({
     settings: repos.settings,
@@ -244,6 +280,7 @@ function assemble(
   return {
     notifications: built.controller,
     settings: buildSettingsController(repos, unitOfWork, messaging),
+    senderDomain: buildSenderDomainController(deps, repos, messaging),
     notifier: new TemplatedNotifier({
       settings: repos.settings,
       create: built.create,
@@ -289,7 +326,7 @@ export function wireNotifications(
         {
           settings: new PrismaNotificationSettingsRepository(deps.prisma),
           overrides: new PrismaTemplateOverrideRepository(deps.prisma),
-          senderDomains: new PrismaSenderDomainReader(deps.prisma),
+          senderDomains: new PrismaSenderDomainRepository(deps.prisma),
         },
         messaging,
       ),
@@ -317,7 +354,7 @@ export function wireNotifications(
     {
       settings: new InMemoryNotificationSettingsRepository(),
       overrides: new InMemoryTemplateOverrideRepository(),
-      senderDomains: new InMemorySenderDomainReader(),
+      senderDomains: new InMemorySenderDomainRepository(),
     },
     messaging,
   );

@@ -2,9 +2,11 @@ import {
   EmailSignupEmailAdapter,
   LoggingEmailSender,
   ResendEmailSender,
+  ResendSenderDomainProvider,
   type EmailSender,
   type SignupEmailPort,
 } from "@platform/admin";
+import type { SenderDomainProvider } from "@platform/notifications";
 import { logger } from "@platform/utils";
 import type { RuntimeConfig } from "./config";
 
@@ -54,4 +56,22 @@ export function staffInviteDelivery(
   return email.deliveryConfigured && config.ADMIN_PUBLIC_URL !== undefined
     ? { staffInviteEmailSender: email.emailSender }
     : {};
+}
+
+/**
+ * Wave 2b (D43): the provider's Domains API, only with a full-access `RESEND_DOMAINS_API_KEY`.
+ * Absent ⇒ nothing is passed, so "Authenticate domain" answers 503 NOT_CONFIGURED.
+ */
+export function senderDomainDelivery(
+  config: Pick<RuntimeConfig, "RESEND_DOMAINS_API_KEY">,
+  fetchImpl?: typeof fetch,
+): { readonly senderDomainProvider?: SenderDomainProvider } {
+  return config.RESEND_DOMAINS_API_KEY === undefined
+    ? {}
+    : {
+        senderDomainProvider: new ResendSenderDomainProvider({
+          apiKey: config.RESEND_DOMAINS_API_KEY,
+          ...(fetchImpl === undefined ? {} : { fetchImpl }),
+        }),
+      };
 }

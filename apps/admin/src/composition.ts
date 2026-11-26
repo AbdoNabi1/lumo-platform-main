@@ -69,7 +69,11 @@ import {
   type ObjectStoragePort,
   type ResolveMediaImages,
 } from "@platform/media";
-import { DEFAULT_PLATFORM_FROM, wireNotifications } from "@platform/notifications";
+import {
+  DEFAULT_PLATFORM_FROM,
+  wireNotifications,
+  type SenderDomainProvider,
+} from "@platform/notifications";
 import {
   wireOrders,
   type InventoryPort as OrdersInventoryPort,
@@ -205,6 +209,7 @@ import {
 } from "./interfaces/staff-auth.admin-controller";
 import type { EmailSender } from "./interfaces/email-sender.port";
 import { NotificationSettingsAdminController } from "./interfaces/notification-settings.admin-controller";
+import { SenderDomainAdminController } from "./interfaces/sender-domain.admin-controller";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -414,6 +419,11 @@ export interface AdminWiringDeps {
   readonly emailDeliveryConfigured?: boolean;
   /** Wave 2b: the platform's sending mailbox (`EMAIL_FROM`), used as From until a store's own domain is verified. */
   readonly emailFrom?: string;
+  /**
+   * Wave 2b (D43): the email provider's Domains API (Resend, needs `RESEND_DOMAINS_API_KEY`, a
+   * full-access key). Absent ⇒ "Authenticate domain" answers 503 NOT_CONFIGURED; Reply-To mode works.
+   */
+  readonly senderDomainProvider?: SenderDomainProvider;
   /**
    * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
    * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
@@ -671,6 +681,8 @@ export interface WiredAdmin {
   readonly notifications: NotificationsAdminController;
   /** Wave 2b: Settings > Notifications (sender, templates, preview, test-send). */
   readonly notificationSettings: NotificationSettingsAdminController;
+  /** Wave 2b (D43): authenticate the store's own sending domain. */
+  readonly senderDomain: SenderDomainAdminController;
   /** Wave 2b: the draft order "Send invoice" customer mail (best effort, after the link is issued). */
   readonly draftInvoiceNotifications: DraftInvoiceNotificationAdapter;
   /** Finance screen → Finance (ADR-0024). */
@@ -988,6 +1000,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         },
       },
     ),
+    ...(deps.senderDomainProvider === undefined
+      ? {}
+      : { senderDomainProvider: deps.senderDomainProvider }),
     delivery: new SenderEmailDelivery({
       ...(deps.emailSender === undefined ? {} : { sender: deps.emailSender }),
       deliveryConfigured: deps.emailDeliveryConfigured === true,
@@ -1701,6 +1716,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
       actorEmail: (tenantId, principalExternalId) =>
         staffAuth.ownEmail(tenantId, principalExternalId),
+    }),
+    senderDomain: new SenderDomainAdminController({
+      senderDomain: notifications.senderDomain,
+      guard,
     }),
     content: new ContentAdminController({ content: content.content, guard }),
     coupons: new CouponsAdminController({ coupons: coupons.coupons, guard }),

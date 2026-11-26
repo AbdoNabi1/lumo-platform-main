@@ -15,6 +15,7 @@ const STATUS_BY_CODE: Readonly<Record<string, number>> = {
   UNAUTHENTICATED: 401,
   FORBIDDEN: 403,
   NOT_CONFIGURED: 503,
+  PROVIDER_ERROR: 502,
 };
 
 /** Maps a use-case `Result` to a transport-neutral response (framework-agnostic; no HTTP server). */

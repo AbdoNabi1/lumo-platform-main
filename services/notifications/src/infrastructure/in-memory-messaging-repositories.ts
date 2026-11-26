@@ -1,7 +1,7 @@
 import { ConcurrencyError } from "@platform/utils";
 import type {
   NotificationSettingsRepository,
-  SenderDomainReader,
+  SenderDomainRepository,
   TemplateOverride,
   TemplateOverrideRepository,
 } from "../domain/messaging/messaging-repositories";
@@ -9,6 +9,7 @@ import type {
   NotificationSettingsValues,
   StoredNotificationSettings,
 } from "../domain/messaging/notification-settings";
+import type { StoredSenderDomain } from "../domain/messaging/sender-domain";
 import type { TemplateKey, TemplateLocale } from "../domain/messaging/template-catalogue";
 
 /** In-memory settings with the SAME version contract as the Prisma repository (stale = `ConcurrencyError`). */
@@ -92,15 +93,55 @@ export class InMemoryTemplateOverrideRepository implements TemplateOverrideRepos
   }
 }
 
-/** In-memory verified domains per tenant (Task 2 will write real rows; tests seed this one). */
-export class InMemorySenderDomainReader implements SenderDomainReader {
-  private readonly verified = new Map<string, string[]>();
+/** In-memory sending domains per store, with the same one-row-per-domain contract as the Prisma repository. */
+export class InMemorySenderDomainRepository implements SenderDomainRepository {
+  private readonly rows = new Map<string, Map<string, StoredSenderDomain>>();
 
+  /** Test seed: these domains are verified for the store. */
   setVerified(tenantId: string, domains: readonly string[]): void {
-    this.verified.set(tenantId, [...domains]);
+    const own = new Map<string, StoredSenderDomain>();
+    for (const domain of domains) {
+      own.set(domain, {
+        domain,
+        providerDomainId: `seed-${domain}`,
+        status: "verified",
+        records: [],
+        verifiedAt: new Date(0),
+      });
+    }
+    this.rows.set(tenantId, own);
+  }
+
+  find(tenantId: string): Promise<StoredSenderDomain | null> {
+    const first = [...(this.rows.get(tenantId)?.values() ?? [])][0];
+    return Promise.resolve(first === undefined ? null : { ...first, records: [...first.records] });
+  }
+
+  save(
+    tenantId: string,
+    row: StoredSenderDomain,
+    options: { readonly replacing?: string } = {},
+  ): Promise<void> {
+    const own = this.rows.get(tenantId) ?? new Map<string, StoredSenderDomain>();
+    if (options.replacing !== undefined) own.delete(options.replacing);
+    own.set(row.domain, { ...row, records: [...row.records] });
+    this.rows.set(tenantId, own);
+    return Promise.resolve();
+  }
+
+  isVerifiedByAnotherStore(domain: string, tenantId: string): Promise<boolean> {
+    for (const [owner, own] of this.rows) {
+      if (owner !== tenantId && own.get(domain)?.status === "verified")
+        return Promise.resolve(true);
+    }
+    return Promise.resolve(false);
   }
 
   listVerifiedDomains(tenantId: string): Promise<readonly string[]> {
-    return Promise.resolve([...(this.verified.get(tenantId) ?? [])]);
+    return Promise.resolve(
+      [...(this.rows.get(tenantId)?.values() ?? [])]
+        .filter((row) => row.status === "verified")
+        .map((row) => row.domain),
+    );
   }
 }

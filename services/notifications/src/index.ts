@@ -5,6 +5,20 @@ export type {
   WiredNotifications,
 } from "./composition";
 export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+export { SenderDomainController } from "./interfaces/sender-domain.controller";
+export { SenderDomainProviderError } from "./application/sender-domain-ports";
+export type {
+  ProviderDomain,
+  SenderDomainProvider,
+  SenderDomainProviderFailure,
+} from "./application/sender-domain-ports";
+export {
+  normalizeDomainStatus,
+  parseDnsRecords,
+  SENDER_DOMAIN_STATUSES,
+} from "./domain/messaging/sender-domain";
+export type { DnsRecord, SenderDomainStatus } from "./domain/messaging/sender-domain";
+export { InMemorySenderDomainProvider } from "./infrastructure/in-memory-sender-domain-provider";
 export { TemplatedNotifier } from "./application/templated-notifier";
 export type {
   TemplatedNotificationOutcome,
