@@ -111,12 +111,5 @@ export function buildEmailConnectionVault(kekRef: string): EmailConnectionVault 
   return new EnvelopeEmailConnectionVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
     EMAIL_CREDENTIALS_KEY_ALIAS,
-    (alias) => {
-      try {
-        return aliases.resolve(alias);
-      } catch {
-        return undefined;
-      }
-    },
   );
 }

@@ -54,7 +54,7 @@ describe("EnvelopeEmailConnectionVault (D48)", () => {
       JSON.stringify({ ...stored, kekRef: TEST_EMAIL_KEK }),
       JSON.stringify({ ...stored, kekRef: null }),
       JSON.stringify({ ...stored, alias: "payments-credentials" }),
-      JSON.stringify({ ...stored, v: 2 }),
+      JSON.stringify({ ...stored, v: 3 }),
       JSON.stringify({ ...stored, v: "1" }),
     ];
     for (const row of bad) {
@@ -88,6 +88,15 @@ describe("EnvelopeEmailConnectionVault (D48)", () => {
       });
       await expect(vault.open("t-1", "resend", stored)).rejects.toThrow(OPEN_FAILED);
     }
+  });
+
+  it("seals envelope v2, and still opens a row stored as v1 (same four fields, written before O15)", async () => {
+    const vault = testEmailVault();
+    const sealed = await vault.seal("t-1", "resend", { apiKey: API_KEY });
+    const stored = JSON.parse(sealed) as Record<string, unknown>;
+    expect(stored["v"]).toBe(2);
+    const legacyRow = JSON.stringify({ ...stored, v: 1 });
+    expect(await vault.open("t-1", "resend", legacyRow)).toEqual({ apiKey: API_KEY });
   });
 
   it("is a real backing; the in-memory twin is a stub that keeps the tenant and kind checks", async () => {

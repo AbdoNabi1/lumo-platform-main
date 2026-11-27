@@ -425,6 +425,40 @@ Notes:
 **Rollback:** delete `EMAIL_CREDENTIALS_KEK_REF`. Saved accounts stay in the table but can no longer be
 opened, so no customer mail is sent until it is set again.
 
+### 4f. Rotating the payment and shipping key-encryption keys (O15)
+
+Until O15, a sealed merchant credential (Paymob keys, Bosta keys and webhook secrets, Morbeh's saved billing
+cards) was stored together with the key reference it was sealed under, and with the local crypto backend
+that reference **is** the key. So every `PAYMENT_CREDENTIALS_KEK_REF` / `SHIPPING_CREDENTIALS_KEK_REF`
+value ever used is in the database and in its backups, and must be treated as leaked. New writes no longer
+store it (envelope v2); the old rows still carry it until they are re-sealed, and the **old key values
+must be replaced**. Do this once, for each of the two that is set on `runtime-api` (if one is not set at
+all, there is nothing to do for it):
+
+1. Generate a NEW random value (PowerShell, 64 characters):
+   `$b = New-Object byte[] 48; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
+2. Copy the **current** value of `PAYMENT_CREDENTIALS_KEK_REF` into a new variable
+   `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS`, then put the NEW value into `PAYMENT_CREDENTIALS_KEK_REF`.
+   Same for shipping: `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and `SHIPPING_CREDENTIALS_KEK_REF`.
+3. Publish. The API opens old rows with the previous key and, in the background after it starts
+   listening, re-seals every stored credential under the new key (one replica does it, under a database
+   lock; safe to repeat on every boot while `…_PREVIOUS` is set).
+4. Check the runtime-api log for the line `credential reseal: resealed N, skipped N, failed 0`. Only the
+   counts are logged. While any row failed, `/readyz` shows a non-critical `credential-reseal` component as
+   degraded with the same counts.
+5. When it says `failed 0`, **delete** `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS` and
+   `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and publish again. The old values are now useless; do not
+   reuse them anywhere.
+
+Notes:
+
+- `…_PREVIOUS` is secret like the key itself, 32+ characters, refused without the current value and
+  refused when equal to it (the API will not boot, or load config, with either mistake).
+- `failed` above 0 means rows that neither key opens (or that kept changing while being re-sealed). They are
+  left untouched. Keep `…_PREVIOUS` set, find out why, and redeploy; do not delete it with failures.
+- `EMAIL_CREDENTIALS_KEK_REF` needs no rotation for this: email accounts were never stored with their key
+  reference.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.

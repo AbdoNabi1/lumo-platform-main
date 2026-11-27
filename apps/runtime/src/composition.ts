@@ -41,6 +41,7 @@ import {
 } from "@platform/orders";
 import {
   EnvelopePaymentCredentialVault,
+  PrismaPaymentSealedCredentialStore,
   wirePayments,
   type PaymentController,
   type PaymentCredentialVault,
@@ -50,6 +51,7 @@ import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
   PlatformBillingPaymentsAdapter,
+  PrismaBillingSealedCredentialStore,
   wireLicensing,
   type PaymentsPort,
   type StoredMethodBillingDeps,
@@ -86,9 +88,11 @@ import { EnvelopeCipher, KeyAliasRegistry, createSecretProvider } from "@platfor
 import { BostaCityDirectory } from "@platform/carrier-bosta";
 import {
   EnvelopeCarrierCredentialVault,
+  PrismaShippingSealedCredentialStore,
   type CarrierCredentialVault,
   type CarrierRegistration,
 } from "@platform/shipping";
+import type { CredentialResealPlan } from "./credential-reseal";
 import { bostaRegistration, bostaWebhookUrl } from "./bosta-registration";
 import { createS3Client, S3StorageService } from "@platform/storage";
 import { logger, type Logger } from "@platform/utils";
@@ -171,6 +175,13 @@ export interface RuntimeCore {
    */
   readonly carrierRegistrations: readonly CarrierRegistration[];
   readonly carrierCredentialVault: CarrierCredentialVault | undefined;
+  /**
+   * O15 rotation: what the one-shot background re-seal walks. Present only while a
+   * `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS` and/or `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` is set
+   * (payments also covers Morbeh's billing card tokens, which share the payments key); `undefined`
+   * otherwise. `api.ts` starts it once the server is listening.
+   */
+  readonly credentialReseal: CredentialResealPlan | undefined;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
@@ -401,18 +412,26 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
 
   // WP-13: merchant PSP credentials. The vault and the Paymob factory come together or not at all,
   // so a merchant can never be handed a Paymob provider whose secrets were sealed by a stub.
-  const paymentCredentialVault: PaymentCredentialVault | undefined =
+  const envelopePaymentVault: EnvelopePaymentCredentialVault | undefined =
     config.PAYMENT_CREDENTIALS_KEK_REF !== undefined
-      ? buildPaymentCredentialVault(config.PAYMENT_CREDENTIALS_KEK_REF)
+      ? buildPaymentCredentialVault(
+          config.PAYMENT_CREDENTIALS_KEK_REF,
+          config.PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS,
+        )
       : undefined;
+  const paymentCredentialVault: PaymentCredentialVault | undefined = envelopePaymentVault;
   const providerRegistrations: readonly ProviderRegistration[] =
     paymentCredentialVault !== undefined ? [paymobRegistration(logger)] : [];
 
   // Project 5: carriers come together with their vault and public webhook origin, or not at all.
-  const carrierCredentialVault: CarrierCredentialVault | undefined =
+  const envelopeCarrierVault: EnvelopeCarrierCredentialVault | undefined =
     config.SHIPPING_CREDENTIALS_KEK_REF !== undefined
-      ? buildCarrierCredentialVault(config.SHIPPING_CREDENTIALS_KEK_REF)
+      ? buildCarrierCredentialVault(
+          config.SHIPPING_CREDENTIALS_KEK_REF,
+          config.SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS,
+        )
       : undefined;
+  const carrierCredentialVault: CarrierCredentialVault | undefined = envelopeCarrierVault;
   const carrierRegistrations: readonly CarrierRegistration[] =
     config.SHIPPING_CREDENTIALS_KEK_REF !== undefined && config.ADMIN_API_PUBLIC_URL !== undefined
       ? [
@@ -468,6 +487,17 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     paymentCredentialVault,
     carrierRegistrations,
     carrierCredentialVault,
+    credentialReseal: buildCredentialResealPlan({
+      prisma,
+      paymentVault:
+        config.PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS === undefined
+          ? undefined
+          : envelopePaymentVault,
+      carrierVault:
+        config.SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS === undefined
+          ? undefined
+          : envelopeCarrierVault,
+    }),
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,
@@ -523,8 +553,14 @@ export function buildPlatformBillingPayments(
  * `kekRef`). A KMS-backed `CryptoPort` satisfies the same `KeyWrapCipher` shape and can replace
  * `NodeCrypto` here without touching Payments.
  */
-function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
+function buildPaymentCredentialVault(
+  kekRef: string,
+  previousKekRef?: string,
+): EnvelopePaymentCredentialVault {
   const aliases = new KeyAliasRegistry();
+  // O15: the trusted keys for the alias. Registered oldest first, so the CURRENT ref is the one new
+  // seals use and the first one an open tries; the previous ref only exists while rotating.
+  if (previousKekRef !== undefined) aliases.set("payments-credentials", previousKekRef);
   aliases.set("payments-credentials", kekRef);
   return new EnvelopePaymentCredentialVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
@@ -537,13 +573,46 @@ function buildPaymentCredentialVault(kekRef: string): PaymentCredentialVault {
  * but under its OWN alias and KEK (`SHIPPING_CREDENTIALS_KEK_REF`), so rotating one never touches
  * the other.
  */
-function buildCarrierCredentialVault(kekRef: string): CarrierCredentialVault {
+function buildCarrierCredentialVault(
+  kekRef: string,
+  previousKekRef?: string,
+): EnvelopeCarrierCredentialVault {
   const aliases = new KeyAliasRegistry();
+  if (previousKekRef !== undefined) aliases.set("shipping-credentials", previousKekRef);
   aliases.set("shipping-credentials", kekRef);
   return new EnvelopeCarrierCredentialVault(
     new EnvelopeCipher(new NodeCrypto(), aliases),
     "shipping-credentials",
   );
+}
+
+/**
+ * O15: the targets of the boot-time re-seal, one per sealed-credential table, each only while the
+ * matching `*_PREVIOUS` key is set. The billing card tokens are sealed with the payments vault, so
+ * they ride along with payments. `undefined` when no rotation is under way.
+ */
+export function buildCredentialResealPlan(deps: {
+  readonly prisma: RuntimeCore["prisma"];
+  readonly paymentVault: EnvelopePaymentCredentialVault | undefined;
+  readonly carrierVault: EnvelopeCarrierCredentialVault | undefined;
+}): CredentialResealPlan | undefined {
+  const { paymentVault, carrierVault } = deps;
+  const targets: CredentialResealPlan["targets"][number][] = [];
+  if (paymentVault !== undefined) {
+    const rewrap = (sealed: string): Promise<string> => paymentVault.reseal(sealed);
+    targets.push(
+      { name: "payments", store: new PrismaPaymentSealedCredentialStore(deps.prisma), rewrap },
+      { name: "billing", store: new PrismaBillingSealedCredentialStore(deps.prisma), rewrap },
+    );
+  }
+  if (carrierVault !== undefined) {
+    targets.push({
+      name: "shipping",
+      store: new PrismaShippingSealedCredentialStore(deps.prisma),
+      rewrap: (sealed) => carrierVault.reseal(sealed),
+    });
+  }
+  return targets.length === 0 ? undefined : { targets };
 }
 
 /**
