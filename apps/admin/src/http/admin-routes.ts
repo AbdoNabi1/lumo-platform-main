@@ -56,6 +56,7 @@ import { licensingRoutes } from "./licensing-routes";
 import { localizationRoutes } from "./localization-routes";
 import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
+import { adPlatformsRoutes } from "./ad-platforms-routes";
 import { leadsRoutes } from "./leads-routes";
 import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
@@ -88,6 +89,7 @@ import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutLinkRoutes } from "./public-checkout-link-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import { publicAdPlatformsRoutes } from "./public-ad-platforms-routes";
 import { publicLeadsRoutes } from "./public-leads-routes";
 import { publicOnlineStoreRoutes } from "./public-online-store-routes";
 import { publicContentRoutes } from "./public-content-routes";
@@ -2383,11 +2385,13 @@ export function adminRoutes(
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLeadsRoutes(admin, options.rateLimiter),
+    ...publicAdPlatformsRoutes(admin),
     ...publicLoyaltyRoutes(admin),
     ...recommendationsRoutes(admin),
     ...reportingRoutes(admin),
     ...wishlistRoutes(admin),
     ...leadsRoutes(admin),
+    ...adPlatformsRoutes(admin),
     ...customer360Routes(admin),
   ] as readonly RouteDefinition[];
 }

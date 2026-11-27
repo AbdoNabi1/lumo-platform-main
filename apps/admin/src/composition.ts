@@ -53,7 +53,12 @@ import {
 } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
-import type { CredentialVaultPort, DeliverySyncPort } from "@platform/ad-platforms";
+import {
+  wireAdPlatforms,
+  type CredentialPolicy,
+  type CredentialVaultPort,
+  type DeliverySyncPort,
+} from "@platform/ad-platforms";
 import { wireLeads, type LeadsController, type ShopFactsPort } from "@platform/leads";
 import {
   wireLicensing,
@@ -273,6 +278,7 @@ import { ShipOrderWithCarrier } from "./carrier-shipping/ship-order-with-carrier
 import { resolveLineImages } from "./http/product-images";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
+import { AdPlatformsAdminController } from "./interfaces/ad-platforms.admin-controller";
 import { LeadsAdminController } from "./interfaces/leads.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
 
@@ -513,6 +519,12 @@ export interface AdminWiringDeps {
    * admin mounts the connections (Task 5).
    */
   readonly adPlatformDeliverySync?: DeliverySyncPort;
+  /**
+   * Lead Site Part D1 (Task 5): overrides the credential policy of the ad platform connections. Absent ⇒ the
+   * default of `wireAdPlatforms`: with `prisma` a stub vault never stores a token (`require_real_vault`);
+   * without it (tests, local in-memory) a stub is allowed. A test seam; the runtime never passes it.
+   */
+  readonly adPlatformCredentialPolicy?: CredentialPolicy;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;
@@ -797,6 +809,8 @@ export interface WiredAdmin {
   readonly wishlist: WishlistAdminController;
   /** Leads inbox screens → Leads (Lead Site Part C). */
   readonly leads: LeadsAdminController;
+  /** Settings → Ad platforms → Ad platforms (Lead Site Part D1). */
+  readonly adPlatforms: AdPlatformsAdminController;
   /**
    * The storefront's customer authentication surface (T5.17) → Security + Identity. Deliberately
    * NOT a `*AdminController`: it is gated by {@link CustomerGuard} (valid customer session) rather
@@ -923,6 +937,14 @@ export interface WiredAdmin {
      * `.strict()` body that carries none, and its own rate limits.
      */
     readonly leads: LeadsController;
+    /**
+     * Lead Site Part D1: the shop's enabled ad platforms' PUBLIC ids (pixel ids, measurement id), for the
+     * storefront's browser tags (D2). A closure taking the request's tenant; `public-ad-platforms-routes.ts`
+     * is its only caller. Never a token, test event code or sealed value.
+     */
+    readonly adPlatforms: {
+      readonly publicView: (tenantId: string) => Promise<AdminResponse>;
+    };
     /**
      * Online Store Part 2: the storefront's published `/pages/<handle>` pages, one by handle and
      * the list (at most 500). Closures taking the request's tenant, never the Pages controller
@@ -1551,6 +1573,23 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
   });
 
+  // Lead Site Part D1. Only `controller` leaves this block: `internal` (opened secrets) is the delivery
+  // side's, built separately by `apps/runtime` over the same tables, and is never reachable from here.
+  const adPlatforms = wireAdPlatforms({
+    clock: deps.clock,
+    idGenerator: deps.idGenerator,
+    ...(deps.adPlatformCredentialVault === undefined
+      ? {}
+      : { vault: deps.adPlatformCredentialVault }),
+    ...(deps.adPlatformDeliverySync === undefined
+      ? {}
+      : { deliverySync: deps.adPlatformDeliverySync }),
+    ...(deps.adPlatformCredentialPolicy === undefined
+      ? {}
+      : { credentialPolicy: deps.adPlatformCredentialPolicy }),
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+  });
+
   const contexts: readonly DrainableContext[] = [
     catalog,
     inventory,
@@ -1836,6 +1875,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     wishlist: new WishlistAdminController({ wishlist: wishlist.wishlist, guard }),
     leads: new LeadsAdminController({ leads: leads.controller, guard }),
+    adPlatforms: new AdPlatformsAdminController({ connections: adPlatforms.controller, guard }),
     customerAuth: new CustomerAuthAdminController({
       security: security.security,
       customers: identity.customers,
@@ -1874,6 +1914,10 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       loyalty: loyalty.loyalty,
       onlineStore: onlineStore.publicReads,
       leads: leads.controller,
+      // A closure, not the controller: `save` (a write) is not reachable through this key.
+      adPlatforms: {
+        publicView: (tenantId) => adPlatforms.controller.publicView({ tenantId }),
+      },
       pages: {
         byHandle: (tenantId, handle) =>
           pages.pages.publishedPageByPath({ routePath: `/pages/${handle}`, tenantId }),
