@@ -24,6 +24,7 @@ import {
   PrismaRefundVerificationAdapter,
   type RuntimeCore,
 } from "./composition";
+import { startCredentialReseal } from "./credential-reseal";
 import { startRuntimeTelemetry } from "./telemetry";
 
 /**
@@ -720,6 +721,15 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   });
   await app.listen({ port: config.PORT, host: "0.0.0.0" });
   logger.info("api listening", { port: config.PORT, env: config.APP_ENV });
+
+  // O15: while a *_KEK_REF_PREVIOUS is set, re-wrap the stored credentials under the current key in the
+  // background (single replica, counts-only log). Never awaited: boot and traffic do not wait for it.
+  void startCredentialReseal({
+    plan: runtime.credentialReseal,
+    prisma: runtime.prisma,
+    health: runtime.health,
+    logger,
+  });
 
   const shutdown = async (): Promise<void> => {
     logger.info("api shutting down");

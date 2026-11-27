@@ -81,6 +81,28 @@ export const EXEMPTIONS = {
     reason:
       "listPublished: the public plan catalogue shown at sign-up; Plan has no tenant_id by design",
   },
+  // O15 key rotation: the boot-time re-seal (apps/runtime/src/credential-reseal.ts) must visit EVERY
+  // merchant's sealed credentials once, so its page of the three tables is cross-tenant by design. Each
+  // call selects ids only (never a sealed blob); every read and write of a row's contents afterwards
+  // runs in that row's own tenant scope with `where: { tenantId, ... }` and compare-and-set.
+  "services/payments/src/infrastructure/prisma-sealed-credential-store.ts|merchantPaymentSettings.findMany":
+    {
+      cls: "platform-global",
+      reason:
+        "O15 re-seal job: pages tenant ids of payments.merchant_payment_settings; contents are read per tenant afterwards",
+    },
+  "services/shipping/src/infrastructure/prisma-sealed-credential-store.ts|merchantCarrierSettings.findMany":
+    {
+      cls: "platform-global",
+      reason:
+        "O15 re-seal job: pages tenant ids of shipping.merchant_carrier_settings; contents are read per tenant afterwards",
+    },
+  "services/licensing/src/infrastructure/prisma-sealed-credential-store.ts|billingPaymentMethod.findMany":
+    {
+      cls: "platform-global",
+      reason:
+        "O15 re-seal job: pages (id, tenant) of billing_payment_methods rows holding a token; each row is read and written in its own tenant scope afterwards",
+    },
   // `where` is built by the caller and TYPED to carry the tenant: `{ readonly tenantId: string } & ...`.
   "services/fulfillment/src/infrastructure/prisma-fulfillment-order-repository.ts|fulfillmentOrder.findFirst":
     {

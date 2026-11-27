@@ -262,12 +262,20 @@ const schema = z
     // the ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY;
     // with a KMS backend it is that KMS's key reference.
     PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    // O15 rotation: the KEK ref that was in use BEFORE the current one. Set only while rotating: rows
+    // sealed under it keep opening (the current ref is tried first, this one second) and the one-shot
+    // re-seal job at boot moves them to the current ref. Refused without the current ref, and refused
+    // when equal to it. SECRET (the ref IS the key material with the local backend). Delete it once
+    // the boot log line `credential reseal: ... failed 0` has been seen.
+    PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: z.string().min(32).optional(),
 
     // ── Merchant carrier credentials (Project 5, Bosta). Merchants' carrier API keys and webhook
     // secrets are sealed under this key-encryption key, SEPARATE from PAYMENT_CREDENTIALS_KEK_REF.
     // Carriers need BOTH this and ADMIN_API_PUBLIC_URL (the admin API's public origin, where carriers
     // post status updates); exactly one set refuses boot outside `local` (Ruling 31).
     SHIPPING_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    // O15 rotation: same contract as PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS, for the carrier key.
+    SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: z.string().min(32).optional(),
     ADMIN_API_PUBLIC_URL: z.string().url().optional(),
 
     // ── Tracking ingest (P1.3 / C-07) ──
@@ -392,6 +400,27 @@ const schema = z
       .transform((v) => v.toLowerCase() === "true"),
   })
   .superRefine((cfg, ctx) => {
+    // O15: a PREVIOUS key reference only makes sense next to the current one it is being rotated to,
+    // and must be a different key. The messages name the variables, never a value.
+    for (const [current, previous] of [
+      ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
+      ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
+    ] as const) {
+      if (cfg[previous] === undefined) continue;
+      if (cfg[current] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [previous],
+          message: `${previous} is set but ${current} is not: a previous key only exists while rotating to a current one (O15).`,
+        });
+      } else if (cfg[previous] === cfg[current]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [previous],
+          message: `${previous} must differ from ${current}: rotating to the same key rotates nothing (O15).`,
+        });
+      }
+    }
     // H-2 (G-SEC-4): live identity binding (Keto relation-tuple sync + Kratos identity/session) is
     // mandatory outside `local` — the security enforcement sync must not silently no-op in production.
     if (cfg.AUTH_MODE === "ory") {

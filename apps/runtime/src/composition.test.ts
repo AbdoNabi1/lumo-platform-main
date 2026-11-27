@@ -1268,3 +1268,97 @@ describe("scheduler jobs", () => {
     expect(ran).toBe(0); // lock respected — single-flight across instances
   });
 });
+
+describe("O15 rotation composition (…_KEK_REF_PREVIOUS)", () => {
+  const current = "kek-test-bbbb".padEnd(40, "b");
+  const previous = "kek-test-aaaa".padEnd(40, "a");
+  const carriers = { ADMIN_API_PUBLIC_URL: "https://api.example.com/" };
+
+  it("no PREVIOUS ⇒ no re-seal plan, whatever else is configured", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF: current.replace(/b/g, "c"),
+        ...carriers,
+      }),
+    );
+    expect(core.credentialReseal).toBeUndefined();
+  });
+
+  it("PAYMENT PREVIOUS ⇒ payments AND billing card tokens are re-sealed; shipping is not", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    );
+    expect(core.credentialReseal?.targets.map((target) => target.name)).toEqual([
+      "payments",
+      "billing",
+    ]);
+  });
+
+  it("SHIPPING PREVIOUS ⇒ only shipping is re-sealed", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        SHIPPING_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+        ...carriers,
+      }),
+    );
+    expect(core.credentialReseal?.targets.map((target) => target.name)).toEqual(["shipping"]);
+  });
+
+  it("the payments vault seals under the CURRENT ref and still opens a row sealed under the previous one", async () => {
+    const before = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: previous }),
+    ).paymentCredentialVault;
+    const old = await before?.seal("t-1", "paymob", { secretKey: "sk-test-1111" });
+    expect(old).toBeDefined();
+
+    const rotated = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    ).paymentCredentialVault;
+    expect(await rotated?.open("t-1", "paymob", old ?? "")).toEqual({ secretKey: "sk-test-1111" });
+
+    const fresh = await rotated?.seal("t-1", "paymob", { secretKey: "sk-test-1111" });
+    const currentOnly = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: current }),
+    ).paymentCredentialVault;
+    expect(await currentOnly?.open("t-1", "paymob", fresh ?? "")).toEqual({
+      secretKey: "sk-test-1111",
+    });
+    expect(fresh).not.toContain("kekRef");
+    expect(fresh).not.toContain(current);
+    expect(fresh).not.toContain(previous);
+    // The previous key alone no longer opens new rows: they really are under the current one.
+    const previousOnly = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: previous }),
+    ).paymentCredentialVault;
+    await expect(previousOnly?.open("t-1", "paymob", fresh ?? "")).rejects.toThrow(
+      /could not be opened/,
+    );
+  });
+
+  it("the carrier vault does the same under its own alias", async () => {
+    const env = { ...validEnv, ...carriers };
+    const old = await buildRuntimeCore(
+      loadRuntimeConfig({ ...env, SHIPPING_CREDENTIALS_KEK_REF: previous }),
+    ).carrierCredentialVault?.seal("t-1", "bosta", { apiKey: "bosta-key-1" });
+    const rotated = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...env,
+        SHIPPING_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    ).carrierCredentialVault;
+    expect(await rotated?.open("t-1", "bosta", old ?? "")).toEqual({ apiKey: "bosta-key-1" });
+  });
+});
