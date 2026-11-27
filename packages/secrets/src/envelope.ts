@@ -7,8 +7,14 @@ import { AppError } from "@platform/utils";
  * `CryptoPort` satisfies it structurally — no dependency on a bounded context). Each payload gets a fresh
  * **data key** encrypted under a KEK reference; the DEK is wrapped by the KEK, which never leaves the
  * backend. Rotating a key **alias** points new writes at the new KEK version while previously sealed data
- * keeps decrypting under the KEK ref embedded in its envelope. Rotation *scheduling* / emergency rotation
+ * keeps decrypting under the alias's recorded earlier versions. Rotation *scheduling* / emergency rotation
  * / lineage stay in the Security context's Credential engine — this is only the cryptographic envelope.
+ *
+ * **The key reference is never stored (O15).** With the stock `NodeCrypto` the KEK is derived from the
+ * reference string itself, so a reference stored next to the ciphertext IS the key. A sealed envelope is
+ * `{ v: 2, alias, wrappedDek, ciphertext }` and {@link EnvelopeCipher.open} takes its candidate keys only
+ * from the trusted {@link KeyAliasRegistry}, never from the stored value (a `kekRef` on a legacy v1 row is
+ * ignored).
  */
 
 /** The key operations envelope encryption needs — structurally satisfied by a KMS/Vault/HSM `CryptoPort`. */
@@ -20,27 +26,36 @@ export interface KeyWrapCipher {
   randomToken(bytes?: number): Promise<string>;
 }
 
-/** A sealed envelope — self-describing so it decrypts under the KEK version it was written with. */
+/**
+ * A sealed envelope: self-describing for everything EXCEPT the key. `kekRef` exists only on legacy v1
+ * rows that were written before O15; it is never emitted and never read.
+ */
 export interface SealedEnvelope {
-  /** Envelope format version (currently 1). */
+  /** Envelope format version: 2 is written; 1 (legacy, carried a `kekRef`) is still opened. */
   readonly v: number;
-  /** The alias in effect at seal time (audit/telemetry only; decryption uses `kekRef`). */
+  /** The alias in effect at seal time: how `open` finds the candidate keys in the trusted registry. */
   readonly alias: string;
-  /** The exact KEK reference/version the data key was wrapped under. */
-  readonly kekRef: string;
   /** The data key, wrapped by the KEK. */
   readonly wrappedDek: string;
   /** The payload, encrypted with the data key. */
   readonly ciphertext: string;
+  /** LEGACY v1 ONLY and IGNORED: with `NodeCrypto` it is the key itself, so it must never be trusted. */
+  readonly kekRef?: string;
 }
 
-const ENVELOPE_VERSION = 1;
+const ENVELOPE_VERSION = 2;
+const LEGACY_ENVELOPE_VERSION = 1;
 const DEK_BYTES = 32;
+
+/** The one error every failed open raises: it names no key, alias, plaintext or ciphertext. */
+function openFailed(): AppError {
+  return new AppError("Sealed value could not be opened", { code: "SECRET_ENVELOPE_OPEN_FAILED" });
+}
 
 /**
  * A registry mapping stable **aliases** (e.g. `primary`) to the current KEK reference, with version
  * history. Aliasing decouples callers from concrete KEK versions; rotating an alias is how key rotation
- * is expressed at the envelope layer (old envelopes still resolve their own embedded KEK ref).
+ * is expressed at the envelope layer (old envelopes still open under the recorded earlier versions).
  */
 export class KeyAliasRegistry {
   private readonly current = new Map<string, string>();
@@ -77,6 +92,18 @@ export class KeyAliasRegistry {
   versions(alias: string): readonly string[] {
     return [...(this.history.get(alias) ?? [])];
   }
+
+  /**
+   * The keys `open` may try for an alias, in try-order: the CURRENT ref first, then every earlier
+   * version newest to oldest, each once. Empty for an unknown alias (a copy: callers cannot edit the
+   * registry through it).
+   */
+  candidates(alias: string): readonly string[] {
+    const current = this.current.get(alias);
+    if (current === undefined) return [];
+    const ordered = [current, ...[...(this.history.get(alias) ?? [])].reverse()];
+    return [...new Set(ordered)];
+  }
 }
 
 export class EnvelopeCipher {
@@ -88,7 +115,10 @@ export class EnvelopeCipher {
     this.aliases = aliases;
   }
 
-  /** Seals a plaintext under the alias's current KEK version — fresh data key per call. */
+  /**
+   * Seals a plaintext under the alias's current KEK version — fresh data key per call. The result
+   * carries NO key reference.
+   */
   async seal(plaintext: string, alias = "primary"): Promise<SealedEnvelope> {
     const kekRef = this.aliases.resolve(alias);
     const dek = await this.cipher.randomToken(DEK_BYTES);
@@ -96,16 +126,55 @@ export class EnvelopeCipher {
       this.cipher.wrapKey(dek, kekRef),
       this.cipher.encrypt(plaintext, dek),
     ]);
-    return { v: ENVELOPE_VERSION, alias, kekRef, wrappedDek, ciphertext };
+    return { v: ENVELOPE_VERSION, alias, wrappedDek, ciphertext };
   }
 
-  /** Opens a sealed envelope using the KEK ref it embeds, so rotation never strands old data. */
+  /**
+   * Opens a sealed envelope. The key comes ONLY from the trusted registry for the envelope's alias
+   * (current version first, then earlier ones); any `kekRef` in the stored value is ignored. A wrong key
+   * fails AES-GCM authentication, so each candidate is simply tried in turn. Every failure (bad shape,
+   * unknown alias, no key opens it) is the same generic error.
+   */
   async open(envelope: SealedEnvelope): Promise<string> {
-    if (envelope.v !== ENVELOPE_VERSION)
-      throw new AppError(`unsupported envelope version: ${envelope.v}`, {
-        code: "SECRET_ENVELOPE_VERSION",
-      });
-    const dek = await this.cipher.unwrapKey(envelope.wrappedDek, envelope.kekRef);
-    return this.cipher.decrypt(envelope.ciphertext, dek);
+    return (await this.openRanked(envelope)).plaintext;
+  }
+
+  /**
+   * Re-wraps an envelope under the alias's CURRENT key as a fresh v2 envelope (rotation). Returns
+   * `null` when it is already v2 and opens under the current key (nothing to do). Throws the generic
+   * open error for an envelope no trusted key opens.
+   */
+  async reseal(envelope: SealedEnvelope): Promise<SealedEnvelope | null> {
+    const { plaintext, rank } = await this.openRanked(envelope);
+    if (envelope.v === ENVELOPE_VERSION && rank === 0) return null;
+    return this.seal(plaintext, envelope.alias);
+  }
+
+  private async openRanked(
+    envelope: SealedEnvelope,
+  ): Promise<{ readonly plaintext: string; readonly rank: number }> {
+    const stored = envelope as unknown;
+    if (typeof stored !== "object" || stored === null || Array.isArray(stored)) throw openFailed();
+    const { v, alias, wrappedDek, ciphertext } = stored as Partial<
+      Record<keyof SealedEnvelope, unknown>
+    >;
+    if (
+      (v !== ENVELOPE_VERSION && v !== LEGACY_ENVELOPE_VERSION) ||
+      typeof alias !== "string" ||
+      typeof wrappedDek !== "string" ||
+      typeof ciphertext !== "string"
+    ) {
+      throw openFailed();
+    }
+    const candidates = this.aliases.candidates(alias);
+    for (const [rank, kekRef] of candidates.entries()) {
+      try {
+        const dek = await this.cipher.unwrapKey(wrappedDek, kekRef);
+        return { plaintext: await this.cipher.decrypt(ciphertext, dek), rank };
+      } catch {
+        // A wrong key fails authentication: try the next trusted candidate. The cause is dropped.
+      }
+    }
+    throw openFailed();
   }
 }

@@ -39,13 +39,21 @@ describe("EnvelopeCarrierCredentialVault (spec §6)", () => {
     const sealed = await vault.seal("t-1", "bosta", { apiKey: "k-secret" });
     const envelope = JSON.parse(sealed) as Record<string, unknown>;
     const tampered = JSON.stringify({ ...envelope, ciphertext: "AAAA:BBBB:CCCC" });
-    const foreignKek = JSON.stringify({ ...envelope, kekRef: "another-kek" });
 
-    for (const bad of ["not json", "{}", tampered, foreignKek]) {
+    for (const bad of ["not json", "{}", tampered]) {
       await expect(vault.open("t-1", "bosta", bad)).rejects.toThrow(
         /^Carrier credentials could not be opened$/,
       );
     }
+  });
+
+  it("a stored kekRef is never used: the key comes from the vault's own registry (O15)", async () => {
+    const vault = testCarrierVault();
+    const sealed = await vault.seal("t-1", "bosta", { apiKey: "k-secret" });
+    const envelope = JSON.parse(sealed) as Record<string, unknown>;
+    expect(envelope).not.toHaveProperty("kekRef");
+    const withHostileRef = JSON.stringify({ ...envelope, kekRef: "another-kek" });
+    expect(await vault.open("t-1", "bosta", withHostileRef)).toEqual({ apiKey: "k-secret" });
   });
 
   it("the webhook secret is sealed under its own carrier key and opens only there", async () => {

@@ -15,6 +15,5 @@ export function testEmailVault(kek: string = TEST_EMAIL_KEK): EnvelopeEmailConne
   return new EnvelopeEmailConnectionVault(
     new EnvelopeCipher(new LocalKeyWrapCipher(), aliases),
     EMAIL_CREDENTIALS_KEY_ALIAS,
-    (alias) => (alias === EMAIL_CREDENTIALS_KEY_ALIAS ? kek : undefined),
   );
 }

@@ -17,9 +17,6 @@ interface Payload {
   readonly s: Readonly<Record<string, string>>;
 }
 
-/** The trusted, configured alias → key reference lookup (`undefined` for an unknown alias). */
-export type KekRefResolver = (alias: string) => string | undefined;
-
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     typeof value === "object" &&
@@ -35,11 +32,9 @@ function isStringRecord(value: unknown): value is Record<string, string> {
  * `{ v, alias, wrappedDek, ciphertext }`.
  *
  * The key reference is NEVER stored: with the stock `NodeCrypto` it is the secret the KEK is derived
- * from, so a row carrying it would carry its own decryption key. It is resolved on open from the
- * vault's own trusted, configured alias registry (`resolveKekRef`), never from the row. A stored row
- * that has a `kekRef` property at all, or names an unknown alias, is refused. (Rotating the KEK behind
- * the same alias strands old rows; rotation needs a versioned, non-secret key id and a trusted
- * historical-key registry: out of scope here.)
+ * from, so a row carrying it would carry its own decryption key. `EnvelopeCipher` (v2 envelopes, O15)
+ * takes its candidate keys from its own trusted alias registry, never from the row. A stored row that
+ * has a `kekRef` property at all, or names an unknown alias, is refused.
  *
  * The tenant and connection kind are sealed INSIDE the payload and re-checked on open
  * (`EnvelopeCipher` has no associated-data channel of its own). Every failure, whatever its cause, is
@@ -49,12 +44,10 @@ export class EnvelopeEmailConnectionVault implements EmailConnectionVault {
   readonly backing = "real" as const;
   private readonly cipher: EnvelopeCipher;
   private readonly alias: string;
-  private readonly resolveKekRef: KekRefResolver;
 
-  constructor(cipher: EnvelopeCipher, alias: string, resolveKekRef: KekRefResolver) {
+  constructor(cipher: EnvelopeCipher, alias: string) {
     this.cipher = cipher;
     this.alias = alias;
-    this.resolveKekRef = resolveKekRef;
   }
 
   async seal(
@@ -101,9 +94,7 @@ export class EnvelopeEmailConnectionVault implements EmailConnectionVault {
       ) {
         throw new Error("shape");
       }
-      const kekRef = this.resolveKekRef(alias);
-      if (typeof kekRef !== "string" || kekRef.length === 0) throw new Error("alias");
-      const envelope: SealedEnvelope = { v, alias, kekRef, wrappedDek, ciphertext };
+      const envelope: SealedEnvelope = { v, alias, wrappedDek, ciphertext };
       const decrypted: unknown = JSON.parse(await this.cipher.open(envelope));
       if (typeof decrypted !== "object" || decrypted === null) throw new Error("payload");
       const payload = decrypted as Partial<Payload>;

@@ -36,7 +36,6 @@ export {
   EnvelopeEmailConnectionVault,
   InMemoryEmailConnectionVault,
 } from "./infrastructure/envelope-email-connection-vault";
-export type { KekRefResolver } from "./infrastructure/envelope-email-connection-vault";
 export { InMemoryStoreEmailProvider } from "./infrastructure/in-memory-store-email-provider";
 export {
   RoutingStoreEmailProvider,
