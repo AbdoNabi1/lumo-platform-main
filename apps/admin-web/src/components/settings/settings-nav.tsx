@@ -11,7 +11,10 @@ export interface SettingsNavItem {
   readonly available: boolean;
 }
 
-/** Shopify's 19 settings entries, in Shopify's order (Plan and Billing share Morbeh's one page). */
+/**
+ * Shopify's 19 settings entries, in Shopify's order (Plan and Billing share Morbeh's one page),
+ * plus Morbeh's own "Ad platforms" right after Customer events (where Shopify keeps pixels).
+ */
 export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
   {
     id: "general",
@@ -71,6 +74,12 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     label: (t) => t.settingsNav.customerEvents,
     href: "/settings/customer-events",
     available: false,
+  },
+  {
+    id: "ad-platforms",
+    label: (t) => t.settingsNav.adPlatforms,
+    href: "/settings/ad-platforms",
+    available: true,
   },
   {
     id: "notifications",

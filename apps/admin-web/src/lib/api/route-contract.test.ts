@@ -267,6 +267,40 @@ describe("admin-web route contract (T6.2)", () => {
   });
 });
 
+describe("Settings > Ad platforms routes (Lead site D1)", () => {
+  it("calls GET /ad-platforms and PUT /ad-platforms/:platform, both real routes", async () => {
+    expect.hasAssertions();
+    if (captures.length === 0) await callEveryExportedFunction();
+    const called = captures
+      .filter((capture) => capture.file === "ad-platforms.ts")
+      .map((capture) => `${capture.method} ${capture.path}`);
+
+    expect(called).toEqual(["GET /api/v1/ad-platforms", "PUT /api/v1/ad-platforms/PARAM"]);
+    const real = loadRealRoutes().filter((route) => route.path.startsWith("/ad-platforms"));
+    expect(real.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
+      "GET /ad-platforms",
+      "PUT /ad-platforms/:platform",
+    ]);
+  });
+
+  it("the route's strict save body declares every field a save can send", () => {
+    expect.hasAssertions();
+    const source = readFileSync(path.join(HTTP_DIR, "ad-platforms-routes.ts"), "utf8");
+    const body = /const saveBody = z([\s\S]*?)\.strict\(\);/.exec(source)?.[1] ?? "";
+    expect(body).not.toBe("");
+    for (const field of [
+      "enabled",
+      "publicConfig",
+      "secret",
+      "clearSecret",
+      "testEventCode",
+      "expectedVersion",
+    ]) {
+      expect(body, field).toMatch(new RegExp(`\\b${field}:`));
+    }
+  });
+});
+
 describe("Settings > Notifications routes (Wave 2b2)", () => {
   it("calls the five email-connection routes and no sender-domain route", async () => {
     expect.hasAssertions();

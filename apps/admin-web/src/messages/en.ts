@@ -2330,6 +2330,9 @@ export const en = {
     domainsBody: "Your store's web address and any domains you've connected.",
     billingTitle: "Plan and billing",
     billingBody: "Your Morbeh plan, payment method and bills.",
+    adPlatformsTitle: "Ad platforms",
+    adPlatformsBody:
+      "Connect Meta, TikTok, Snapchat and Google so your site's events reach each platform.",
   },
   /** Shopify parity Wave 1a — the Settings sub-navigation (Shopify's 19 entries, in its order). */
   settingsNav: {
@@ -2351,6 +2354,7 @@ export const en = {
     apps: "Apps and sales channels",
     domains: "Domains",
     customerEvents: "Customer events",
+    adPlatforms: "Ad platforms",
     notifications: "Notifications",
     customData: "Metafields and metaobjects",
     languages: "Languages",
@@ -2466,6 +2470,53 @@ export const en = {
     noEmailAccountWarning:
       "Customers can't sign up by email until you connect your store's email account in Notifications.",
     noEmailAccountLink: "Open Notifications",
+  },
+  /** Lead site D1 - Settings → Ad platforms: one card per platform (ids, token, switch, status). */
+  adPlatformsSettings: {
+    title: "Ad platforms",
+    subtitle:
+      "Connect Meta, TikTok, Snapchat and Google so your site's events reach each platform.",
+    back: "Back to settings",
+    loadError: "Couldn't load your ad platforms. Try again.",
+    unauthorized: "Sign in to manage ad platforms.",
+    siteTypeLead: "Your lead site sends Page view, Lead and Contact events.",
+    siteTypeStore:
+      "Your store sends commerce events: Page view, View item, Add to cart, Begin checkout and Purchase.",
+    statusLive: "Live",
+    statusIncomplete: "Incomplete",
+    statusOff: "Off",
+    enabled: "Send events to this platform",
+    pixelId: "Pixel ID",
+    pixelCode: "Pixel code",
+    measurementId: "Measurement ID",
+    conversionId: "Conversion ID",
+    labelLead: "Lead conversion label",
+    labelContact: "Contact conversion label",
+    labelPurchase: "Purchase conversion label",
+    token: "Access token",
+    tokenSaved: "Token ending in {last4}",
+    tokenKeep: "Leave empty to keep the saved token",
+    tokenNone:
+      "No token saved yet. Add one to send events from our server as well as from the browser.",
+    removeToken: "Remove token",
+    removeTitle: "Remove the saved token?",
+    removeBody:
+      "Events stop going from our server to this platform until you save a new token. This can't be undone.",
+    removeCancel: "Cancel",
+    removeConfirm: "Remove token",
+    removing: "Removing…",
+    testEventCode: "Test event code",
+    testEventCodeHint: "From the platform's test events tool. Leave empty when you're not testing.",
+    googleNote:
+      "Sending from our server to Google Ads comes in a later step; for now it works from the browser only.",
+    save: "Save",
+    saving: "Saving…",
+    saved: "Saved",
+    unsaved: "Unsaved changes",
+    conflict: "Someone else changed this. Reload the page to see the latest version.",
+    fieldInvalid: "Check this value.",
+    tokenInvalid: "A token is 10 to 1024 characters: letters, digits and . _ ~ + / = : | - only.",
+    unavailable: "Not available yet: this server isn't set up to store tokens.",
   },
   /** Wave 2b - Settings → Notifications: sender email, customer templates, staff recipients. */
   notificationSettings: {

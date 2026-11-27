@@ -21,6 +21,7 @@ const EXPECTED = [
   ["apps", "Apps and sales channels", "/settings/apps"],
   ["domains", "Domains", "/settings/domains"],
   ["customer-events", "Customer events", "/settings/customer-events"],
+  ["ad-platforms", "Ad platforms", "/settings/ad-platforms"],
   ["notifications", "Notifications", "/settings/notifications"],
   ["custom-data", "Metafields and metaobjects", "/settings/custom-data"],
   ["languages", "Languages", "/locales"],
@@ -35,7 +36,7 @@ function labelOf(link: HTMLElement): string | null | undefined {
 }
 
 describe("SettingsNav", () => {
-  it("defines Shopify's 19 entries with the exact ids, labels and hrefs, in order", () => {
+  it("defines Shopify's 19 entries plus Ad platforms with the exact ids, labels and hrefs, in order", () => {
     expect.hasAssertions();
     expect(SETTINGS_NAV_ITEMS.map((item) => [item.id, item.label(en), item.href] as const)).toEqual(
       EXPECTED,
@@ -45,12 +46,12 @@ describe("SettingsNav", () => {
     );
   });
 
-  it("renders 19 links in the table order", () => {
+  it("renders 20 links in the table order", () => {
     expect.hasAssertions();
     render(<SettingsNav t={en} />);
     const nav = screen.getByRole("navigation", { name: en.settingsNav.label });
     const links = within(nav).getAllByRole("link");
-    expect(links).toHaveLength(19);
+    expect(links).toHaveLength(20);
     expect(links.map(labelOf)).toEqual(EXPECTED.map(([, label]) => label));
     expect(links.map((link) => link.getAttribute("href"))).toEqual(
       EXPECTED.map(([, , href]) => href),
@@ -82,6 +83,19 @@ describe("SettingsNav", () => {
     render(<SettingsNav t={en} />);
     expect(screen.getAllByRole("link").filter((link) => link.hasAttribute("aria-current"))).toEqual(
       [],
+    );
+  });
+
+  it("lists Ad platforms as an available page right after Customer events, and marks it current", () => {
+    expect.hasAssertions();
+    const ids = SETTINGS_NAV_ITEMS.map((item) => item.id);
+    expect(ids[ids.indexOf("customer-events") + 1]).toBe("ad-platforms");
+    expect(SETTINGS_NAV_ITEMS.find((item) => item.id === "ad-platforms")?.available).toBe(true);
+
+    render(<SettingsNav t={en} activeId="ad-platforms" />);
+    expect(screen.getByRole("link", { name: "Ad platforms" })).toHaveAttribute(
+      "aria-current",
+      "page",
     );
   });
 
@@ -125,6 +139,7 @@ describe("SettingsNav", () => {
       ar.settingsNav.apps,
       ar.settingsNav.domains,
       ar.settingsNav.customerEvents,
+      ar.settingsNav.adPlatforms,
       ar.settingsNav.notifications,
       ar.settingsNav.customData,
       ar.settingsNav.languages,
