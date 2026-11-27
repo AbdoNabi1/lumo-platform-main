@@ -46,7 +46,14 @@ import {
   type PaymentCredentialVault,
   type ProviderRegistration,
 } from "@platform/payments";
-import { EnvelopeCredentialVault, type CredentialVaultPort } from "@platform/ad-platforms";
+import {
+  EnvelopeCredentialVault,
+  connectionsForDelivery,
+  wireAdPlatforms,
+  type ConnectionsForDelivery,
+  type CredentialVaultPort,
+  type DeliverySyncPort,
+} from "@platform/ad-platforms";
 import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
@@ -92,6 +99,7 @@ import type { RuntimeConfig } from "./config";
 import { RuntimeMetrics } from "./metrics";
 import { createOryFetch, isOryNetworkApiKey } from "./ory-fetch";
 import { TrackingIngestHandler, type TrackingCapturedPayload } from "./tracking/tracking-ingest";
+import { AdPlatformDeliverySync, type SiteType } from "./tracking/ad-platform-destinations";
 import { loadTrackingRegistry, PrismaTrackingRegistryStore } from "./tracking/tracking-registry";
 import {
   TrackingRegistryHandle,
@@ -168,6 +176,17 @@ export interface RuntimeCore {
    * 503 to a token (never a stub next to a real database).
    */
   readonly adPlatformCredentialVault?: CredentialVaultPort;
+  /**
+   * Lead Site Part D1 (Task 4): the delivery-side read of the sealed connections (live connections, opened
+   * secrets), built over the SAME tables with the SAME real vault — only when the vault is configured. The
+   * tracking runtime resolves `conn://` credentials through it.
+   */
+  readonly adPlatformConnections?: ConnectionsForDelivery;
+  /**
+   * Lead Site Part D1 (Task 4): re-syncs a shop's tracking destinations after a connection is saved. Handed to
+   * the admin API (`adPlatformDeliverySync`) so saving a connection reaches the registry.
+   */
+  readonly adPlatformDeliverySync?: DeliverySyncPort;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
@@ -397,6 +416,17 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
       ? buildAdPlatformCredentialVault(config.AD_PLATFORM_CREDENTIALS_KEK_REF)
       : undefined;
 
+  const adPlatformDelivery =
+    adPlatformCredentialVault === undefined
+      ? undefined
+      : buildAdPlatformDelivery({
+          prisma,
+          vault: adPlatformCredentialVault,
+          clock,
+          idGenerator,
+          ruleSetKey: config.TRACKING_RULE_SET_KEY,
+        });
+
   const platformBillingPayments = buildPlatformBillingPayments(config);
   const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
     config,
@@ -442,6 +472,12 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     providerRegistrations,
     paymentCredentialVault,
     ...(adPlatformCredentialVault === undefined ? {} : { adPlatformCredentialVault }),
+    ...(adPlatformDelivery === undefined
+      ? {}
+      : {
+          adPlatformConnections: adPlatformDelivery.connections,
+          adPlatformDeliverySync: adPlatformDelivery.sync,
+        }),
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,
@@ -527,6 +563,56 @@ export function buildAdPlatformCredentialVault(kekRef: string): CredentialVaultP
       }
     },
   );
+}
+
+/**
+ * Lead Site Part D1 (Task 4): the delivery side of the ad platform connections. The runtime builds its OWN
+ * ad-platforms instance over the same tables and the same real vault (stateless; no `deliverySync`, so there
+ * is no cycle with the admin's instance that triggers the sync) and derives from it the connection reader the
+ * tracking runtime resolves `conn://` credentials through and the `AdPlatformDeliverySync` the admin calls
+ * after a connection is saved.
+ */
+export function buildAdPlatformDelivery(input: {
+  readonly prisma: Database;
+  readonly vault: CredentialVaultPort;
+  readonly clock: Clock;
+  readonly idGenerator: IdGenerator;
+  readonly ruleSetKey: string;
+}): { readonly connections: ConnectionsForDelivery; readonly sync: DeliverySyncPort } {
+  const connections = connectionsForDelivery(
+    wireAdPlatforms({
+      prisma: input.prisma,
+      vault: input.vault,
+      clock: input.clock,
+      idGenerator: input.idGenerator,
+    }).internal,
+  );
+  return {
+    connections,
+    sync: new AdPlatformDeliverySync({
+      store: new PrismaTrackingRegistryStore(input.prisma, input.idGenerator),
+      connections,
+      siteTypeOf: prismaSiteTypeOf(input.prisma),
+      clock: input.clock,
+      ruleSetKey: input.ruleSetKey,
+    }),
+  };
+}
+
+/**
+ * The shop's site type from its own settings row (tenancy owns the table; the default for a shop that never
+ * saved settings is `store`, as `StoreSettings.defaults()`). A value that is not a site type is corrupt data:
+ * it throws rather than guessing which events the shop may receive.
+ */
+export function prismaSiteTypeOf(prisma: Database): (tenantId: string) => Promise<SiteType> {
+  return async (tenantId) => {
+    const row = await runReadScoped(prisma, tenantId, (client) =>
+      client.storeSettings.findFirst({ where: { tenantId }, select: { siteType: true } }),
+    );
+    if (row === null) return "store";
+    if (row.siteType === "store" || row.siteType === "lead_site") return row.siteType;
+    throw new Error("store settings site type is not a site type");
+  };
 }
 
 /**
@@ -856,6 +942,9 @@ export function buildTrackingIngestRuntime(
       processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
       deadLetters,
       logger: core.logger,
+      ...(core.adPlatformConnections === undefined
+        ? {}
+        : { connectionCredentials: core.adPlatformConnections }),
     });
     return { runtime, stop: () => watcher.stop() };
   });

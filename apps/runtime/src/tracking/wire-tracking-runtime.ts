@@ -34,6 +34,7 @@
  *   mid-event is invisible to it.
  */
 
+import type { ConnectionsForDelivery } from "@platform/ad-platforms";
 import type { IdGenerator } from "@platform/contracts";
 import type { Database } from "@platform/db";
 import type { SecretProvider } from "@platform/secrets";
@@ -43,10 +44,12 @@ import {
   HttpJsonAdapter,
   InMemoryDestinationState,
   type AdapterRegistryPort,
+  type CredentialResolverPort,
   type IngestRuntimeDeps,
   type RecordingRuntimeDeps,
 } from "@platform/tracking";
 
+import { ConnectionCredentialResolver } from "./connection-credential-resolver";
 import { PrismaEventRecordStore } from "./prisma-event-record-store";
 import type { TrackingRegistryHandle } from "./tracking-registry-handle";
 import {
@@ -88,6 +91,12 @@ export interface TrackingRuntimeInput {
     }): Promise<void>;
   };
   readonly logger: Logger;
+  /**
+   * Lead Site Part D1: the sealed ad platform connections, so `conn://<tenantId>/<platform>` credential
+   * references (the per-shop destinations the connections create) resolve at send time. Absent ⇒ such a
+   * reference resolves to nothing (a permanent "credential unresolved" failure), never to a stub.
+   */
+  readonly connectionCredentials?: Pick<ConnectionsForDelivery, "openSecret">;
 }
 
 export interface TrackingRuntime {
@@ -155,9 +164,19 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     input.clock.now().getTime(),
   );
 
+  // `conn://` references open from the sealed ad platform vault; every other reference (`vault://…`) goes to
+  // the secret provider exactly as before.
+  const adapterCredentials: CredentialResolverPort =
+    input.connectionCredentials === undefined
+      ? credentials
+      : new ConnectionCredentialResolver({
+          connections: input.connectionCredentials,
+          fallback: credentials,
+        });
+
   const httpAdapter = new HttpJsonAdapter({
     http: new FetchHttpTransport(),
-    credentials,
+    credentials: adapterCredentials,
     envelopes,
     now: () => input.clock.now().getTime(),
   });

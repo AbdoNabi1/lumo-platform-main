@@ -590,6 +590,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     ...(runtime.adPlatformCredentialVault === undefined
       ? {}
       : { adPlatformCredentialVault: runtime.adPlatformCredentialVault }),
+    // Lead Site Part D1 (Task 4): saving a connection re-syncs the shop's tracking destinations. Passed
+    // explicitly, like the vault; present exactly when the vault is.
+    ...(runtime.adPlatformDeliverySync === undefined
+      ? {}
+      : { adPlatformDeliverySync: runtime.adPlatformDeliverySync }),
     // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
     // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
     ...(runtime.platformBillingPayments === undefined

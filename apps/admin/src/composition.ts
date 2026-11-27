@@ -47,7 +47,7 @@ import type { PostingAccounts } from "@platform/finance";
 import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
-import type { CredentialVaultPort } from "@platform/ad-platforms";
+import type { CredentialVaultPort, DeliverySyncPort } from "@platform/ad-platforms";
 import { wireLeads, type LeadsController, type ShopFactsPort } from "@platform/leads";
 import {
   wireLicensing,
@@ -428,6 +428,12 @@ export interface AdminWiringDeps {
    * (503), never a stub. Consumed when the admin mounts the connections (Task 5).
    */
   readonly adPlatformCredentialVault?: CredentialVaultPort;
+  /**
+   * Lead Site Part D1 (Task 4): re-syncs the shop's tracking destinations after a connection changes
+   * (`apps/runtime` builds it over the same tables and vault). Absent ⇒ a save syncs nothing. Consumed when the
+   * admin mounts the connections (Task 5).
+   */
+  readonly adPlatformDeliverySync?: DeliverySyncPort;
   /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;
