@@ -344,6 +344,7 @@ async function signUpStore(storeName: string, email: string): Promise<Store> {
     email,
     password: PASSWORD,
     country: "EG",
+    siteType: "store",
   });
   expect(res.statusCode).toBe(201);
   const created = body(res);
@@ -675,6 +676,7 @@ describe("merchant twins (platform tenant, the store comes from the signed chall
       email,
       password: PASSWORD,
       country: "EG",
+      siteType: "store",
     });
     const login = await merchantLogin(email, PASSWORD);
     const setupChallenge = body(login).setupChallenge as string;
@@ -704,6 +706,7 @@ describe("merchant twins (platform tenant, the store comes from the signed chall
       email,
       password: PASSWORD,
       country: "EG",
+      siteType: "store",
     });
     const login = await merchantLogin(email, PASSWORD);
     const setupChallenge = body(login).setupChallenge as string;
