@@ -682,7 +682,7 @@ cd 'F:/New folder/morbeh-lead-site' && node C:/Users/Abdo/AppData/Local/node/cor
   `"ScCid"` in `envelope/click-ids.ts` (platform stays `"snapchat"`). `vendor-event-input.test.ts` builds `clickIds` from
   real `extractClickIds` output for a URL with `ttclid=tt-click-1&ScCid=sc-click-1`.
 - (finding 9) Secrets in failure paths: `HttpJsonAdapter` never mutates `request.endpoint`; it builds the authenticated
-  URL/headers locally. **Round 2 (finding 9):** (a) `SECRET_RULE.pattern` becomes `/^[A-Za-z0-9._~+/=:|-]+$/` (no
+  URL/headers locally. **Round 2 (finding 9):** (a) `SECRET_RULE.pattern` becomes `<printable-token-characters pattern>` (no
   quotes, backslashes, spaces or other JSON-escaped characters; message `must be 10–1024 characters using letters,
 digits and . _ ~ + / = : | -`), with validation tests for a quote, a backslash and a space; (b) `redactSecrets(value,
 needles)` walks the **decoded** value recursively (strings, array items, object keys and values) and replaces every

@@ -1,5 +1,5 @@
 import { runInTenantTransaction, type Database } from "@platform/db";
-import { createTestPrismaClient } from "@platform/db/testing";
+import { createTestPrismaClient, runWithRlsEnforced } from "@platform/db/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Connection, type ConnectionProps } from "../domain/connection";
 import type { ConnectionRepository } from "../domain/connection-repository";
@@ -166,21 +166,64 @@ describe.runIf(Boolean(databaseUrl))("PrismaConnectionRepository against a real 
     await expect(create({ platform: "myspace" })).rejects.toThrow();
   });
 
+  // The connection role of the test database is a SUPERUSER, and PostgreSQL never applies row-level security
+  // to a superuser (not even with FORCE). So these two run under `runWithRlsEnforced`, which sets the tenant
+  // and then drops to a NOBYPASSRLS role that holds the table privileges: the policy alone decides.
+  const connectionsTable = [{ schema: "tracking", table: "ad_platform_connections" }] as const;
+  const draft = (tenantId: string) => ({
+    id: crypto.randomUUID(),
+    tenantId,
+    platform: "meta",
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+
   it("the database refuses a row written for another tenant than the one set on the transaction (RLS WITH CHECK)", async () => {
     const a = tenantOf();
     const b = tenantOf();
+
+    // control: the very same insert for the tenant that IS set goes through (the role has the privilege)
     await expect(
-      runInTenantTransaction(database(), a, (tx) =>
-        tx.adPlatformConnection.create({
-          data: {
-            id: crypto.randomUUID(),
-            tenantId: b,
-            platform: "meta",
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-        }),
+      runWithRlsEnforced(database(), a, connectionsTable, (tx) =>
+        tx.adPlatformConnection.create({ data: draft(a) }),
       ),
-    ).rejects.toThrow();
+    ).resolves.toBeDefined();
+
+    await expect(
+      runWithRlsEnforced(database(), a, connectionsTable, (tx) =>
+        tx.adPlatformConnection.create({ data: draft(b) }),
+      ),
+    ).rejects.toThrow(/row-level security/iu);
+  });
+
+  it("under an RLS-enforced role a tenant sees only its own connections (RLS USING)", async () => {
+    const a = tenantOf();
+    const b = tenantOf();
+    await runWithRlsEnforced(database(), b, connectionsTable, (tx) =>
+      tx.adPlatformConnection.create({ data: draft(b) }),
+    );
+
+    // even a query that forgets its tenant filter returns nothing of another tenant's
+    const seenByA = await runWithRlsEnforced(
+      database(),
+      a,
+      connectionsTable,
+      (tx) =>
+        tx.$queryRaw<
+          { tenant_id: string }[]
+        >`SELECT tenant_id FROM "tracking"."ad_platform_connections"`,
+    );
+    expect(seenByA.filter((row) => row.tenant_id === b)).toEqual([]);
+
+    const seenByB = await runWithRlsEnforced(
+      database(),
+      b,
+      connectionsTable,
+      (tx) =>
+        tx.$queryRaw<
+          { tenant_id: string }[]
+        >`SELECT tenant_id FROM "tracking"."ad_platform_connections"`,
+    );
+    expect(seenByB.filter((row) => row.tenant_id === b)).toHaveLength(1);
   });
 });

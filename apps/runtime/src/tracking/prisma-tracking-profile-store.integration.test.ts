@@ -1,6 +1,6 @@
 import type { IdGenerator } from "@platform/contracts";
 import { runInTenantTransaction } from "@platform/db";
-import { createTestPrismaClient } from "@platform/db/testing";
+import { createTestPrismaClient, runWithRlsEnforced } from "@platform/db/testing";
 import {
   TrackingProfileService,
   createProfile,
@@ -81,6 +81,67 @@ describe.runIf(Boolean(databaseUrl))("tracking.tracking_profiles (integration)",
       expect(await store.findByCustomerId(b, "c-1")).toBeNull();
       expect(await store.findByEmailHash(b, sha("e"))).toBeNull();
       expect(await store.findByPhoneHash(b, sha("+201012345678"))).toBeNull();
+    } finally {
+      await cleanup(prisma, [a, b]);
+      await prisma.$disconnect();
+    }
+  }, 60_000);
+
+  it("RLS really applies to the table: another tenant's row is refused and invisible; the retention scan opens only behind its switch", async () => {
+    const prisma = createTestPrismaClient(databaseUrl);
+    const suffix = crypto.randomUUID();
+    const a = `tenant-itest-profile-rls-a-${suffix}`;
+    const b = `tenant-itest-profile-rls-b-${suffix}`;
+    const table = [{ schema: "tracking", table: "tracking_profiles" }] as const;
+    const row = (tenantId: string) => ({
+      id: crypto.randomUUID(),
+      tenantId,
+      visitorId: "v-1",
+      lastSeenAt: new Date(T0),
+      createdAt: new Date(T0),
+      updatedAt: new Date(T0),
+      expiresAt: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    try {
+      // the connection role of the test database is a superuser, which RLS never applies to: the
+      // checks below run under a NOBYPASSRLS role so the policies alone decide
+      await expect(
+        runWithRlsEnforced(prisma, a, table, (tx) => tx.trackingProfile.create({ data: row(a) })),
+      ).resolves.toBeDefined();
+      await expect(
+        runWithRlsEnforced(prisma, a, table, (tx) => tx.trackingProfile.create({ data: row(b) })),
+      ).rejects.toThrow(/row-level security/iu);
+      await runWithRlsEnforced(prisma, b, table, (tx) =>
+        tx.trackingProfile.create({ data: row(b) }),
+      );
+
+      const own = await runWithRlsEnforced(
+        prisma,
+        a,
+        table,
+        (tx) =>
+          tx.$queryRaw<
+            { tenant_id: string }[]
+          >`SELECT tenant_id FROM "tracking"."tracking_profiles"`,
+      );
+      expect(own.filter((r) => r.tenant_id === b)).toEqual([]);
+      expect(own.filter((r) => r.tenant_id === a)).toHaveLength(1);
+
+      // the scan sees other tenants only with the explicit switch on
+      const scanned = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.tenant_id', ${a}, true)`;
+        await tx.$executeRawUnsafe("SET LOCAL ROLE rls_probe");
+        const without = await tx.$queryRaw<
+          { tenant_id: string }[]
+        >`SELECT DISTINCT tenant_id FROM "tracking"."tracking_profiles"`;
+        await tx.$executeRaw`SELECT set_config('app.retention_scan', 'on', true)`;
+        const withScan = await tx.$queryRaw<
+          { tenant_id: string }[]
+        >`SELECT DISTINCT tenant_id FROM "tracking"."tracking_profiles"`;
+        return { without, withScan };
+      });
+      expect(scanned.without.map((r) => r.tenant_id)).not.toContain(b);
+      expect(scanned.withScan.map((r) => r.tenant_id)).toContain(b);
     } finally {
       await cleanup(prisma, [a, b]);
       await prisma.$disconnect();

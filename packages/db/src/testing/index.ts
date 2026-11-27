@@ -33,3 +33,4 @@ export function createTestPrismaClient(
 }
 
 export { createFakePrisma, type FakePrisma } from "./fake-prisma";
+export { runWithRlsEnforced } from "./rls";
