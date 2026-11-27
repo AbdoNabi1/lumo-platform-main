@@ -25,6 +25,7 @@ import {
   type RuntimeCore,
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
+import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
 import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
 
@@ -598,6 +599,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // Started after the fail-closed guards above so a boot-time rejection never spins up telemetry.
   const telemetry = startRuntimeTelemetry(config, "api");
 
+  const trackingCookieKeeper = buildTrackingCookieKeeper(runtime);
   const app = await createAdminHttpApi({
     ...integrationPorts,
     // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
@@ -650,6 +652,8 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // the route answers 503 NOT_CONFIGURED and the storefront sends nothing. The sink is the outbox
     // under EVENT_TRANSPORT=postgres and the broker under kafka (P1-D1).
     trackingEventSink: buildTrackingEventSink(runtime),
+    // P1-D6 Cookie Keeper: reads the visitor profile, so it exists only while tracking ingest (which writes it) is on.
+    ...(trackingCookieKeeper === null ? {} : { trackingCookieKeeper }),
     ...(runtime.config.TRACKING_EDGE_SECRET === undefined
       ? {}
       : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),

@@ -653,3 +653,9 @@ export type {
   TrackingRetentionReport,
 } from "./profile/retention";
 export { fbcCreatedAtMs, isFbcValidAt } from "./envelope/click-ids";
+export {
+  COOKIE_KEEPER_MAX_VALUE,
+  COOKIE_KEEPER_NAMES,
+  restorableCookies,
+} from "./profile/cookie-keeper";
+export type { CookieKeeperInput, CookieKeeperName } from "./profile/cookie-keeper";

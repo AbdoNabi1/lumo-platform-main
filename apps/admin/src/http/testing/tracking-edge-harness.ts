@@ -12,7 +12,7 @@ import type {
 import { JsonEventSerializer } from "@platform/domain-events";
 import { InMemoryAuditTrail } from "../../infrastructure/in-memory-audit-trail";
 import { createAdminHttpApi } from "../server";
-import type { TrackingEventSink } from "../public-tracking-routes";
+import type { TrackingCookieKeeper, TrackingEventSink } from "../public-tracking-routes";
 import { signEdgeRequest } from "../tracking-edge-signature";
 
 /** Low-entropy test value on purpose (secret scanners): not a credential. */
@@ -36,6 +36,8 @@ export interface EdgeAppOptions {
   readonly failPublish?: boolean;
   /** No sink at all (a runtime whose transport could not be built). */
   readonly noSink?: boolean;
+  /** Cookie Keeper (P1-D6): what restores lost vendor cookies from the profile. */
+  readonly cookieKeeper?: TrackingCookieKeeper;
 }
 
 export async function buildEdgeApp(options: EdgeAppOptions = {}): Promise<EdgeApp> {
@@ -91,6 +93,7 @@ export async function buildEdgeApp(options: EdgeAppOptions = {}): Promise<EdgeAp
     responseCache,
     ...(secret === null ? {} : { trackingEdgeSecret: secret }),
     ...(options.noSink === true ? {} : { trackingEventSink: sink }),
+    ...(options.cookieKeeper === undefined ? {} : { trackingCookieKeeper: options.cookieKeeper }),
   });
   return { app, published };
 }

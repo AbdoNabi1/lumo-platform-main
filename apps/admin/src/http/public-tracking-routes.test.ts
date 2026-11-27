@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { signEdgeRequest } from "./tracking-edge-signature";
-import { trackingMessageId } from "./public-tracking-routes";
+import { trackingMessageId, type TrackingCookieKeeper } from "./public-tracking-routes";
 import {
   COLLECT_URL,
   EDGE_SECRET,
@@ -282,5 +282,76 @@ describe("POST /public/tracking/collect — transport failure", () => {
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "PUBLISH_FAILED", retryable: true });
     expect(JSON.stringify(res.json())).not.toContain("broker is down");
+  });
+});
+
+describe("POST /public/tracking/collect — Cookie Keeper (P1-D6)", () => {
+  const keeperSeen: { tenantId: string; visitorId: string; present: string[] }[] = [];
+  const keeper: TrackingCookieKeeper = ({ tenantId, visitorId, present }) => {
+    keeperSeen.push({ tenantId, visitorId, present: [...present].sort() });
+    return Promise.resolve([{ name: "_ttp", value: "restored-ttp", maxAgeSeconds: 34_128_000 }]);
+  };
+  const withVisitor = (cookies: Record<string, string>): Record<string, unknown> => {
+    const body = edgeBody();
+    (body["client"] as { cookies: Record<string, string> }).cookies = {
+      visitorId: "mb-visitor-0001-aaaa",
+      ...cookies,
+    };
+    return body;
+  };
+
+  beforeEach(() => {
+    keeperSeen.length = 0;
+  });
+
+  it("returns the keeper's cookies, asked for the SIGNED tenant and visitor with the names the browser holds", async () => {
+    const { app } = await boot({ cookieKeeper: keeper });
+
+    const res = await sendSigned(app, withVisitor({ fbp: "fb.1.1.1", ga: "GA1.1.1.2", epik: "e" }));
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toMatchObject({
+      cookies: [{ name: "_ttp", value: "restored-ttp", maxAgeSeconds: 34_128_000 }],
+    });
+    expect(keeperSeen).toEqual([
+      {
+        tenantId: SHOP,
+        visitorId: "mb-visitor-0001-aaaa",
+        present: ["_fbp", "_ga", "_epik"].sort(),
+      },
+    ]);
+  });
+
+  it("lists no cookies — and does not ask — when the request has no visitor id", async () => {
+    const { app } = await boot({ cookieKeeper: keeper });
+
+    const res = await sendSigned(app);
+
+    expect(res.json()).toMatchObject({ cookies: [] });
+    expect(keeperSeen).toEqual([]);
+  });
+
+  it("a failing keeper never fails the capture: 202 with no cookies, event still queued", async () => {
+    const { app, published } = await boot({
+      cookieKeeper: () => Promise.reject(new Error("db down: secret-row-contents")),
+    });
+
+    const res = await sendSigned(app, withVisitor({}));
+
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toMatchObject({ cookies: [] });
+    expect(JSON.stringify(res.json())).not.toContain("secret-row-contents");
+    expect(published).toHaveLength(1);
+  });
+
+  it("never asks the keeper for an unauthenticated or other-tenant request", async () => {
+    const { app } = await boot({ cookieKeeper: keeper });
+
+    const unsigned = await sendSigned(app, withVisitor({}), { signature: "0".repeat(64) });
+    const other = await sendSigned(app, withVisitor({}), { tenantHeader: "shop-other" });
+
+    expect(unsigned.statusCode).toBe(401);
+    expect(other.statusCode).toBe(403);
+    expect(keeperSeen).toEqual([]);
   });
 });

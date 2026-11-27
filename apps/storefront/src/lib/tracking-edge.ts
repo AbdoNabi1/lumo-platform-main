@@ -1,12 +1,11 @@
-import { createHmac } from "node:crypto";
 import { MIN_SECRET_BYTES } from "./storefront-env";
 
 /**
  * Tracking P1-D3: the storefront SERVER's side of `POST /public/tracking/collect` on the runtime API.
  *
- * Server-only by construction: it needs `node:crypto` and the shared secret, neither of which may ever
- * reach a browser (a client import fails the build on `node:crypto`). Nothing calls it yet but tests —
- * the edge middleware (P1-D5) and the same-origin `/_m/*` route (P3) will.
+ * Server-only by construction: it holds the shared secret, which must never reach a browser. It uses Web
+ * Crypto (`crypto.subtle`), not `node:crypto`, so the SAME code runs in the Edge-runtime middleware (the P1-D5
+ * touch event) and in Node (server actions, the P3 same-origin `/_m/*` route).
  *
  * The signature is HMAC-SHA256 over `<x-mb-ts>.<exact body bytes>` with `TRACKING_EDGE_SECRET`
  * (`x-mb-ts` = whole Unix seconds); the runtime refuses anything older or newer than five minutes.
@@ -38,16 +37,24 @@ export interface SignedTrackingHeaders {
 }
 
 /** Signs `rawBody` as of `nowMs`. The body must be the exact string that is then sent. */
-export function signTrackingRequest(
+export async function signTrackingRequest(
   secret: string,
   rawBody: string,
   nowMs: number = Date.now(),
-): SignedTrackingHeaders {
+): Promise<SignedTrackingHeaders> {
   const timestamp = String(Math.floor(nowMs / 1000));
-  const signature = createHmac("sha256", secret)
-    .update(`${timestamp}.`)
-    .update(rawBody)
-    .digest("hex");
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, encoder.encode(`${timestamp}.${rawBody}`));
+  const signature = Array.from(new Uint8Array(mac), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
   return { "x-mb-ts": timestamp, "x-mb-sig": signature };
 }
 
@@ -65,6 +72,12 @@ export interface TrackingClientContext {
     readonly ga?: string;
     readonly visitorId?: string;
     readonly sessionId?: string;
+    // The rest of the Cookie Keeper list (P1-D6): presence tells the runtime what NOT to restore.
+    readonly ttclid?: string;
+    readonly scclid?: string;
+    readonly gclAw?: string;
+    readonly liFatId?: string;
+    readonly epik?: string;
   };
 }
 
@@ -76,7 +89,7 @@ export interface SendTrackingEventInput {
   readonly client: TrackingClientContext;
 }
 
-/** A cookie the runtime asks the storefront to re-emit first-party (P1-D6; empty until then). */
+/** A cookie the runtime asks the storefront to re-emit first-party (P1-D6 Cookie Keeper). */
 export interface TrackingCookieDirective {
   readonly name: string;
   readonly value: string;
@@ -136,7 +149,7 @@ export async function sendTrackingEvent(
     event: input.event,
     client: input.client,
   });
-  const headers = signTrackingRequest(secret, rawBody, (deps.nowMs ?? Date.now)());
+  const headers = await signTrackingRequest(secret, rawBody, (deps.nowMs ?? Date.now)());
   const base = deps.runtimeUrl ?? env["RUNTIME_API_URL"] ?? "http://localhost:3080";
 
   try {

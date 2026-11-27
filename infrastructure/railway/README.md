@@ -482,6 +482,27 @@ needs `TRACKING_INGEST_ENABLED=true` and a seeded tracking registry (§8). Rotat
 value on both services in the same deploy window; requests signed with the old one fail with 401 until both
 have restarted.
 
+### 4h. Edge capture on the store's own domain (P1) — nothing to configure
+
+With §4g set, the storefront's middleware does the following on every **page navigation** (never on assets,
+prefetches, crawlers or staff previews), with no database or network call on a plain page view:
+
+- sets the first-party master cookie `_mb_id` (UUID, 400 days, `Secure`, `SameSite=Lax`, host-only, readable by
+  scripts) from the server response, and keeps the latest click id per platform in an HttpOnly `_mb_clk`
+  cookie (90 days) and Meta's `_fbc` (derived from `fbclid`);
+- reads click ids from the landing URL with their documented aliases (`ScCid`/`sccid`/`sc_click_id`, `gclid`,
+  `gbraid`, `wbraid`, `ttclid`, `msclkid`, `twclid`, `li_fat_id`, `epik`) and swaps in the backup parameters
+  `mb_gclid`, `mb_fbclid`, `mb_ttclid`, `mb_sccid`, … when a browser stripped the native one;
+- for a brand-new visitor or a landing that carries a click id/UTM, sends ONE signed background `visitor_touch`
+  event (no vendor receives it; it teaches the visitor's profile). The answer can carry cookies the browser lost
+  (Cookie Keeper); they are set on that visitor's next request.
+
+**Client IP.** `X-Forwarded-For` is only believed from the right: `STOREFRONT_TRUSTED_PROXIES` is the number of
+proxies in front of the storefront that append to it. Railway's edge is one, so the default `1` (the LAST entry
+is the visitor) is right for the normal deployment. Set `2` when a CDN sits in front of Railway, `0` when nothing
+appends the header (the address is then simply not recorded). The lead form uses the same rule. Never set it
+higher than the real chain: a value that is too high selects a value the visitor typed.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.

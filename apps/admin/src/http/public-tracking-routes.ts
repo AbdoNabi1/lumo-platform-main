@@ -9,6 +9,7 @@ import {
   TRACKING_CAPTURED_VERSION,
   gaClientIdFromCookie,
   type CollectorRefusal,
+  type CookieDirective,
   type TrackingCapturedEventPayload,
 } from "@platform/tracking";
 import { logger, ValidationError } from "@platform/utils";
@@ -44,9 +45,22 @@ export interface TrackingEventSink {
   }): Promise<void>;
 }
 
+/**
+ * Cookie Keeper (P1-D6): the vendor cookies the visitor's browser lacks and their profile still holds,
+ * as first-party `Set-Cookie` directives. Tenant and visitor come from the SIGNED body, never from a
+ * header; `present` is the set of cookie names the storefront saw on the request.
+ */
+export type TrackingCookieKeeper = (input: {
+  readonly tenantId: string;
+  readonly visitorId: string;
+  readonly present: ReadonlySet<string>;
+}) => Promise<readonly CookieDirective[]>;
+
 export interface PublicTrackingRouteDeps {
   /** `TRACKING_EDGE_SECRET`. Absent ⇒ the route answers 503 NOT_CONFIGURED and stores nothing. */
   readonly secret: string | undefined;
+  /** Absent (profiles not enabled) ⇒ the response simply lists no cookies. */
+  readonly cookieKeeper?: TrackingCookieKeeper;
   readonly sink: TrackingEventSink | undefined;
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
@@ -63,8 +77,28 @@ const clientCookies = z
     ga: z.string().max(512).optional(),
     visitorId: z.string().max(128).optional(),
     sessionId: z.string().max(128).optional(),
+    // Presence of the rest of the Cookie Keeper list (P1-D6), so the keeper never restores over a live cookie.
+    ttclid: z.string().max(1024).optional(),
+    scclid: z.string().max(512).optional(),
+    gclAw: z.string().max(512).optional(),
+    liFatId: z.string().max(512).optional(),
+    epik: z.string().max(512).optional(),
   })
   .strict();
+
+/** Client-cookie field → the cookie name the browser holds it under (Cookie Keeper presence check). */
+const PRESENCE_COOKIE_NAMES: Readonly<Record<string, string>> = {
+  fbp: "_fbp",
+  fbc: "_fbc",
+  ttp: "_ttp",
+  scid: "_scid",
+  ga: "_ga",
+  ttclid: "ttclid",
+  scclid: "_scclid",
+  gclAw: "_gcl_aw",
+  liFatId: "li_fat_id",
+  epik: "_epik",
+};
 
 const edgeBody = z
   .object({
@@ -149,6 +183,29 @@ function withClientContext(body: EdgeBody): Record<string, unknown> {
       },
     },
   };
+}
+
+async function restoreCookies(
+  keeper: TrackingCookieKeeper | undefined,
+  tenantId: string,
+  cookies: EdgeBody["client"]["cookies"],
+): Promise<readonly CookieDirective[]> {
+  const visitorId = cookies.visitorId;
+  if (keeper === undefined || visitorId === undefined || visitorId === "") return [];
+  const present = new Set<string>();
+  for (const [field, name] of Object.entries(PRESENCE_COOKIE_NAMES)) {
+    const value = (cookies as Record<string, string | undefined>)[field];
+    if (value !== undefined && value !== "") present.add(name);
+  }
+  try {
+    return await keeper({ tenantId, visitorId, present });
+  } catch (cause) {
+    // Counts-only: the error name, never a message that could carry a row.
+    logger.warn("tracking edge: cookie keeper failed", {
+      error: cause instanceof Error ? cause.name : "unknown",
+    });
+    return [];
+  }
 }
 
 /**
@@ -317,9 +374,11 @@ export function publicTrackingRoutes(deps: PublicTrackingRouteDeps): readonly Ro
           };
         }
 
-        // `cookies` is the Cookie Keeper seam (P1-D6): the storefront re-emits whatever is listed
-        // here as first-party Set-Cookie. Empty until the profile store exists.
-        return { status: 202, body: { eventId: envelope.eventId, cookies: [] } };
+        // Cookie Keeper (P1-D6): the storefront re-emits whatever is listed here as first-party
+        // Set-Cookie. It never changes the answer: a failing keeper means "no cookies", not an error,
+        // because the event is already safely queued.
+        const cookies = await restoreCookies(deps.cookieKeeper, tenantId, body.client.cookies);
+        return { status: 202, body: { eventId: envelope.eventId, cookies } };
       },
     }),
   ] as readonly RouteDefinition[];

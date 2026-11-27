@@ -20,7 +20,7 @@ import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
-import type { TrackingEventSink } from "./public-tracking-routes";
+import type { TrackingCookieKeeper, TrackingEventSink } from "./public-tracking-routes";
 
 export interface AdminHttpDeps extends AdminWiringDeps {
   /**
@@ -69,6 +69,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly trackingEdgeSecret?: string;
   /** Where accepted tracking events go (outbox under `postgres`, the broker under Kafka). */
   readonly trackingEventSink?: TrackingEventSink;
+  /** Tracking P1-D6: restores lost vendor cookies from the visitor profile. Absent ⇒ none are listed. */
+  readonly trackingCookieKeeper?: TrackingCookieKeeper;
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -203,6 +205,9 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
       trackingEdge: {
         secret: deps.trackingEdgeSecret,
         sink: deps.trackingEventSink,
+        ...(deps.trackingCookieKeeper === undefined
+          ? {}
+          : { cookieKeeper: deps.trackingCookieKeeper }),
         serializer: deps.serializer,
         idGenerator: deps.idGenerator,
         clock: deps.clock,

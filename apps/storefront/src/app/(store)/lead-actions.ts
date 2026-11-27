@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies, headers } from "next/headers";
+import { trustedClientIp } from "@/lib/client-ip";
 import {
   createLead,
   isCreateLeadResult,
@@ -50,19 +51,12 @@ const ATTRIBUTION_COOKIES = [
 ] as const;
 /** The route's own limits (`public-leads-routes.ts`); a value past them would 422 the whole lead. */
 const MAX_URL = 2048;
-const MAX_IP = 64;
 const MAX_TEXT = 512;
 
 const optional = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim() ?? "";
   return trimmed === "" ? undefined : trimmed;
 };
-
-/** The visitor's address: the first `x-forwarded-for` entry; null when absent or not address-sized. */
-function visitorIp(forwardedFor: string | null): string | null {
-  const first = forwardedFor?.split(",")[0]?.trim() ?? "";
-  return first === "" || first.length > MAX_IP ? null : first;
-}
 
 function mapFailure(status: number, body: unknown): LeadSubmissionResult {
   if (status === 422) {
@@ -116,7 +110,9 @@ export async function submitLead(input: LeadFormInput): Promise<LeadSubmissionRe
       pageUrl: requestHeaders.get("referer")?.slice(0, MAX_URL) ?? null,
       // The page's own referrer is unknown on the server.
       referrer: null,
-      ip: visitorIp(requestHeaders.get("x-forwarded-for")),
+      // Tracking P1-D7: the address OUR proxy appended (right-most untrusted hop), never the left-most
+      // value, which the submitter can write. Null when the header is absent or not an address.
+      ip: trustedClientIp(requestHeaders),
       userAgent: requestHeaders.get("user-agent")?.slice(0, MAX_TEXT) ?? null,
       cookies: attribution,
     },

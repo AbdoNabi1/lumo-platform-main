@@ -37,10 +37,10 @@ describe("trackingEdgeSecret", () => {
 });
 
 describe("signTrackingRequest", () => {
-  it("signs `<seconds>.<exact body>` with HMAC-SHA256 as lowercase hex (the runtime verifies the same bytes)", () => {
+  it("signs `<seconds>.<exact body>` with HMAC-SHA256 as lowercase hex (the runtime verifies the same bytes)", async () => {
     const body = '{"tenantId":"shop-1","event":{"eventName":"page_view"}}';
 
-    const headers = signTrackingRequest(SECRET, body, NOW_MS);
+    const headers = await signTrackingRequest(SECRET, body, NOW_MS);
 
     expect(headers["x-mb-ts"]).toBe(String(NOW_S));
     expect(headers["x-mb-sig"]).toBe(
@@ -49,13 +49,25 @@ describe("signTrackingRequest", () => {
     expect(headers["x-mb-sig"]).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("changes with the body, the secret and the second", () => {
-    const base = signTrackingRequest(SECRET, "a", NOW_MS)["x-mb-sig"];
-    expect(signTrackingRequest(SECRET, "b", NOW_MS)["x-mb-sig"]).not.toBe(base);
-    expect(signTrackingRequest("other-".padEnd(40, "1"), "a", NOW_MS)["x-mb-sig"]).not.toBe(base);
-    expect(signTrackingRequest(SECRET, "a", NOW_MS + 1000)["x-mb-sig"]).not.toBe(base);
+  it("changes with the body, the secret and the second", async () => {
+    const sig = async (secret: string, body: string, at: number) =>
+      (await signTrackingRequest(secret, body, at))["x-mb-sig"];
+    const base = await sig(SECRET, "a", NOW_MS);
+    expect(await sig(SECRET, "b", NOW_MS)).not.toBe(base);
+    expect(await sig("other-".padEnd(40, "1"), "a", NOW_MS)).not.toBe(base);
+    expect(await sig(SECRET, "a", NOW_MS + 1000)).not.toBe(base);
     // …but not with the millisecond: the timestamp is whole seconds.
-    expect(signTrackingRequest(SECRET, "a", NOW_MS + 999)["x-mb-sig"]).toBe(base);
+    expect(await sig(SECRET, "a", NOW_MS + 999)).toBe(base);
+  });
+
+  it("signs a multi-byte body exactly like node:crypto does over its UTF-8 bytes", async () => {
+    const body = JSON.stringify({ name: "مُنتج — ✓", note: "naïve" });
+
+    const headers = await signTrackingRequest(SECRET, body, NOW_MS);
+
+    expect(headers["x-mb-sig"]).toBe(
+      createHmac("sha256", SECRET).update(`${NOW_S}.`).update(body).digest("hex"),
+    );
   });
 });
 

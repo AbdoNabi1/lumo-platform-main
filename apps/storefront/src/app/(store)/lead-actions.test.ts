@@ -120,7 +120,7 @@ describe("submitLead request", () => {
     jar.set("_scid", { value: "scid-1", expiresAt: 1e12 });
     jar.set("_ga", { value: "GA1.1.1.2", expiresAt: 1e12 });
     requestHeaders.set("referer", "https://shop.example/?utm_source=ad");
-    requestHeaders.set("x-forwarded-for", "203.0.113.7, 10.0.0.1");
+    requestHeaders.set("x-forwarded-for", "203.0.113.7");
     requestHeaders.set("user-agent", "Mozilla/5.0 Test");
 
     const result = await submitLead(input);
@@ -207,6 +207,35 @@ describe("submitLead request", () => {
     expect(context.pageUrl).toHaveLength(2048);
     expect(context.ip).toBeNull();
     expect(context.cookies).toEqual({ ga: "g".repeat(512) });
+  });
+
+  it("takes the address the edge appended, never a left-most value the submitter wrote (P1-D7)", async () => {
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    requestHeaders.set("x-forwarded-for", "1.2.3.4, 10.9.8.7, 203.0.113.7");
+
+    await submitLead(input);
+
+    expect((sentBody().context as { ip: string | null }).ip).toBe("203.0.113.7");
+  });
+
+  it("honours STOREFRONT_TRUSTED_PROXIES for a deployment with a second proxy in front", async () => {
+    vi.stubEnv("STOREFRONT_TRUSTED_PROXIES", "2");
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    requestHeaders.set("x-forwarded-for", "1.2.3.4, 203.0.113.7, 104.16.0.1");
+
+    await submitLead(input);
+
+    expect((sentBody().context as { ip: string | null }).ip).toBe("203.0.113.7");
+  });
+
+  it("sends no address at all when no proxy is trusted (the header is then the submitter's)", async () => {
+    vi.stubEnv("STOREFRONT_TRUSTED_PROXIES", "0");
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    requestHeaders.set("x-forwarded-for", "203.0.113.7");
+
+    await submitLead(input);
+
+    expect((sentBody().context as { ip: string | null }).ip).toBeNull();
   });
 
   it("flags a filled honeypot and clamps a bad elapsed time", async () => {
