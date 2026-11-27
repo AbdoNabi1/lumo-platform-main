@@ -38,8 +38,11 @@ const MIN_LOCK_TTL_MS = 60_000;
  *   record, and the scheduler prunes delivered rows after `OUTBOX_RETENTION_DAYS`.
  * - **One process does the work.** Delivery is sequential within a pass and single-flight across
  *   workers, so throughput is one row at a time. A second worker adds availability, not speed.
- * - **Nothing outside the outbox arrives.** The tracking collector publishes straight to the
- *   broker, so tracking ingest cannot run on this transport (`config.ts` refuses the combination).
+ * - **Nothing outside the outbox arrives.** The standalone `apps/collector` publishes straight to
+ *   the broker and is not served by this transport; tracking events reach the relay through the
+ *   runtime API's `POST /public/tracking/collect` (Tracking P1-D1), which appends them to the outbox.
+ *   (Formerly: the collector publishes straight to the
+ *   broker, so tracking ingest could not run on this transport; `config.ts` used to refuse it.)
  * - **A consumer registered later does not see earlier rows** — a row on a topic nobody subscribes
  *   to is marked delivered immediately.
  *

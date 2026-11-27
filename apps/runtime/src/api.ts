@@ -25,6 +25,7 @@ import {
   type RuntimeCore,
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
+import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
 
 /**
@@ -645,6 +646,13 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
         }),
     tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
+    // Tracking P1-D3: the storefront-signed capture route. The secret is optional on purpose: absent ⇒
+    // the route answers 503 NOT_CONFIGURED and the storefront sends nothing. The sink is the outbox
+    // under EVENT_TRANSPORT=postgres and the broker under kafka (P1-D1).
+    trackingEventSink: buildTrackingEventSink(runtime),
+    ...(runtime.config.TRACKING_EDGE_SECRET === undefined
+      ? {}
+      : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),
     ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
       ? {}
       : { platformStoreDomain: runtime.config.PLATFORM_STORE_DOMAIN }),

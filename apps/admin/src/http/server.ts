@@ -20,6 +20,7 @@ import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
+import type { TrackingEventSink } from "./public-tracking-routes";
 
 export interface AdminHttpDeps extends AdminWiringDeps {
   /**
@@ -61,6 +62,13 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly tenantGate?: TenantGate;
   /** Plan 1B-2: create the first owner (idempotent) from runtime env. Absent ⇒ nothing happens. */
   readonly bootstrapOwner?: { readonly email: string; readonly password: string };
+  /**
+   * Tracking P1-D3: `TRACKING_EDGE_SECRET`, the HMAC key the storefront server signs
+   * `POST /public/tracking/collect` with. Absent ⇒ that route answers 503 NOT_CONFIGURED.
+   */
+  readonly trackingEdgeSecret?: string;
+  /** Where accepted tracking events go (outbox under `postgres`, the broker under Kafka). */
+  readonly trackingEventSink?: TrackingEventSink;
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -192,6 +200,13 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
         ? { platformTenantId }
         : {}),
       rateLimiter: deps.rateLimiter,
+      trackingEdge: {
+        secret: deps.trackingEdgeSecret,
+        sink: deps.trackingEventSink,
+        serializer: deps.serializer,
+        idGenerator: deps.idGenerator,
+        clock: deps.clock,
+      },
       ...(tenantGate === undefined
         ? {}
         : { onTenantLifecycleChange: (id: string) => cachedGate?.invalidate(id) }),

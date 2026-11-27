@@ -463,6 +463,25 @@ Notes:
 - `EMAIL_CREDENTIALS_KEK_REF` needs no rotation for this: email accounts were never stored with their key
   reference.
 
+### 4g. Tracking capture secret (`TRACKING_EDGE_SECRET`) — owner step, optional
+
+The storefront's server sends its tracking events to `runtime-api` (`POST /api/v1/public/tracking/collect`)
+signed with a shared secret (HMAC-SHA256 over a timestamp and the body; a request more than 5 minutes old is
+refused). Nothing is captured until **the same random value is set on both services**:
+
+1. Generate one value, at least 32 characters (PowerShell):
+   `$b = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ($b | ForEach-Object { $_.ToString('x2') }) -join ''`
+2. Set it as `TRACKING_EDGE_SECRET` on `runtime-api` **and** on `storefront` (a secret in the secret manager,
+   never in git or a chat). Redeploy both.
+3. Either side missing it is safe: `runtime-api` answers `503 NOT_CONFIGURED` and the storefront sends
+   nothing. Nothing crashes and no page slows down.
+
+Events then travel over whichever transport is configured (`EVENT_TRANSPORT`): under `postgres` the API
+appends each one to `platform.outbox` and the worker's relay hands it to the tracking ingest consumer, which
+needs `TRACKING_INGEST_ENABLED=true` and a seeded tracking registry (§8). Rotate the secret by setting a new
+value on both services in the same deploy window; requests signed with the old one fail with 401 until both
+have restarted.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.
@@ -662,8 +681,8 @@ environment is a boot failure waiting to happen rather than a shortcut.
 
 `KAFKA_BROKERS` is not needed. `REDIS_URL` still is: the delivery loop takes a Redis lock so two
 workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**, and do not set
-`TRACKING_INGEST_ENABLED=true` — the collector publishes to a broker, so the config refuses that
-combination.
+`TRACKING_INGEST_ENABLED=true` until the tracking registry is seeded. Tracking ingest works under this
+transport (`runtime-api` appends events to the outbox; see §4g).
 
 How it behaves (`apps/runtime/src/outbox-delivery-runtime.ts`): every `OUTBOX_RELAY_INTERVAL_MS`
 (2 s) the worker takes the pending rows that are due, oldest first, and hands each to every consumer
@@ -804,7 +823,13 @@ Under `EVENT_TRANSPORT=postgres`:
   deliver the same rows; the consumers' inbox (`platform.inbox_processed_events`) absorbs that.
 - **A consumer added later does not see earlier events** — rows on a topic with no subscriber are
   marked `published` immediately.
-- **No tracking ingest.** The collector needs a broker.
+- **Tracking ingest takes events from `runtime-api` only.** The standalone `apps/collector` publishes to a
+  broker and is not part of this deployment; the storefront-signed route (§4g) is.
+- **Tracking deliveries are retried durably.** A vendor call that fails transiently is retried by the
+  worker (every `TRACKING_RETRY_SWEEP_INTERVAL_MS`, 1 min) with growing delays — 1 min, 5 min, 30 min, 2 h,
+  6 h, 12 h, then daily — until the vendor's own window closes (GA4 72 h; Meta, TikTok, Snap 7 days minus
+  1 h), then the delivery is dead-lettered with its reason. The retry state lives in
+  `tracking.delivery_retries` (migration `20261205000000_tracking_delivery_retry`).
 - **Nothing prunes the outbox unless the scheduler runs.** Delivered rows are deleted after
   `OUTBOX_RETENTION_DAYS` by `apps/runtime/src/scheduler.ts`, which this guide does not deploy.
 - **Switching to `kafka` later** needs no data change: the two columns are ignored by the Kafka

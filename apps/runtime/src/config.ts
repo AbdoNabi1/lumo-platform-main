@@ -307,6 +307,14 @@ const schema = z
     TRACKING_RULE_SET_KEY: z.string().default("tracking.routing.default"),
     /** Registry hot-reload poll interval (`TrackingRegistryWatcher`). */
     TRACKING_REGISTRY_POLL_MS: z.coerce.number().int().positive().default(30_000),
+    /**
+     * Tracking P1-D3: the secret the storefront SERVER signs `POST /public/tracking/collect` with
+     * (HMAC-SHA256 over timestamp + body). The SAME value must be set on the storefront. Absent ⇒ the
+     * route answers 503 NOT_CONFIGURED and nothing is collected (fail safe, never a crash).
+     */
+    TRACKING_EDGE_SECRET: z.string().min(32).optional(),
+    /** Milliseconds between delivery-retry sweeps in the worker (durable per-destination retry, P1-D2). */
+    TRACKING_RETRY_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
 
     // ── H-3 (G-SEC-2) cloud KMS / HSM / Vault + threat-intel provider selection ──
     /** Which KMS/crypto provider backs Security's key operations (default `local` = node:crypto). */
@@ -470,17 +478,9 @@ const schema = z
           "EVENT_TRANSPORT=postgres requires OUTBOX_RELAY_ENABLED=true: under this transport the outbox relay is the only thing that delivers events.",
       });
     }
-    // The collector publishes beacons straight to the broker (`tracking.event.captured.v1`), never
-    // through the outbox, so without a broker the ingest consumer would be registered and receive
-    // nothing, forever. Refuse the combination rather than report a healthy consumer that is deaf.
-    if (cfg.EVENT_TRANSPORT === "postgres" && cfg.TRACKING_INGEST_ENABLED) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["TRACKING_INGEST_ENABLED"],
-        message:
-          "TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka: the collector publishes tracking events to the broker directly, not through the outbox, so the Postgres transport can never deliver them.",
-      });
-    }
+    // (Tracking ingest under EVENT_TRANSPORT=postgres is supported since Tracking P1/T1: the runtime
+    // API's `POST /public/tracking/collect` appends `tracking.event.captured.v1` to the outbox, so
+    // the relay can deliver it. The former refusal of that combination is gone on purpose.)
     // H-01: `buildSecurityHttpGuard` (apps/runtime/src/security/wire-security-runtime.ts) is not called
     // by any entrypoint — api.ts still authorizes every request through AdminGuard + Keto. Accepting this
     // flag would tell an operator that zero-trust enforcement ("authn → threat → risk → device → policy →

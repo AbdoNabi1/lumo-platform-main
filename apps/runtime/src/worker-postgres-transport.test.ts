@@ -189,10 +189,19 @@ describe("config: EVENT_TRANSPORT", () => {
     );
   });
 
-  it("refuses postgres with tracking ingest on — the collector bypasses the outbox", () => {
-    expect(() => loadRuntimeConfig({ ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" })).toThrow(
-      /TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka/,
-    );
+  it("accepts postgres with tracking ingest on — the runtime API appends events to the outbox (P1-D1)", () => {
+    const config = loadRuntimeConfig({ ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" });
+    expect(config.EVENT_TRANSPORT).toBe("postgres");
+    expect(config.TRACKING_INGEST_ENABLED).toBe(true);
+  });
+
+  it("TRACKING_EDGE_SECRET is optional and needs at least 32 characters when present", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_EDGE_SECRET).toBeUndefined();
+    expect(() => loadRuntimeConfig({ ...BASE_ENV, TRACKING_EDGE_SECRET: "too-short" })).toThrow();
+    const secret = "edge-secret-".padEnd(40, "x");
+    expect(
+      loadRuntimeConfig({ ...BASE_ENV, TRACKING_EDGE_SECRET: secret }).TRACKING_EDGE_SECRET,
+    ).toBe(secret);
   });
 
   it("rejects an unknown transport instead of silently falling back to kafka", () => {

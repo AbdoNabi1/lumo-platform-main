@@ -91,6 +91,7 @@ import { publicCheckoutLinkRoutes } from "./public-checkout-link-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
 import { publicAdPlatformsRoutes } from "./public-ad-platforms-routes";
 import { publicLeadsRoutes } from "./public-leads-routes";
+import { publicTrackingRoutes, type PublicTrackingRouteDeps } from "./public-tracking-routes";
 import { publicOnlineStoreRoutes } from "./public-online-store-routes";
 import { publicContentRoutes } from "./public-content-routes";
 import { publicShippingRoutes } from "./public-shipping-routes";
@@ -1024,6 +1025,8 @@ export function adminRoutes(
     /** Set only under TENANT_MODE=multi; without it merchant sign-up answers 503. */
     readonly platformTenantId?: string;
     readonly onTenantLifecycleChange?: (tenantId: string) => void;
+    /** Tracking P1-D3: the storefront-signed capture route. Absent ⇒ the route is not mounted. */
+    readonly trackingEdge?: PublicTrackingRouteDeps;
   } = {},
 ): readonly RouteDefinition[] {
   // Under TENANT_MODE=multi a merchant's own owner holds `admin` (`*:*` in the role table), so a
@@ -2385,6 +2388,7 @@ export function adminRoutes(
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
     ...publicLeadsRoutes(admin, options.rateLimiter),
+    ...(options.trackingEdge === undefined ? [] : publicTrackingRoutes(options.trackingEdge)),
     ...publicAdPlatformsRoutes(admin),
     ...publicLoyaltyRoutes(admin),
     ...recommendationsRoutes(admin),
