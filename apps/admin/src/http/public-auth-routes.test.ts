@@ -15,16 +15,26 @@ import { publicAuthRoutes } from "./public-auth-routes";
 class RecordingSignupEmailPort implements SignupEmailPort {
   readonly completeAccountCalls: Array<{ email: string; link: string; tenantId: string }> = [];
   readonly alreadyRegisteredCalls: Array<{ email: string; tenantId: string }> = [];
+  /** D51: false = the store has no working email connection. */
+  available = true;
+  /** true = the store's own account refuses the send. */
+  failing = false;
+
+  async isAvailable(): Promise<boolean> {
+    return this.available;
+  }
 
   async sendCompleteAccountEmail(input: {
     email: string;
     link: string;
     tenantId: string;
   }): Promise<void> {
+    if (this.failing) throw new Error("EMAIL_KEY_REJECTED re_secret_key_value sara@customer.test");
     this.completeAccountCalls.push(input);
   }
 
   async sendAlreadyRegisteredEmail(input: { email: string; tenantId: string }): Promise<void> {
+    if (this.failing) throw new Error("EMAIL_KEY_REJECTED re_secret_key_value sara@customer.test");
     this.alreadyRegisteredCalls.push(input);
   }
 }
@@ -363,6 +373,70 @@ describe("POST /public/auth/register — G-72 guest-to-account upgrade", () => {
   });
 });
 
+describe("POST /public/auth/register: no working email connection (D51)", () => {
+  async function guestCheckout(email: string): Promise<void> {
+    const resolved = await h.identity.customers.resolveGuestCustomer({
+      email,
+      name: "Guest Buyer",
+      tenantId: "tenant-local",
+    });
+    expect(resolved.status).toBe(200);
+  }
+
+  it("answers 503 EMAIL_NOT_CONNECTED for a brand-new email: no customer, nothing sent", async () => {
+    h.signupEmail.available = false;
+    const response = await register(h.admin, { email: "new@example.com" });
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      code: "EMAIL_NOT_CONNECTED",
+      message: "Sign-up by email isn't available for this store yet",
+      retryable: false,
+      fields: [],
+    });
+    expect(h.signupEmail.completeAccountCalls).toHaveLength(0);
+    expect(h.signupEmail.alreadyRegisteredCalls).toHaveLength(0);
+    h.signupEmail.available = true;
+    expect((await login(h.admin, { email: "new@example.com" })).status).toBe(401);
+  });
+
+  it("is the SAME answer for a guest email and a registered one (no purchase/account oracle)", async () => {
+    await register(h.admin, { email: "verified@example.com" });
+    await guestCheckout("guest@example.com");
+    h.signupEmail.available = false;
+    const guest = await register(h.admin, { email: "guest@example.com" });
+    const registered = await register(h.admin, { email: "verified@example.com" });
+    const brandNew = await register(h.admin, { email: "brand-new@example.com" });
+    expect([guest.status, registered.status, brandNew.status]).toEqual([503, 503, 503]);
+    expect(guest.body).toEqual(registered.body);
+    expect(guest.body).toEqual(brandNew.body);
+    expect(h.signupEmail.completeAccountCalls).toHaveLength(0);
+    expect(h.signupEmail.alreadyRegisteredCalls).toHaveLength(0);
+  });
+
+  it("when the store's own account refuses the send it is 503 too, and nothing it said is in the answer", async () => {
+    await guestCheckout("guest@example.com");
+    h.signupEmail.failing = true;
+    const response = await register(h.admin, { email: "guest@example.com" });
+    expect(response.status).toBe(503);
+    expect(JSON.stringify(response.body)).not.toContain("re_secret_key_value");
+    expect(JSON.stringify(response.body)).not.toContain("sara@customer.test");
+    expect(response.body).toMatchObject({ code: "EMAIL_NOT_CONNECTED" });
+  });
+
+  it("sign-up completes normally again once the store connects its email account", async () => {
+    h.signupEmail.available = false;
+    expect((await register(h.admin)).status).toBe(503);
+    h.signupEmail.available = true;
+    expect((await register(h.admin)).status).toBe(201);
+  });
+
+  it("login and completing a sign-up with a token need no email connection", async () => {
+    await register(h.admin);
+    h.signupEmail.available = false;
+    expect((await login(h.admin)).status).toBe(200);
+  });
+});
+
 describe("POST /public/auth/login", () => {
   it("establishes a real session and reports the customerRef read back OUT of it", async () => {
     const registered = await register(h.admin);
@@ -375,6 +449,22 @@ describe("POST /public/auth/login", () => {
     expect(session.customerRef).toBe(customerRef);
     expect(session.sessionId).toBeTruthy();
     expect(session.expiresAt).toBe("2026-08-31T01:00:00.000Z");
+  });
+
+  it("still signs a storefront customer in after the staff two-step policy is switched on", async () => {
+    await register(h.admin);
+    const configured = await h.security.security.configureTenantSecurity({
+      tenantId: "tenant-local",
+      tenantRef: "tenant-local",
+      config: { mfaRequired: true },
+    });
+    expect(configured.status).toBe(200);
+    expect((configured.body as { mfaRequired: boolean }).mfaRequired).toBe(true);
+
+    const response = await login(h.admin);
+
+    expect(response.status).toBe(200);
+    expect((response.body as { sessionId: string }).sessionId).toBeTruthy();
   });
 
   it("returns an OPAQUE session id — never a JWT, never the customerRef itself", async () => {

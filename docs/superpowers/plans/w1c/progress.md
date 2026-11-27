@@ -1,0 +1,22 @@
+# Wave 1c ledger
+
+- 2026-11-24 Branch morbeh/shopify-parity-w1c from origin/main ec8e599d (wave 1a+1b merged), in worktree F:/New folder/morbeh-shopify-parity-w1b (deps installed).
+- Scope (D4): Settings > Users (staff list, invite, roles admin/operator/viewer, deactivate, own 2FA, login code step, require-2FA policy, activity log) + Customer segments (Shopify-style fixed filters).
+- Users evidence: survey-users.md (copied from w1b part B). Segments survey dispatched.
+- 2026-11-24 Segments survey done (survey-segments.md). D8: Wave 1c = Segments only; Users & permissions → Wave 1d. Plan written: 2026-11-24-shopify-parity-w1c-segments.md (3 tasks). Plan review round 1 → reviewer-sol.
+- 2026-11-24 Plan review 1 (Sol): CHANGES_REQUESTED 8 blocking + 4 optional; all accepted, amendments added to T1-T3. Round 2 → reviewer-sol.
+- 2026-11-24 Round 2 (Sol): 7 resolved, R6 still blocking (void lock result + no-op memory lock). Accepted → Task 1 round-2 amendment. Round 3 (last allowed) → reviewer-sol.
+- 2026-11-24 Round 3 (Sol): AGREED. OPUS AGREED. Task 1 → impl-terra.
+- 2026-11-24 15:33 Task 1 checkpoint A (terra): 811cc915 (schema+migration+consistency) + 6db26375 (domain). Checkpoint B → impl-terra.
+- 2026-11-24 15:47 Task 1 checkpoint B (terra): 86cf0c65 + 8656e498 (16 files +1412 total). identity 187 pass/54 gated skipped; tsc/arch/scanner clean (per terra; Opus re-ran identity). Some explicit assertions missing (listed in report). Review → reviewer-sol.
+- 2026-11-24 15:57 Task 1 review (Sol): NON_COMPLIANT/CHANGES_REQUESTED, 7 important + 1 minor, all test-coverage gaps. Fix round 1 → impl-sonnet (retry rule).
+- 2026-11-24 16:03 Task 1 fix (sonnet) 3a1a28df tests-only; Opus re-review: 201 pass/54 gated → Task 1 DONE. Task 2 → impl-sonnet (BASE 3a1a28df).
+- 2026-11-24 16:37 Task 2 (sonnet): 5043c3d5 + 212edc6a (10 files +3014). Opus: admin segment+customer 175 pass/21 gated. Pushed branch; draft PR #18 to run gated SQL in CI. Review → reviewer-sol.
+- 2026-11-24 16:42 Task 2 review (Sol): COMPLIANT/APPROVED, 1 minor (snapshot comment) fixed by Opus. getStoreRegion orders:read accepted for fixed roles; follow-up: customer-scoped region read before custom staff permissions. Task 2 DONE. Task 3 → impl-sonnet.
+- 2026-11-24 PR #18 (draft) CI all green at 212edc6a; gated suites ran on CI Postgres: identity segment repo integration 2/2 (incl. concurrent create at 99).
+  - admin segment query integration 21/21 on CI Postgres (SQL validated).
+- 2026-11-24 17:33 Task 3 (sonnet): 9e9bfb3f + 327c5c95 + cc0fab99 (46 files +6209). Implementer: admin-web 3730 pass; Opus: 38 files/598 pass. Review → reviewer-sol (export ignores segment, cap message, id encoding to adjudicate).
+- 2026-11-24 17:45 Task 3 review (Sol): NON_COMPLIANT/CHANGES_REQUESTED, 2 important (export ignores segment; new page canEdit) + 3 minor (cap message, money helper, i18n hasAssertions). Fix round 1 → impl-sonnet.
+- 2026-11-24 17:56 Task 3 fix fa474575; Opus re-review 535 pass → Task 3 DONE. Pushed; branch review → reviewer-sol.
+- 2026-11-24 18:09 Branch review (Sol): COMPLIANT/APPROVED, 0 findings. Waiting CI on fa474575, then ready + merge.
+- 2026-11-24 PR #18 CI 13/13 green at fa474575 → ready + merged (--match-head-commit), merge commit 3b4dc994. Owner must apply 20261125000000_customer_segments on Supabase before deploying. Next: Wave 1d (Users & permissions).

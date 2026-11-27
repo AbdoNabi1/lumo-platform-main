@@ -41,13 +41,11 @@ function plainVault(): EnvelopeCredentialVault {
     unwrapKey: (text) => Promise.resolve(text),
     randomToken: () => Promise.resolve("dek"),
   };
-  return new EnvelopeCredentialVault(new EnvelopeCipher(plain, aliases), TEST_KEK_ALIAS, (alias) =>
-    alias === TEST_KEK_ALIAS ? "x".repeat(40) : undefined,
-  );
+  return new EnvelopeCredentialVault(new EnvelopeCipher(plain, aliases), TEST_KEK_ALIAS);
 }
 
 function plainRow(ciphertext: string): string {
-  return JSON.stringify({ v: 1, alias: TEST_KEK_ALIAS, wrappedDek: "dek", ciphertext });
+  return JSON.stringify({ v: 2, alias: TEST_KEK_ALIAS, wrappedDek: "dek", ciphertext });
 }
 
 describe("EnvelopeCredentialVault", () => {
@@ -61,7 +59,7 @@ describe("EnvelopeCredentialVault", () => {
     expect(await vault.open("t-1", "meta", sealed)).toBe(SECRET);
   });
 
-  it("stores exactly {v, alias, wrappedDek, ciphertext}: no key reference, no plaintext", async () => {
+  it("stores exactly {v: 2, alias, wrappedDek, ciphertext}: no key reference, no plaintext", async () => {
     const sealed = await testEnvelopeVault().seal("t-1", "meta", SECRET);
     expect(sealed).not.toContain(SECRET);
     expect(sealed).not.toContain("t-1");
@@ -71,7 +69,7 @@ describe("EnvelopeCredentialVault", () => {
     expect(Object.keys(envelope).sort()).toEqual(["alias", "ciphertext", "v", "wrappedDek"]);
     expect(Object.hasOwn(envelope, "kekRef")).toBe(false);
     expect(envelope["alias"]).toBe(TEST_KEK_ALIAS);
-    expect(envelope["v"]).toBe(1);
+    expect(envelope["v"]).toBe(2);
   });
 
   it("uses a fresh data key per seal (the same secret never seals to the same string)", async () => {
@@ -104,13 +102,49 @@ describe("EnvelopeCredentialVault", () => {
     }
   });
 
-  it("refuses a stored row that carries a key reference: a string, null, or the configured one", async () => {
+  it("never uses a key reference carried by a stored row: it is dropped and the trusted key opens", async () => {
     const vault = testEnvelopeVault();
     const row = JSON.parse(await vault.seal("t-1", "meta", SECRET)) as Stored;
-    expect(await vault.open("t-1", "meta", JSON.stringify(row))).toBe(SECRET);
     for (const kekRef of ["attacker-chosen-key-reference", null, TEST_KEK_REF]) {
-      await expectGenericOpenFailure(vault.open("t-1", "meta", JSON.stringify({ ...row, kekRef })));
+      expect(await vault.open("t-1", "meta", JSON.stringify({ ...row, kekRef }))).toBe(SECRET);
     }
+    // A row sealed under a different key does not open just because it names the right ref.
+    const other = JSON.parse(
+      await testEnvelopeVault("another-test-kek-0123456789-0123456789").seal("t-1", "meta", SECRET),
+    ) as Stored;
+    await expectGenericOpenFailure(
+      vault.open("t-1", "meta", JSON.stringify({ ...other, kekRef: TEST_KEK_REF })),
+    );
+  });
+
+  it("opens a legacy v1 row and re-seals it as a v2 envelope without a key reference", async () => {
+    const vault = testEnvelopeVault();
+    const row = JSON.parse(await vault.seal("t-1", "meta", SECRET)) as Stored;
+    const legacy = JSON.stringify({ ...row, v: 1, kekRef: TEST_KEK_REF });
+    expect(await vault.open("t-1", "meta", legacy)).toBe(SECRET);
+    const renewed = await vault.reseal(legacy);
+    expect(Object.keys(JSON.parse(renewed) as Stored).sort()).toEqual([
+      "alias",
+      "ciphertext",
+      "v",
+      "wrappedDek",
+    ]);
+    expect((JSON.parse(renewed) as Stored)["v"]).toBe(2);
+    expect(await vault.open("t-1", "meta", renewed)).toBe(SECRET);
+    await expectGenericOpenFailure(vault.open("t-2", "meta", renewed));
+  });
+
+  it("keeps opening rows sealed under the previous key during a rotation, and re-seals them", async () => {
+    const before = testEnvelopeVault(TEST_KEK_REF);
+    const sealed = await before.seal("t-1", "meta", SECRET);
+    const after = testEnvelopeVault("rotated-test-kek-0123456789-0123456789", TEST_KEK_REF);
+    expect(await after.open("t-1", "meta", sealed)).toBe(SECRET);
+    const renewed = await after.reseal(sealed);
+    expect(renewed).not.toBe(sealed);
+    expect(await after.reseal(renewed)).toBe(renewed);
+    const onlyNew = testEnvelopeVault("rotated-test-kek-0123456789-0123456789");
+    expect(await onlyNew.open("t-1", "meta", renewed)).toBe(SECRET);
+    await expectGenericOpenFailure(onlyNew.open("t-1", "meta", sealed));
   });
 
   it("refuses an unknown alias", async () => {
@@ -121,11 +155,10 @@ describe("EnvelopeCredentialVault", () => {
     );
   });
 
-  it("refuses rows of the wrong shape or with extra fields", async () => {
+  it("refuses rows of the wrong shape", async () => {
     const vault = testEnvelopeVault();
     const row = JSON.parse(await vault.seal("t-1", "meta", SECRET)) as Stored;
     const bad: unknown[] = [
-      { ...row, extra: 1 },
       { ...row, v: "1" },
       { ...row, alias: 7 },
       { ...row, wrappedDek: null },
@@ -176,11 +209,7 @@ describe("EnvelopeCredentialVault", () => {
       unwrapKey: () => Promise.reject(new Error(`backend rejected ${SECRET}`)),
       randomToken: () => Promise.resolve("dek"),
     };
-    const vault = new EnvelopeCredentialVault(
-      new EnvelopeCipher(failing, aliases),
-      TEST_KEK_ALIAS,
-      () => "x".repeat(40),
-    );
+    const vault = new EnvelopeCredentialVault(new EnvelopeCipher(failing, aliases), TEST_KEK_ALIAS);
     await expectGenericOpenFailure(vault.open("t-1", "meta", plainRow("{}")));
   });
 
@@ -194,11 +223,7 @@ describe("EnvelopeCredentialVault", () => {
       unwrapKey: () => Promise.reject(new Error("no")),
       randomToken: () => Promise.resolve("dek"),
     };
-    const vault = new EnvelopeCredentialVault(
-      new EnvelopeCipher(failing, aliases),
-      TEST_KEK_ALIAS,
-      () => "x".repeat(40),
-    );
+    const vault = new EnvelopeCredentialVault(new EnvelopeCipher(failing, aliases), TEST_KEK_ALIAS);
     const caught = await failureOf(vault.seal("t-1", "meta", SECRET));
     expect(caught.message).toBe("Ad platform credentials could not be sealed");
     expect(caught.message).not.toContain(SECRET);
@@ -218,7 +243,6 @@ describe("EnvelopeCredentialVault", () => {
         new KeyAliasRegistry(),
       ),
       "missing-alias",
-      () => undefined,
     );
     const caught = await failureOf(vault.seal("t-1", "meta", SECRET));
     expect(caught.message).toBe("Ad platform credentials could not be sealed");

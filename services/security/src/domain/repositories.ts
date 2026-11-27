@@ -9,9 +9,11 @@ import type { MfaEnrollment } from "./mfa-enrollment";
 import type { Policy } from "./policy";
 import type { RelationTuple } from "./relationship";
 import type { Principal } from "./principal";
+import type { PrincipalStatus } from "./value-objects/principal-kind";
 import type { Role } from "./role";
 import type { RoleAssignment } from "./role-assignment";
 import type { Session } from "./session";
+import type { StaffInvitation } from "./staff-invitation";
 import type { TenantSecurityProfile } from "./tenant-security-profile";
 
 /** Persists principals (keyed by id + externalId). Optimistic-locked, same-tx outbox. */
@@ -21,6 +23,19 @@ export interface PrincipalRepository {
   findByExternalId(externalId: string, tenantId: string, tx?: unknown): Promise<Principal | null>;
   /** Resolves a human principal by its Identity `subjectRef` (the shared identity id) — H-2 resolution. */
   findBySubjectRef(subjectRef: string, tenantId: string, tx?: unknown): Promise<Principal | null>;
+}
+
+/** What the staff read model needs of a principal (the aggregate does not expose `createdAt`). */
+export interface PrincipalSummary {
+  readonly id: string;
+  readonly externalId: string;
+  readonly status: PrincipalStatus;
+  readonly createdAt: Date;
+}
+
+/** Tenant-wide principal summaries (id = the INTERNAL id that assignments and sessions store). */
+export interface PrincipalReader {
+  listSummaries(tenantId: string, tx?: unknown): Promise<readonly PrincipalSummary[]>;
 }
 
 export interface CredentialRepository {
@@ -51,6 +66,15 @@ export interface SessionRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly Session[]>;
+  /**
+   * The latest `establishedAt` per principal (keys are INTERNAL principal ids, as stored in
+   * `principalRef`); principals without a session are absent. Staff list "last signed in".
+   */
+  lastEstablishedByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, Date>>;
   /** All sessions — session intelligence + analytics read models (§5). */
   listAll(tenantId: string, tx?: unknown): Promise<readonly Session[]>;
 }
@@ -70,6 +94,15 @@ export interface RoleAssignmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly RoleAssignment[]>;
+  /**
+   * Every assignment of the tenant that is active at `now` (status `active`, not past its expiry),
+   * reduced to what the staff read model needs. `principalRef` is the INTERNAL principal id.
+   */
+  listActiveByTenant(
+    tenantId: string,
+    now: Date,
+    tx?: unknown,
+  ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]>;
 }
 
 export interface PolicyRepository {
@@ -113,6 +146,15 @@ export interface MfaEnrollmentRepository {
     tenantId: string,
     tx?: unknown,
   ): Promise<readonly MfaEnrollment[]>;
+  /**
+   * The ACTIVE `totp` enrolment of each given principal, keyed by the principal's INTERNAL id
+   * (`principalRef`). Principals without one are absent from the map.
+   */
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+    tx?: unknown,
+  ): Promise<ReadonlyMap<string, MfaEnrollment>>;
 }
 
 /** Persists machine-identity governance profiles (keyed by principalRef). Same-tx outbox (P2.0-C §14). */
@@ -179,4 +221,58 @@ export interface AuditLedgerRepository {
   append(record: AuditRecord, tenantId: string, tx?: unknown): Promise<void>;
   tail(tenantRef: string | null, tenantId: string, tx?: unknown): Promise<AuditRecord | null>;
   list(tenantRef: string | null, tenantId: string, tx?: unknown): Promise<readonly AuditRecord[]>;
+  /**
+   * Wave 1e activity reader: ONE page of a tenant's records, across EVERY ledger scope
+   * (`tenant_scope` is ignored — it is the hash chain's bucket, not a filter). Newest first by
+   * `occurredAt desc, id desc`; `before` is an exclusive keyset cursor; never re-verifies chains.
+   * `principalRefs`, when given, keeps only those refs (an empty list matches nothing).
+   */
+  listForTenant(input: ListAuditForTenantInput, tx?: unknown): Promise<readonly AuditRecord[]>;
+}
+
+export interface ListAuditForTenantInput {
+  readonly tenantId: string;
+  readonly actions: readonly string[];
+  readonly principalRefs?: readonly string[];
+  readonly before?: { readonly occurredAt: string; readonly id: string };
+  readonly limit: number;
+}
+
+/**
+ * Persists staff invitations (`security.staff_invitations`). The tenant comes from the aggregate on
+ * `save` and from the first argument on reads; every read is tenant-scoped. Writes need the unit of
+ * work's `tx` in the Prisma adapter. Aggregates are never shared: each read returns a fresh instance.
+ */
+export interface StaffInvitationRepository {
+  /**
+   * Create (aggregate version 0 → persisted version 1) or update (compare-and-swap on the loaded
+   * version; stale → `ConcurrencyError`). A second pending invitation for the same (tenant, email) →
+   * `ConflictError("This email already has a pending invitation")`. Returns the persisted version and
+   * never mutates the aggregate (reload to continue).
+   */
+  save(invitation: StaffInvitation, tx?: unknown): Promise<number>;
+  /** A non-UUID id resolves to `null` without querying. */
+  findById(tenantId: string, id: string, tx?: unknown): Promise<StaffInvitation | null>;
+  /** The pending invitation for this normalised email, if any (expired ones included). */
+  findPendingByEmail(
+    tenantId: string,
+    email: string,
+    tx?: unknown,
+  ): Promise<StaffInvitation | null>;
+  /** The invitation (any status) holding this token hash, if it belongs to the tenant. */
+  findByTokenHash(
+    tenantId: string,
+    tokenHash: string,
+    tx?: unknown,
+  ): Promise<StaffInvitation | null>;
+  /** Pending invitations (expired ones included), ordered by email. */
+  listPending(tenantId: string, tx?: unknown): Promise<readonly StaffInvitation[]>;
+}
+
+/**
+ * Serialises the staff writes of one tenant. Prisma: a transaction-scoped advisory lock taken on the
+ * given unit-of-work `tx` (throws without it); in-memory: a per-tenant queued mutex.
+ */
+export interface StaffMutationLock {
+  withTenantStaffLock<T>(tenantId: string, tx: unknown, fn: () => Promise<T>): Promise<T>;
 }

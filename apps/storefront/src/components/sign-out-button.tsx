@@ -27,7 +27,11 @@ export function SignOutButton({ t }: { readonly t: Dictionary }) {
     startTransition(async () => {
       const result = everywhere ? await signOutEverywhere() : await signOut();
       if (!result.ok) {
-        setError(t.account.errors[result.reason]);
+        setError(
+          result.reason === "accounts-disabled"
+            ? t.account.errors.accountsDisabled
+            : t.account.errors[result.reason],
+        );
         setScope(null);
         return;
       }

@@ -3,6 +3,7 @@ import { AlertTriangleIcon } from "lucide-react";
 import { Card, CardContent } from "@platform/ui";
 import { POLICY_TITLES, POLICY_TYPES, type PolicyType } from "@platform/storefront-content";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { PolicyCard } from "@/components/online-store/policy-card";
 import {
   fetchPolicies,
@@ -60,43 +61,47 @@ export default async function PoliciesPage() {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="settings" user={user}>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
-        <header>
-          <h1 className="text-2xl font-semibold tracking-tight">{t.policies.title}</h1>
-          <p className="text-muted-foreground mt-1 text-sm">{t.policies.subtitle}</p>
-          {canEdit ? null : (
-            <p role="note" className="text-muted-foreground mt-2 text-sm">
-              {t.policies.readOnly}
-            </p>
+      <SettingsFrame t={t} activeId="policies">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+          <header>
+            <h1 className="text-2xl font-semibold tracking-tight">{t.policies.title}</h1>
+            <p className="text-muted-foreground mt-1 text-sm">{t.policies.subtitle}</p>
+            {canEdit ? null : (
+              <p role="note" className="text-muted-foreground mt-2 text-sm">
+                {t.policies.readOnly}
+              </p>
+            )}
+          </header>
+          {reads.map(([type, read]) =>
+            read?.outcome === "ok" ? (
+              <PolicyCard
+                key={type}
+                t={t}
+                locale={locale}
+                type={type}
+                title={POLICY_TITLES[type][locale]}
+                policy={read.data}
+                set={isSet(read.data, summaryRows)}
+                canEdit={canEdit}
+                defaults={defaults}
+                storefrontUrl={storefrontUrl}
+              />
+            ) : (
+              <Card key={type}>
+                <CardContent>
+                  <h2 className="text-base font-semibold">{POLICY_TITLES[type][locale]}</h2>
+                  <p role="alert" className="text-destructive mt-2 flex items-center gap-2 text-sm">
+                    <AlertTriangleIcon aria-hidden="true" className="size-4" />
+                    {read?.outcome === "unauthorized"
+                      ? t.formErrors.forbidden
+                      : t.policies.loadError}
+                  </p>
+                </CardContent>
+              </Card>
+            ),
           )}
-        </header>
-        {reads.map(([type, read]) =>
-          read?.outcome === "ok" ? (
-            <PolicyCard
-              key={type}
-              t={t}
-              locale={locale}
-              type={type}
-              title={POLICY_TITLES[type][locale]}
-              policy={read.data}
-              set={isSet(read.data, summaryRows)}
-              canEdit={canEdit}
-              defaults={defaults}
-              storefrontUrl={storefrontUrl}
-            />
-          ) : (
-            <Card key={type}>
-              <CardContent>
-                <h2 className="text-base font-semibold">{POLICY_TITLES[type][locale]}</h2>
-                <p role="alert" className="text-destructive mt-2 flex items-center gap-2 text-sm">
-                  <AlertTriangleIcon aria-hidden="true" className="size-4" />
-                  {read?.outcome === "unauthorized" ? t.formErrors.forbidden : t.policies.loadError}
-                </p>
-              </CardContent>
-            </Card>
-          ),
-        )}
-      </div>
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

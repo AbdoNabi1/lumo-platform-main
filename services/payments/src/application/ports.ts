@@ -28,7 +28,21 @@ export interface FinancePort {
 
 /** Sends a best-effort lifecycle notification — reference-only, never blocks a transition's own result. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */
 export interface NotificationPort {
-  notify(orderRef: string, status: string, tenantId: string): Promise<void>;
+  /** `event` (Wave 2b) names what just happened when the status alone cannot (a partial refund repeats its status). */
+  notify(
+    orderRef: string,
+    status: string,
+    tenantId: string,
+    event?: PaymentNotificationEvent,
+  ): Promise<void>;
+}
+
+/** A completed refund: one customer email per refund (the refund id is the event). */
+export interface PaymentNotificationEvent {
+  readonly kind: "refund_completed";
+  readonly refundId: string;
+  readonly amountMinor: number;
+  readonly currency: string;
 }
 
 /** Replay-safe webhook dedup — unique per `(tenant, provider, event)`, backing `RecordWebhook`'s idempotency. ADR-0014 (WP-10, T10.3): `tenantId` is an explicit per-call parameter. */

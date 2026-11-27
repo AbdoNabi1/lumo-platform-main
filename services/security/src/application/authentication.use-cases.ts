@@ -84,6 +84,18 @@ export interface AuthenticateInput {
   readonly rememberDevice?: boolean;
   /** Set when a fresh MFA factor has already been verified in this flow (satisfies step-up/required). */
   readonly mfaSatisfied?: boolean;
+  /**
+   * Staff sign-in only (Wave 1e): when true and the principal has an ACTIVE enrolment, no session is
+   * created unless `mfaSatisfied` — whatever the risk or policy engine says (requirement `required`).
+   * Default false, so customers' sign-in is unchanged.
+   */
+  readonly requireEnrolledFactor?: boolean;
+  /**
+   * Staff sign-in only (Wave 1f, mandatory two-step): when true and the principal has NO active
+   * enrolment, no session is created (requirement `required`, `hasActiveEnrollment: false`) — the
+   * caller sends them to set two-step up. Default false; customers never pass it.
+   */
+  readonly requireFactorEnrollment?: boolean;
   readonly sessionTtlSeconds?: number;
   readonly metadata?: Readonly<Record<string, string>>;
 }
@@ -93,6 +105,8 @@ export interface AuthenticationOutcome {
   readonly principalExternalId: string | null;
   readonly sessionId: string | null;
   readonly mfaRequirement: MfaRequirement;
+  /** True when the principal has an active totp enrolment (lets the caller offer the code step). */
+  readonly hasActiveEnrollment: boolean;
   readonly riskScore: number;
   readonly riskBand: RiskBand;
   readonly reason?: string;
@@ -152,9 +166,12 @@ export class Authenticate implements UseCase<
       );
       deviceTrusted = existing !== null && existing.isTrusted;
     }
+    // Staff-only fallback: customers also have a null tenantRef and must never inherit the staff policy.
+    const profileRef =
+      principal.tenantRef ?? (input.requireEnrolledFactor === true ? input.tenantId : null);
     const profile =
-      principal.tenantRef !== null
-        ? await this.deps.tenantProfiles.findByTenant(principal.tenantRef, input.tenantId)
+      profileRef !== null
+        ? await this.deps.tenantProfiles.findByTenant(profileRef, input.tenantId)
         : null;
     const enrollments = await this.deps.mfaEnrollments.listByPrincipal(
       principal.id.toString(),
@@ -168,8 +185,19 @@ export class Authenticate implements UseCase<
       riskBand: risk.band,
       sensitiveAction: input.sensitiveAction ?? false,
     });
+    const hasActiveEnrollment = enrollments.some((e) => e.isActive);
+    // Wave 1f: an unenrolled staff member must set two-step up before any session exists, whatever the
+    // risk or policy engine says (and even if a caller claims a factor was satisfied: there is none).
+    const mustEnrol = input.requireFactorEnrollment === true && !hasActiveEnrollment;
+    const enrolledAndAsked =
+      input.requireEnrolledFactor === true &&
+      hasActiveEnrollment &&
+      (mfa.requirement === "none" || mfa.requirement === "optional");
+    const requirement: MfaRequirement =
+      mustEnrol || enrolledAndAsked ? "required" : mfa.requirement;
     const mfaSatisfied =
-      input.mfaSatisfied === true || mfa.requirement === "none" || mfa.requirement === "optional";
+      !mustEnrol &&
+      (input.mfaSatisfied === true || requirement === "none" || requirement === "optional");
 
     const refreshFingerprint = await this.deps.crypto.randomToken(24);
     return this.deps.unitOfWork.run<Result<AuthenticationOutcome, DomainError>>(async (tx) => {
@@ -222,14 +250,15 @@ export class Authenticate implements UseCase<
         action: "security.auth.succeeded",
         decision: "allow",
         tenantRef: principal.tenantRef,
-        metadata: { method: input.method, risk: String(risk.score), mfa: mfa.requirement },
+        metadata: { method: input.method, risk: String(risk.score), mfa: requirement },
       });
 
       return ok({
         authenticated: true,
         principalExternalId: principal.externalId,
         sessionId,
-        mfaRequirement: mfa.requirement,
+        mfaRequirement: requirement,
+        hasActiveEnrollment,
         riskScore: risk.score,
         riskBand: risk.band,
       });
@@ -308,6 +337,7 @@ export class Authenticate implements UseCase<
         principalExternalId: null,
         sessionId: null,
         mfaRequirement: "none",
+        hasActiveEnrollment: false,
         riskScore: risk.score,
         riskBand: risk.band,
         reason,

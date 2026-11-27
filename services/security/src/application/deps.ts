@@ -20,11 +20,14 @@ import type {
   MachineIdentityProfileRepository,
   MfaEnrollmentRepository,
   PolicyRepository,
+  PrincipalReader,
   PrincipalRepository,
   RelationTupleRepository,
   RoleAssignmentRepository,
   RoleRepository,
   SessionRepository,
+  StaffInvitationRepository,
+  StaffMutationLock,
   TenantSecurityProfileRepository,
 } from "../domain/repositories";
 import { UniqueEntityId } from "@platform/domain";
@@ -48,6 +51,7 @@ import type {
   MfaProviderResolver,
 } from "./auth-ports";
 import type { RelationshipCheckPort } from "./authz-ports";
+import type { PasswordCredentialStore, PasswordHasher } from "./password-credentials";
 import type { ComplianceRulePackResolver } from "./compliance-ports";
 import type { ThreatIntelResolver } from "./threat-ports";
 import type {
@@ -72,10 +76,20 @@ export interface SecurityOutboxPort {
 /** The full dependency surface every Security use-case is constructed with (composition-injected). */
 export interface SecurityDeps {
   readonly principals: PrincipalRepository;
+  /** Wave 1d: tenant-wide principal summaries (internal id, externalId, status, createdAt). */
+  readonly principalReader: PrincipalReader;
+  /** Wave 1d: where `staff:<email>` password credentials live (the hashed provider's store). */
+  readonly staffCredentials: PasswordCredentialStore;
+  /** Wave 1d: the SAME scrypt hasher the hashed password provider verifies with. */
+  readonly passwordHasher: Pick<PasswordHasher, "hash">;
   readonly credentials: CredentialRepository;
   readonly sessions: SessionRepository;
   readonly roles: RoleRepository;
   readonly assignments: RoleAssignmentRepository;
+  /** Wave 1d: staff invitations (own single-use token, hashed). */
+  readonly staffInvitations: StaffInvitationRepository;
+  /** Wave 1d: serialises every staff write of a tenant (advisory lock / in-memory mutex). */
+  readonly staffMutationLock: StaffMutationLock;
   readonly policies: PolicyRepository;
   readonly delegations: DelegationRepository;
   readonly tenantProfiles: TenantSecurityProfileRepository;
@@ -132,6 +146,38 @@ export interface SecurityDeps {
   readonly aiProfiles: AiGovernanceProfileRepository;
 }
 
+/** The slice of {@link SecurityDeps} the audit seam touches (lets narrower use cases reuse it). */
+export type AuditDeps = Pick<
+  SecurityDeps,
+  "auditLedger" | "auditChain" | "idGenerator" | "clock" | "telemetry" | "outbox"
+>;
+
+/** The slice of {@link SecurityDeps} the Wave 1d staff use cases need. */
+export type StaffDeps = AuditDeps &
+  Pick<
+    SecurityDeps,
+    | "principals"
+    | "principalReader"
+    | "assignments"
+    | "roles"
+    | "sessions"
+    | "staffInvitations"
+    | "staffMutationLock"
+    | "staffCredentials"
+    | "passwordHasher"
+    | "unitOfWork"
+    // Wave 1e: the two-step column of the staff list and the store-wide "require two-step" policy.
+    | "mfaEnrollments"
+    | "tenantProfiles"
+  >;
+
+/** The slice of {@link SecurityDeps} the Wave 1e sign-in code check needs (staff lock + one unit of work). */
+export type MfaLoginDeps = StaffDeps &
+  Pick<SecurityDeps, "mfaEnrollments" | "mfaProviders" | "crypto">;
+
+/** The slice the Wave 1e own two-step use cases need (adds the tenant profile for the policy flag). */
+export type OwnMfaDeps = MfaLoginDeps & Pick<SecurityDeps, "tenantProfiles">;
+
 export interface AuditAppendInput {
   /** ADR-0014 (WP-10, T10.3): the row/scope tenant — distinct from `tenantRef`, the audit chain's own scope (null ⇒ platform chain). */
   readonly tenantId: string;
@@ -148,7 +194,7 @@ export interface AuditAppendInput {
  * and bumps telemetry — the single audit seam every use-case funnels through (ADR-0009/ADR-0023).
  */
 export async function recordAudit(
-  deps: SecurityDeps,
+  deps: AuditDeps,
   tx: unknown,
   input: AuditAppendInput,
 ): Promise<AuditRecord> {
@@ -185,7 +231,7 @@ export async function recordAudit(
 
 /** Builds a {@link SecurityChanged} for a non-aggregate fact (audit anchor / access decision). */
 export function securityEvent(
-  deps: SecurityDeps,
+  deps: Pick<SecurityDeps, "idGenerator" | "clock">,
   aggregate: SecurityAggregate,
   aggregateId: string,
   key: string,

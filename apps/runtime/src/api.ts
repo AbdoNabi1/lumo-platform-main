@@ -1,9 +1,7 @@
-import {
-  createAdminHttpApi,
-  LoggingSignupEmailAdapter,
-  type SignupEmailPort,
-} from "@platform/admin";
+import { createAdminHttpApi } from "@platform/admin";
 import { PrismaAuditTrail } from "@platform/db";
+import type { EmailConnectionVault } from "@platform/notifications";
+import type { CarrierCredentialVault } from "@platform/shipping";
 import { composePaymentProviderRegistrations } from "@platform/payments";
 import { InMemoryObjectStorage, type ObjectStoragePort } from "@platform/media";
 import {
@@ -17,7 +15,7 @@ import {
 import { NodeDnsVerifier } from "@platform/tenancy";
 import { logger } from "@platform/utils";
 import { resolveApiExposure } from "./api-exposure";
-import { resolveEmailWiring } from "./email-wiring";
+import { resolveEmailWiring, staffInviteDelivery, storeEmailDelivery } from "./email-wiring";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildReturnsPaymentsPortAdapter,
@@ -26,6 +24,7 @@ import {
   PrismaRefundVerificationAdapter,
   type RuntimeCore,
 } from "./composition";
+import { startCredentialReseal } from "./credential-reseal";
 import { startRuntimeTelemetry } from "./telemetry";
 
 /**
@@ -52,6 +51,42 @@ export function assertProductionMfaConfigured(
         "(C2-4). Pass mfaProviders in createAdminHttpApi's deps once a real provider exists.",
     );
   }
+}
+
+/**
+ * Wave 1f (D31): two-step is mandatory (`STAFF_TWO_STEP=required`, the default). That is only real when the
+ * sign-in code step exists — native staff sign-in (AUTH_MODE=native), the real TOTP provider and its
+ * `MFA_TOTP_KEY`. Outside `local` the API refuses to boot with the rule on and no code step (it must never
+ * silently become optional, nor lock everyone out); `local` gets a warning. With AUTH_MODE=ory staff sign
+ * in through Ory, not through Morbeh's code step, so the rule does not apply there (a warning says so).
+ */
+export function assertProductionStaffTwoStepConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  input: {
+    readonly staffTwoStep: RuntimeConfig["STAFF_TWO_STEP"];
+    readonly authMode: RuntimeConfig["AUTH_MODE"];
+    readonly mfaConfigured: boolean;
+  },
+): void {
+  if (input.staffTwoStep !== "required") return;
+  if (input.authMode !== "native") {
+    logger.warn(
+      "STAFF_TWO_STEP=required has no effect: AUTH_MODE is not native (Ory signs staff in)",
+    );
+    return;
+  }
+  if (input.mfaConfigured) return;
+  if (appEnv === "local") {
+    logger.warn(
+      "STAFF_TWO_STEP=required is not enforced: no MFA_TOTP_KEY / real TOTP provider, APP_ENV=local",
+    );
+    return;
+  }
+  throw new Error(
+    "STAFF_TWO_STEP=required needs MFA_TOTP_KEY and the TOTP provider. Two-step verification is " +
+      "mandatory for every staff and merchant sign-in, so the code step must be available: set " +
+      "MFA_TOTP_KEY (min 32 characters) — or set STAFF_TWO_STEP=optional on purpose.",
+  );
 }
 
 /**
@@ -114,6 +149,49 @@ export function assertProductionPaymentProviderConfigured(
   if (appEnv === "local") {
     for (const problem of problems) {
       logger.warn(`Payments provider guard (APP_ENV=local, not enforced): ${problem}`);
+    }
+  } else {
+    throw new Error(`api: ${problems.join(" Also: ")}`);
+  }
+}
+
+/**
+ * Project 5 / Ruling 31: carriers are configured by a PAIR — `SHIPPING_CREDENTIALS_KEK_REF` (seals
+ * merchants' keys) and `ADMIN_API_PUBLIC_URL` (where carriers post statuses). One without the other
+ * either seals nothing or silently never follows statuses, so outside `local` it refuses boot; neither
+ * set is fine (carriers simply unavailable). The in-memory vault is never acceptable outside `local`
+ * (§8.1), and the webhook origin must be https (preflight F13). `local` only warns.
+ */
+export function assertProductionCarriersConfigured(
+  appEnv: RuntimeConfig["APP_ENV"],
+  carriers: {
+    readonly kekConfigured: boolean;
+    readonly webhookBaseConfigured: boolean;
+    readonly webhookBaseUrl: string | undefined;
+    readonly vault: CarrierCredentialVault | undefined;
+  },
+): void {
+  const problems: string[] = [];
+  if (carriers.kekConfigured !== carriers.webhookBaseConfigured) {
+    problems.push(
+      "carriers are half-configured: set both SHIPPING_CREDENTIALS_KEK_REF and ADMIN_API_PUBLIC_URL, or neither (Ruling 31)",
+    );
+  }
+  if (carriers.vault?.backing === "stub") {
+    problems.push(
+      "the in-memory carrier credential vault must never seal merchants' carrier keys outside APP_ENV=local (§8.1). Set SHIPPING_CREDENTIALS_KEK_REF.",
+    );
+  }
+  if (
+    carriers.webhookBaseUrl !== undefined &&
+    new URL(carriers.webhookBaseUrl).protocol !== "https:"
+  ) {
+    problems.push("ADMIN_API_PUBLIC_URL must use https outside local (preflight F13)");
+  }
+  if (problems.length === 0) return;
+  if (appEnv === "local") {
+    for (const problem of problems) {
+      logger.warn(`Carriers guard (APP_ENV=local, not enforced): ${problem}`);
     }
   } else {
     throw new Error(`api: ${problems.join(" Also: ")}`);
@@ -220,31 +298,27 @@ export function assertProductionObjectStorageConfigured(
 }
 
 /**
- * G-72: no real `SignupEmailPort` provider is wired anywhere in this codebase (D4 — "the user's
- * choice", deliberately out of scope) — `buildRuntimeCore` always resolves `LoggingSignupEmailAdapter`
- * (logs the signup-completion link instead of emailing it). This guard fails closed outside `local`
- * while that is still the resolved adapter, same `instanceof`-based shape as
- * `assertProductionMfaConfigured`/`assertProductionObjectStorageConfigured` above. Once a real
- * provider (Resend/SendGrid/SES/...) is chosen and wired through `AdminWiringDeps.signupEmail`, this
- * guard passes without any change to it.
+ * Wave 2b2 (D48): a merchant's email key is sealed with `@platform/secrets`' envelope encryption under
+ * `EMAIL_CREDENTIALS_KEK_REF`. The in-memory stub vault is NOT encryption, so it must never seal a
+ * merchant's key outside `APP_ENV=local` (same rule as the carrier vault, §8.1). A missing vault
+ * outside local is fine: saving a connection then answers 503 NOT_CONFIGURED and no customer mail is
+ * sent. `local` only warns.
  */
-export function assertProductionSignupEmailConfigured(
+export function assertProductionEmailVaultConfigured(
   appEnv: RuntimeConfig["APP_ENV"],
-  signupEmail: SignupEmailPort,
+  vault: EmailConnectionVault | undefined,
 ): void {
-  if (!(signupEmail instanceof LoggingSignupEmailAdapter)) return;
+  if (vault?.backing !== "stub") return;
   if (appEnv === "local") {
     logger.warn(
-      "Signup verification email is permissive: no production SignupEmailPort configured, APP_ENV=local",
+      "Email credentials guard (APP_ENV=local, not enforced): the in-memory email credential vault is in use",
     );
-  } else {
-    throw new Error(
-      "api: no production SignupEmailPort is configured (G-72). The logging dev adapter (writes " +
-        "the signup-completion link to the log instead of emailing it) must never back account " +
-        "verification outside APP_ENV=local. Pass signupEmail in createAdminHttpApi's deps once a " +
-        "real provider (Resend/SendGrid/SES/...) is chosen and wired.",
-    );
+    return;
   }
+  throw new Error(
+    "api: the in-memory email credential vault must never seal merchants' email keys outside " +
+      "APP_ENV=local (§8.1). Set EMAIL_CREDENTIALS_KEK_REF.",
+  );
 }
 
 /**
@@ -411,10 +485,12 @@ export function assertProductionIntegrationPortsConfigured(
  */
 export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promise<void> {
   const runtime = core ?? buildRuntimeCore(config);
-  // Plan 1C: Resend when RESEND_API_KEY is set, else a logging sender. A real signupEmail is passed
-  // ONLY with a key, so the G-72 guard below keeps refusing a non-local boot that has no real sender.
+  // Plan 1C: Morbeh's OWN account: Resend when RESEND_API_KEY is set, else a logging sender. It backs
+  // staff invitations and password reset only (D45); a store's customer mail never goes through it.
   const email = resolveEmailWiring(runtime.config);
-  const signupEmail = email.signupEmail ?? runtime.signupEmail;
+  // Wave 2b2: a store's customer mail (templates, test sends, sign-up) goes ONLY through the store's own
+  // email connection: the merchant's key, sealed under EMAIL_CREDENTIALS_KEK_REF.
+  const storeEmail = storeEmailDelivery(config);
 
   // Stage 5 (C-03 partial): none of these 12 ports have a real adapter yet (Stage 6) — this object
   // is the single source of truth for both the guard below and the deps spread into
@@ -478,7 +554,22 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // single boot attempt on a fresh environment reveals everything still missing at once.
   const guardFailures = [
     collectGuardFailure(() => assertProductionMfaConfigured(config.APP_ENV, runtime.mfaProviders)),
+    collectGuardFailure(() =>
+      assertProductionStaffTwoStepConfigured(config.APP_ENV, {
+        staffTwoStep: config.STAFF_TWO_STEP,
+        authMode: config.AUTH_MODE,
+        mfaConfigured: runtime.mfaConfigured,
+      }),
+    ),
     collectGuardFailure(() => assertProductionPaymentProviderConfigured(config.APP_ENV, runtime)),
+    collectGuardFailure(() =>
+      assertProductionCarriersConfigured(config.APP_ENV, {
+        kekConfigured: config.SHIPPING_CREDENTIALS_KEK_REF !== undefined,
+        webhookBaseConfigured: config.ADMIN_API_PUBLIC_URL !== undefined,
+        webhookBaseUrl: config.ADMIN_API_PUBLIC_URL,
+        vault: runtime.carrierCredentialVault,
+      }),
+    ),
     collectGuardFailure(() => assertProductionLicensingBillingConfigured(config.APP_ENV, runtime)),
     collectGuardFailure(() =>
       assertProductionObjectStorageConfigured(config.APP_ENV, runtime.objectStorage),
@@ -486,7 +577,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     collectGuardFailure(() =>
       assertProductionIntegrationPortsConfigured(config.APP_ENV, integrationPorts),
     ),
-    collectGuardFailure(() => assertProductionSignupEmailConfigured(config.APP_ENV, signupEmail)),
+    collectGuardFailure(() =>
+      assertProductionEmailVaultConfigured(config.APP_ENV, storeEmail.emailVault),
+    ),
     collectGuardFailure(() => assertProductionDunningNotificationsConfigured(config.APP_ENV)),
   ].filter((message): message is string => message !== undefined);
 
@@ -510,6 +603,8 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // offline stubs (also the default whenever `prisma` is present — stated here so it cannot drift).
     realShippingAndTax: true,
     mfaProviders: runtime.mfaProviders,
+    mfaConfigured: runtime.mfaConfigured,
+    staffTwoStepRequired: runtime.staffTwoStepRequired,
     serializer: runtime.serializer,
     idGenerator: runtime.idGenerator,
     clock: runtime.clock,
@@ -522,6 +617,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     health: runtime.health,
     metrics: runtime.metrics,
     prisma: runtime.prisma,
+    carrierRegistrations: runtime.carrierRegistrations,
+    carrierCredentialVault: runtime.carrierCredentialVault,
+    distributedLock: runtime.distributedLock,
     // Plan 1B-1: passwords in Postgres (scrypt, tenant-scoped, lockout) instead of process memory.
     passwordAuthProvider: new HashedPasswordAuthProvider({
       store: new PrismaPasswordCredentialStore(runtime.prisma),
@@ -610,11 +708,15 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // memory limit). The durable adapter, the `platform.audit_events` table, and the 7-year-retention
     // `platform.audit.entry_recorded.v1` topic all already existed — only this wiring was missing.
     auditTrail: new PrismaAuditTrail(runtime.prisma, runtime.idGenerator),
-    // G-72: guarded above by assertProductionSignupEmailConfigured; real once RESEND_API_KEY is set.
-    signupEmail,
     // Plan 1C: staff forgot-password. The reset link is built from ADMIN_PUBLIC_URL; without it the
     // request endpoint still answers 202 and sends nothing.
     emailSender: email.emailSender,
+    // Wave 2b2 (D45-D48): each store's customer mail goes through ITS OWN email account. The vault seals
+    // the merchant's key; absent (no KEK outside local) ⇒ saving a connection is 503 NOT_CONFIGURED.
+    ...storeEmail,
+    // Wave 1d: staff invitations go only through a REAL delivery (Resend) and need ADMIN_PUBLIC_URL;
+    // otherwise inviting answers 503 NOT_CONFIGURED before anything is written.
+    ...staffInviteDelivery(email, runtime.config),
     ...(runtime.config.ADMIN_PUBLIC_URL === undefined
       ? {}
       : { adminPublicUrl: runtime.config.ADMIN_PUBLIC_URL }),
@@ -630,6 +732,15 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   });
   await app.listen({ port: config.PORT, host: "0.0.0.0" });
   logger.info("api listening", { port: config.PORT, env: config.APP_ENV });
+
+  // O15: while a *_KEK_REF_PREVIOUS is set, re-wrap the stored credentials under the current key in the
+  // background (single replica, counts-only log). Never awaited: boot and traffic do not wait for it.
+  void startCredentialReseal({
+    plan: runtime.credentialReseal,
+    prisma: runtime.prisma,
+    health: runtime.health,
+    logger,
+  });
 
   const shutdown = async (): Promise<void> => {
     logger.info("api shutting down");

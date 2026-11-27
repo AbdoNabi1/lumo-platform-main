@@ -1,10 +1,10 @@
-import { neutral, primary, status } from "./primitives";
+import { brand, neutral, night, onPrimaryInk, primary, status } from "./primitives";
 
 /**
  * Morbeh Design System — semantic tokens.
  *
  * This is the layer components are allowed to consume. Every entry answers a *role*
- * ("what is a card's background?"), never an appearance ("what is slate-100?").
+ * ("what is a card's background?"), never an appearance ("what is sand-100?").
  *
  * Light and dark are authored independently. Dark is NOT an inversion of light: its
  * surfaces step *up* in lightness as they come forward (background → card → popover),
@@ -69,6 +69,10 @@ export interface SemanticColors extends Readonly<Record<string, string>> {
   readonly chart3: string;
   readonly chart4: string;
   readonly chart5: string;
+  /** Logo two-tone: the bento's circles. Brand-lock value — never a UI accent. */
+  readonly brandSecondary: string;
+  /** Logo accent used by the app icon's circles. Brand-lock value — never a UI accent. */
+  readonly brandIconAccent: string;
 }
 
 const light: SemanticColors = {
@@ -81,7 +85,7 @@ const light: SemanticColors = {
   surface: neutral[100],
   surfaceForeground: neutral[900],
   muted: neutral[100],
-  mutedForeground: neutral[500],
+  mutedForeground: neutral[600],
   subtleForeground: neutral[400],
   secondary: neutral[100],
   secondaryForeground: neutral[700],
@@ -115,35 +119,35 @@ const light: SemanticColors = {
   chart3: status.light.info.primary,
   chart4: status.light.warning.primary,
   chart5: status.light.success.primary,
+  brandSecondary: brand.light.secondary,
+  brandIconAccent: brand.light.iconAccent,
 };
 
 const dark: SemanticColors = {
-  background: neutral[950],
-  foreground: neutral[50],
-  card: neutral[900],
-  cardForeground: neutral[50],
-  popover: neutral[800],
-  popoverForeground: neutral[50],
-  surface: neutral[800],
-  surfaceForeground: neutral[50],
-  muted: neutral[800],
-  mutedForeground: neutral[400],
-  subtleForeground: neutral[500],
-  secondary: neutral[800],
-  secondaryForeground: neutral[300],
-  accent: neutral[800],
-  accentForeground: neutral[50],
-  border: neutral[800],
-  borderStrong: neutral[700],
-  input: neutral[500],
+  background: night[950],
+  foreground: night[50],
+  card: night[900],
+  cardForeground: night[50],
+  popover: night[850],
+  popoverForeground: night[50],
+  surface: night[850],
+  surfaceForeground: night[50],
+  muted: night[850],
+  mutedForeground: night[400],
+  subtleForeground: night[500],
+  secondary: night[850],
+  secondaryForeground: night[300],
+  accent: night[850],
+  accentForeground: night[50],
+  border: night[800],
+  borderStrong: night[700],
+  input: night[500],
   ring: primary[400],
-  // The brand fill is held at #635BFF in both themes: it is the one value that clears AA
-  // against a white label while still reading as "Morbeh purple". Dark-mode *text* uses the
-  // lighter ramp steps instead (see `primarySubtleForeground` / `ring`).
-  primary: primary[500],
-  primaryForeground: neutral[0],
-  primaryHover: primary[600],
-  primaryActive: primary[700],
+  // Dark fills use the lighter 400 step with ink labels.
+  primary: primary[400],
+  primaryForeground: onPrimaryInk,
+  primaryHover: primary[300],
+  primaryActive: primary[200],
   primarySubtle: primary[950],
   primarySubtleForeground: primary[300],
   success: status.dark.success.primary,
@@ -153,17 +157,19 @@ const dark: SemanticColors = {
   warningSubtle: status.dark.warning.soft,
   warningForeground: status.dark.warning.strong,
   destructive: status.dark.error.primary,
-  destructiveForeground: neutral[0],
+  destructiveForeground: onPrimaryInk,
   destructiveSubtle: status.dark.error.soft,
   destructiveSubtleForeground: status.dark.error.strong,
   info: status.dark.info.primary,
   infoSubtle: status.dark.info.soft,
   infoForeground: status.dark.info.strong,
   chart1: primary[400],
-  chart2: neutral[400],
+  chart2: night[400],
   chart3: status.dark.info.strong,
   chart4: status.dark.warning.strong,
   chart5: status.dark.success.strong,
+  brandSecondary: brand.dark.secondary,
+  brandIconAccent: brand.dark.iconAccent,
 };
 
 /** The two authored themes. `colors.light` / `colors.dark` are the seeds for `services/theme`. */

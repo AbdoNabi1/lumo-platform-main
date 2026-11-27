@@ -154,6 +154,19 @@ export class InMemoryStaffDirectoryRepository implements StaffDirectoryRepositor
     this.store.set(entry.email, entry);
     return Promise.resolve();
   }
+
+  delete(entry: StaffDirectoryEntry): Promise<boolean> {
+    const current = this.store.get(entry.email);
+    if (
+      current === undefined ||
+      current.shopId !== entry.shopId ||
+      current.ownerExternalId !== entry.ownerExternalId
+    ) {
+      return Promise.resolve(false);
+    }
+    this.store.delete(entry.email);
+    return Promise.resolve(true);
+  }
 }
 
 interface StoreSettingsRecord {

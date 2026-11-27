@@ -2,3 +2,21 @@
 # Historical commits cannot be rewritten, so a finding in an earlier commit of a PR range is allowlisted here.
 # af538c30: placeholder idempotency key in a unit test fixture (not a credential); the line now uses a low-entropy value.
 af538c306abba69128c16e84903b094a70d383a1:apps/admin-web/src/app/online-store/themes/actions.test.ts:generic-api-key:16
+# Carriers part 1: fake Bosta test fixtures ("bosta-key-123", "bosta-live-key-123") in tests and the plan doc; not credentials.
+b8d51434443b7dd51ac370b93f8a9896708cb853:apps/admin/src/http/carrier-settings-routes.test.ts:generic-api-key:119
+e79b3c438c4e62cd2b44698afe152dbf4f38653a:services/shipping/src/infrastructure/envelope-carrier-credential-vault.test.ts:generic-api-key:12
+e79b3c438c4e62cd2b44698afe152dbf4f38653a:services/shipping/src/infrastructure/envelope-carrier-credential-vault.test.ts:generic-api-key:14
+a670560e503bdb3d7547d154a03e440f5c664578:services/shipping/src/application/carrier-settings.use-cases.test.ts:generic-api-key:132
+eefd929098d1acc9d9f986478de8b96a8268e0b7:docs/superpowers/plans/2026-11-12-local-carriers-part1-bosta.md:generic-api-key:3101
+d209b6fdb7a70cb92bda579f9fada921211ce641:docs/superpowers/plans/2026-11-12-local-carriers-part1-bosta.md:generic-api-key:1175
+d209b6fdb7a70cb92bda579f9fada921211ce641:docs/superpowers/plans/2026-11-12-local-carriers-part1-bosta.md:generic-api-key:1177
+d209b6fdb7a70cb92bda579f9fada921211ce641:docs/superpowers/plans/2026-11-12-local-carriers-part1-bosta.md:generic-api-key:1352
+# Wave 1e: 2f8b2819 had the public RFC 6238 test vector (base32 of ASCII "12345678901234567890") as a literal; not a credential. 6c320612 derives it at runtime.
+2f8b281927d1600b0fbbc434e26bcf1527df9998:services/security/src/infrastructure/totp-mfa-provider.test.ts:generic-api-key:135
+# Wave 2b2: fake Resend/Stripe-shaped keys in unit-test fixtures (not credentials); the lines now use low-entropy values.
+6309c4acadad3f5ad8b9c1ce66cc1bf12b978ec9:services/notifications/src/domain/messaging/email-connection.test.ts:generic-api-key:10
+6309c4acadad3f5ad8b9c1ce66cc1bf12b978ec9:services/notifications/src/domain/messaging/email-connection.test.ts:stripe-access-token:51
+d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/app/settings/notifications/actions.test.ts:generic-api-key:185
+d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/components/settings/notifications/email-account-card.test.tsx:generic-api-key:32
+d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/lib/api/notification-settings.test.ts:generic-api-key:240
+d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/lib/api/notification-settings.test.ts:generic-api-key:252

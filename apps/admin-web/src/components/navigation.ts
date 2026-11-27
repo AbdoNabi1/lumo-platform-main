@@ -10,9 +10,11 @@ import {
   FolderTreeIcon,
   GiftIcon,
   HouseIcon,
+  ImageIcon,
   InboxIcon,
   LandmarkIcon,
   LanguagesIcon,
+  LayersIcon,
   LayoutTemplateIcon,
   MegaphoneIcon,
   MenuIcon,
@@ -30,6 +32,7 @@ import {
   TagIcon,
   ToggleLeftIcon,
   UserIcon,
+  UsersRoundIcon,
   WarehouseIcon,
   WorkflowIcon,
   type LucideIcon,
@@ -89,6 +92,12 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     Icon: TagIcon,
     children: [
       {
+        id: "collections",
+        label: (t) => t.nav.collections,
+        href: "/collections",
+        Icon: LayersIcon,
+      },
+      {
         id: "categories",
         label: (t) => t.nav.categories,
         href: "/categories",
@@ -106,11 +115,25 @@ export const PRIMARY_NAV: readonly NavItem[] = [
     // Plan 2C-1: Pricing is off the menu — the variant on the product is the only price source.
     sectionIds: ["pricing"],
   },
-  { id: "customers", label: (t) => t.nav.customers, href: "/customers", Icon: UserIcon },
+  {
+    id: "customers",
+    label: (t) => t.nav.customers,
+    href: "/customers",
+    Icon: UserIcon,
+    // Shopify parity Wave 1c: Segments sit under Customers, as in Shopify.
+    children: [
+      {
+        id: "customers-segments",
+        label: (t) => t.nav.segments,
+        href: "/customers/segments",
+        Icon: UsersRoundIcon,
+      },
+    ],
+  },
   { id: "leads", label: (t) => t.nav.leads, href: "/leads", Icon: InboxIcon },
   {
     id: "marketing",
-    label: (t) => t.nav.marketing,
+    label: (t) => t.nav.growth,
     href: "/marketing",
     Icon: MegaphoneIcon,
     children: [
@@ -122,21 +145,28 @@ export const PRIMARY_NAV: readonly NavItem[] = [
       },
     ],
   },
+  { id: "discounts", label: (t) => t.nav.discounts, href: "/discounts", Icon: PercentIcon },
   {
-    id: "discounts",
-    label: (t) => t.nav.discounts,
-    href: "/discounts",
-    Icon: PercentIcon,
+    id: "content",
+    label: (t) => t.nav.content,
+    href: "/content",
+    Icon: FileTextIcon,
+    // Shopify's Content lists Metaobjects, Files, Menus and Blog posts; Files and Menus exist.
     children: [
       {
-        id: "promotions",
-        label: (t) => t.nav.promotions,
-        href: "/promotions",
-        Icon: GiftIcon,
+        id: "content-files",
+        label: (t) => t.nav.files,
+        href: "/content/files",
+        Icon: ImageIcon,
+      },
+      {
+        id: "online-store-navigation",
+        label: (t) => t.nav.menus,
+        href: "/online-store/navigation",
+        Icon: MenuIcon,
       },
     ],
   },
-  { id: "content", label: (t) => t.nav.content, href: "/content", Icon: FileTextIcon },
   { id: "finance", label: (t) => t.nav.finance, href: "/finance", Icon: LandmarkIcon },
   { id: "analytics", label: (t) => t.nav.analytics, href: "/analytics", Icon: BarChart3Icon },
 ];
@@ -158,12 +188,6 @@ export const ONLINE_STORE_NAV: NavItem = {
       Icon: PaletteIcon,
     },
     { id: "pages", label: (t) => t.nav.pages, href: "/pages", Icon: FileIcon },
-    {
-      id: "online-store-navigation",
-      label: (t) => t.nav.navigation,
-      href: "/online-store/navigation",
-      Icon: MenuIcon,
-    },
     {
       id: "online-store-preferences",
       label: (t) => t.nav.preferences,
@@ -192,6 +216,8 @@ export const PLATFORM_TOOLS_NAV: readonly NavItem[] = [
     href: "/notifications",
     Icon: BellIcon,
   },
+  // Phase 2: the raw promotion rules behind Discounts — an engineering view, not the merchant's.
+  { id: "promotions", label: (t) => t.nav.promotions, href: "/promotions", Icon: GiftIcon },
   { id: "templates", label: (t) => t.nav.templates, href: "/templates", Icon: LayoutTemplateIcon },
   {
     id: "components-library",

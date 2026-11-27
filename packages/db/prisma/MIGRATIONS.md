@@ -114,15 +114,15 @@ Hand-written and additive (expand-only); the agent never applies them. Deploy wi
 - `20261016030000_staff_directory` — creates `tenancy.staff_directory` (which store a staff email
   signs in to; one store per email) with RLS enabled and forced and its own `tenant_isolation`
   policy.
-- `20261120000000_store_site_type` — adds `tenancy.store_settings.site_type` (`store` | `lead_site`,
+- `20261202000000_store_site_type` — adds `tenancy.store_settings.site_type` (`store` | `lead_site`,
   `NOT NULL DEFAULT 'store'`, with a CHECK) and the nullable `site_type_settled_at` (when the
   type was fixed at sign-up). The table keeps its existing RLS policy. Deploy before the release
   that reads it (lead site, branch `morbeh/lead-site`).
-- `20261122000000_leads` — creates the `leads` schema and `leads.leads` (one row per saved lead-form
+- `20261203000000_leads` — creates the `leads` schema and `leads.leads` (one row per saved lead-form
   submission, with the client idempotency key `submission_key` unique per tenant) with RLS enabled and
   forced and its own `tenant_isolation` policy. Deploy before the release that reads it (lead site,
   branch `morbeh/lead-site`).
-- `20261123000000_ad_platform_connections` — creates `tracking.ad_platform_connections` (one row per shop
+- `20261204000000_ad_platform_connections` — creates `tracking.ad_platform_connections` (one row per shop
   and ad platform: public ids, the envelope-sealed vendor token and its masked last four) with RLS enabled
   and forced and its own `tenant_isolation` policy, a platform CHECK, a CHECK that Google Ads never holds a
   secret, and a unique index on `(tenant_id, platform)`. Deploy before the release that reads it (lead site,

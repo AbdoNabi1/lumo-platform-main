@@ -329,6 +329,9 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 Notes:
 
 - The token lasts 2 hours (`STAFF_TOKEN_TTL_SECONDS`, 300 to 86400). It cannot be revoked earlier: gap G-88.
+- Two-step verification is mandatory for every staff and merchant sign-in (`STAFF_TWO_STEP`, default
+  `required`): someone without it is taken to a setup screen at sign-in. It needs `MFA_TOTP_KEY`; the API
+  refuses to boot with `required` and no key. Set `STAFF_TWO_STEP=optional` only on purpose.
 - Staff sign-in is limited to 10 attempts per 15 minutes per shop and email, on top of the lockout
   after 10 failures. A staff login and a customer login are separate accounts even for the same email.
 - TOTP enrollments made before `MFA_TOTP_KEY` was set must be re-enrolled; none are known on the live
@@ -338,9 +341,10 @@ Notes:
 
 ### 4c. Email and password reset (Plan 1C) — off until a key is set
 
-Every email the platform sends goes through one sender, which uses [Resend](https://resend.com) when
-`RESEND_API_KEY` is set. Without the key nothing changes: emails are written to the log, **recipient
-and subject only, never the body or any link**.
+Morbeh's own emails (staff invitations and password reset) go through one sender, which uses
+[Resend](https://resend.com) when `RESEND_API_KEY` is set. That is **Morbeh's own account**: it is never
+used for a store's customer mail (see 4d). Without the key nothing changes: emails are written to the
+log, **recipient and subject only, never the body or any link**.
 
 With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
 
@@ -348,8 +352,6 @@ With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
   expires after **30 minutes**. The page answers the same way whether or not the email has an account.
   Requests are limited to 5 per hour per email, and completions to 10 per 15 minutes per shop.
 - **Change password:** "Change password" in the account menu (needs the current password).
-- **Customer signup email** (G-72): the "complete your account" link is actually emailed instead of
-  logged.
 
 | Service | Variable           | Value                                                                  |
 | ------- | ------------------ | ---------------------------------------------------------------------- |
@@ -360,8 +362,8 @@ With the key and `ADMIN_PUBLIC_URL`, native sign-in gains:
 Notes:
 
 - Resend's sandbox sender (`onboarding@resend.dev`) delivers **only to the email address the Resend
-  account was created with**. That is enough for the owner's own password reset. Sending to customers
-  needs a verified sending domain, which means buying a domain.
+  account was created with**. That is enough for the owner's own password reset. Customer mail does
+  not use this account at all (4d).
 - Only a SHA-256 hash of each reset token is stored; the table is `security.password_reset_tokens`.
   Expired and used rows are never deleted yet (G-90).
 - **Deploy the migration first** (or together with the release), from the API Console:
@@ -370,6 +372,96 @@ Notes:
   the same way but no link is sent.
 
 **Rollback:** delete `RESEND_API_KEY`. Emails go back to the log; the table stays, unused.
+
+### 4d. Each store's customer email comes from the store's OWN email account (Wave 2b2)
+
+Order, shipping, refund and invoice emails, customer sign-up emails and template test sends are sent
+**only** through the merchant's own email account, as `"<Store name>" <the merchant's address>`.
+Morbeh's account (`RESEND_API_KEY`, `EMAIL_FROM`) is never used for them, under any fallback: a store
+with no connected account sends nothing, its notifications are recorded as failed `EMAIL_NOT_CONNECTED`,
+and customer sign-up answers 503 `EMAIL_NOT_CONNECTED`.
+
+The merchant connects their own [Resend](https://resend.com) account in Settings > Notifications >
+Email account (an API key from their Resend account, and a From address on a domain **they verified in
+their Resend account**). Saving sends a test email to the person saving; the account shows
+**Connected** only when that works. The key is write-only (the page shows its last four characters)
+and is sealed before it is stored. That needs one secret on the API service:
+
+| Service | Variable                    | Value                                                                              |
+| ------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| API     | `EMAIL_CREDENTIALS_KEK_REF` | secret, 32+ characters. Separate from the payment and shipping key-encryption keys |
+
+Notes:
+
+- Without it, outside `APP_ENV=local`, saving an email account answers 503 "Not available yet" and no
+  customer email is sent. The API refuses to boot outside `local` with the in-memory vault.
+- Rotating the value strands the keys sealed under the old one: merchants would have to enter their key
+  again. Treat it like the payment key-encryption key.
+- SMTP (Gmail / Outlook / Zoho / custom mailbox with an app password) is built but **off by default**:
+  Railway only allows outbound SMTP on the Pro plan and above, while the HTTPS API (Resend) works on
+  every plan. See `EMAIL_SMTP_ENABLED` below.
+- **Deploy the migrations first:** `20261129000000_notification_settings`, then
+  `20261130000000_store_email_connections` (creates `notifications.email_connections` and drops the
+  empty `notifications.sender_domains`), then `20261201000000_email_connection_smtp` (widens the
+  `kind` CHECK to `('resend','smtp')`; nothing else changes).
+
+#### 4e. Mailbox (SMTP) accounts, `EMAIL_SMTP_ENABLED`
+
+| Service | Variable             | Value                                           |
+| ------- | -------------------- | ----------------------------------------------- |
+| API     | `EMAIL_SMTP_ENABLED` | `true` or `false` (default `false`; not secret) |
+
+- Turn it on **only after upgrading Railway to the Pro plan** (Hobby blocks outbound SMTP ports, so a
+  mailbox could never connect). It is a plain Variable: change it and redeploy, no migration.
+- Off: the Email account page shows the mailbox option as "Needs a server upgrade"; saving one answers
+  503 `NOT_CONFIGURED`; a mailbox connection that already exists sends nothing (customer mail is
+  recorded `EMAIL_NOT_CONNECTED`). Resend accounts are unaffected.
+- On: the API connects out to the merchant's mail server (465 TLS, 587 STARTTLS; certificates are
+  verified; the password is only ever sent over an encrypted connection). Private and loopback
+  addresses are refused, so a merchant cannot aim it at the platform's own network.
+- Gmail needs an **app password** (Google Account > Security > 2-Step Verification on > App
+  passwords), never the normal password. Gmail limits a normal account to about 500 emails a day.
+
+**Rollback:** delete `EMAIL_CREDENTIALS_KEK_REF`. Saved accounts stay in the table but can no longer be
+opened, so no customer mail is sent until it is set again.
+
+### 4f. Rotating the payment and shipping key-encryption keys (O15)
+
+Until O15, a sealed merchant credential (Paymob keys, Bosta keys and webhook secrets, Morbeh's saved billing
+cards) was stored together with the key reference it was sealed under, and with the local crypto backend
+that reference **is** the key. So every `PAYMENT_CREDENTIALS_KEK_REF` / `SHIPPING_CREDENTIALS_KEK_REF`
+value ever used is in the database and in its backups, and must be treated as leaked. New writes no longer
+store it (envelope v2); the old rows still carry it until they are re-sealed, and the **old key values
+must be replaced**. Do this once, for each of the two that is set on `runtime-api` (if one is not set at
+all, there is nothing to do for it):
+
+1. Generate a NEW random value (PowerShell, 64 characters):
+   `$b = New-Object byte[] 48; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
+2. Keep `PAYMENT_CREDENTIALS_KEK_REF` under its own name: COPY its value into the
+   `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS` variable, then put the new value into
+   `PAYMENT_CREDENTIALS_KEK_REF`. Apply/Deploy the change on runtime-api (and worker if it has the
+   variable). Same for shipping: `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and
+   `SHIPPING_CREDENTIALS_KEK_REF`. Never rename or move the current variable: a `…_PREVIOUS` without its
+   current key is ignored.
+3. Publish. The API opens old rows with the previous key and, in the background after it starts
+   listening, re-seals every stored credential under the new key (one replica does it, under a database
+   lock; safe to repeat on every boot while `…_PREVIOUS` is set).
+4. Check the runtime-api log for the line `credential reseal: resealed N, skipped N, failed 0`. Only the
+   counts are logged. While any row failed, `/readyz` shows a non-critical `credential-reseal` component as
+   degraded with the same counts.
+5. When it says `failed 0`, **delete** `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS` and
+   `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and publish again. The old values are now useless; do not
+   reuse them anywhere.
+
+Notes:
+
+- `…_PREVIOUS` is secret like the key itself, 32+ characters. Without the current value, or when equal to
+  it, it is ignored with a boot warning that names only the variables (never values), and no re-seal runs:
+  the API still boots, but the rotation has not happened. Fix the variables and redeploy.
+- `failed` above 0 means rows that neither key opens (or that kept changing while being re-sealed). They are
+  left untouched. Keep `…_PREVIOUS` set, find out why, and redeploy; do not delete it with failures.
+- `EMAIL_CREDENTIALS_KEK_REF` needs no rotation for this: email accounts were never stored with their key
+  reference.
 
 ## 5. Deploy order
 

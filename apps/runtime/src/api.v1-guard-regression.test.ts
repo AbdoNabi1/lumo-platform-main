@@ -28,14 +28,6 @@ const { mockCreateAdminHttpApi } = vi.hoisted(() => ({
 
 vi.mock("@platform/admin", () => ({
   createAdminHttpApi: mockCreateAdminHttpApi,
-  LoggingSignupEmailAdapter: class {
-    async sendCompleteAccountEmail() {
-      return undefined;
-    }
-    async sendAlreadyRegisteredEmail() {
-      return undefined;
-    }
-  },
   LoggingEmailSender: class {
     send() {
       return Promise.resolve();
@@ -46,12 +38,9 @@ vi.mock("@platform/admin", () => ({
       return Promise.resolve();
     }
   },
-  EmailSignupEmailAdapter: class {
-    sendCompleteAccountEmail() {
-      return Promise.resolve();
-    }
-    sendAlreadyRegisteredEmail() {
-      return Promise.resolve();
+  ResendStoreEmailProvider: class {
+    send() {
+      return Promise.resolve({ ok: true });
     }
   },
 }));

@@ -197,6 +197,10 @@ vi.mock("./client", async (importOriginal) => {
       captures.push({ method: "GET", path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });
     }),
+    postAdminApiForBytes: vi.fn((requestPath: string) => {
+      captures.push({ method: "POST", path: requestPath, file: currentFile, fn: currentFn });
+      return Promise.resolve({ outcome: "error", message: "mocked" });
+    }),
     mutateAdminApi: vi.fn((requestPath: string, init: { readonly method: string }) => {
       captures.push({ method: init.method, path: requestPath, file: currentFile, fn: currentFn });
       return Promise.resolve({ outcome: "error", message: "mocked" });
@@ -260,5 +264,46 @@ describe("admin-web route contract (T6.2)", () => {
         `${misses.length} call(s) in lib/api/*.ts have no matching route in adminRoutes():\n${detail}`,
       );
     }
+  });
+});
+
+describe("Settings > Notifications routes (Wave 2b2)", () => {
+  it("calls the five email-connection routes and no sender-domain route", async () => {
+    expect.hasAssertions();
+    if (captures.length === 0) await callEveryExportedFunction();
+    const notifications = captures.filter((capture) => capture.file === "notification-settings.ts");
+    const called = notifications.map((capture) => `${capture.method} ${capture.path}`);
+
+    expect(called).toEqual(
+      expect.arrayContaining([
+        "GET /api/v1/notifications/email-connection",
+        "PUT /api/v1/notifications/email-connection",
+        "DELETE /api/v1/notifications/email-connection",
+        "POST /api/v1/notifications/email-connection/test",
+        "POST /api/v1/notifications/email-connection/enabled",
+      ]),
+    );
+    expect(called.filter((call) => call.includes("sender-domain"))).toEqual([]);
+    expect(
+      loadRealRoutes()
+        .map((route) => route.path)
+        .filter((routePath) => routePath.includes("sender-domain")),
+    ).toEqual([]);
+  });
+
+  it("the route's strict save body declares every field a mailbox save sends (Task 3)", () => {
+    expect.hasAssertions();
+    const source = readFileSync(path.join(HTTP_DIR, "email-connection-routes.ts"), "utf8");
+    const body =
+      /const saveBody = z([\s\S]*?)\.strict\(\);\s*const enabledBody/.exec(source)?.[1] ?? "";
+    expect(body).not.toBe("");
+    for (const field of ["kind", "fromEmail", "apiKey", "smtp", "password", "expectedVersion"]) {
+      expect(body, field).toMatch(new RegExp(`\\b${field}:`));
+    }
+    // The nested mailbox object is strict too, and holds exactly what the page sends for it.
+    for (const field of ["preset", "host", "port", "security", "username"]) {
+      expect(body, `smtp.${field}`).toMatch(new RegExp(`\\b${field}:`));
+    }
+    expect(body).toMatch(/\.strict\(\)\s*\.nullable\(\)/);
   });
 });

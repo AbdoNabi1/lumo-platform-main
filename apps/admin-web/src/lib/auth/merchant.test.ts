@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   completeMerchantReset,
   exchangeMerchantPassword,
@@ -310,5 +310,127 @@ describe("completeMerchantReset", () => {
 
   it("maps a network failure to unavailable", async () => {
     expect(await completeMerchantReset({ ...completeBase, fetchImpl: boom })).toBe("unavailable");
+  });
+});
+
+describe("exchangeMerchantPassword — the code step (Wave 1e)", () => {
+  const loginBase = { ...base, email: "o@x.test", password: "fake-password-1" };
+
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  it("carries the challenge and its lifetime from the nested MFA_REQUIRED 403", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, {
+          error: { code: "MFA_REQUIRED", message: "Enter the code from your authenticator app" },
+          mfaRequirement: "required",
+          challenge: "signed.challenge.jwt",
+          challengeExpiresIn: 300,
+        }),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "mfa",
+      challenge: "signed.challenge.jwt",
+      challengeExpiresIn: 300,
+    });
+  });
+
+  it("is a plain mfa result when the 403 carries no challenge", async () => {
+    const result = await exchangeMerchantPassword({
+      ...loginBase,
+      fetchImpl: reply(403, { error: { code: "MFA_REQUIRED" }, mfaRequirement: "required" }),
+    });
+    expect(result).toEqual({ ok: false, reason: "mfa" });
+    expect("challenge" in result).toBe(false);
+  });
+
+  it("does not take a challenge from a 403 that is not MFA_REQUIRED", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, { code: "FORBIDDEN", challenge: "nope" }),
+      }),
+    ).toEqual({ ok: false, reason: "unavailable" });
+  });
+});
+
+describe("exchangeMerchantPassword — setup at sign-in (Wave 1f)", () => {
+  const loginBase = { ...base, email: "o@x.test", password: "fake-password-1" };
+
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  it("carries the setup challenge from the nested MFA_SETUP_REQUIRED 403", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, {
+          error: {
+            code: "MFA_SETUP_REQUIRED",
+            message: "Set up two-step verification to continue",
+          },
+          setupChallenge: "signed.setup.jwt",
+          setupChallengeExpiresIn: 600,
+        }),
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "mfa_setup",
+      setupChallenge: "signed.setup.jwt",
+      setupChallengeExpiresIn: 600,
+    });
+  });
+
+  it("also accepts a flat MFA_SETUP_REQUIRED envelope", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, { code: "MFA_SETUP_REQUIRED", setupChallenge: "s" }),
+      }),
+    ).toEqual({ ok: false, reason: "mfa_setup", setupChallenge: "s" });
+  });
+
+  it("is a plain mfa result when the setup 403 carries no challenge, never unavailable", async () => {
+    const result = await exchangeMerchantPassword({
+      ...loginBase,
+      fetchImpl: reply(403, { error: { code: "MFA_SETUP_REQUIRED" } }),
+    });
+    expect(result).toEqual({ ok: false, reason: "mfa" });
+  });
+
+  it("does not take a setup challenge from a 403 that is not MFA_SETUP_REQUIRED", async () => {
+    expect(
+      await exchangeMerchantPassword({
+        ...loginBase,
+        fetchImpl: reply(403, { code: "FORBIDDEN", setupChallenge: "nope" }),
+      }),
+    ).toEqual({ ok: false, reason: "unavailable" });
+  });
+
+  it("sign-up with the rule on has no token: signInRequired", async () => {
+    expect(
+      await signUpMerchant({
+        ...signupBase,
+        fetchImpl: reply(201, {
+          tenantId: "t",
+          storeUrl: "https://s.example",
+          signInRequired: true,
+        }),
+      }),
+    ).toEqual({ ok: true, signInRequired: true });
+  });
+
+  it("sign-up still returns the token when the rule is off", async () => {
+    expect(
+      await signUpMerchant({
+        ...signupBase,
+        fetchImpl: reply(201, { tenantId: "t", accessToken: "tok", expiresIn: 3600 }),
+      }),
+    ).toEqual({ ok: true, token: "tok", expiresIn: 3600 });
   });
 });

@@ -33,8 +33,8 @@ export class InMemoryShipmentRepository implements ShipmentRepository {
     await this.outbox.write(shipment.pullDomainEvents(), { ...this.context, tenantId }, tx);
   }
 
-  async findById(id: string, tenantId: string): Promise<Shipment | null> {
-    return bucketFor(this.store, tenantId).get(id) ?? null;
+  findById(id: string, tenantId: string): Promise<Shipment | null> {
+    return Promise.resolve(bucketFor(this.store, tenantId).get(id) ?? null);
   }
 
   /**
@@ -43,16 +43,45 @@ export class InMemoryShipmentRepository implements ShipmentRepository {
    * field yet, so there is nothing to match against (mirrors the Prisma adapter's always-NULL
    * column today).
    */
-  async findByIdempotencyKey(_idempotencyKey: string, _tenantId: string): Promise<Shipment | null> {
-    return null;
+  findByIdempotencyKey(_idempotencyKey: string, _tenantId: string): Promise<Shipment | null> {
+    return Promise.resolve(null);
   }
 
-  async findByFulfillmentRef(fulfillmentRef: string, tenantId: string): Promise<Shipment | null> {
+  /** Newest first, like Prisma's `createdAt desc`: the last-inserted match (a re-save keeps its place). */
+  findByFulfillmentRef(fulfillmentRef: string, tenantId: string): Promise<Shipment | null> {
+    return Promise.resolve(
+      this.newest(tenantId, (shipment) => shipment.fulfillmentRef === fulfillmentRef),
+    );
+  }
+
+  countByFulfillmentRef(fulfillmentRef: string, tenantId: string): Promise<number> {
+    return Promise.resolve(
+      [...bucketFor(this.store, tenantId).values()].filter(
+        (s) => s.fulfillmentRef === fulfillmentRef,
+      ).length,
+    );
+  }
+
+  findByTrackingNumber(
+    carrier: string,
+    trackingNumber: string,
+    tenantId: string,
+  ): Promise<Shipment | null> {
+    return Promise.resolve(
+      this.newest(
+        tenantId,
+        (shipment) =>
+          shipment.carrier?.value === carrier && shipment.trackingNumber?.value === trackingNumber,
+      ),
+    );
+  }
+
+  /** `Map` iterates in first-insertion order, so the last match is the most recently created. */
+  private newest(tenantId: string, matches: (shipment: Shipment) => boolean): Shipment | null {
+    let found: Shipment | null = null;
     for (const shipment of bucketFor(this.store, tenantId).values()) {
-      if (shipment.fulfillmentRef === fulfillmentRef) {
-        return shipment;
-      }
+      if (matches(shipment)) found = shipment;
     }
-    return null;
+    return found;
   }
 }

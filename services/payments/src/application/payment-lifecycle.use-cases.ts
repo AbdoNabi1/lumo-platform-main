@@ -24,6 +24,7 @@ import {
   PaymentProviderUnavailableError,
   type FinancePort,
   type NotificationPort,
+  type PaymentNotificationEvent,
   type OrdersPort,
   type PaymentProvider,
   type PaymentProviderResolver,
@@ -102,10 +103,11 @@ async function notifyBestEffort(
   deps: PaymentLifecycleDeps,
   intent: PaymentIntent,
   tenantId: string,
+  event?: PaymentNotificationEvent,
 ): Promise<void> {
   try {
     await deps.ordersPort?.reportPaymentOutcome(intent.orderRef, intent.status.value, tenantId);
-    await deps.notifications?.notify(intent.orderRef, intent.status.value, tenantId);
+    await deps.notifications?.notify(intent.orderRef, intent.status.value, tenantId, event);
   } catch {
     // Best-effort: a reference-only notification failure never fails the intent's own transition.
   }
@@ -792,7 +794,20 @@ export class RefundPaymentLifecycle implements UseCase<
 
           await this.deps.intents.save(intent, tenantId, tx);
           if (outcome.succeeded) {
-            await notifyBestEffort(this.deps, intent, tenantId);
+            const completed = intent.refunds.find((refund) => refund.id.toString() === refundId);
+            await notifyBestEffort(
+              this.deps,
+              intent,
+              tenantId,
+              completed === undefined
+                ? undefined
+                : {
+                    kind: "refund_completed",
+                    refundId,
+                    amountMinor: completed.amount.amountMinor,
+                    currency: completed.amount.currency,
+                  },
+            );
           }
         }
         return ok({ paymentIntentId: intent.id.toString(), status: intent.status.value });

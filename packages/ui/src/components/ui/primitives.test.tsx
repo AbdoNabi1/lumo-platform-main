@@ -48,6 +48,27 @@ describe("Button", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
+  it("uses the rounded-button radius token, including the icon size, never rounded-xl or rounded-full", () => {
+    // Locked brand shape (docs/ui/BRAND_LOCK.md): buttons are pills in the dashboard, and the
+    // storefront re-maps --radius-button to the merchant's corner setting. A hard rounded-full
+    // would pill every storefront CTA, so it must not come back.
+    expect.hasAssertions();
+    render(
+      <>
+        <Button>Save</Button>
+        <Button size="icon" aria-label="Menu">
+          x
+        </Button>
+      </>,
+    );
+    for (const name of ["Save", "Menu"]) {
+      const classes = screen.getByRole("button", { name }).className.split(/\s+/);
+      expect(classes).toContain("rounded-button");
+      expect(classes).not.toContain("rounded-xl");
+      expect(classes).not.toContain("rounded-full");
+    }
+  });
+
   it("styles every variant from tokens, never a literal colour", () => {
     const variants = ["primary", "secondary", "outline", "ghost", "destructive", "link"] as const;
     for (const variant of variants) {

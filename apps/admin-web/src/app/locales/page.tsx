@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { AlertTriangleIcon, GlobeIcon, LockIcon, PlusIcon } from "lucide-react";
 import { Button, Card, CardContent, Skeleton } from "@platform/ui";
 import { AppShell } from "@/components/app-shell";
+import { SettingsFrame } from "@/components/settings/settings-frame";
 import { LocalesPagination } from "@/components/locales/locales-pagination";
 import { LocalesTable } from "@/components/locales/locales-table";
 import { fetchLocalesPage } from "@/lib/api/localization";
@@ -32,24 +33,26 @@ export default async function LocalesPage({ searchParams }: LocalesPageProps) {
 
   return (
     <AppShell t={t} locale={locale} activeNavId="locales" user={user}>
-      <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
-        <header className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">{t.localesPage.title}</h1>
-            <p className="text-muted-foreground mt-1 text-sm">{t.localesPage.subtitle}</p>
-          </div>
-          <Button asChild>
-            <Link href="/locales/new">
-              <PlusIcon aria-hidden="true" />
-              {t.localesPage.newLocale}
-            </Link>
-          </Button>
-        </header>
+      <SettingsFrame t={t} activeId="languages">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6">
+          <header className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">{t.localesPage.title}</h1>
+              <p className="text-muted-foreground mt-1 text-sm">{t.localesPage.subtitle}</p>
+            </div>
+            <Button asChild>
+              <Link href="/locales/new">
+                <PlusIcon aria-hidden="true" />
+                {t.localesPage.newLocale}
+              </Link>
+            </Button>
+          </header>
 
-        <Suspense key={params.after ?? ""} fallback={<LocalesTableSkeleton />}>
-          <LocalesResults first={PAGE_SIZE} after={params.after} t={t} />
-        </Suspense>
-      </div>
+          <Suspense key={params.after ?? ""} fallback={<LocalesTableSkeleton />}>
+            <LocalesResults first={PAGE_SIZE} after={params.after} t={t} />
+          </Suspense>
+        </div>
+      </SettingsFrame>
     </AppShell>
   );
 }

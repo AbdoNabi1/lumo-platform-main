@@ -1,3 +1,9 @@
+export * from "./domain/customer-segment";
+export type { CustomerSegmentRepository } from "./domain/customer-segment-repository";
+export * from "./application/customer-segment.use-cases";
+export * from "./interfaces/customer-segment.controller";
+export { InMemoryCustomerSegmentRepository } from "./infrastructure/in-memory-customer-segment-repository";
+export { PrismaCustomerSegmentRepository } from "./infrastructure/prisma-customer-segment-repository";
 export { wireIdentity } from "./composition";
 export type { IdentityWiringDeps, WiredIdentity } from "./composition";
 export { CustomerController } from "./interfaces/customer.controller";
@@ -52,3 +58,67 @@ export {
   PrismaMembershipRepository,
 } from "./infrastructure/prisma-access-repositories";
 export { IDENTITY_PUBLISHED_EVENTS } from "./infrastructure/identity-event-translator";
+
+export { Phone } from "./domain/value-objects/phone";
+export {
+  isCustomerLanguage,
+  type CustomerLanguage,
+} from "./domain/value-objects/customer-language";
+export {
+  MAX_TAG_LENGTH,
+  MAX_TAGS_PER_CUSTOMER,
+  MAX_NOTE_LENGTH,
+  normalizeTag,
+  tagKeyOf,
+  parseTags,
+  normalizeNote,
+  sortTags,
+  compareText,
+  characterCount,
+  type CustomerTag,
+  type CustomerAnnotations,
+  type CustomerAnnotationRepository,
+} from "./domain/customer-annotations";
+export { InMemoryCustomerAnnotationRepository } from "./infrastructure/in-memory-customer-annotation-repository";
+export { PrismaCustomerAnnotationRepository } from "./infrastructure/prisma-customer-annotation-repository";
+
+// Wave 1b: customer profile, note, tags and marketing consent (staff-side).
+export { CreateCustomer } from "./application/create-customer.use-case";
+export type {
+  CreateCustomerInput,
+  CreateCustomerOutput,
+} from "./application/create-customer.use-case";
+export { UpdateCustomerProfile } from "./application/update-customer-profile.use-case";
+export type {
+  UpdateCustomerProfileInput,
+  UpdateCustomerProfileOutput,
+} from "./application/update-customer-profile.use-case";
+export { SetCustomerNote } from "./application/set-customer-note.use-case";
+export type {
+  SetCustomerNoteInput,
+  SetCustomerNoteOutput,
+} from "./application/set-customer-note.use-case";
+export { SetCustomerTags } from "./application/set-customer-tags.use-case";
+export type {
+  SetCustomerTagsInput,
+  SetCustomerTagsOutput,
+} from "./application/set-customer-tags.use-case";
+export { ChangeMarketingConsent } from "./application/change-marketing-consent.use-case";
+export type {
+  ChangeMarketingConsentInput,
+  ChangeMarketingConsentOutput,
+} from "./application/change-marketing-consent.use-case";
+export {
+  RecordShopperMarketingConsent,
+  SHOPPER_CHECKOUT_CONSENT_SOURCE,
+} from "./application/record-shopper-marketing-consent.use-case";
+export type {
+  RecordShopperMarketingConsentInput,
+  RecordShopperMarketingConsentOutput,
+} from "./application/record-shopper-marketing-consent.use-case";
+export { GetCustomerAnnotations } from "./application/get-customer-annotations.use-case";
+export type {
+  CustomerAnnotationsItem,
+  GetCustomerAnnotationsInput,
+  GetCustomerAnnotationsOutput,
+} from "./application/get-customer-annotations.use-case";

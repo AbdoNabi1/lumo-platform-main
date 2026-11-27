@@ -1,4 +1,17 @@
-import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
+import {
+  getAdminApi as getApi,
+  mutateAdminApi,
+  type ApiResult,
+  type MutationResult,
+} from "./client";
+
+/** Every console read: a 403 keeps its status so the page can say the console is for the store owner only. */
+function getAdminApi<T>(
+  path: string,
+  isValid: (value: unknown) => value is T,
+): Promise<ApiResult<T>> {
+  return getApi(path, isValid, { reportForbidden: true });
+}
 // Imported for local use as well as re-exported below: `export ... from` re-exports a name without
 // binding it in this module's scope, and `transitionPrincipal`'s signature annotates with it.
 import type { PrincipalTransitionTarget } from "./security-transitions";
@@ -40,7 +53,7 @@ function isSecurityDashboardDto(value: unknown): value is SecurityDashboardDto {
 
 export type FetchSecurityDashboardResult =
   | { readonly outcome: "ok"; readonly data: SecurityDashboardDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/dashboard` — `security:security_dashboard`. */
@@ -77,7 +90,7 @@ function isTrustCenterDto(value: unknown): value is TrustCenterDto {
 
 export type FetchTrustCenterResult =
   | { readonly outcome: "ok"; readonly data: TrustCenterDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/trust-center` — `security:trust_center`. */
@@ -116,15 +129,12 @@ function isSecurityAnalyticsDto(value: unknown): value is SecurityAnalyticsDto {
 
 export type FetchSecurityAnalyticsResult =
   | { readonly outcome: "ok"; readonly data: SecurityAnalyticsDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/analytics` — `security:security_analytics`. No querystring. */
 export async function fetchSecurityAnalytics(): Promise<FetchSecurityAnalyticsResult> {
-  const result = await getAdminApi(
-    `/api/v1/security/console/analytics`,
-    isSecurityAnalyticsDto,
-  );
+  const result = await getAdminApi(`/api/v1/security/console/analytics`, isSecurityAnalyticsDto);
   return toSimpleResult(result);
 }
 
@@ -156,7 +166,7 @@ function isIdentityOverviewDto(value: unknown): value is IdentityOverviewDto {
 
 export type FetchIdentityOverviewResult =
   | { readonly outcome: "ok"; readonly data: IdentityOverviewDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/identity-overview` — `security:identity_overview`. */
@@ -194,7 +204,7 @@ function isMachineIdentityExplorerDto(value: unknown): value is MachineIdentityE
 
 export type FetchMachineIdentityExplorerResult =
   | { readonly outcome: "ok"; readonly data: MachineIdentityExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/machine-identity-explorer` — `security:machine_identity_explorer`. */
@@ -238,7 +248,7 @@ function isResolvedPrincipalDto(value: unknown): value is ResolvedPrincipalDto {
 
 export type ResolvePrincipalResult =
   | { readonly outcome: "ok"; readonly data: ResolvedPrincipalDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/resolve/principals/:subjectRef` — `security:resolve_principal`. Lookup route. */
@@ -266,7 +276,7 @@ function isMembershipResolutionDto(value: unknown): value is MembershipResolutio
 
 export type ResolveMembershipResult =
   | { readonly outcome: "ok"; readonly data: MembershipResolutionDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/resolve/memberships/:userId` — `security:resolve_membership`. Lookup route. */
@@ -295,7 +305,7 @@ function isOrganizationResolutionDto(value: unknown): value is OrganizationResol
 
 export type ResolveOrganizationResult =
   | { readonly outcome: "ok"; readonly data: OrganizationResolutionDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "error"; readonly message: string };
 
@@ -311,7 +321,7 @@ export async function resolveOrganization(
     isOrganizationResolutionDto,
   );
   if (result.outcome === "ok") return { outcome: "ok", data: result.data };
-  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  if (result.outcome === "unauthorized") return unauthorizedOf(result);
   if (result.outcome === "not_found") return { outcome: "not_found" };
   return { outcome: "error", message: result.message };
 }
@@ -336,7 +346,7 @@ function isMachineIdentityResolutionDto(value: unknown): value is MachineIdentit
 
 export type ResolveMachineIdentityResult =
   | { readonly outcome: "ok"; readonly data: MachineIdentityResolutionDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "error"; readonly message: string };
 
@@ -352,7 +362,7 @@ export async function resolveMachineIdentity(
     isMachineIdentityResolutionDto,
   );
   if (result.outcome === "ok") return { outcome: "ok", data: result.data };
-  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  if (result.outcome === "unauthorized") return unauthorizedOf(result);
   if (result.outcome === "not_found") return { outcome: "not_found" };
   return { outcome: "error", message: result.message };
 }
@@ -374,7 +384,7 @@ function isConsentDecisionDto(value: unknown): value is ConsentDecisionDto {
 
 export type CheckConsentResult =
   | { readonly outcome: "ok"; readonly data: ConsentDecisionDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/consent/:subjectRef?purpose=` — `security:check_consent`. Lookup route; fail-closed. */
@@ -423,7 +433,7 @@ function isPermissionExplorerDto(value: unknown): value is PermissionExplorerDto
 
 export type FetchPermissionExplorerResult =
   | { readonly outcome: "ok"; readonly data: PermissionExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/permission-explorer` — `security:permission_explorer`. */
@@ -458,7 +468,7 @@ function isPolicyExplorerDto(value: unknown): value is PolicyExplorerDto {
 
 export type FetchPolicyExplorerResult =
   | { readonly outcome: "ok"; readonly data: PolicyExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/policy-explorer` — `security:policy_explorer`. */
@@ -492,7 +502,7 @@ function isSecurityRegistryExplorerDto(value: unknown): value is SecurityRegistr
 
 export type FetchRegistryExplorerResult =
   | { readonly outcome: "ok"; readonly data: SecurityRegistryExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/registry-explorer` — `security:registry_explorer`. */
@@ -538,7 +548,7 @@ function isSessionExplorerDto(value: unknown): value is SessionExplorerDto {
 
 export type FetchSessionExplorerResult =
   | { readonly outcome: "ok"; readonly data: SessionExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/session-explorer` — `security:session_explorer`. */
@@ -576,7 +586,7 @@ function isDeviceExplorerDto(value: unknown): value is DeviceExplorerDto {
 
 export type FetchDeviceExplorerResult =
   | { readonly outcome: "ok"; readonly data: DeviceExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/device-explorer` — `security:device_explorer`. */
@@ -603,7 +613,7 @@ function isRiskExplorerDto(value: unknown): value is RiskExplorerDto {
 
 export type FetchRiskExplorerResult =
   | { readonly outcome: "ok"; readonly data: RiskExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/risk-explorer` — `security:risk_explorer`. */
@@ -636,7 +646,7 @@ function isSessionIntrospectionDto(value: unknown): value is SessionIntrospectio
 
 export type IntrospectSessionResult =
   | { readonly outcome: "ok"; readonly data: SessionIntrospectionDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /**
@@ -681,7 +691,7 @@ function isAuditExplorerDto(value: unknown): value is AuditExplorerDto {
 
 export type FetchAuditExplorerResult =
   | { readonly outcome: "ok"; readonly data: AuditExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/audit-explorer` — `security:audit_explorer`. */
@@ -722,7 +732,7 @@ function isIncidentExplorerDto(value: unknown): value is IncidentExplorerDto {
 
 export type FetchIncidentExplorerResult =
   | { readonly outcome: "ok"; readonly data: IncidentExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/incident-explorer` — `security:incident_explorer`. */
@@ -752,7 +762,7 @@ function isAuditChainReportDto(value: unknown): value is AuditChainReportDto {
 
 export type VerifyAuditChainResult =
   | { readonly outcome: "ok"; readonly data: AuditChainReportDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/audit-chain/verify` — `security:verify_audit_chain`. */
@@ -793,7 +803,7 @@ function isSecretExplorerDto(value: unknown): value is SecretExplorerDto {
 
 export type FetchSecretExplorerResult =
   | { readonly outcome: "ok"; readonly data: SecretExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/secret-explorer` — `security:secret_explorer`. Never exposes secret values. */
@@ -827,7 +837,7 @@ function isCredentialLineageDto(value: unknown): value is CredentialLineageDto {
 
 export type GetCredentialLineageResult =
   | { readonly outcome: "ok"; readonly data: CredentialLineageDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "not_found" }
   | { readonly outcome: "error"; readonly message: string };
 
@@ -843,7 +853,7 @@ export async function getCredentialLineage(
     isCredentialLineageDto,
   );
   if (result.outcome === "ok") return { outcome: "ok", data: result.data };
-  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  if (result.outcome === "unauthorized") return unauthorizedOf(result);
   if (result.outcome === "not_found") return { outcome: "not_found" };
   return { outcome: "error", message: result.message };
 }
@@ -1045,7 +1055,7 @@ function isAiGovernanceExplorerDto(value: unknown): value is AiGovernanceExplore
 
 export type FetchAiGovernanceExplorerResult =
   | { readonly outcome: "ok"; readonly data: AiGovernanceExplorerDto }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string };
 
 /** `GET /security/console/ai-governance-explorer` — `security:ai_governance_explorer`. */
@@ -1179,14 +1189,7 @@ export function checkAiAction(
 
 /** Mirrors `security-identity-routes.ts`'s `principalKindEnum` field-for-field. */
 export type PrincipalKind =
-  | "human"
-  | "service_account"
-  | "machine"
-  | "api_key"
-  | "robot"
-  | "partner"
-  | "marketplace"
-  | "ai";
+  "human" | "service_account" | "machine" | "api_key" | "robot" | "partner" | "marketplace" | "ai";
 
 /**
  * The `PrincipalOutput` DTO both `registerPrincipal` and `transitionPrincipal` return
@@ -2921,9 +2924,7 @@ export interface TenantSecurityProfileOutputDto {
   readonly defaultPolicyKey: string | null;
 }
 
-function isTenantSecurityProfileOutputDto(
-  value: unknown,
-): value is TenantSecurityProfileOutputDto {
+function isTenantSecurityProfileOutputDto(value: unknown): value is TenantSecurityProfileOutputDto {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -2965,20 +2966,30 @@ export function configureTenantSecurity(
 
 // ── Shared ───────────────────────────────────────────────────────────────────────────────────────
 
+/** An `unauthorized` outcome that keeps the 403 `status` (the owner-only screens say who may open them). */
+function unauthorizedOf(result: { readonly status?: number }): {
+  readonly outcome: "unauthorized";
+  readonly status?: number;
+} {
+  return result.status === undefined
+    ? { outcome: "unauthorized" }
+    : { outcome: "unauthorized", status: result.status };
+}
+
 /** Collapses `getAdminApi`'s 4-outcome `ApiResult` down to the 3 outcomes every console screen
  * (endpoints with no path param — nothing to 404 on) actually needs to render. */
 function toSimpleResult<T>(
   result:
     | { readonly outcome: "ok"; readonly data: T }
-    | { readonly outcome: "unauthorized" }
+    | { readonly outcome: "unauthorized"; readonly status?: number }
     | { readonly outcome: "not_found" }
     | { readonly outcome: "error"; readonly message: string },
 ):
   | { readonly outcome: "ok"; readonly data: T }
-  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "unauthorized"; readonly status?: number }
   | { readonly outcome: "error"; readonly message: string } {
   if (result.outcome === "ok") return { outcome: "ok", data: result.data };
-  if (result.outcome === "unauthorized") return { outcome: "unauthorized" };
+  if (result.outcome === "unauthorized") return unauthorizedOf(result);
   if (result.outcome === "not_found") return { outcome: "error", message: "Not found" };
   return { outcome: "error", message: result.message };
 }

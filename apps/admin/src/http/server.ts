@@ -13,7 +13,6 @@ import {
 } from "@platform/http";
 import type { FastifyInstance } from "fastify";
 import { logger } from "@platform/utils";
-import { AllowAllAccessControl } from "../infrastructure/allow-all-access-control";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
 import { wireAdmin, type AdminWiringDeps } from "../composition";
@@ -133,8 +132,10 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
       logger,
     });
   }
+  // Wave 1d (D13): the HTTP guard decides through the SAME live access control the facade guard uses
+  // (one instance, the one `StaffAdminController` invalidates), never through `deps.accessControl` directly.
   const guard = new AdminGuard({
-    accessControl: deps.accessControl ?? new AllowAllAccessControl(),
+    accessControl: admin.liveAccessControl,
     auditTrail: deps.auditTrail ?? new InMemoryAuditTrail(),
     clock: deps.clock,
   });

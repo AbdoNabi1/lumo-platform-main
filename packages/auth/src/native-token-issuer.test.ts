@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { SignJWT, decodeJwt, decodeProtectedHeader } from "jose";
+import { describe, expect, it, vi } from "vitest";
 import { JwtVerifier } from "./jwt-verifier";
 import { NativeTokenIssuer, loadSigningKey, localKeyResolver } from "./native-token-issuer";
 
@@ -94,5 +95,215 @@ describe("NativeTokenIssuer", () => {
       .toString();
     expect(() => loadSigningKey(rsa)).toThrow(/P-256/);
     expect(() => loadSigningKey("not a key")).toThrow();
+  });
+});
+
+describe("NativeTokenIssuer sign-in challenge", () => {
+  const claims = { sub: "staff-1", tenantId: "tenant-a", email: "owner@example.test" };
+  const verifierFor = async (native: NativeTokenIssuer, logger: unknown = silent) =>
+    new JwtVerifier({
+      issuer: "https://api.example.test/",
+      audience: "morbeh-admin",
+      getKey: await localKeyResolver(native),
+      logger: logger as never,
+    });
+
+  it("round-trips sub, tenant, email and a unique jti, with the default 300 s lifetime", async () => {
+    const native = issuer();
+    const first = await native.issueChallenge(claims);
+    const second = await native.issueChallenge(claims);
+    expect(first.expiresIn).toBe(300);
+    expect(first.jti).not.toBe(second.jti);
+    expect(await native.verifyChallenge(first.token)).toEqual({ ...claims, jti: first.jti });
+  });
+
+  it("carries the challenge audience, typ and purpose and none of the session claims", async () => {
+    const native = issuer();
+    const { token, jti } = await native.issueChallenge(claims, 120);
+    expect(decodeProtectedHeader(token)).toMatchObject({ alg: "ES256", typ: "mfa-challenge+jwt" });
+    const payload = decodeJwt(token);
+    expect(payload.aud).toBe("morbeh-admin:mfa-challenge");
+    expect(payload.iss).toBe("https://api.example.test/");
+    expect(payload["purpose"]).toBe("staff-login-mfa");
+    expect(payload["tenant_id"]).toBe("tenant-a");
+    expect(payload["email"]).toBe("owner@example.test");
+    expect(payload.jti).toBe(jti);
+    expect(payload.exp! - payload.iat!).toBe(120);
+    for (const claim of ["kind", "roles", "sid"]) expect(payload).not.toHaveProperty(claim);
+  });
+
+  it("expires: rejected once the lifetime plus the 30 s tolerance has passed", async () => {
+    let current = new Date("2026-11-27T10:00:00.000Z");
+    const native = issuer(pem(), () => current);
+    const { token } = await native.issueChallenge(claims);
+    current = new Date("2026-11-27T10:05:20.000Z"); // 320 s: inside lifetime + tolerance
+    expect(await native.verifyChallenge(token)).not.toBeNull();
+    current = new Date("2026-11-27T10:05:31.000Z"); // 331 s: past it
+    expect(await native.verifyChallenge(token)).toBeNull();
+  });
+
+  it("a session token is not a challenge", async () => {
+    const native = issuer();
+    const session = await native.issue({
+      sub: "staff-1",
+      tenantId: "tenant-a",
+      kind: "staff",
+      roles: ["admin"],
+      sid: "sess-1",
+    });
+    expect(await native.verifyChallenge(session.token)).toBeNull();
+  });
+
+  it("a challenge is not a session: JwtVerifier rejects it on audience", async () => {
+    const native = issuer();
+    const debug = vi.fn();
+    const verifier = await verifierFor(native, { debug });
+    const { token } = await native.issueChallenge(claims);
+    expect(await verifier.verify(token)).toBeNull();
+    expect(await verifier.verifyWithClaims(token)).toBeNull();
+    expect(debug).toHaveBeenCalledWith("jwt verification failed", {
+      reason: "JWTClaimValidationFailed",
+    });
+  });
+
+  it("a tampered or malformed token, or one from another key, is null and never throws", async () => {
+    const native = issuer();
+    const { token } = await native.issueChallenge(claims);
+    const [header, body, signature] = token.split(".");
+    const tamperedBody = Buffer.from(
+      JSON.stringify({ ...decodeJwt(token), tenant_id: "tenant-b" }),
+    ).toString("base64url");
+    expect(await native.verifyChallenge(`${header}.${tamperedBody}.${signature}`)).toBeNull();
+    expect(
+      await native.verifyChallenge(`${header}.${body}.${signature?.slice(0, -4)}AAAA`),
+    ).toBeNull();
+    expect(await native.verifyChallenge("not-a-jwt")).toBeNull();
+    expect(await native.verifyChallenge("")).toBeNull();
+    const foreign = await issuer().issueChallenge(claims);
+    expect(await native.verifyChallenge(foreign.token)).toBeNull();
+  });
+
+  it("refuses a token signed with our key that lacks the challenge typ or purpose", async () => {
+    const key = loadSigningKey(pem());
+    const native = new NativeTokenIssuer({
+      privateKey: key,
+      issuer: "https://api.example.test/",
+      audience: "morbeh-admin",
+      ttlSeconds: 7200,
+    });
+    const sign = (header: Record<string, string>, extra: Record<string, unknown>) =>
+      new SignJWT({ tenant_id: "tenant-a", email: "a@b.co", ...extra })
+        .setProtectedHeader({ alg: "ES256", ...header })
+        .setSubject("staff-1")
+        .setIssuer("https://api.example.test/")
+        .setAudience("morbeh-admin:mfa-challenge")
+        .setJti("j-1")
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(key);
+    expect(
+      await native.verifyChallenge(await sign({ typ: "JWT" }, { purpose: "staff-login-mfa" })),
+    ).toBeNull();
+    expect(
+      await native.verifyChallenge(await sign({ typ: "mfa-challenge+jwt" }, { purpose: "other" })),
+    ).toBeNull();
+    expect(
+      await native.verifyChallenge(
+        await sign({ typ: "mfa-challenge+jwt" }, { purpose: "staff-login-mfa" }),
+      ),
+    ).toEqual({ sub: "staff-1", tenantId: "tenant-a", email: "a@b.co", jti: "j-1" });
+  });
+});
+
+describe("NativeTokenIssuer setup challenge (Wave 1f)", () => {
+  const claims = { sub: "staff-1", tenantId: "tenant-a", email: "owner@example.test" };
+  const SETUP = "staff-login-mfa-setup" as const;
+
+  it("round-trips with its own purpose, typ, audience and a 600 s default lifetime", async () => {
+    const native = issuer();
+    const { token, jti, expiresIn } = await native.issueChallenge(claims, undefined, SETUP);
+    expect(expiresIn).toBe(600);
+    expect(await native.verifyChallenge(token, SETUP)).toEqual({ ...claims, jti });
+    expect(decodeProtectedHeader(token)).toMatchObject({ alg: "ES256", typ: "mfa-setup+jwt" });
+    const payload = decodeJwt(token);
+    expect(payload.aud).toBe("morbeh-admin:mfa-setup");
+    expect(payload["purpose"]).toBe(SETUP);
+    expect(payload.exp! - payload.iat!).toBe(600);
+    for (const claim of ["kind", "roles", "sid"]) expect(payload).not.toHaveProperty(claim);
+  });
+
+  it("an explicit lifetime wins; the default code challenge is still 300 s", async () => {
+    const native = issuer();
+    expect((await native.issueChallenge(claims, 90, SETUP)).expiresIn).toBe(90);
+    expect((await native.issueChallenge(claims)).expiresIn).toBe(300);
+    expect((await native.issueChallenge(claims, undefined, "staff-login-mfa")).expiresIn).toBe(300);
+  });
+
+  it("a code challenge is refused as a setup challenge and a setup challenge as a code challenge", async () => {
+    const native = issuer();
+    const code = await native.issueChallenge(claims);
+    const setup = await native.issueChallenge(claims, undefined, SETUP);
+    expect(await native.verifyChallenge(code.token, SETUP)).toBeNull();
+    expect(await native.verifyChallenge(setup.token)).toBeNull();
+    expect(await native.verifyChallenge(setup.token, "staff-login-mfa")).toBeNull();
+    // Each is still accepted for its own purpose.
+    expect(await native.verifyChallenge(code.token)).not.toBeNull();
+    expect(await native.verifyChallenge(setup.token, SETUP)).not.toBeNull();
+  });
+
+  it("a setup challenge is not a session: JwtVerifier rejects it; a session is not a setup challenge", async () => {
+    const native = issuer();
+    const verifier = new JwtVerifier({
+      issuer: "https://api.example.test/",
+      audience: "morbeh-admin",
+      getKey: await localKeyResolver(native),
+      logger: silent,
+    });
+    const { token } = await native.issueChallenge(claims, undefined, SETUP);
+    expect(await verifier.verify(token)).toBeNull();
+    expect(await verifier.verifyWithClaims(token)).toBeNull();
+    const session = await native.issue({
+      sub: "staff-1",
+      tenantId: "tenant-a",
+      kind: "staff",
+      roles: ["admin"],
+      sid: "sess-1",
+    });
+    expect(await native.verifyChallenge(session.token, SETUP)).toBeNull();
+  });
+
+  it("expires with the 30 s tolerance, and a forged purpose on the setup typ/audience is refused", async () => {
+    let current = new Date("2026-11-27T10:00:00.000Z");
+    const native = issuer(pem(), () => current);
+    const { token } = await native.issueChallenge(claims, undefined, SETUP);
+    current = new Date("2026-11-27T10:10:20.000Z"); // 620 s: inside lifetime + tolerance
+    expect(await native.verifyChallenge(token, SETUP)).not.toBeNull();
+    current = new Date("2026-11-27T10:10:31.000Z"); // 631 s: past it
+    expect(await native.verifyChallenge(token, SETUP)).toBeNull();
+
+    const key = loadSigningKey(pem());
+    const forging = new NativeTokenIssuer({
+      privateKey: key,
+      issuer: "https://api.example.test/",
+      audience: "morbeh-admin",
+      ttlSeconds: 7200,
+    });
+    const sign = (typ: string, aud: string, purpose: string) =>
+      new SignJWT({ tenant_id: "tenant-a", email: "a@b.co", purpose })
+        .setProtectedHeader({ alg: "ES256", typ })
+        .setSubject("staff-1")
+        .setIssuer("https://api.example.test/")
+        .setAudience(aud)
+        .setJti("j-1")
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(key);
+    // A setup purpose carried on the code challenge's typ/audience (and the reverse) is no challenge of either kind.
+    const mixedA = await sign("mfa-challenge+jwt", "morbeh-admin:mfa-challenge", SETUP);
+    const mixedB = await sign("mfa-setup+jwt", "morbeh-admin:mfa-setup", "staff-login-mfa");
+    for (const mixed of [mixedA, mixedB]) {
+      expect(await forging.verifyChallenge(mixed, SETUP)).toBeNull();
+      expect(await forging.verifyChallenge(mixed)).toBeNull();
+    }
   });
 });

@@ -5,6 +5,7 @@
  * resolves the store from the account). Passwords and reset tokens are only ever sent in a POST body:
  * never in a URL we build, never logged.
  */
+import { readMfaChallenge, readMfaSetupChallenge } from "./mfa-challenge";
 import type { ExchangeResult } from "./native";
 
 export type SignupCountry = "EG" | "SA" | "AE";
@@ -149,10 +150,15 @@ export async function exchangeMerchantPassword(input: {
   if (reply === null) return { ok: false, reason: "unavailable" };
   if (reply.status === 401) return { ok: false, reason: "invalid" };
   if (reply.status === 403) {
+    // Wave 1f: the right password but no two-step yet while the platform requires it.
+    const setup = readMfaSetupChallenge(reply.body);
+    if (setup !== null) return { ok: false, reason: "mfa_setup", ...setup };
+    // A setup 403 that names no usable challenge is still "two-step is required": the plain mfa answer.
+    if (hasCode(reply.body, "MFA_SETUP_REQUIRED")) return { ok: false, reason: "mfa" };
     // The runtime passes the staff MFA response through as `{ error: { code }, mfaRequirement }`;
     // a flat `{ code }` envelope is accepted too.
     return hasCode(reply.body, "MFA_REQUIRED")
-      ? { ok: false, reason: "mfa" }
+      ? { ok: false, reason: "mfa", ...readMfaChallenge(reply.body) }
       : { ok: false, reason: "unavailable" };
   }
   // Single mode (no platform tenant): merchant sign-in does not exist on this deployment.

@@ -14,6 +14,18 @@ export interface GetShipmentByFulfillmentDeps {
   readonly shipments: ShipmentRepository;
 }
 
+export class CountShipmentsByFulfillment {
+  constructor(private readonly deps: GetShipmentByFulfillmentDeps) {}
+
+  async execute(
+    input: GetShipmentByFulfillmentInput,
+  ): Promise<Result<{ count: number }, DomainError>> {
+    return ok({
+      count: await this.deps.shipments.countByFulfillmentRef(input.fulfillmentRef, input.tenantId),
+    });
+  }
+}
+
 /** Reads the shipment created for a given fulfillment order, if any (Phase A.30 admin Order Detail panel). */
 export class GetShipmentByFulfillment implements UseCase<
   GetShipmentByFulfillmentInput,

@@ -37,12 +37,19 @@ export interface ShipmentDetailDto {
   readonly carrier: string | null;
   readonly carrierService: string | null;
   readonly trackingNumber: string | null;
+  readonly carrierDeliveryId: string | null;
+  readonly needsReview: boolean;
+  readonly trackingEvents: readonly {
+    description: string;
+    location: string | null;
+    occurredAt: string;
+  }[];
   /** Only set once the carrier accepted the shipment — derived from that attempt's own timestamp, never fabricated. */
   readonly shippedAt: string | null;
   readonly deliveredAt: string | null;
 }
 
-function toShipmentDetailDto(shipment: Shipment): ShipmentDetailDto {
+export function toShipmentDetailDto(shipment: Shipment): ShipmentDetailDto {
   const acceptedByCarrier = shipment.attempts.find(
     (attempt) => attempt.kind === "carrier" && attempt.outcome === "succeeded",
   );
@@ -53,6 +60,15 @@ function toShipmentDetailDto(shipment: Shipment): ShipmentDetailDto {
     carrier: shipment.carrier?.value ?? null,
     carrierService: shipment.carrierService?.value ?? null,
     trackingNumber: shipment.trackingNumber?.value ?? null,
+    carrierDeliveryId: shipment.label?.carrierDeliveryId ?? null,
+    needsReview: shipment.needsCarrierReview,
+    trackingEvents: [...shipment.trackingEvents]
+      .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())
+      .map((event) => ({
+        description: event.description,
+        location: event.location ?? null,
+        occurredAt: event.occurredAt.toISOString(),
+      })),
     shippedAt: acceptedByCarrier?.occurredAt.toISOString() ?? null,
     deliveredAt: shipment.deliveredAt?.toISOString() ?? null,
   };
@@ -67,6 +83,23 @@ function toShipmentDetailDto(shipment: Shipment): ShipmentDetailDto {
  */
 export function shippingRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
   return [
+    defineRoute({
+      method: "GET",
+      path: "/shipments/:shipmentId",
+      version: 1,
+      permission: "shipping:read",
+      summary: "Get shipment details",
+      schema: { params: shipmentIdParams },
+      handle: async ({ params, context }): Promise<AdminResponse> => {
+        const response = await admin.shipping.getShipment(context.principal, {
+          ...params,
+          tenantId: context.tenantId,
+        });
+        return response.status === 200
+          ? { status: 200, body: toShipmentDetailDto(response.body as Shipment) }
+          : response;
+      },
+    }),
     defineRoute({
       method: "POST",
       path: "/shipments",

@@ -1,8 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { UniqueEntityId } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
-import { ConcurrencyError } from "@platform/utils";
 import { Shipment } from "./domain/shipment";
 import type { ShipmentRepository } from "./domain/shipment-repository";
 import { Carrier, CarrierService } from "./domain/value-objects/carrier";
@@ -21,6 +20,7 @@ import type {
   ProviderLabel,
   VoidLabelRequest,
 } from "./application/ports";
+import { PostgresLikeShipmentRepository, TrackingUnitOfWork } from "./testing/shipping-doubles";
 
 /**
  * Phase A.15 (Shipping, Task 1-2) — same exploit-proof shape as Payments' Phase A.13
@@ -31,74 +31,13 @@ import type {
  * reproduces `PrismaShipmentRepository`'s optimistic-lock (`version`) contract: `save()` throws
  * `ConcurrencyError` on a version mismatch, and `findById()` always returns a freshly reconstituted
  * instance stamped with the row's current version (never the same in-memory object mutated across
- * reads), exactly like a real DB round-trip.
+ * reads), exactly like a real DB round-trip. Both doubles live in `./testing/shipping-doubles.ts`.
  */
 const TENANT = "tenant-a";
 
-class TrackingUnitOfWork implements TransactionalUnitOfWork<unknown> {
-  openCount = 0;
-  async run<T>(work: (context: unknown) => Promise<T>): Promise<T> {
-    this.openCount += 1;
-    try {
-      return await work(undefined);
-    } finally {
-      this.openCount -= 1;
-    }
-  }
-}
-
-class PostgresLikeShipmentRepository implements ShipmentRepository {
-  private readonly rows = new Map<string, { shipment: Shipment; version: number }>();
-
-  async save(shipment: Shipment, _tenantId: string, _tx?: unknown): Promise<void> {
-    const id = shipment.id.toString();
-    const existing = this.rows.get(id);
-    if (existing === undefined) {
-      this.rows.set(id, { shipment, version: 1 });
-      return;
-    }
-    if (existing.version !== shipment.version) {
-      throw new ConcurrencyError(
-        `Shipment ${id} was modified concurrently (expected version ${shipment.version})`,
-      );
-    }
-    this.rows.set(id, { shipment, version: existing.version + 1 });
-  }
-
-  async findById(id: string, _tenantId: string, _tx?: unknown): Promise<Shipment | null> {
-    const row = this.rows.get(id);
-    if (row === undefined) return null;
-    const s = row.shipment;
-    // Reconstitute fresh (mirrors a real DB round-trip: every read is an independent instance
-    // stamped with the row's current version) — this is what makes the concurrency test below
-    // meaningful rather than trivially sharing one mutable object across "reads".
-    return Shipment.reconstitute(s.id, s.fulfillmentRef, s.packages, s.status, row.version, {
-      attempts: s.attempts,
-      trackingEvents: s.trackingEvents,
-      carrier: s.carrier,
-      carrierService: s.carrierService,
-      label: s.label,
-      trackingNumber: s.trackingNumber,
-      deliveryEstimate: s.deliveryEstimate,
-      deliveredAt: s.deliveredAt,
-    });
-  }
-
-  async findByIdempotencyKey(): Promise<Shipment | null> {
-    return null;
-  }
-
-  async findByFulfillmentRef(fulfillmentRef: string): Promise<Shipment | null> {
-    for (const row of this.rows.values()) {
-      if (row.shipment.fulfillmentRef === fulfillmentRef) return row.shipment;
-    }
-    return null;
-  }
-
-  size(): number {
-    return this.rows.size;
-  }
-}
+beforeEach(() => {
+  expect.hasAssertions();
+});
 
 class RecordingCarrierProvider implements CarrierProviderPort {
   readonly createLabelCalls: Array<{ request: CreateLabelRequest; openCountAtCall: number }> = [];

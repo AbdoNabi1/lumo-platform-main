@@ -16,6 +16,8 @@ export {
   NativeTokenIssuer,
   loadSigningKey,
   localKeyResolver,
+  type MfaChallengeClaims,
+  type MfaChallengePurpose,
   type NativeStaffClaims,
   type NativeTokenIssuerOptions,
 } from "./native-token-issuer";

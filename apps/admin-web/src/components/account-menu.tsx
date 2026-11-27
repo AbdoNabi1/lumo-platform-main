@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { KeyRoundIcon, LogOutIcon } from "lucide-react";
+import { KeyRoundIcon, LogOutIcon, ShieldCheckIcon } from "lucide-react";
 import {
   Avatar,
   AvatarFallback,
@@ -51,6 +51,14 @@ export function AccountMenu({ t, user }: { readonly t: Dictionary; readonly user
             <Link href="/account/password">
               <KeyRoundIcon aria-hidden="true" />
               {t.topbar.changePassword}
+            </Link>
+          </DropdownMenuItem>
+        )}
+        {user.canChangePassword === true && (
+          <DropdownMenuItem asChild>
+            <Link href="/account/security">
+              <ShieldCheckIcon aria-hidden="true" />
+              {t.topbar.twoStep}
             </Link>
           </DropdownMenuItem>
         )}

@@ -33,6 +33,16 @@ import {
 } from "./application/authorization.use-cases";
 import { ListPrincipalRoleKeys } from "./application/principal-roles.use-cases";
 import {
+  AcceptStaffInvitation,
+  ChangeStaffRole,
+  CreateStaffInvitation,
+  RenewStaffInvitation,
+  ResetStaffTwoStep,
+  RevokeStaffInvitation,
+  SetStaffActive,
+} from "./application/staff-commands.use-cases";
+import { ListStaff, StaffAccess } from "./application/staff.use-cases";
+import {
   CheckAccess,
   DeleteRelationTuple,
   WriteRelationTuple,
@@ -85,6 +95,16 @@ import {
   RevokeMfa,
   VerifyMfaEnrollment,
 } from "./application/mfa.use-cases";
+import { VerifyMfaLogin } from "./application/mfa-login.use-cases";
+import { GetStaffSecurityPolicy, SetRequireTwoStep } from "./application/staff-policy.use-cases";
+import { ListStaffActivity } from "./application/staff-activity.use-cases";
+import {
+  ConfirmOwnTwoStep,
+  DisableOwnTwoStep,
+  GetOwnTwoStep,
+  RegenerateOwnBackupCodes,
+  StartOwnTwoStep,
+} from "./application/own-mfa.use-cases";
 import {
   ArchivePolicy,
   DefinePolicy,
@@ -157,9 +177,15 @@ import type {
   CryptoPort,
   MfaProviderResolver,
 } from "./application/auth-ports";
-import type { PasswordRegistrar } from "./application/password-credentials";
+import type {
+  PasswordCredentialStore,
+  PasswordHasher,
+  PasswordRegistrar,
+} from "./application/password-credentials";
 import { PasswordResetService, type PasswordResetTokenStore } from "./application/password-reset";
 import { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-auth-provider";
+import { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
+import { ScryptPasswordHasher } from "./infrastructure/scrypt-password-hasher";
 import { InMemoryPasswordResetTokenStore } from "./infrastructure/in-memory-password-reset-token-store";
 import type { ThreatIntelResolver } from "./application/threat-ports";
 import type { RelationshipCheckPort } from "./application/authz-ports";
@@ -187,7 +213,11 @@ import {
   InMemorySessionRepository,
   InMemoryTenantSecurityProfileRepository,
 } from "./infrastructure/in-memory-repositories";
+import { InMemoryStaffInvitationRepository } from "./infrastructure/in-memory-staff-invitation-repository";
+import { InMemoryStaffMutationLock } from "./infrastructure/in-memory-staff-mutation-lock";
 import { InMemoryUnitOfWork } from "./infrastructure/in-memory-unit-of-work";
+import { PrismaStaffInvitationRepository } from "./infrastructure/prisma-staff-invitation-repository";
+import { PrismaStaffMutationLock } from "./infrastructure/prisma-staff-mutation-lock";
 import {
   PrismaAiGovernanceProfileRepository,
   PrismaAuditLedgerRepository,
@@ -252,6 +282,11 @@ export interface SecurityWiringDeps {
    */
   readonly mfaProviders?: MfaProviderResolver;
   /**
+   * Wave 1e: true only when the injected totp provider is the real one AND its key is configured
+   * (`apps/runtime` decides). Gates `StartOwnTwoStep` (503 `NOT_CONFIGURED`); absent ⇒ false.
+   */
+  readonly mfaConfigured?: boolean;
+  /**
    * Plan 1B-1: the production `"password"` provider (HashedPasswordAuthProvider over Postgres).
    * Absent ⇒ the in-memory reference provider, exactly as before this field existed.
    */
@@ -267,6 +302,8 @@ interface SecurityInfra {
   readonly sessions: PrismaSessionRepository | InMemorySessionRepository;
   readonly roles: PrismaRoleRepository | InMemoryRoleRepository;
   readonly assignments: PrismaRoleAssignmentRepository | InMemoryRoleAssignmentRepository;
+  readonly staffInvitations: PrismaStaffInvitationRepository | InMemoryStaffInvitationRepository;
+  readonly staffMutationLock: PrismaStaffMutationLock | InMemoryStaffMutationLock;
   readonly policies: PrismaPolicyRepository | InMemoryPolicyRepository;
   readonly delegations: PrismaDelegationRepository | InMemoryDelegationRepository;
   readonly tenantProfiles:
@@ -310,6 +347,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
       sessions: new PrismaSessionRepository(rd),
       roles: new PrismaRoleRepository(rd),
       assignments: new PrismaRoleAssignmentRepository(rd),
+      staffInvitations: new PrismaStaffInvitationRepository({ prisma }),
+      staffMutationLock: new PrismaStaffMutationLock(),
       policies: new PrismaPolicyRepository(rd),
       delegations: new PrismaDelegationRepository(rd),
       tenantProfiles: new PrismaTenantSecurityProfileRepository(rd),
@@ -361,6 +400,8 @@ function buildInfra(deps: SecurityWiringDeps): SecurityInfra {
     sessions: new InMemorySessionRepository(rd),
     roles: new InMemoryRoleRepository(rd),
     assignments: new InMemoryRoleAssignmentRepository(rd),
+    staffInvitations: new InMemoryStaffInvitationRepository(),
+    staffMutationLock: new InMemoryStaffMutationLock(),
     policies: new InMemoryPolicyRepository(rd),
     delegations: new InMemoryDelegationRepository(rd),
     tenantProfiles: new InMemoryTenantSecurityProfileRepository(rd),
@@ -419,6 +460,8 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     sessions,
     roles,
     assignments,
+    staffInvitations,
+    staffMutationLock,
     policies,
     delegations,
     tenantProfiles,
@@ -499,12 +542,29 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const threatIntel: ThreatIntelResolver =
     deps.threatIntel ?? new MultiThreatIntelResolver([threatProvider]);
 
+  // Wave 1d: staff credentials live where the hashed provider keeps them, and an accepted invitation
+  // hashes with the SAME scrypt parameters. Without a hashed provider (tests/local reference mode)
+  // there is no durable store, so a private in-memory pair backs the staff use cases.
+  const hashedProvider =
+    deps.passwordAuthProvider instanceof HashedPasswordAuthProvider
+      ? deps.passwordAuthProvider
+      : undefined;
+  const staffCredentials: PasswordCredentialStore =
+    hashedProvider?.credentialStore ?? new InMemoryPasswordCredentialStore();
+  const passwordHasher: Pick<PasswordHasher, "hash"> =
+    hashedProvider?.passwordHasher ?? new ScryptPasswordHasher({ log2N: 10 });
+
   const securityDeps: SecurityDeps = {
     principals,
+    principalReader: principals,
+    staffCredentials,
+    passwordHasher,
     credentials,
     sessions,
     roles,
     assignments,
+    staffInvitations,
+    staffMutationLock,
     policies,
     delegations,
     tenantProfiles,
@@ -601,6 +661,15 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const configureTenantSecurity = new ConfigureTenantSecurity(securityDeps);
   const evaluateAccess = new EvaluateAccess(securityDeps);
   const listPrincipalRoleKeys = new ListPrincipalRoleKeys(securityDeps);
+  const listStaff = new ListStaff(securityDeps);
+  const staffAccess = new StaffAccess(securityDeps);
+  const changeStaffRole = new ChangeStaffRole(securityDeps);
+  const setStaffActive = new SetStaffActive(securityDeps);
+  const resetStaffTwoStep = new ResetStaffTwoStep(securityDeps);
+  const createStaffInvitation = new CreateStaffInvitation(securityDeps);
+  const renewStaffInvitation = new RenewStaffInvitation(securityDeps);
+  const revokeStaffInvitation = new RevokeStaffInvitation(securityDeps);
+  const acceptStaffInvitation = new AcceptStaffInvitation(securityDeps);
   const verifyAuditChain = new VerifyAuditChain(securityDeps);
   const registerAuthMethod = new RegisterAuthMethod(securityDeps);
   const authenticate = new Authenticate(securityDeps);
@@ -613,6 +682,17 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
   const generateBackupCodes = new GenerateBackupCodes(securityDeps);
   const revokeMfa = new RevokeMfa(securityDeps);
   const decideMfa = new DecideMfa(securityDeps);
+  const verifyMfaLogin = new VerifyMfaLogin(securityDeps);
+  const getStaffSecurityPolicy = new GetStaffSecurityPolicy(securityDeps);
+  const setRequireTwoStep = new SetRequireTwoStep(securityDeps);
+  const listStaffActivity = new ListStaffActivity(securityDeps);
+  const getOwnTwoStep = new GetOwnTwoStep(securityDeps);
+  const startOwnTwoStep = new StartOwnTwoStep(securityDeps, {
+    mfaConfigured: deps.mfaConfigured ?? false,
+  });
+  const confirmOwnTwoStep = new ConfirmOwnTwoStep(securityDeps);
+  const regenerateOwnBackupCodes = new RegenerateOwnBackupCodes(securityDeps);
+  const disableOwnTwoStep = new DisableOwnTwoStep(securityDeps);
   const evaluateRisk = new EvaluateRisk(securityDeps);
   const scheduleCredentialRotation = new ScheduleCredentialRotation(securityDeps);
   const rotateDueCredentials = new RotateDueCredentials(securityDeps);
@@ -669,6 +749,15 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     configureTenantSecurity,
     evaluateAccess,
     listPrincipalRoleKeys,
+    listStaff,
+    staffAccess,
+    changeStaffRole,
+    setStaffActive,
+    resetStaffTwoStep,
+    createStaffInvitation,
+    renewStaffInvitation,
+    revokeStaffInvitation,
+    acceptStaffInvitation,
     verifyAuditChain,
     registerAuthMethod,
     authenticate,
@@ -681,6 +770,15 @@ export function wireSecurity(deps: SecurityWiringDeps): WiredSecurity {
     generateBackupCodes,
     revokeMfa,
     decideMfa,
+    verifyMfaLogin,
+    getStaffSecurityPolicy,
+    setRequireTwoStep,
+    listStaffActivity,
+    getOwnTwoStep,
+    startOwnTwoStep,
+    confirmOwnTwoStep,
+    regenerateOwnBackupCodes,
+    disableOwnTwoStep,
     evaluateRisk,
     revokeAllSessions,
     scheduleCredentialRotation,

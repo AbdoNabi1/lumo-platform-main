@@ -37,11 +37,16 @@ import { analyticsRoutes } from "./analytics-routes";
 import { salesAnalyticsRoutes } from "./sales-analytics-routes";
 import { automationRoutes } from "./automation-routes";
 import { cartRoutes } from "./cart-routes";
+import { collectionsRoutes } from "./collections-routes";
 import { checkoutRoutes } from "./checkout-routes";
 import { componentsRoutes } from "./components-routes";
 import { contentRoutes } from "./content-routes";
 import { couponsRoutes } from "./coupons-routes";
 import { customer360Routes } from "./customer-360-routes";
+import { annotationsOfCustomer, customerRoutes, marketingOf } from "./customer-routes";
+import type { SegmentMembersPage } from "../infrastructure/cross-context/customer-segment-query";
+import { customerSegmentRoutes } from "./customer-segment-routes";
+import { staffRoutes } from "./staff-routes";
 import { experienceRoutes } from "./experience-routes";
 import { experimentationRoutes } from "./experimentation-routes";
 import { featureFlagsRoutes } from "./feature-flags-routes";
@@ -55,6 +60,7 @@ import { leadsRoutes } from "./leads-routes";
 import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
+import { publicCarrierWebhookRoutes } from "./public-carrier-webhook-routes";
 import { platformBillingRoutes } from "./platform-billing-routes";
 import { pagesRoutes } from "./pages-routes";
 import { notificationsRoutes } from "./notifications-routes";
@@ -103,10 +109,15 @@ import { securitySessionsRoutes } from "./security-sessions-routes";
 import { seoRoutes } from "./seo-routes";
 import { shippingRoutes } from "./shipping-routes";
 import { shippingZonesRoutes } from "./shipping-zones-routes";
+import { carrierSettingsRoutes } from "./carrier-settings-routes";
+import { carrierShippingRoutes } from "./carrier-shipping-routes";
 import { taxesRoutes } from "./taxes-routes";
 import { storeBillingRoutes } from "./store-billing-routes";
 import { storeDomainsRoutes } from "./store-domains-routes";
 import { storeSettingsRoutes } from "./store-settings-routes";
+import { checkoutSettingsRoutes } from "./checkout-settings-routes";
+import { notificationSettingsRoutes } from "./notification-settings-routes";
+import { emailConnectionRoutes } from "./email-connection-routes";
 import { pinRoutesToTenant, tenancyRoutes } from "./tenancy-routes";
 import { themeRoutes } from "./theme-routes";
 import { wishlistRoutes } from "./wishlist-routes";
@@ -182,10 +193,14 @@ const listOrdersQuery = z.object({
   tag: tagFilterParam().optional(),
 });
 const customerIdParams = z.object({ customerId: z.string().min(1) });
+/** The size of a `GET /customers` page when the caller gives no `first` (the repository's default). */
+const DEFAULT_CUSTOMER_PAGE_SIZE = 50;
 const listCustomersQuery = z.object({
   first: z.coerce.number().int().min(1).max(100).optional(),
   after: z.string().min(1).optional(),
   search: z.string().min(1).optional(),
+  /** Wave 1c: answer from this segment's live members (`default:*` or a custom segment id). */
+  segmentId: z.string().min(1).max(100).optional(),
 });
 
 /**
@@ -475,13 +490,30 @@ export interface CustomerDetailDto {
   readonly addresses: readonly OrderAddressDto[];
   /** Full append-only consent log, occurrence order — current state per scope is the latest record. */
   readonly consents: readonly CustomerConsentDto[];
+  readonly phone: string | null;
+  readonly language: "en" | "ar" | null;
+  readonly isGuest: boolean;
+  /** Staff note and tags live outside the aggregate (Identity's annotation repository). */
+  readonly note: string | null;
+  readonly tags: readonly string[];
+  /** Current staff-asserted marketing state, derived from the latest consent record per scope. */
+  readonly marketing: { readonly email: boolean; readonly sms: boolean };
 }
 
-function toCustomerDetailDto(customer: Customer): CustomerDetailDto {
+function toCustomerDetailDto(
+  customer: Customer,
+  annotations: { readonly note: string | null; readonly tags: readonly string[] },
+): CustomerDetailDto {
   return {
     id: customer.id.toString(),
     name: customer.name,
     email: customer.email.value,
+    phone: customer.phone,
+    language: customer.language,
+    isGuest: customer.isGuest,
+    note: annotations.note,
+    tags: annotations.tags,
+    marketing: marketingOf(customer),
     addresses: customer.addresses.map((address) => ({
       line1: address.line1,
       city: address.city,
@@ -1687,6 +1719,13 @@ export function adminRoutes(
         };
       },
     }),
+    // Wave 1b: registered before `GET /customers/:customerId` so `/customers/export-rows` is not
+    // swallowed by the `:customerId` parameter.
+    ...customerRoutes(admin),
+    // Wave 1c: `/customer-segments/preview` and `/store-currency` are registered before `:segmentId`.
+    ...customerSegmentRoutes(admin),
+    // Wave 1d: Settings > Users and permissions (`/staff/invitations/...` before `/staff/:principalExternalId/...`).
+    ...staffRoutes(admin),
     defineRoute({
       method: "GET",
       path: "/customers",
@@ -1696,14 +1735,39 @@ export function adminRoutes(
       schema: { querystring: listCustomersQuery },
       // ADR-0014: ListCustomersInput now requires tenantId — sourced from the already-verified
       // context.tenantId (packages/http's tenant-resolution chain), never from the query string.
-      handle: async ({ query, context }) =>
-        mapPage(
+      handle: async ({ query, context }): Promise<AdminResponse> => {
+        const { segmentId, ...page } = query;
+        // Wave 1c: a segment filter is answered from the live segment query, in the same list shape.
+        if (segmentId !== undefined) {
+          const response = await admin.customerSegments.members(context.principal, {
+            tenantId: context.tenantId,
+            segmentId,
+            first: page.first ?? DEFAULT_CUSTOMER_PAGE_SIZE,
+            ...(page.after === undefined ? {} : { after: page.after }),
+            ...(page.search === undefined ? {} : { search: page.search }),
+          });
+          if (response.status !== 200) return response;
+          const members = response.body as SegmentMembersPage;
+          return {
+            status: 200,
+            body: {
+              items: members.items.map((member): CustomerListItemDto => ({
+                id: member.id,
+                name: member.name,
+                email: member.email,
+              })),
+              pageInfo: members.pageInfo,
+            },
+          };
+        }
+        return mapPage(
           await admin.customers.listCustomers(context.principal, {
-            ...query,
+            ...page,
             tenantId: context.tenantId,
           }),
           toCustomerListItemDto,
-        ),
+        );
+      },
     }),
     defineRoute({
       method: "GET",
@@ -1721,7 +1785,16 @@ export function adminRoutes(
         if (response.status !== 200) {
           return response;
         }
-        return { status: 200, body: toCustomerDetailDto(response.body as Customer) };
+        const customer = response.body as Customer;
+        // A failed annotations read is that error response — never a detail without its note/tags.
+        const annotations = await annotationsOfCustomer(
+          admin,
+          context.principal,
+          context.tenantId,
+          customer.id.toString(),
+        );
+        if (!annotations.ok) return annotations.response;
+        return { status: 200, body: toCustomerDetailDto(customer, annotations) };
       },
     }),
     defineRoute({
@@ -2231,9 +2304,11 @@ export function adminRoutes(
     ...salesAnalyticsRoutes(admin),
     ...automationRoutes(admin),
     ...cartRoutes(admin),
+    ...collectionsRoutes(admin),
     ...checkoutRoutes(admin),
     ...paymentsRoutes(admin),
     ...paymentsWebhookRoutes(admin),
+    ...publicCarrierWebhookRoutes(admin),
     ...platformBillingRoutes(admin),
     ...fulfillmentRoutes(admin),
     ...orderOperationsRoutes(admin),
@@ -2242,6 +2317,8 @@ export function adminRoutes(
     ...draftOrderRoutes(admin),
     ...shippingRoutes(admin),
     ...shippingZonesRoutes(admin),
+    ...carrierSettingsRoutes(admin),
+    ...carrierShippingRoutes(admin),
     ...taxesRoutes(admin),
     ...returnsRoutes(admin),
     ...reviewsRoutes(admin),
@@ -2278,6 +2355,9 @@ export function adminRoutes(
     // Store settings are per request tenant (the repository takes the tenant per call), so they sit
     // outside the pinned tenancy family and work for every merchant under TENANT_MODE=multi.
     ...storeSettingsRoutes(admin),
+    ...checkoutSettingsRoutes(admin),
+    ...notificationSettingsRoutes(admin, options.rateLimiter),
+    ...emailConnectionRoutes(admin, options.rateLimiter),
     ...storeDomainsRoutes(admin),
     ...storeBillingRoutes(admin),
     ...licensingRoutes(admin),
@@ -2292,7 +2372,7 @@ export function adminRoutes(
         ? {}
         : { platformTenantId: options.platformTenantId }),
     }),
-    ...staffAccountRoutes(admin),
+    ...staffAccountRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
     ...publicCheckoutRoutes(admin),

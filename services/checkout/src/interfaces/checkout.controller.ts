@@ -76,6 +76,13 @@ import type {
   StartDraftCheckout,
   StartDraftCheckoutInput,
 } from "../application/draft-checkout.use-cases";
+import type {
+  GetCheckoutSettings,
+  GetCheckoutSettingsInput,
+  UpdateCheckoutSettings,
+  UpdateCheckoutSettingsInput,
+} from "../application/checkout-settings.use-cases";
+import { toPublicCheckoutSettings } from "../domain/checkout-settings";
 import { type ControllerResponse, present } from "./presenter";
 
 export interface CheckoutControllerDeps {
@@ -115,6 +122,8 @@ export interface CheckoutControllerDeps {
   readonly claimInvoiceCheckout: ClaimInvoiceCheckout;
   readonly revokeDraftLinks: RevokeDraftLinks;
   readonly listDraftLinks: ListDraftLinks;
+  readonly getCheckoutSettings: GetCheckoutSettings;
+  readonly updateCheckoutSettings: UpdateCheckoutSettings;
 }
 
 /** Framework-agnostic interface boundary for checkout use-cases (no HTTP server). */
@@ -127,6 +136,38 @@ export class CheckoutController {
 
   async start(input: StartCheckoutInput): Promise<ControllerResponse> {
     return present(await this.deps.startCheckout.execute(input), 201);
+  }
+
+  /** The shop's saved checkout settings (defaults when none), with the version to send back on save. */
+  async getSettings(input: GetCheckoutSettingsInput): Promise<ControllerResponse> {
+    const result = await this.deps.getCheckoutSettings.execute(input);
+    return present(
+      result.ok
+        ? { ok: true as const, value: { ...result.value.values, version: result.value.version } }
+        : result,
+      200,
+    );
+  }
+
+  /** Wave 2a: only the eight switches the storefront needs - never the version or anything else. */
+  async getPublicSettings(input: GetCheckoutSettingsInput): Promise<ControllerResponse> {
+    const result = await this.deps.getCheckoutSettings.execute(input);
+    return present(
+      result.ok
+        ? { ok: true as const, value: toPublicCheckoutSettings(result.value.values) }
+        : result,
+      200,
+    );
+  }
+
+  async updateSettings(input: UpdateCheckoutSettingsInput): Promise<ControllerResponse> {
+    const result = await this.deps.updateCheckoutSettings.execute(input);
+    return present(
+      result.ok
+        ? { ok: true as const, value: { ...result.value.values, version: result.value.version } }
+        : result,
+      200,
+    );
   }
 
   async get(input: GetCheckoutSessionInput): Promise<ControllerResponse> {

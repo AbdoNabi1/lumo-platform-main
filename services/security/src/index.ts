@@ -43,6 +43,36 @@ export {
   ListPrincipalRoleKeys,
   type ListPrincipalRoleKeysInput,
 } from "./application/principal-roles.use-cases";
+// Wave 1d — staff read model (Users and permissions) and the live access check's read.
+export {
+  ListStaff,
+  StaffAccess,
+  type ListStaffInput,
+  type ListStaffOutput,
+  type StaffAccessInput,
+  type StaffAccessOutput,
+} from "./application/staff.use-cases";
+export {
+  AcceptStaffInvitation,
+  ChangeStaffRole,
+  CreateStaffInvitation,
+  RenewStaffInvitation,
+  ResetStaffTwoStep,
+  RevokeStaffInvitation,
+  SetStaffActive,
+  normalizeStaffEmail,
+  type AcceptStaffInvitationInput,
+  type ChangeStaffRoleInput,
+  type CreateStaffInvitationInput,
+  type CreateStaffInvitationOutput,
+  type RenewStaffInvitationInput,
+  type ResetStaffTwoStepInput,
+  type RevokeStaffInvitationInput,
+  type RevokeStaffInvitationOutput,
+  type SetStaffActiveInput,
+  type SetStaffActiveStatus,
+} from "./application/staff-commands.use-cases";
+export { STAFF_IDENTIFIER_PREFIX } from "./application/staff-support";
 // Zero-trust access decision types — reused by the H-4 edge guard (decision stays in EvaluateAccess).
 export type { EvaluateAccessInput, AccessDecisionOutput } from "./application/access.use-cases";
 
@@ -165,6 +195,11 @@ export { Session } from "./domain/session";
 export type { SessionStatus } from "./domain/session";
 export { Role } from "./domain/role";
 export { RoleAssignment } from "./domain/role-assignment";
+// Wave 1d: staff vocabulary + invitations.
+export { OWNER_ROLE_KEY, STAFF_ROLES } from "./domain/staff";
+export type { StaffMemberView, StaffRole, StaffStatus } from "./domain/staff";
+export { INVITATION_TTL_MS, StaffInvitation } from "./domain/staff-invitation";
+export type { StaffInvitationStatus } from "./domain/staff-invitation";
 export { Policy, PolicyVersion } from "./domain/policy";
 export type { PolicyEffect, PolicyMode, PolicyRule, PolicyCondition } from "./domain/policy";
 export { Delegation } from "./domain/delegation";
@@ -295,6 +330,7 @@ export { HashedPasswordAuthProvider } from "./infrastructure/hashed-password-aut
 export { InMemoryPasswordCredentialStore } from "./infrastructure/in-memory-password-credential-store";
 export {
   normalizeIdentifier,
+  type PasswordCredentialOwner,
   type PasswordCredentialRecord,
   type PasswordCredentialStore,
   type PasswordHasher,

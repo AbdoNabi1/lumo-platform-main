@@ -345,6 +345,7 @@ describe("online-store menus API client (Part 2, spec 2.6)", () => {
       outcome: "invalid",
       message: "INVALID_CONTENT: Check the highlighted fields.",
       fields: [{ field: "items", message: "MENU_TOO_LARGE" }],
+      code: "INVALID_CONTENT",
     });
   });
 

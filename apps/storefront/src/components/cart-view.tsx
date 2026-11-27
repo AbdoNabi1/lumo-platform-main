@@ -13,6 +13,11 @@ import {
 } from "@/app/(store)/cart/actions";
 import { startCheckout } from "@/app/(store)/checkout/actions";
 import { LineThumb } from "./line-thumb";
+import { LoginRequiredNotice } from "./login-required-notice";
+import {
+  DEFAULT_PUBLIC_CHECKOUT_SETTINGS,
+  type PublicCheckoutSettings,
+} from "@/lib/checkout-settings-model";
 import { formatCurrency, formatNumber } from "@/lib/format";
 import type { ResolvedCartLine } from "@/lib/cart";
 import type { Locale } from "@/lib/i18n";
@@ -50,12 +55,16 @@ export function CartView({
   lines,
   t,
   locale,
+  settings = DEFAULT_PUBLIC_CHECKOUT_SETTINGS,
 }: {
   readonly cart: CartSummary;
   readonly lines: readonly ResolvedCartLine[];
   readonly t: Dictionary;
   readonly locale: Locale;
+  /** Wave 2a: the shop's add-to-cart limit and whether it takes sign-ups; the defaults are today's cart. */
+  readonly settings?: PublicCheckoutSettings;
 }) {
+  const lineLimit = settings.cartLineLimit;
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [pendingLineKey, setPendingLineKey] = useState<string | null>(null);
@@ -65,15 +74,34 @@ export function CartView({
     "unavailable" | "choose-variant" | "ownership" | "network" | null
   >(null);
   const [checkoutError, setCheckoutError] = useState(false);
+  /** Wave 2a: what the shop's add-to-cart limit said about the last change, worded for the shopper. */
+  const [limitNotice, setLimitNotice] = useState<string | null>(null);
+  /** Wave 2a: the shop only takes orders from signed-in customers. */
+  const [loginRequired, setLoginRequired] = useState(false);
+
+  /** "You can add up to 3 of this item", in the page's language; the server's own words if no number is found. */
+  function limitText(serverMessage: string | undefined): string {
+    const found = serverMessage === undefined ? null : /\d+/.exec(serverMessage)?.[0];
+    const limit = found ?? (lineLimit === null ? null : String(lineLimit));
+    if (limit === null) return serverMessage ?? t.cart.networkErrorBody;
+    return t.cart.lineLimit.replace("{limit}", formatNumber(locale, Number(limit)));
+  }
 
   function afterMutation(result: CartActionResult): void {
     setPendingLineKey(null);
     setPendingClear(false);
     if (!result.ok) {
+      if (result.reason === "limit") {
+        setError(null);
+        setLimitNotice(limitText(result.message));
+        return;
+      }
+      setLimitNotice(null);
       setError(result.reason === "unavailable" ? "network" : result.reason);
       return;
     }
     setError(null);
+    setLimitNotice(null);
   }
 
   function onQuantityChange(line: ResolvedCartLine, nextQuantity: number): void {
@@ -106,10 +134,15 @@ export function CartView({
       const result = await startCheckout(cart.id);
       setPendingCheckout(false);
       if (!result.ok) {
-        setCheckoutError(true);
+        const over = result.fields?.find((entry) => entry.field === "quantity");
+        setLoginRequired(result.reason === "login-required");
+        setLimitNotice(over === undefined ? null : limitText(over.message));
+        setCheckoutError(result.reason !== "login-required" && over === undefined);
         return;
       }
       setCheckoutError(false);
+      setLoginRequired(false);
+      setLimitNotice(null);
       router.push("/checkout");
     });
   }
@@ -130,6 +163,11 @@ export function CartView({
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
+        {limitNotice !== null && (
+          <p role="alert" className="text-destructive text-sm">
+            {limitNotice}
+          </p>
+        )}
         {error !== null && (
           <div
             role="alert"
@@ -191,7 +229,7 @@ export function CartView({
                       variant="outline"
                       size="icon"
                       aria-label={t.cart.increaseQuantity}
-                      disabled={linePending}
+                      disabled={linePending || (lineLimit !== null && line.quantity >= lineLimit)}
                       onClick={() => onQuantityChange(line, line.quantity + 1)}
                     >
                       <PlusIcon aria-hidden="true" />
@@ -235,6 +273,9 @@ export function CartView({
           </div>
         </div>
         {checkoutError && <p className="text-destructive text-xs">{t.cart.checkoutErrorBody}</p>}
+        {loginRequired && (
+          <LoginRequiredNotice t={t} showRegister={settings.accountsMode !== "disabled"} />
+        )}
         <Button
           type="button"
           disabled={isPending || lines.length === 0}

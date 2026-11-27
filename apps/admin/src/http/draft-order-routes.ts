@@ -403,13 +403,28 @@ export function draftOrderRoutes(admin: WiredAdmin): readonly RouteDefinition[] 
           draftId: draft.id,
         });
         if (marked.status !== 200) return withDraftConflictCode(marked);
-        const { token, expiresAt } = issued.body as IssueInvoiceLinkOutput;
+        const { token, expiresAt, linkId } = issued.body as IssueInvoiceLinkOutput;
         const path = `/c/${token}`;
         const hostname = primaryHostnameOf(await admin.shopDomains(tenantId));
+        const url = shopLinkUrl(hostname, path);
+        // Wave 2b: the customer gets the invoice by email too. Best effort and after everything above
+        // succeeded: a mail that cannot be sent never changes this answer, the merchant still gets the
+        // link. The link goes to the mail in memory only; it is never stored or logged.
+        try {
+          await admin.draftInvoiceNotifications.sendInvoice({
+            tenantId,
+            draft: await draftDetailOf(admin, principal, tenantId, draft),
+            linkId,
+            url,
+            path,
+          });
+        } catch {
+          // sendInvoice already logs and swallows; this guards the detail read above.
+        }
         return {
           status: 201,
           body: {
-            url: shopLinkUrl(hostname, path),
+            url,
             path,
             expiresAt,
             shopName: await shopNameOf(admin, tenantId),

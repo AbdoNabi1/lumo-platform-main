@@ -30,9 +30,20 @@ const DEFAULT_TENANT_ID = "tenant-local";
 
 export type ApiResult<T> =
   | { readonly outcome: "ok"; readonly data: T }
-  | { readonly outcome: "unauthorized" }
+  | {
+      readonly outcome: "unauthorized";
+      /** 403 when the API answered "signed in, but not allowed" (the owner-only screens say so); absent for a 401. */
+      readonly status?: number;
+    }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "error"; readonly message: string };
+  | {
+      readonly outcome: "error";
+      readonly message: string;
+      /** The HTTP status when the API answered non-2xx; absent for a network failure or a bad body. */
+      readonly status?: number;
+      /** The API error envelope's `code` (for example `UNAVAILABLE`), when the body carried one. */
+      readonly code?: string;
+    };
 
 /** One field-level validation failure, as returned in the API error envelope's `fields`. */
 export interface FieldIssue {
@@ -48,18 +59,24 @@ export interface FieldIssue {
  */
 export type MutationResult<T> =
   | { readonly outcome: "ok"; readonly data: T }
-  | { readonly outcome: "unauthorized" }
+  | {
+      readonly outcome: "unauthorized";
+      /** The reply's error code, only when the caller asked for it (`readCodeOn401`). */
+      readonly code?: string;
+    }
   | { readonly outcome: "forbidden" }
   | { readonly outcome: "not_found" }
-  | { readonly outcome: "conflict"; readonly message: string }
+  | { readonly outcome: "conflict"; readonly message: string; readonly code?: string }
   | {
       readonly outcome: "invalid";
       readonly message: string;
       readonly fields: readonly FieldIssue[];
+      readonly code?: string;
     }
   | {
       readonly outcome: "error";
       readonly message: string;
+      readonly code?: string;
       /** The HTTP status when the API answered non-2xx; absent for a network failure or a bad body. */
       readonly status?: number;
     };
@@ -110,10 +127,17 @@ async function adminRequestHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
-/** GETs `path` off the admin runtime API. Never throws — every failure mode is a typed outcome. */
+/**
+ * GETs `path` off the admin runtime API. Never throws — every failure mode is a typed outcome.
+ *
+ * A 401 and a 403 are both `unauthorized`. A screen that must tell them apart (the owner-only
+ * pages: "signed in, but not allowed") opts in with `{ reportForbidden: true }`, which adds
+ * `status: 403` to the 403 outcome only; every other caller sees exactly what it always did.
+ */
 export async function getAdminApi<T>(
   path: string,
   isValid: (value: unknown) => value is T,
+  options: { readonly reportForbidden?: boolean } = {},
 ): Promise<ApiResult<T>> {
   const runtimeApiUrl = requireProdEnv("RUNTIME_API_URL", DEFAULT_RUNTIME_API_URL);
   const headers = await adminRequestHeaders();
@@ -129,13 +153,27 @@ export async function getAdminApi<T>(
   }
 
   if (response.status === 401 || response.status === 403) {
-    return { outcome: "unauthorized" };
+    return options.reportForbidden === true && response.status === 403
+      ? { outcome: "unauthorized", status: 403 }
+      : { outcome: "unauthorized" };
   }
   if (response.status === 404) {
     return { outcome: "not_found" };
   }
   if (!response.ok) {
-    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+    const envelope: unknown = await response.json().catch(() => null);
+    const shape = envelope as {
+      readonly code?: unknown;
+      readonly error?: { readonly code?: unknown } | null;
+    } | null;
+    // The flat `{ code }` envelope or the nested `{ error: { code } }` one.
+    const code = shape?.code ?? shape?.error?.code;
+    return {
+      outcome: "error",
+      message: `Admin API responded with status ${response.status}`,
+      status: response.status,
+      ...(typeof code === "string" ? { code } : {}),
+    };
   }
 
   const body: unknown = await response.json();
@@ -175,6 +213,13 @@ export async function mutateAdminApi<T>(
     readonly method: "POST" | "PUT" | "PATCH" | "DELETE";
     readonly body?: unknown;
     readonly idempotencyKey?: string;
+    readonly timeoutMs?: number;
+    /**
+     * Report the reply's error `code` on a 401. Off by default: a 401 normally means "signed out",
+     * but a route whose own refusal is a 401 (Wave 1e: `INVALID_PASSWORD` on turning two-step off)
+     * needs the caller to tell the two apart.
+     */
+    readonly readCodeOn401?: boolean;
   },
   isValid: (value: unknown) => value is T,
 ): Promise<MutationResult<T>> {
@@ -189,12 +234,16 @@ export async function mutateAdminApi<T>(
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(`${runtimeApiUrl}${path}`, {
-      method: init.method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      cache: "no-store",
-    });
+    response = await fetchWithTimeout(
+      `${runtimeApiUrl}${path}`,
+      {
+        method: init.method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        cache: "no-store",
+      },
+      init.timeoutMs,
+    );
   } catch (error) {
     return {
       outcome: "error",
@@ -204,28 +253,42 @@ export async function mutateAdminApi<T>(
 
   const parsed: unknown = await response.json().catch(() => null);
 
-  if (response.status === 401) return { outcome: "unauthorized" };
+  const envelope = parsed as {
+    readonly message?: unknown;
+    readonly code?: unknown;
+    readonly fields?: unknown;
+    readonly error?: { readonly code?: unknown } | null;
+  } | null;
+  // Two envelope shapes exist: the flat `{ code, message }` and the nested `{ error: { code, message } }`.
+  const rawCode = envelope?.code ?? envelope?.error?.code;
+  const code = typeof rawCode === "string" ? { code: rawCode } : {};
+  if (response.status === 401) {
+    return init.readCodeOn401 === true
+      ? { outcome: "unauthorized", ...code }
+      : { outcome: "unauthorized" };
+  }
   if (response.status === 403) return { outcome: "forbidden" };
   if (response.status === 404) return { outcome: "not_found" };
   if (response.status === 409) {
-    const envelope = parsed as { readonly message?: unknown } | null;
     return {
       outcome: "conflict",
       message: typeof envelope?.message === "string" ? envelope.message : "Conflict",
+      ...code,
     };
   }
   if (response.status === 422) {
-    const envelope = parsed as { readonly message?: unknown; readonly fields?: unknown } | null;
     return {
       outcome: "invalid",
       message: typeof envelope?.message === "string" ? envelope.message : "Validation failed",
       fields: fieldIssuesOf(envelope?.fields),
+      ...code,
     };
   }
   if (!response.ok) {
     return {
       outcome: "error",
       message: `Admin API responded with status ${response.status}`,
+      ...code,
       status: response.status,
     };
   }
@@ -314,4 +377,71 @@ export async function sendAdminBinary<T>(
     return { outcome: "error", message: "Admin API returned an unexpected response shape" };
   }
   return { outcome: "ok", data: parsed };
+}
+
+/** The outcome of fetching raw bytes (a waybill PDF). A 409 carries the order numbers that blocked it. */
+export type BytesResult =
+  | { readonly outcome: "ok"; readonly bytes: Uint8Array }
+  | { readonly outcome: "unauthorized" }
+  | { readonly outcome: "not_found" }
+  | {
+      readonly outcome: "conflict";
+      readonly code?: string;
+      readonly orderNumbers: readonly string[];
+    }
+  | { readonly outcome: "error"; readonly message: string };
+
+/**
+ * POSTs a JSON body and reads the response as bytes — server-side only, like every function here.
+ * The bytes are returned to the caller and never stored (waybills are personal data).
+ */
+export async function postAdminApiForBytes(
+  path: string,
+  body: unknown,
+  timeoutMs = 30_000,
+): Promise<BytesResult> {
+  const runtimeApiUrl = requireProdEnv("RUNTIME_API_URL", DEFAULT_RUNTIME_API_URL);
+  const headers = await adminRequestHeaders();
+  headers["content-type"] = "application/json";
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(
+      `${runtimeApiUrl}${path}`,
+      { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" },
+      timeoutMs,
+    );
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : "Network error reaching the admin API",
+    };
+  }
+
+  if (response.status === 401 || response.status === 403) return { outcome: "unauthorized" };
+  if (response.status === 404) return { outcome: "not_found" };
+  if (response.status === 409) {
+    const envelope = (await response.json().catch(() => null)) as {
+      readonly code?: unknown;
+      readonly orderNumbers?: unknown;
+    } | null;
+    return {
+      outcome: "conflict",
+      ...(typeof envelope?.code === "string" ? { code: envelope.code } : {}),
+      orderNumbers: Array.isArray(envelope?.orderNumbers)
+        ? envelope.orderNumbers.filter((n): n is string => typeof n === "string")
+        : [],
+    };
+  }
+  if (!response.ok) {
+    return { outcome: "error", message: `Admin API responded with status ${response.status}` };
+  }
+  try {
+    return { outcome: "ok", bytes: new Uint8Array(await response.arrayBuffer()) };
+  } catch (error) {
+    return {
+      outcome: "error",
+      message: error instanceof Error ? error.message : "Could not read the admin API response",
+    };
+  }
 }

@@ -11,7 +11,14 @@ import {
   type Subscriber,
 } from "@platform/messaging";
 import type { TransactionalUnitOfWork } from "@platform/repository";
+import {
+  AttachCarrierShipment,
+  DetachCarrierShipment,
+  MirrorShipmentStatus,
+  PrepareForCarrierShipment,
+} from "./application/carrier-fulfillment.use-cases";
 import { CreateFulfillment } from "./application/create-fulfillment.use-case";
+import type { NotificationPort } from "./application/ports";
 import { CreateShipment } from "./application/create-shipment.use-case";
 import { AdvanceFulfillment } from "./application/fulfillment-lifecycle.use-cases";
 import { GetFulfillmentByOrder } from "./application/get-fulfillment-by-order.use-case";
@@ -46,6 +53,11 @@ export interface FulfillmentWiringDeps {
    * built here is a tenant-agnostic singleton — no `tenantId` at composition time any more.
    */
   readonly prisma?: Database;
+  /**
+   * Wave 2b: the customer "your order shipped" mail. Absent ⇒ the offline no-op, unchanged. Named
+   * apart from the other contexts' `notifications` fields because one deps object feeds them all.
+   */
+  readonly fulfillmentNotifications?: NotificationPort;
 }
 
 export interface WiredFulfillment {
@@ -63,7 +75,7 @@ function buildController(
   const ordersPort = new InMemoryOrdersAdapter();
   const inventoryPort = new InMemoryInventoryAdapter();
   const shippingProvider = new InMemoryShippingProvider();
-  const notifications = new InMemoryNotificationAdapter();
+  const notifications = deps.fulfillmentNotifications ?? new InMemoryNotificationAdapter();
   const processedCarrierWebhooks = new InMemoryProcessedCarrierWebhookStore();
 
   const lifecycleDeps = {
@@ -75,6 +87,8 @@ function buildController(
     notifications,
   };
 
+  const requestReservation = new RequestReservation({ ...lifecycleDeps, inventoryPort });
+
   return new FulfillmentController({
     createFulfillment: new CreateFulfillment({
       fulfillmentOrders,
@@ -83,7 +97,7 @@ function buildController(
       clock: deps.clock,
     }),
     advanceFulfillment: new AdvanceFulfillment(lifecycleDeps),
-    requestReservation: new RequestReservation({ ...lifecycleDeps, inventoryPort }),
+    requestReservation,
     createShipment: new CreateShipment({ ...lifecycleDeps, shippingProvider }),
     recordCarrierWebhook: new RecordCarrierWebhook({
       fulfillmentOrders,
@@ -94,6 +108,13 @@ function buildController(
     }),
     getFulfillmentByOrder: new GetFulfillmentByOrder({ fulfillmentOrders }),
     getFulfillmentsByOrders: new GetFulfillmentsByOrders({ fulfillmentOrders }),
+    prepareForCarrierShipment: new PrepareForCarrierShipment({
+      ...lifecycleDeps,
+      requestReservation,
+    }),
+    attachCarrierShipment: new AttachCarrierShipment(lifecycleDeps),
+    detachCarrierShipment: new DetachCarrierShipment(lifecycleDeps),
+    mirrorShipmentStatus: new MirrorShipmentStatus(lifecycleDeps),
   });
 }
 

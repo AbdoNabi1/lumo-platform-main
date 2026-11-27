@@ -3,7 +3,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeftIcon } from "lucide-react";
 import { Card, CardContent } from "@platform/ui";
+import { AccountsDisabledNotice } from "@/components/accounts-disabled-notice";
 import { AuthForm } from "@/components/auth-form";
+import { loadCheckoutSettings } from "@/lib/checkout-settings";
 import { CUSTOMER_SESSION_COOKIE, resolveCurrentCustomer } from "@/lib/customer-session";
 import { dictionaryFor } from "@/lib/i18n";
 import { getRequestLocale } from "@/lib/request-locale";
@@ -19,6 +21,8 @@ export default async function AccountRegisterPage() {
 
   const result = await resolveCurrentCustomer(jar.get(CUSTOMER_SESSION_COOKIE)?.value);
   if (result.status === "signed-in") redirect("/account");
+  // Wave 2a (D37): a shop with customer accounts off shows why instead of a form that would be refused.
+  const accountsOff = (await loadCheckoutSettings()).accountsMode === "disabled";
 
   return (
     <main className="mx-auto flex max-w-md flex-col gap-6 p-8">
@@ -29,11 +33,19 @@ export default async function AccountRegisterPage() {
 
       <Card>
         <CardContent className="flex flex-col gap-6 py-8">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-2xl font-semibold tracking-tight">{t.account.register.title}</h1>
-            <p className="text-muted-foreground text-sm">{t.account.register.subtitle}</p>
-          </div>
-          <AuthForm mode="register" t={t} />
+          {accountsOff ? (
+            <AccountsDisabledNotice t={t} />
+          ) : (
+            <>
+              <div className="flex flex-col gap-1">
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {t.account.register.title}
+                </h1>
+                <p className="text-muted-foreground text-sm">{t.account.register.subtitle}</p>
+              </div>
+              <AuthForm mode="register" t={t} />
+            </>
+          )}
         </CardContent>
       </Card>
     </main>

@@ -14,6 +14,7 @@ import type { Principal } from "../domain/principal";
 import type {
   AiGovernanceProfileRepository,
   AuditLedgerRepository,
+  ListAuditForTenantInput,
   CredentialRepository,
   DelegationRepository,
   DeviceDirectory,
@@ -24,7 +25,9 @@ import type {
   PolicyRegistry,
   PolicyRepository,
   PrincipalDirectory,
+  PrincipalReader,
   PrincipalRepository,
+  PrincipalSummary,
   RelationTupleRepository,
   RoleAssignmentRepository,
   RoleRegistry,
@@ -43,19 +46,24 @@ export interface InMemorySecurityRepositoryDeps {
 }
 
 /** In-memory `PrincipalRepository` — indexes by id + externalId; writes events to the outbox on save. */
-export class InMemoryPrincipalRepository implements PrincipalRepository, PrincipalDirectory {
+export class InMemoryPrincipalRepository
+  implements PrincipalRepository, PrincipalDirectory, PrincipalReader
+{
   private readonly byId = new ScopedMap<Principal>();
   private readonly byExternalId = new ScopedMap<Principal>();
+  /** When the row first reached the store (the `registered` event's time) — the Prisma `created_at`. */
+  private readonly createdAt = new ScopedMap<Date>();
   constructor(private readonly deps: InMemorySecurityRepositoryDeps) {}
 
   async save(principal: Principal, tenantId: string, tx?: unknown): Promise<void> {
-    this.byId.set(tenantId, principal.id.toString(), principal);
+    const id = principal.id.toString();
+    const events = principal.pullDomainEvents();
+    if (this.createdAt.get(tenantId, id) === undefined) {
+      this.createdAt.set(tenantId, id, new Date(events[0]?.occurredAt ?? Date.now()));
+    }
+    this.byId.set(tenantId, id, principal);
     this.byExternalId.set(tenantId, principal.externalId, principal);
-    await this.deps.outbox.write(
-      principal.pullDomainEvents(),
-      { ...this.deps.context, tenantId },
-      tx,
-    );
+    await this.deps.outbox.write(events, { ...this.deps.context, tenantId }, tx);
   }
   async findById(id: string, tenantId: string): Promise<Principal | null> {
     return this.byId.get(tenantId, id) ?? null;
@@ -71,6 +79,16 @@ export class InMemoryPrincipalRepository implements PrincipalRepository, Princip
   }
   async listAll(tenantId: string): Promise<readonly Principal[]> {
     return this.byId.values(tenantId);
+  }
+  listSummaries(tenantId: string): Promise<readonly PrincipalSummary[]> {
+    return Promise.resolve(
+      this.byId.values(tenantId).map((p) => ({
+        id: p.id.toString(),
+        externalId: p.externalId,
+        status: p.status,
+        createdAt: new Date(this.createdAt.get(tenantId, p.id.toString()) ?? 0),
+      })),
+    );
   }
 }
 
@@ -129,6 +147,20 @@ export class InMemorySessionRepository implements SessionRepository {
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId).filter((s) => s.principalRef === principalRef);
   }
+  lastEstablishedByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, Date>> {
+    const wanted = new Set(principalRefs);
+    const latest = new Map<string, Date>();
+    for (const session of this.byId.values(tenantId)) {
+      if (!wanted.has(session.principalRef)) continue;
+      const seen = latest.get(session.principalRef);
+      if (seen === undefined || session.establishedAt.getTime() > seen.getTime())
+        latest.set(session.principalRef, new Date(session.establishedAt));
+    }
+    return Promise.resolve(latest);
+  }
   async listAll(tenantId: string): Promise<readonly Session[]> {
     return this.byId.values(tenantId);
   }
@@ -180,6 +212,17 @@ export class InMemoryRoleAssignmentRepository implements RoleAssignmentRepositor
     tenantId: string,
   ): Promise<readonly RoleAssignment[]> {
     return this.byId.values(tenantId).filter((a) => a.principalRef === principalRef);
+  }
+  listActiveByTenant(
+    tenantId: string,
+    now: Date,
+  ): Promise<readonly { readonly principalRef: string; readonly roleKey: string }[]> {
+    return Promise.resolve(
+      this.byId
+        .values(tenantId)
+        .filter((a) => a.isActiveAt(now))
+        .map((a) => ({ principalRef: a.principalRef, roleKey: a.roleKey })),
+    );
   }
 }
 
@@ -282,6 +325,18 @@ export class InMemoryMfaEnrollmentRepository implements MfaEnrollmentRepository 
   }
   async listByPrincipal(principalRef: string, tenantId: string): Promise<readonly MfaEnrollment[]> {
     return this.byId.values(tenantId).filter((e) => e.principalRef === principalRef);
+  }
+  listActiveByPrincipals(
+    tenantId: string,
+    principalRefs: readonly string[],
+  ): Promise<ReadonlyMap<string, MfaEnrollment>> {
+    const wanted = new Set(principalRefs);
+    const byPrincipal = new Map<string, MfaEnrollment>();
+    for (const e of this.byId.values(tenantId)) {
+      if (e.status === "active" && e.method === "totp" && wanted.has(e.principalRef))
+        byPrincipal.set(e.principalRef, e);
+    }
+    return Promise.resolve(byPrincipal);
   }
 }
 
@@ -405,5 +460,33 @@ export class InMemoryAuditLedgerRepository implements AuditLedgerRepository {
   }
   async list(tenantRef: string | null, tenantId: string): Promise<readonly AuditRecord[]> {
     return [...this.bucket(tenantId, tenantRef)];
+  }
+  listForTenant(input: ListAuditForTenantInput): Promise<readonly AuditRecord[]> {
+    const actions = new Set(input.actions);
+    const refs = input.principalRefs === undefined ? null : new Set(input.principalRefs);
+    const { before } = input;
+    const rows = this.byTenant
+      .values(input.tenantId)
+      .flat()
+      .filter(
+        (r) =>
+          actions.has(r.content.action) &&
+          (refs === null || refs.has(r.content.principalRef)) &&
+          (before === undefined ||
+            r.content.occurredAt < before.occurredAt ||
+            (r.content.occurredAt === before.occurredAt && r.id < before.id)),
+      )
+      .sort((a, b) =>
+        a.content.occurredAt === b.content.occurredAt
+          ? a.id < b.id
+            ? 1
+            : a.id > b.id
+              ? -1
+              : 0
+          : a.content.occurredAt < b.content.occurredAt
+            ? 1
+            : -1,
+      );
+    return Promise.resolve(rows.slice(0, Math.max(0, input.limit)));
   }
 }

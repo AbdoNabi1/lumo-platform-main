@@ -323,6 +323,223 @@ describe("inventory.inventory_items and catalog.product_variants — stock per v
   });
 });
 
+describe("shipping.merchant_carrier_settings — migration history matches the Prisma model (Project 5)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf-8"))
+    .join("\n");
+
+  it("every column was created by some migration", () => {
+    const actual = columnsEverAddedTo("shipping", "merchant_carrier_settings", allSql);
+    for (const column of [
+      "tenant_id",
+      "enabled_carriers",
+      "carrier_settings",
+      "version",
+      "created_at",
+      "updated_at",
+    ]) {
+      expect(
+        actual.has(column),
+        `expected "shipping"."merchant_carrier_settings"."${column}"`,
+      ).toBe(true);
+    }
+  });
+
+  it("is RLS-enabled and forced with the tenant_isolation policy (G-63)", () => {
+    expect(allSql).toContain(
+      'ALTER TABLE "shipping"."merchant_carrier_settings" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'ALTER TABLE "shipping"."merchant_carrier_settings" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(allSql).toContain(
+      'CREATE POLICY tenant_isolation ON "shipping"."merchant_carrier_settings"',
+    );
+  });
+
+  it("indexes shipments by (tenant, carrier, tracking number) for webhook lookups", () => {
+    expect(allSql).toMatch(
+      /CREATE INDEX "shipments_tenant_id_carrier_tracking_number_idx"\s+ON "shipping"\."shipments"\("tenant_id", "carrier", "tracking_number"\);/,
+    );
+  });
+});
+describe("identity customer segments (20261125000000)", () => {
+  const migration = join(migrationsDir, "20261125000000_customer_segments", "migration.sql");
+
+  it("defines segment columns, types, defaults, key and indexes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("identity", "customer_segments", sql)].sort()).toEqual([
+      "conditions",
+      "created_at",
+      "created_by",
+      "id",
+      "name",
+      "name_key",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    for (const definition of [
+      '"id" UUID NOT NULL',
+      '"tenant_id" TEXT NOT NULL',
+      '"name" TEXT NOT NULL',
+      '"name_key" TEXT NOT NULL',
+      '"conditions" JSONB NOT NULL',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"created_by" TEXT',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      'CONSTRAINT "customer_segments_pkey" PRIMARY KEY ("id")',
+      'CREATE UNIQUE INDEX "customer_segments_tenant_id_name_key_key" ON "identity"."customer_segments"("tenant_id", "name_key");',
+      'CREATE INDEX "customer_segments_tenant_id_created_at_idx" ON "identity"."customer_segments"("tenant_id", "created_at");',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on segment reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "identity"."customer_segments" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "identity"."customer_segments" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "identity"."customer_segments";',
+    );
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "identity"."customer_segments" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+});
+
+describe("security staff invitations (20261126000000)", () => {
+  const migration = join(migrationsDir, "20261126000000_staff_invitations", "migration.sql");
+
+  it("defines invitation columns, types, defaults and key", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("security", "staff_invitations", sql)].sort()).toEqual([
+      "accepted_at",
+      "created_at",
+      "email",
+      "expires_at",
+      "id",
+      "invited_by",
+      "principal_external_id",
+      "role_key",
+      "status",
+      "tenant_id",
+      "token_hash",
+      "updated_at",
+      "version",
+    ]);
+    for (const definition of [
+      '"id" UUID NOT NULL',
+      '"tenant_id" TEXT NOT NULL',
+      '"email" TEXT NOT NULL',
+      '"principal_external_id" TEXT NOT NULL',
+      '"role_key" TEXT NOT NULL',
+      '"invited_by" TEXT NOT NULL',
+      '"token_hash" TEXT NOT NULL',
+      '"status" TEXT NOT NULL',
+      '"expires_at" TIMESTAMP(3) NOT NULL',
+      '"accepted_at" TIMESTAMP(3),',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      'CONSTRAINT "staff_invitations_pkey" PRIMARY KEY ("id")',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("constrains email normalisation, role key and status", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_email_normalized" CHECK ("email" = lower(btrim("email")) AND "email" <> '')`,
+    );
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_role_key_check" CHECK ("role_key" IN ('admin','operator','viewer'))`,
+    );
+    expect(sql).toContain(
+      `CONSTRAINT "staff_invitations_status_check" CHECK ("status" IN ('pending','accepted','revoked'))`,
+    );
+  });
+
+  it("allows one pending invitation per email, a unique token hash and a status index", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain(
+      `CREATE UNIQUE INDEX "staff_invitations_one_pending_per_email" ON "security"."staff_invitations"("tenant_id", "email") WHERE "status" = 'pending';`,
+    );
+    expect(sql).toContain(
+      'CREATE UNIQUE INDEX "staff_invitations_token_hash_key" ON "security"."staff_invitations"("token_hash");',
+    );
+    expect(sql).toContain(
+      'CREATE INDEX "staff_invitations_tenant_id_status_idx" ON "security"."staff_invitations"("tenant_id", "status");',
+    );
+  });
+
+  it("forces tenant isolation on invitation reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "security"."staff_invitations" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "security"."staff_invitations" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'DROP POLICY IF EXISTS tenant_isolation ON "security"."staff_invitations";',
+    );
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "security"."staff_invitations" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+
+  it("is purely additive", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).not.toMatch(/\b(DROP TABLE|DROP COLUMN|ALTER COLUMN|TRUNCATE|DELETE FROM)\b/i);
+  });
+});
+
+describe("identity customer profile and tags (20261124000000)", () => {
+  const migration = join(migrationsDir, "20261124000000_customer_profile_tags", "migration.sql");
+
+  it("adds nullable customer profile columns and constrains language", () => {
+    const sql = readFileSync(migration, "utf-8");
+    for (const column of ["phone", "language", "note"]) {
+      expect(sql).toContain(`ALTER TABLE "identity"."customers" ADD COLUMN "${column}" TEXT;`);
+    }
+    expect(sql).toContain(`CHECK ("language" IS NULL OR "language" IN ('en','ar'))`);
+  });
+
+  it("defines customer tags with types, defaults, key, tenant index and cascading foreign key", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect([...columnsEverAddedTo("identity", "customer_tags", sql)].sort()).toEqual([
+      "created_at",
+      "customer_id",
+      "tag",
+      "tag_key",
+      "tenant_id",
+    ]);
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL',
+      '"customer_id" UUID NOT NULL',
+      '"tag" TEXT NOT NULL',
+      '"tag_key" TEXT NOT NULL',
+      '"created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP',
+      'CONSTRAINT "customer_tags_pkey" PRIMARY KEY ("customer_id", "tag_key")',
+      'CREATE INDEX "customer_tags_tenant_id_tag_key_idx" ON "identity"."customer_tags"("tenant_id", "tag_key");',
+      'FOREIGN KEY ("customer_id") REFERENCES "identity"."customers"("id") ON DELETE CASCADE ON UPDATE CASCADE;',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on customer tags for reads and writes", () => {
+    const sql = readFileSync(migration, "utf-8");
+    expect(sql).toContain('ALTER TABLE "identity"."customer_tags" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "identity"."customer_tags" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain('CREATE POLICY tenant_isolation ON "identity"."customer_tags" FOR ALL');
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+});
+
 describe("orders schema — order archive (order operations Part 1)", () => {
   it("a migration adds orders.orders.archived_at", () => {
     const sql = readdirSync(migrationsDir, { withFileTypes: true })
@@ -716,6 +933,453 @@ describe("online_store content — column types, defaults and keys (Project 4 Pa
   }
 });
 
+describe("security mfa last used step (20261127000000)", () => {
+  const migration = join(migrationsDir, "20261127000000_mfa_last_used_step", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+
+  it("adds exactly one column to security.mfa_enrollments", () => {
+    expect([...columnsEverAddedTo("security", "mfa_enrollments", readSql())]).toEqual([
+      "last_used_step",
+    ]);
+  });
+
+  it("adds last_used_step as a nullable INTEGER with no default", () => {
+    const statement =
+      /ALTER TABLE "security"\."mfa_enrollments" ADD COLUMN "last_used_step"([^;]*);/.exec(
+        readSql(),
+      );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("INTEGER");
+  });
+
+  it("is purely additive", () => {
+    const sql = readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+    expect(sql).not.toMatch(/\bDROP\b|\bUPDATE\b|\bDELETE\b|\bNOT NULL\b|\bDEFAULT\b/);
+  });
+
+  it("matches the Prisma model field", () => {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "security.prisma"),
+      "utf-8",
+    );
+    expect(schema).toMatch(/lastUsedStep\s+Int\?\s+@map\("last_used_step"\)/);
+  });
+});
+
+describe("checkout settings (20261128000000)", () => {
+  const migration = join(migrationsDir, "20261128000000_checkout_settings", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+
+  it("creates checkout.checkout_settings with exactly the planned columns", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_settings", readSql())].sort()).toEqual([
+      "accounts_mode",
+      "cart_line_limit",
+      "line2_mode",
+      "marketing_email_prompt",
+      "name_mode",
+      "phone_mode",
+      "require_login",
+      "show_account_link",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+  });
+
+  it("types every column and gives it today's behaviour as its default", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      `"name_mode" TEXT NOT NULL DEFAULT 'required' CHECK ("name_mode" IN ('required','optional'))`,
+      `"phone_mode" TEXT NOT NULL DEFAULT 'required' CHECK ("phone_mode" IN ('required','optional'))`,
+      `"line2_mode" TEXT NOT NULL DEFAULT 'optional' CHECK ("line2_mode" IN ('hidden','optional','required'))`,
+      `"marketing_email_prompt" TEXT NOT NULL DEFAULT 'hidden' CHECK ("marketing_email_prompt" IN ('hidden','show','preselect'))`,
+      '"cart_line_limit" INTEGER CHECK ("cart_line_limit" IS NULL OR "cart_line_limit" BETWEEN 1 AND 999)',
+      '"require_login" BOOLEAN NOT NULL DEFAULT false',
+      `"accounts_mode" TEXT NOT NULL DEFAULT 'optional' CHECK ("accounts_mode" IN ('optional','disabled'))`,
+      '"show_account_link" BOOLEAN NOT NULL DEFAULT true',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("refuses require_login while accounts are disabled", () => {
+    expect(readSql()).toContain(
+      `CONSTRAINT "checkout_settings_login_needs_accounts" CHECK (NOT ("require_login" AND "accounts_mode" = 'disabled'))`,
+    );
+  });
+
+  it("forces tenant isolation on checkout settings for reads and writes", () => {
+    const sql = readSql();
+    expect(sql).toContain('ALTER TABLE "checkout"."checkout_settings" ENABLE ROW LEVEL SECURITY;');
+    expect(sql).toContain('ALTER TABLE "checkout"."checkout_settings" FORCE ROW LEVEL SECURITY;');
+    expect(sql).toContain(
+      'CREATE POLICY tenant_isolation ON "checkout"."checkout_settings" FOR ALL',
+    );
+    expect(sql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(sql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+  });
+
+  it("adds the nullable marketing_opt_in column to checkout_sessions with no default", () => {
+    expect([...columnsEverAddedTo("checkout", "checkout_sessions", readSql())]).toEqual([
+      "marketing_opt_in",
+    ]);
+    const statement =
+      /ALTER TABLE "checkout"\."checkout_sessions" ADD COLUMN "marketing_opt_in"([^;]*);/.exec(
+        readSql(),
+      );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("BOOLEAN");
+  });
+
+  it("adds the nullable source column to identity.consent_records (who made the choice), nothing else", () => {
+    expect([...columnsEverAddedTo("identity", "consent_records", readSql())]).toEqual(["source"]);
+    const statement = /ALTER TABLE "identity"\."consent_records" ADD COLUMN "source"([^;]*);/.exec(
+      readSql(),
+    );
+    expect(statement).not.toBeNull();
+    expect(statement![1]!.trim()).toBe("TEXT");
+    const identity = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "identity.prisma"),
+      "utf-8",
+    );
+    const model = /model ConsentRecord \{([\s\S]*?)\n\}/.exec(identity)?.[1] ?? "";
+    expect(model).toMatch(/source\s+String\?/);
+  });
+
+  it("is purely additive", () => {
+    expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+    expect(code()).not.toMatch(/ALTER COLUMN/);
+  });
+
+  it("matches the Prisma models", () => {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "checkout.prisma"),
+      "utf-8",
+    );
+    const model = /model CheckoutSettings \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /nameMode\s+String\s+@default\("required"\)\s+@map\("name_mode"\)/,
+      /phoneMode\s+String\s+@default\("required"\)\s+@map\("phone_mode"\)/,
+      /line2Mode\s+String\s+@default\("optional"\)\s+@map\("line2_mode"\)/,
+      /marketingEmailPrompt\s+String\s+@default\("hidden"\)\s+@map\("marketing_email_prompt"\)/,
+      /cartLineLimit\s+Int\?\s+@map\("cart_line_limit"\)/,
+      /requireLogin\s+Boolean\s+@default\(false\)\s+@map\("require_login"\)/,
+      /accountsMode\s+String\s+@default\("optional"\)\s+@map\("accounts_mode"\)/,
+      /showAccountLink\s+Boolean\s+@default\(true\)\s+@map\("show_account_link"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("checkout_settings"\)/,
+      /@@schema\("checkout"\)/,
+    ])
+      expect(model).toMatch(field);
+    expect(schema).toMatch(/marketingOptIn\s+Boolean\?\s+@map\("marketing_opt_in"\)/);
+  });
+});
+
+describe("notification settings (20261129000000)", () => {
+  const migration = join(migrationsDir, "20261129000000_notification_settings", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+  const schema = () =>
+    readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+
+  it("creates the three notifications tables with exactly the planned columns", () => {
+    const sql = readSql();
+    expect([...columnsEverAddedTo("notifications", "notification_settings", sql)].sort()).toEqual([
+      "disabled_templates",
+      "sender_email",
+      "staff_recipients",
+      "tenant_id",
+      "updated_at",
+      "version",
+    ]);
+    expect(
+      [...columnsEverAddedTo("notifications", "notification_template_overrides", sql)].sort(),
+    ).toEqual(["body", "key", "locale", "subject", "tenant_id", "updated_at"]);
+    expect([...columnsEverAddedTo("notifications", "sender_domains", sql)].sort()).toEqual([
+      "domain",
+      "provider_domain_id",
+      "records",
+      "status",
+      "tenant_id",
+      "updated_at",
+      "verified_at",
+    ]);
+  });
+
+  it("types every column as planned", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      '"sender_email" TEXT,',
+      `"staff_recipients" JSONB NOT NULL DEFAULT '[]'`,
+      `"disabled_templates" TEXT[] NOT NULL DEFAULT '{}'`,
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+      `"locale" TEXT NOT NULL CHECK ("locale" IN ('en','ar'))`,
+      '"subject" TEXT NOT NULL',
+      '"body" TEXT NOT NULL',
+      'PRIMARY KEY ("tenant_id","key","locale")',
+      '"provider_domain_id" TEXT NOT NULL',
+      '"records" JSONB NOT NULL',
+      '"verified_at" TIMESTAMP(3),',
+      'PRIMARY KEY ("tenant_id","domain")',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation on every new table for reads and writes", () => {
+    const sql = readSql();
+    for (const table of [
+      "notification_settings",
+      "notification_template_overrides",
+      "sender_domains",
+    ]) {
+      expect(sql).toContain(`ALTER TABLE "notifications"."${table}" ENABLE ROW LEVEL SECURITY;`);
+      expect(sql).toContain(`ALTER TABLE "notifications"."${table}" FORCE ROW LEVEL SECURITY;`);
+      expect(sql).toContain(`CREATE POLICY tenant_isolation ON "notifications"."${table}" FOR ALL`);
+    }
+    expect(
+      sql.match(/USING \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(3);
+    expect(
+      sql.match(/WITH CHECK \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(3);
+  });
+
+  it("allows one verified owner per domain (partial unique index, SQL only)", () => {
+    const sql = readSql();
+    expect(sql).toContain(
+      `CREATE UNIQUE INDEX "sender_domains_verified_domain_key" ON "notifications"."sender_domains" ("domain") WHERE "status" = 'verified';`,
+    );
+  });
+
+  it("is purely additive", () => {
+    expect(code()).not.toMatch(/\bDROP TABLE\b|\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/);
+    expect(code()).not.toMatch(/ALTER COLUMN/);
+    expect(code()).not.toMatch(/ALTER TABLE "(?!notifications")/);
+  });
+
+  it("sorts after the checkout settings migration", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((name) => /^\d{14}_/.test(name))
+      .sort();
+    expect(names.indexOf("20261129000000_notification_settings")).toBeGreaterThan(
+      names.indexOf("20261128000000_checkout_settings"),
+    );
+  });
+
+  it("matches the Prisma models", () => {
+    const text = schema();
+    const settings = /model NotificationSettings \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /senderEmail\s+String\?\s+@map\("sender_email"\)/,
+      /staffRecipients\s+Json\s+@default\("\[\]"\)\s+@map\("staff_recipients"\)/,
+      /disabledTemplates\s+String\[\]\s+@default\(\[\]\)\s+@map\("disabled_templates"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("notification_settings"\)/,
+      /@@schema\("notifications"\)/,
+    ])
+      expect(settings).toMatch(field);
+    const overrides = /model NotificationTemplateOverride \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@map\("tenant_id"\)/,
+      /locale\s+String/,
+      /subject\s+String/,
+      /body\s+String/,
+      /@@id\(\[tenantId, key, locale\]\)/,
+      /@@map\("notification_template_overrides"\)/,
+    ])
+      expect(overrides).toMatch(field);
+    // sender_domains is dropped by 20261130000000 (D50): the model is gone.
+    expect(text).not.toMatch(/model SenderDomain\b/);
+  });
+});
+
+describe("store email connections (20261130000000)", () => {
+  const migration = join(migrationsDir, "20261130000000_store_email_connections", "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+  const schema = () =>
+    readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+
+  it("creates notifications.email_connections with exactly the planned columns", () => {
+    expect([...columnsEverAddedTo("notifications", "email_connections", readSql())].sort()).toEqual(
+      [
+        "enabled",
+        "from_email",
+        "kind",
+        "last_error",
+        "last_error_at",
+        "sealed_credentials",
+        "secret_last4",
+        "status",
+        "tenant_id",
+        "updated_at",
+        "verified_at",
+        "version",
+      ],
+    );
+  });
+
+  it("types and constrains every column as planned", () => {
+    const sql = readSql();
+    for (const definition of [
+      '"tenant_id" TEXT NOT NULL PRIMARY KEY',
+      `"kind" TEXT NOT NULL CHECK ("kind" IN ('resend'))`,
+      '"from_email" TEXT NOT NULL',
+      '"sealed_credentials" TEXT NOT NULL',
+      '"secret_last4" TEXT NOT NULL',
+      '"enabled" BOOLEAN NOT NULL DEFAULT true',
+      `"status" TEXT NOT NULL CHECK ("status" IN ('connected','failed'))`,
+      '"last_error" TEXT,',
+      '"last_error_at" TIMESTAMP(3),',
+      '"verified_at" TIMESTAMP(3),',
+      '"version" INTEGER NOT NULL DEFAULT 1',
+      '"updated_at" TIMESTAMP(3) NOT NULL',
+    ])
+      expect(sql).toContain(definition);
+  });
+
+  it("forces tenant isolation for reads and writes", () => {
+    const sql = readSql();
+    const table = '"notifications"."email_connections"';
+    expect(sql).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+    expect(sql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
+    expect(sql).toContain(`CREATE POLICY tenant_isolation ON ${table} FOR ALL`);
+    expect(
+      sql.match(/USING \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(1);
+    expect(
+      sql.match(/WITH CHECK \(tenant_id = current_setting\('app\.tenant_id', true\)\)/g),
+    ).toHaveLength(1);
+  });
+
+  it("drops only the empty sender_domains table and is otherwise additive", () => {
+    const sql = code();
+    expect(sql.match(/\bDROP TABLE\b[^;]*;/g)).toEqual([
+      'DROP TABLE IF EXISTS "notifications"."sender_domains";',
+    ]);
+    expect(sql).not.toMatch(/\bDROP COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b|ALTER COLUMN/);
+    expect(sql).not.toMatch(/ALTER TABLE (?!"notifications"\."email_connections")/);
+  });
+
+  it("has no column for a key reference or a plain key", () => {
+    const columns = [...columnsEverAddedTo("notifications", "email_connections", readSql())];
+    expect(columns.filter((name) => /kek|api_key|secret_key|password/.test(name))).toEqual([]);
+  });
+
+  it("sorts after the notification settings migration", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((name) => /^\d{14}_/.test(name))
+      .sort();
+    expect(names.indexOf("20261130000000_store_email_connections")).toBeGreaterThan(
+      names.indexOf("20261129000000_notification_settings"),
+    );
+  });
+
+  it("matches the Prisma model and no sender domain model remains", () => {
+    const text = schema();
+    const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    for (const field of [
+      /tenantId\s+String\s+@id\s+@map\("tenant_id"\)/,
+      /kind\s+String/,
+      /fromEmail\s+String\s+@map\("from_email"\)/,
+      /sealedCredentials\s+String\s+@map\("sealed_credentials"\)/,
+      /secretLast4\s+String\s+@map\("secret_last4"\)/,
+      /enabled\s+Boolean\s+@default\(true\)/,
+      /status\s+String/,
+      /lastError\s+String\?\s+@map\("last_error"\)/,
+      /lastErrorAt\s+DateTime\?\s+@map\("last_error_at"\)/,
+      /verifiedAt\s+DateTime\?\s+@map\("verified_at"\)/,
+      /version\s+Int\s+@default\(1\)/,
+      /updatedAt\s+DateTime\s+@updatedAt\s+@map\("updated_at"\)/,
+      /@@map\("email_connections"\)/,
+      /@@schema\("notifications"\)/,
+    ])
+      expect(model).toMatch(field);
+    expect(text).not.toMatch(/model SenderDomain\b/);
+    expect(text).not.toMatch(/sender_domains/);
+  });
+});
+
+describe("email connection SMTP kind (20261201000000)", () => {
+  const name = "20261201000000_email_connection_smtp";
+  const migration = join(migrationsDir, name, "migration.sql");
+  const readSql = () => readFileSync(migration, "utf-8").replace(/\r\n/g, "\n");
+  const code = () =>
+    readSql()
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("--"))
+      .join("\n");
+
+  it("widens only the kind CHECK, by dropping and re-adding the one named constraint", () => {
+    const sql = code();
+    expect(sql).toContain(
+      'ALTER TABLE "notifications"."email_connections"\n  DROP CONSTRAINT IF EXISTS "email_connections_kind_check";',
+    );
+    expect(sql).toContain(
+      `ADD CONSTRAINT "email_connections_kind_check" CHECK ("kind" IN ('resend','smtp'));`,
+    );
+    expect(sql.match(/\bALTER TABLE\b/g)).toHaveLength(2);
+    expect(sql).not.toMatch(
+      /\bCREATE\b|\bDROP TABLE\b|\bDROP COLUMN\b|\bADD COLUMN\b|\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b|ALTER COLUMN|POLICY/,
+    );
+    expect(sql).not.toMatch(/ALTER TABLE (?!"notifications"\."email_connections")/);
+  });
+
+  it("adds no column: the mailbox details live in the sealed blob", () => {
+    expect(readSql()).not.toMatch(/ADD COLUMN/i);
+    const columns = [...columnsEverAddedTo("notifications", "email_connections", readSql())];
+    expect(columns).toEqual([]);
+  });
+
+  it("sorts after the store email connections migration", () => {
+    const names = readdirSync(migrationsDir)
+      .filter((entry) => /^\d{14}_/.test(entry))
+      .sort();
+    expect(names.indexOf(name)).toBeGreaterThan(
+      names.indexOf("20261130000000_store_email_connections"),
+    );
+  });
+
+  it("the Prisma model keeps `kind` a plain string (the CHECK is the rule)", () => {
+    const text = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "notifications.prisma"),
+      "utf-8",
+    );
+    const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
+    expect(model).toMatch(/kind\s+String/);
+  });
+});
+
 describe("leads.leads — migration history matches the Prisma model (Lead Site Part C)", () => {
   const allSql = readdirSync(migrationsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
@@ -846,7 +1510,7 @@ describe("tracking.ad_platform_connections — migration history matches the Pri
 
   it("is additive: the migration only creates the table (no drop, no alter of existing objects)", () => {
     const sql = readFileSync(
-      join(migrationsDir, "20261123000000_ad_platform_connections", "migration.sql"),
+      join(migrationsDir, "20261204000000_ad_platform_connections", "migration.sql"),
       "utf-8",
     ).replace(/\r\n/g, "\n");
     expect(sql).toMatch(/^SET row_security = off;$/m);

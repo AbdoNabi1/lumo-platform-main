@@ -13,12 +13,12 @@ const defaults = readBrandStyle(DEFAULT_THEME_DOCUMENT.brand);
 describe("brandToCssVars", () => {
   it("maps the default brand onto the design system's own values", () => {
     const vars = brandToCssVars(defaults);
-    expect(vars["--background"]).toBe("#f8fafc");
-    expect(vars["--foreground"]).toBe("#0f172a");
-    expect(vars["--primary"]).toBe("#635bff");
+    expect(vars["--background"]).toBe("#fcf8f3");
+    expect(vars["--foreground"]).toBe("#212529");
+    expect(vars["--primary"]).toBe("#b8451d");
     expect(vars["--primary-foreground"]).toBe("#ffffff");
-    expect(vars["--brand-accent"]).toBe("#f1f5f9");
-    expect(vars["--ring"]).toBe("#635bff");
+    expect(vars["--brand-accent"]).toBe("#f3e9de");
+    expect(vars["--ring"]).toBe("#b8451d");
     expect(vars["--shop-radius-xl"]).toBe("16px");
     expect(vars["--shop-base-size"]).toBe("15px");
     expect(vars).toMatchSnapshot();
@@ -118,8 +118,8 @@ describe("brandStyleSheet", () => {
       for (const bad of ["<", ">", ";}", "script", "display:none", "url(", "expression"])
         expect(css).not.toContain(bad);
       // The hostile field's whole group falls back to the defaults.
-      expect(css).toContain("--ring:#635bff");
-      expect(css).toContain("--background:#f8fafc");
+      expect(css).toContain("--ring:#b8451d");
+      expect(css).toContain("--background:#fcf8f3");
     },
   );
 

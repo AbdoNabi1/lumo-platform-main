@@ -16,6 +16,9 @@ import type {
   ActivateDirectoryEntry,
   FindStaffDirectoryEntry,
   RecordPendingOwner,
+  ReleaseStaffEmail,
+  ReserveStaffEmail,
+  ReserveStaffEmailInput,
 } from "../application/staff-directory.use-cases";
 import type { StaffDirectoryEntryInput, StaffDirectoryEntryView } from "../domain/staff-directory";
 import type { SiteType, StoreSettingsInput } from "../domain/store-settings";
@@ -75,6 +78,8 @@ export interface TenancyControllerDeps {
   readonly recordPendingOwner: RecordPendingOwner;
   readonly activateDirectoryEntry: ActivateDirectoryEntry;
   readonly findStaffDirectoryEntry: FindStaffDirectoryEntry;
+  readonly reserveStaffEmail: ReserveStaffEmail;
+  readonly releaseStaffEmail: ReleaseStaffEmail;
   readonly slugTaken: (slug: string) => Promise<boolean>;
 }
 
@@ -143,6 +148,20 @@ export class TenancyController {
     input: StaffDirectoryEntryInput,
   ): Promise<Result<StaffDirectoryEntryView, DomainError>> {
     return this.deps.recordPendingOwner.execute(input);
+  }
+
+  /** Wave 1d: holds an invited teammate's email for a shop (`active` row, no credential yet). */
+  async reserveStaffEmail(
+    input: ReserveStaffEmailInput,
+  ): Promise<Result<StaffDirectoryEntryView, DomainError>> {
+    return this.deps.reserveStaffEmail.execute(input);
+  }
+
+  /** Wave 1d: gives the reservation back; a no-op unless email, shop and owner all match. */
+  async releaseStaffEmail(
+    input: StaffDirectoryEntryInput,
+  ): Promise<Result<{ readonly released: boolean }, DomainError>> {
+    return this.deps.releaseStaffEmail.execute(input);
   }
 
   async activateDirectoryEntry(

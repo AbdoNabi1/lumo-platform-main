@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { defineRoute, type RequestContext, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
@@ -13,6 +14,14 @@ import {
 } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./public-staff-auth-routes";
+import {
+  confirmStaffSetup,
+  finishStaffLogin,
+  loginVerifyBody,
+  setupConfirmBody,
+  setupStartBody,
+  startStaffSetup,
+} from "./staff-login-verify";
 
 const signupBody = z
   .object({
@@ -39,7 +48,17 @@ const resetCompleteBody = z
   })
   .strict();
 
+const inviteAcceptBody = z
+  .object({
+    store: z.string().min(1).max(200),
+    token: z.string().min(1).max(512),
+    password: z.string().max(256),
+  })
+  .strict();
+
 const HOUR_MS = 60 * 60 * 1000;
+const INVITE_ACCEPT_LIMIT = 10;
+const INVITE_ACCEPT_WINDOW_MS = 15 * 60 * 1000;
 const SIGNUP_IP_LIMIT = 5;
 const SIGNUP_EMAIL_LIMIT = 3;
 const LOGIN_LIMIT = 10;
@@ -222,7 +241,11 @@ export function publicMerchantRoutes(
         });
         if (session.status === 200) return session;
         const error = (session.body as { error?: { code?: string } } | null)?.error;
-        if (session.status === 403 && error?.code === "MFA_REQUIRED") return session;
+        if (
+          session.status === 403 &&
+          (error?.code === "MFA_REQUIRED" || error?.code === "MFA_SETUP_REQUIRED")
+        )
+          return session;
         if (session.status === 503 || error?.code === "NOT_CONFIGURED") {
           // The client still gets the ordinary 401 (nothing about the deployment on the wire), but
           // every merchant sign-in is failing, so the operator has to hear about it.
@@ -232,6 +255,66 @@ export function publicMerchantRoutes(
           );
         }
         return INVALID_CREDENTIALS;
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/verify",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary: "Public: finish a merchant sign-in with the code from the authenticator app",
+      schema: { body: loginVerifyBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // The challenge names the store (signed when the merchant's password was right): no tenant
+        // check against the request, which is the platform tenant by the gate above.
+        return await finishStaffLogin({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/setup/start",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: start two-step setup at merchant sign-in (returns the key ONCE; never cached)",
+      schema: { body: setupStartBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // The setup challenge names the store (signed when the password was right): no tenant check against
+        // the request, which is the platform tenant by the gate above.
+        return await startStaffSetup({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/login/setup/confirm",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish setup at merchant sign-in with the first code; returns the token and backup codes ONCE",
+      schema: { body: setupConfirmBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        return await confirmStaffSetup({
+          admin,
+          body,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        });
       },
     }),
     defineRoute({
@@ -277,6 +360,33 @@ export function publicMerchantRoutes(
         const refused = gate(context);
         if (refused !== null) return refused;
         return admin.staffAuth.completePasswordReset({
+          tenantId: body.store,
+          token: body.token,
+          password: body.password,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/merchant/invitations/accept",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: accept a staff invitation from the merchant sign-in page (store in the body)",
+      schema: { body: inviteAcceptBody },
+      handle: async ({ body, context }) => {
+        const refused = gate(context);
+        if (refused !== null) return refused;
+        // Bucketed by a hash of the token (and the store it names), never by the token itself.
+        const spent = await limited(
+          `rl:${body.store}:staff-invite-accept:${createHash("sha256").update(body.token).digest("hex")}`,
+          INVITE_ACCEPT_LIMIT,
+          INVITE_ACCEPT_WINDOW_MS,
+          "Too many invitation attempts",
+        );
+        if (spent !== null) return spent;
+        return admin.staff.acceptInvitation({
           tenantId: body.store,
           token: body.token,
           password: body.password,

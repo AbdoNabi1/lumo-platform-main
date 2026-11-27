@@ -53,6 +53,7 @@ export { BillingPaymentMethod } from "./domain/billing-payment-method";
 export type { BillingPaymentMethodStatus } from "./domain/billing-payment-method";
 export type { BillingPaymentMethodRepository } from "./domain/repositories";
 export { PrismaBillingPaymentMethodRepository } from "./infrastructure/prisma-repositories";
+export { PrismaBillingSealedCredentialStore } from "./infrastructure/prisma-sealed-credential-store";
 export {
   NoStoredPaymentMethodError,
   StoredMethodBillingPaymentsAdapter,

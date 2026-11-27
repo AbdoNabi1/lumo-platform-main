@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ar } from "@/messages/ar";
 import { en } from "@/messages/en";
 import { DEFAULT_LOCALE, dictionaryFor, directionFor, isLocale, LOCALES } from "./i18n";
@@ -10,6 +10,10 @@ import { DEFAULT_LOCALE, dictionaryFor, directionFor, isLocale, LOCALES } from "
  * locale.
  */
 
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
 type Leaf = readonly [path: string, value: string];
 
 function leaves(value: unknown, path: string[] = []): Leaf[] {
@@ -20,6 +24,8 @@ function leaves(value: unknown, path: string[] = []): Leaf[] {
 
 /** Keys whose Arabic value is legitimately identical to English (keyboard glyphs, symbols). */
 const SHARED_VERBATIM = new Set([
+  // Paper size is an international format identifier, not translatable prose.
+  "carrierSettings.a4",
   "topbar.searchHint",
   // Plan 3B — order page templates that carry only placeholders and a symbol, no words: "{status}
   // ({count})", "{price} × {quantity}", and the em dash for "no payment method". Nothing to translate.
@@ -41,6 +47,18 @@ const SHARED_VERBATIM = new Set([
   "shippingSettings.between",
   "shippingSettings.noCondition",
   "taxSettings.noOverrides",
+  // Customers — a language is named in its own script in both locales (an endonym: "English",
+  // "العربية"), so the language picker reads the same whichever way the admin reads the page.
+  "customerForm.languageEnglish",
+  "customerForm.languageArabic",
+  // Customers > Segments — the example in the country-code box is ISO 3166 alpha-2 codes typed in
+  // Latin letters in both locales ("EG, SA"); nothing to translate.
+  "segments.editor.countriesPlaceholder",
+  // Content > Files — the upload-failure template "{name}: {reason}" is only placeholders and
+  // punctuation, and `files.unknown` is the em dash for "no value" (type/size/date unavailable).
+  // Neither carries a word; nothing to translate (same rationale as the 3B/3C entries above).
+  "files.uploadFailed",
+  "files.unknown",
   // Settings → Domains: an example hostname typed in Latin letters (hostnames are ASCII); nothing to
   // translate.
   "domainsPage.hostnamePlaceholder",

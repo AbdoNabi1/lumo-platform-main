@@ -27,13 +27,32 @@ export type CartActionResult =
   | { readonly ok: true }
   | {
       readonly ok: false;
-      /** `"unavailable"`: the product is not for sale (the server could not resolve a price). `"choose-variant"`
+      /** Wave 2a: with `"limit"`, the server's own sentence ("You can add up to 3 of this item"). */
+      readonly message?: string;
+      /** `"limit"` (Wave 2a): the shop caps one cart line and this quantity is above it (422 field `quantity`).
+       * `"unavailable"`: the product is not for sale (the server could not resolve a price). `"choose-variant"`
        * (Plan 2A): the product has several variants and none was named (API `VARIANT_REQUIRED`).
        * `"ownership"`: the
        * Runtime API 404'd — a stale/cleared session cookie no longer matches any cart it can
        * resolve. `"network"`: the Runtime API is unreachable or returned an unexpected status. */
-      readonly reason: "unavailable" | "choose-variant" | "ownership" | "network";
+      readonly reason: "unavailable" | "choose-variant" | "ownership" | "network" | "limit";
     };
+
+/**
+ * The server's refusal of a cart line above the shop's add-to-cart limit: a 422 whose field error
+ * names `quantity` (`apps/admin/src/http/public-cart-routes.ts`). Returns its message, else `null`.
+ */
+function limitMessage(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const { fields } = body as { readonly fields?: unknown };
+  if (!Array.isArray(fields)) return null;
+  for (const entry of fields as readonly unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { field, message } = entry as { readonly field?: unknown; readonly message?: unknown };
+    if (field === "quantity" && typeof message === "string" && message !== "") return message;
+  }
+  return null;
+}
 
 /** Starts a new guest session: a fresh opaque id in the cookie. The old session's cart is left behind. */
 async function replaceSessionRef(): Promise<string> {
@@ -117,6 +136,11 @@ export async function addToCart(
   if (added.status === 422 && isVariantRequired(added.body)) {
     return { ok: false, reason: "choose-variant" };
   }
+  // Wave 2a: the shop's add-to-cart limit is a 422 naming `quantity`, which is not "unavailable".
+  if (added.status === 422) {
+    const message = limitMessage(added.body);
+    if (message !== null) return { ok: false, reason: "limit", message };
+  }
   // Any other 422 is the server refusing to sell this product (draft, archived, unknown variant).
   if (added.status === 422) return { ok: false, reason: "unavailable" };
   if (added.status < 200 || added.status >= 300) return { ok: false, reason: "network" };
@@ -136,6 +160,8 @@ export async function changeQuantity(
 
   const result = await changeCartItemQuantity(cartId, sessionRef, productId, quantity, variantId);
   if (result.status === 404) return { ok: false, reason: "ownership" };
+  const message = result.status === 422 ? limitMessage(result.body) : null;
+  if (message !== null) return { ok: false, reason: "limit", message };
   if (result.status < 200 || result.status >= 300) return { ok: false, reason: "network" };
 
   revalidatePath("/cart");

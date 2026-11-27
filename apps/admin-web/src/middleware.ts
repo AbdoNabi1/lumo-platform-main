@@ -59,6 +59,8 @@ const PUBLIC_PREFIXES = [
   "/reset-password",
   "/auth/forgot",
   "/auth/reset",
+  // Wave 1d: an invited person has no session yet; the link carries a single-use token.
+  "/accept-invite",
   "/logout",
   "/api/healthz",
 ];
@@ -91,6 +93,9 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/discounts", "operator"],
   ["/promotions/new", "operator"],
   ["/promotions", "viewer"],
+  // Shopify parity Wave 1b: Files read for viewers (the API refuses their writes; the page hides
+  // those controls). Listed before `/content`, which stays operator-only (longest prefix wins).
+  ["/content/files", "viewer"],
   ["/content", "operator"],
   ["/pages/new", "operator"],
   ["/pages", "viewer"],
@@ -112,6 +117,12 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/components-library/new", "operator"],
   ["/components-library", "viewer"],
   ["/marketing", "operator"],
+  // Shopify parity Wave 1b: adding a customer is operator work; the list and each customer read for
+  // viewers (the API refuses their writes and the screens hide those controls).
+  ["/customers/new", "operator"],
+  // Wave 1c: a new segment (and a duplicate, which opens it with `?from=`) is operator work; the
+  // list and each segment read for viewers (the API refuses their writes, the screens hide them).
+  ["/customers/segments/new", "operator"],
   ["/customers", "viewer"],
   // Lead Site Part C: every role reads the inbox; changing a status and the CSV export are
   // operator permissions the API (and the screen / export route) enforce themselves.
@@ -135,12 +146,17 @@ const ROUTE_ROLE_REQUIREMENTS: readonly (readonly [string, Role])[] = [
   ["/draft-orders", "viewer"],
   ["/products/new", "operator"],
   ["/products", "viewer"],
+  // Shopify parity Wave 1a: collections read for viewers; creating one is operator work.
+  ["/collections/new", "operator"],
+  ["/collections", "viewer"],
   ["/categories", "viewer"],
   ["/brands", "viewer"],
   ["/inventory", "operator"],
   ["/pricing", "operator"],
   ["/analytics", "viewer"],
   ["/account/password", "viewer"],
+  // Wave 1e: every role protects its own account with two-step verification.
+  ["/account/security", "viewer"],
   ["/", "viewer"],
 ];
 

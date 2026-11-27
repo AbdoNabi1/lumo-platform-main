@@ -1,0 +1,43 @@
+{
+  "success": true,
+  "message": "Done successfully.",
+  "data": {
+    "_id": "NGnhfEz_cb",
+    "state": {
+      "code": 10,
+      "value": "Pickup requested"
+    },
+    "maskedState": "Created",
+    "cod": 50,
+    "type": {
+      "code": 10,
+      "value": "Send"
+    },
+    "businessReference": "43535252",
+    "trackingNumber": "710892",
+    "dropOffAddress": {
+      "city": {
+        "_id": "ZzKt7Gf6Yn",
+        "name": "Red Sea",
+        "sector": 8
+      },
+      "zone": {
+        "_id": "pCuOAEOeHI",
+        "name": "Qesm Hurghada 2"
+      },
+      "district": "Qesm Hurghada 2"
+    },
+    "timeline": [
+      {
+        "value": "Created",
+        "done": true
+      }
+    ],
+    "history": [
+      {
+        "title": "Created",
+        "date": "2021-02-08T12:38:07.275Z"
+      }
+    ]
+  }
+}

@@ -16,6 +16,7 @@ export { PAYMENTS_PUBLISHED_EVENTS } from "./infrastructure/payment-event-transl
 export type {
   FinancePort,
   NotificationPort,
+  PaymentNotificationEvent,
   OrdersPort,
   PaymentCredentialVault,
   PaymentProviderResolver,
@@ -48,6 +49,7 @@ export {
 } from "./infrastructure/built-in-provider-registrations";
 export type { MerchantPaymentSettingsDto } from "./application/merchant-payment-settings.use-cases";
 export { EnvelopePaymentCredentialVault } from "./infrastructure/envelope-payment-credential-vault";
+export { PrismaPaymentSealedCredentialStore } from "./infrastructure/prisma-sealed-credential-store";
 export { TenantPaymentProviderResolver } from "./infrastructure/tenant-payment-provider-resolver";
 export { CashOnDeliveryProvider } from "./infrastructure/cash-on-delivery-provider";
 export { ManualPaymentProvider } from "./infrastructure/manual-payment-provider";

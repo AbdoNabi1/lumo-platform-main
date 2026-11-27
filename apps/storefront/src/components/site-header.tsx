@@ -31,11 +31,17 @@ export function SiteHeader({
   locale,
   shell,
   previewToken,
+  showAccountLink = true,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
   readonly shell: StorefrontShell;
   readonly previewToken: string | null;
+  /**
+   * Wave 2a: false when the shop hides the account link or has customer accounts off; the icon (and
+   * nothing else) goes. Default true: today's header.
+   */
+  readonly showAccountLink?: boolean;
 }) {
   const name = shell.storeName.trim();
   const logo = shell.brand.logo.image;
@@ -121,11 +127,13 @@ export function SiteHeader({
            * `/account/login`, so the destination is correct either way and is decided by a real
            * server-side session check rather than by a guessed cookie-presence test in the header.
            */}
-          <Button asChild variant="ghost" size="icon" aria-label={t.nav.account}>
-            <Link href={withPreview("/account", previewToken)}>
-              <UserIcon aria-hidden="true" className="size-4" />
-            </Link>
-          </Button>
+          {showAccountLink && (
+            <Button asChild variant="ghost" size="icon" aria-label={t.nav.account}>
+              <Link href={withPreview("/account", previewToken)}>
+                <UserIcon aria-hidden="true" className="size-4" />
+              </Link>
+            </Button>
+          )}
           <LocaleSwitch
             locale={locale}
             label={t.language.switch}

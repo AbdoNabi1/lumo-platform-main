@@ -1,11 +1,11 @@
 import type { UseCase } from "@platform/application";
-import type { CursorPage, Paginated } from "@platform/types";
+import type { Paginated } from "@platform/types";
 import { ok, type Result } from "@platform/types";
 import type { DomainError } from "@platform/utils";
-import type { MediaAssetRepository } from "../domain/library-repositories";
+import type { MediaAssetListQuery, MediaAssetRepository } from "../domain/library-repositories";
 import type { MediaAsset } from "../domain/media-asset";
 
-export interface ListMediaAssetsInput extends CursorPage {
+export interface ListMediaAssetsInput extends MediaAssetListQuery {
   readonly tenantId: string;
 }
 

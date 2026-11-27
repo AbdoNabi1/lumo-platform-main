@@ -53,12 +53,28 @@ export class StaffDirectoryEntry {
     return ok(new StaffDirectoryEntry({ email, shopId, ownerExternalId, status: "pending" }));
   }
 
+  /**
+   * A directory row for an invited teammate: already `active` because no credential exists for it
+   * until the invitation is accepted (so sign-in still answers 401 and a reset sends nothing).
+   */
+  static createActive(
+    input: StaffDirectoryEntryInput,
+  ): Result<StaffDirectoryEntry, ValidationError> {
+    const created = StaffDirectoryEntry.create(input);
+    return created.ok ? ok(created.value.activate()) : created;
+  }
+
   static restore(props: StaffDirectoryEntryProps): StaffDirectoryEntry {
     return new StaffDirectoryEntry({ ...props });
   }
 
   activate(): StaffDirectoryEntry {
     return new StaffDirectoryEntry({ ...this.props, status: "active" });
+  }
+
+  /** The same row held for another owner (same shop); status is kept. */
+  withOwner(ownerExternalId: string): StaffDirectoryEntry {
+    return new StaffDirectoryEntry({ ...this.props, ownerExternalId: ownerExternalId.trim() });
   }
 
   get email(): string {

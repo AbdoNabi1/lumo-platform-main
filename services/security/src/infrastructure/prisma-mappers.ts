@@ -30,6 +30,7 @@ import {
   type PolicyStatus,
 } from "../domain/policy";
 import { Principal } from "../domain/principal";
+import type { PrincipalSummary } from "../domain/repositories";
 import { RelationTuple } from "../domain/relationship";
 import { Role, type RoleStatus } from "../domain/role";
 import { RoleAssignment, type AssignmentStatus } from "../domain/role-assignment";
@@ -75,6 +76,18 @@ export const PrincipalMapper = {
     displayName: p.displayName,
     status: p.status,
     attributes: { ...p.attributes },
+  }),
+  /** Staff read model: the columns the `Principal` aggregate does not carry (`createdAt`). */
+  toSummary: (r: {
+    id: string;
+    externalId: string;
+    status: string;
+    createdAt: Date;
+  }): PrincipalSummary => ({
+    id: r.id,
+    externalId: r.externalId,
+    status: r.status as PrincipalStatus,
+    createdAt: r.createdAt,
   }),
   toDomain: (r: {
     id: string;
@@ -304,12 +317,14 @@ export const MfaEnrollmentMapper = {
     backupCodeHashes: [...m.backupCodeHashes],
     deviceRef: m.deviceRef,
     activatedAt: m.activatedAt,
+    lastUsedStep: m.lastUsedStep,
     createdAtDomain: m.createdAt,
   }),
   toUpdate: (m: MfaEnrollment) => ({
     status: m.status,
     backupCodeHashes: [...m.backupCodeHashes],
     activatedAt: m.activatedAt,
+    lastUsedStep: m.lastUsedStep,
   }),
   toDomain: (r: {
     id: string;
@@ -320,6 +335,7 @@ export const MfaEnrollmentMapper = {
     backupCodeHashes: unknown;
     deviceRef: string | null;
     activatedAt: Date | null;
+    lastUsedStep: number | null;
     createdAtDomain: Date;
     version: number;
   }): MfaEnrollment =>
@@ -332,6 +348,7 @@ export const MfaEnrollmentMapper = {
       deviceRef: r.deviceRef,
       createdAt: r.createdAtDomain,
       activatedAt: r.activatedAt,
+      lastUsedStep: r.lastUsedStep,
       version: r.version,
     }),
 };

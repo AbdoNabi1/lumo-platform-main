@@ -83,7 +83,7 @@ export function AppShellView({ children, t, locale, activeNavId, user, store }: 
       >
         <div className="flex items-center gap-2.5 px-5 max-lg:justify-center max-lg:px-2">
           <BrandMark />
-          <span className="truncate text-xl font-semibold tracking-tight max-lg:sr-only">
+          <span className="font-display truncate text-xl font-semibold tracking-tight max-lg:sr-only">
             {storeName}
           </span>
         </div>
@@ -127,7 +127,7 @@ export function AppShellView({ children, t, locale, activeNavId, user, store }: 
 
           <div className="flex items-center gap-2 md:hidden">
             <BrandMark className="size-5" />
-            <span className="truncate font-semibold">{storeName}</span>
+            <span className="font-display truncate font-semibold">{storeName}</span>
           </div>
 
           <GlobalSearch

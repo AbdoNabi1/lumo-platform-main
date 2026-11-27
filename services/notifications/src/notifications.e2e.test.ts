@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Clock, IdGenerator } from "@platform/contracts";
 import { InMemoryEventSerializer } from "@platform/domain-events/testing";
 import { wireNotifications } from "./composition";
+import { InMemoryStoreEmailProvider } from "./infrastructure/in-memory-store-email-provider";
+import { testEmailVault } from "./testing/email-connection-doubles";
+import { STORE_KEY } from "./testing/store-email-fixture";
 
 const TENANT = "tenant-a";
 
@@ -12,12 +15,34 @@ function sequentialIds(): IdGenerator {
 
 const clock: Clock = { now: () => new Date("2026-07-12T00:00:00.000Z") };
 
-function wire() {
-  return wireNotifications({
-    serializer: new InMemoryEventSerializer(),
-    idGenerator: sequentialIds(),
-    clock,
+/** The email channel is real: these lifecycle tests give the store a connected email account. */
+async function wire() {
+  const app = wireNotifications(
+    {
+      serializer: new InMemoryEventSerializer(),
+      idGenerator: sequentialIds(),
+      clock,
+    },
+    {
+      store: {
+        get: () => Promise.resolve({ storeName: "Shop", contactEmail: null, defaultLocale: "en" }),
+      },
+      emailVault: testEmailVault(),
+      emailProvider: new InMemoryStoreEmailProvider(),
+      recipients: {
+        resolve: () => Promise.resolve({ name: "Ada", email: "ada@example.com", language: null }),
+      },
+    },
+  );
+  await app.emailConnection.save({
+    tenantId: TENANT,
+    expectedVersion: null,
+    kind: "resend",
+    fromEmail: "shop@example.com",
+    apiKey: STORE_KEY,
+    actorEmail: "staff@example.com",
   });
+  return app;
 }
 
 function createInput(idempotencyKey: string) {
@@ -34,7 +59,7 @@ function createInput(idempotencyKey: string) {
   };
 }
 
-async function newNotificationId(app: ReturnType<typeof wire>): Promise<string> {
+async function newNotificationId(app: Awaited<ReturnType<typeof wire>>): Promise<string> {
   const created = await app.notifications.create(createInput("idem-1"));
   expect(created.status).toBe(201);
   return (created.body as { notificationId: string }).notificationId;
@@ -42,7 +67,7 @@ async function newNotificationId(app: ReturnType<typeof wire>): Promise<string> 
 
 describe("notifications (end to end)", () => {
   it("runs the full Sprint 4.12 lifecycle: create -> queue -> send -> delivered, publishing canonical events", async () => {
-    const app = wire();
+    const app = await wire();
     const id = await newNotificationId(app);
 
     const queued = await app.notifications.queue({ tenantId: TENANT, notificationId: id });
@@ -71,7 +96,7 @@ describe("notifications (end to end)", () => {
   });
 
   it("creation is idempotent by idempotencyKey — a replay returns the existing notification", async () => {
-    const app = wire();
+    const app = await wire();
     const first = await app.notifications.create(createInput("idem-shared"));
     const replay = await app.notifications.create(createInput("idem-shared"));
     expect(replay.status).toBe(201);
@@ -81,7 +106,7 @@ describe("notifications (end to end)", () => {
   });
 
   it("provider-callback idempotency: first processed, replay deduped", async () => {
-    const app = wire();
+    const app = await wire();
     const id = await newNotificationId(app);
     await app.notifications.queue({ tenantId: TENANT, notificationId: id });
     await app.notifications.send({ tenantId: TENANT, notificationId: id });
@@ -107,7 +132,7 @@ describe("notifications (end to end)", () => {
   });
 
   it("rejects an illegal transition (409)", async () => {
-    const app = wire();
+    const app = await wire();
     const id = await newNotificationId(app);
     const response = await app.notifications.advance({
       tenantId: TENANT,
@@ -118,7 +143,7 @@ describe("notifications (end to end)", () => {
   });
 
   it("returns 404 for an unknown notification", async () => {
-    const app = wire();
+    const app = await wire();
     const response = await app.notifications.advance({
       tenantId: TENANT,
       notificationId: "missing",
@@ -128,7 +153,7 @@ describe("notifications (end to end)", () => {
   });
 
   it("rejects an empty channel list at creation (422)", async () => {
-    const app = wire();
+    const app = await wire();
     const response = await app.notifications.create({ ...createInput("idem-empty"), channels: [] });
     expect(response.status).toBe(422);
   });

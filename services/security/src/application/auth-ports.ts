@@ -69,12 +69,28 @@ export interface MfaProviderPort {
    */
   enroll(input: {
     readonly principalRef: string;
-  }): Promise<{ readonly secretRef: string; readonly provisioningUri?: string }>;
+    /** Human-readable account name shown in the authenticator app (the staff email) — never an internal id. */
+    readonly accountLabel: string;
+  }): Promise<{
+    readonly secretRef: string;
+    readonly provisioningUri?: string;
+    /** The unspaced base32 secret for manual entry; shown to the caller once, never persisted. */
+    readonly manualKey?: string;
+  }>;
   issueChallenge(input: {
     readonly secretRef: string | null;
     readonly deliveryHint?: string;
   }): Promise<{ readonly challengeRef: string }>;
   verify(input: { readonly secretRef: string | null; readonly code: string }): Promise<boolean>;
+  /**
+   * Like `verify`, but returns the matched TOTP time-step counter (`floor(unix / 30)` among now-1, now,
+   * now+1) so the caller can reject a replay; `null` when the code does not match.
+   */
+  verifyStep(input: {
+    readonly secretRef: string | null;
+    readonly code: string;
+    readonly at?: Date;
+  }): Promise<number | null>;
 }
 
 export interface MfaProviderResolver {

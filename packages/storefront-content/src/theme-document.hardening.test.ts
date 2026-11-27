@@ -99,7 +99,7 @@ describe("the default document", () => {
     expect(() => {
       (doc.brand.colors as { primary: string }).primary = "#000000";
     }).toThrow(TypeError);
-    expect(DEFAULT_THEME_DOCUMENT.brand.colors.primary).toBe("#635bff");
+    expect(DEFAULT_THEME_DOCUMENT.brand.colors.primary).toBe("#b8451d");
   });
 });
 

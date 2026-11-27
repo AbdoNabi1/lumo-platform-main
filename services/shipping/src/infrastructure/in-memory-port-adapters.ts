@@ -47,11 +47,12 @@ export class InMemoryNotificationAdapter implements NotificationPort {
 export class InMemoryProcessedCarrierWebhookStore implements ProcessedCarrierWebhookStore {
   private readonly processed = new Set<string>();
 
-  async hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean> {
-    return this.processed.has(JSON.stringify([tenantId, carrier, eventId]));
+  hasProcessed(carrier: string, eventId: string, tenantId: string): Promise<boolean> {
+    return Promise.resolve(this.processed.has(JSON.stringify([tenantId, carrier, eventId])));
   }
 
-  async markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void> {
+  markProcessed(carrier: string, eventId: string, tenantId: string): Promise<void> {
     this.processed.add(JSON.stringify([tenantId, carrier, eventId]));
+    return Promise.resolve();
   }
 }

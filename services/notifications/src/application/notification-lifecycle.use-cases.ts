@@ -24,6 +24,13 @@ export interface NotificationIdInput {
 
 export interface AdvanceNotificationInput extends NotificationIdInput {
   readonly toStatus: NotificationStatusValue;
+  /** A short machine code recorded on the history entry (`DISABLED`...); never free text or an address. */
+  readonly reason?: string;
+}
+
+export interface SendNotificationInput extends NotificationIdInput {
+  /** In-memory only values for this send (see `ProviderSendRequest.transient`). Never persisted. */
+  readonly transientVariables?: Readonly<Record<string, string>>;
 }
 
 export interface NotificationLifecycleDeps {
@@ -101,6 +108,7 @@ export class AdvanceNotification implements UseCase<
           input.toStatus,
           this.deps.idGenerator.generate(),
           this.deps.clock.now(),
+          input.reason,
         );
       } catch (error) {
         if (isDomainError(error)) return err(error);
@@ -219,9 +227,13 @@ export class SendNotification implements UseCase<
   }
 
   async execute(
-    input: NotificationIdInput,
+    input: SendNotificationInput,
   ): Promise<Result<NotificationStatusOutput, DomainError>> {
-    const precheck = await this.precheck(input.notificationId, input.tenantId);
+    const precheck = await this.precheck(
+      input.notificationId,
+      input.tenantId,
+      input.transientVariables,
+    );
     if (!precheck.ok) return err(precheck.error);
     const { channel, request } = precheck.value;
 
@@ -240,6 +252,7 @@ export class SendNotification implements UseCase<
   private async precheck(
     notificationId: string,
     tenantId: string,
+    transient: Readonly<Record<string, string>> | undefined,
   ): Promise<Result<SendPrecheck, DomainError>> {
     return this.deps.unitOfWork.run<Result<SendPrecheck, DomainError>>(async (tx) => {
       const notification = await this.deps.notifications.findById(notificationId, tenantId, tx);
@@ -255,6 +268,10 @@ export class SendNotification implements UseCase<
         subject: rendered.subject,
         body: rendered.body,
         idempotencyKey,
+        tenantId,
+        templateId: notification.template.templateId,
+        variables: notification.variables,
+        ...(transient === undefined ? {} : { transient }),
       };
 
       return ok({ channel, request });

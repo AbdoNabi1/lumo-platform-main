@@ -1,5 +1,78 @@
 export { wireNotifications } from "./composition";
-export type { NotificationsWiringDeps, WiredNotifications } from "./composition";
+export type {
+  NotificationsMessagingDeps,
+  NotificationsWiringDeps,
+  WiredNotifications,
+} from "./composition";
+export { NotificationSettingsController } from "./interfaces/notification-settings.controller";
+export { EmailConnectionController } from "./interfaces/email-connection.controller";
+export type {
+  EmailConnectionVault,
+  StoreEmailCredentials,
+  SmtpStoreEmailFailureCode,
+  StoreEmailFailureCode,
+  StoreEmailMessage,
+  StoreEmailProvider,
+  StoreEmailResult,
+} from "./application/email-connection-ports";
+export { StoreEmailDelivery, StoreEmailError } from "./application/store-email-delivery";
+export type { StoreEmailErrorCode } from "./application/store-email-delivery";
+export type {
+  EmailConnectionOutput,
+  EmailConnectionView,
+} from "./application/email-connection.use-cases";
+export {
+  EMAIL_CONNECTION_KINDS,
+  isUsableConnection,
+  sanitizeProviderMessage,
+} from "./domain/messaging/email-connection";
+export type {
+  EmailConnectionKind,
+  EmailConnectionStatus,
+  StoredEmailConnection,
+} from "./domain/messaging/email-connection";
+export {
+  EMAIL_CREDENTIALS_KEY_ALIAS,
+  EnvelopeEmailConnectionVault,
+  InMemoryEmailConnectionVault,
+} from "./infrastructure/envelope-email-connection-vault";
+export { InMemoryStoreEmailProvider } from "./infrastructure/in-memory-store-email-provider";
+export {
+  RoutingStoreEmailProvider,
+  SmtpStoreEmailProvider,
+} from "./infrastructure/smtp-store-email-provider";
+export type { SmtpClientOptions } from "./infrastructure/smtp-client";
+export type { RecordedStoreEmail } from "./infrastructure/in-memory-store-email-provider";
+export { TemplatedNotifier } from "./application/templated-notifier";
+export type {
+  TemplatedNotificationOutcome,
+  TemplatedNotificationRequest,
+} from "./application/templated-notifier";
+export type {
+  NotificationLog,
+  OutgoingMail,
+  RecipientContact,
+  RecipientResolverPort,
+  StoreMailSender,
+  StoreProfile,
+  StoreProfilePort,
+} from "./application/messaging-ports";
+export {
+  chooseLocale,
+  isTemplateKey,
+  isTemplateLocale,
+  TEMPLATE_CATALOGUE,
+  TEMPLATE_KEYS,
+  TEMPLATE_LOCALES,
+} from "./domain/messaging/template-catalogue";
+export type { TemplateKey, TemplateLocale } from "./domain/messaging/template-catalogue";
+export {
+  emailDomain,
+  formatFrom,
+  isFreeMailDomain,
+  isValidEmail,
+} from "./domain/messaging/sender-resolution";
+export { escapeHtml, renderTemplate, formatMoney } from "./domain/messaging/template-renderer";
 export { NotificationsController } from "./interfaces/notifications.controller";
 export type { ControllerResponse } from "./interfaces/presenter";
 export { Notification } from "./domain/notification";

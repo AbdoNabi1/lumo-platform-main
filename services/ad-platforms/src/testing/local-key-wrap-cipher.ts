@@ -56,13 +56,19 @@ class LocalKeyWrapCipher implements KeyWrapCipher {
 export const TEST_KEK_ALIAS = "ad-platform-credentials";
 export const TEST_KEK_REF = "test-kek-ref-0123456789-0123456789-abcdef";
 
-/** The real envelope vault over a genuine AES-GCM cipher and a test KEK. */
-export function testEnvelopeVault(kekRef: string = TEST_KEK_REF): EnvelopeCredentialVault {
+/**
+ * The real envelope vault over a genuine AES-GCM cipher and a test KEK. `previousKekRef` models a rotation:
+ * rows sealed under it keep opening (the registry tries the current ref first, then it).
+ */
+export function testEnvelopeVault(
+  kekRef: string = TEST_KEK_REF,
+  previousKekRef?: string,
+): EnvelopeCredentialVault {
   const aliases = new KeyAliasRegistry();
+  if (previousKekRef !== undefined) aliases.set(TEST_KEK_ALIAS, previousKekRef);
   aliases.set(TEST_KEK_ALIAS, kekRef);
   return new EnvelopeCredentialVault(
     new EnvelopeCipher(new LocalKeyWrapCipher(), aliases),
     TEST_KEK_ALIAS,
-    (alias) => (alias === TEST_KEK_ALIAS ? kekRef : undefined),
   );
 }

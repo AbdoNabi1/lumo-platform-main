@@ -1,3 +1,4 @@
+import { logger } from "@platform/utils";
 import { z } from "zod";
 
 /**
@@ -80,12 +81,31 @@ const schema = z
     AUTH_SIGNING_KEY: z.string().min(1).optional(),
     STAFF_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(7200),
     /**
-     * Plan 1C: Resend API key (`re_...`). SECRET — set it only in Railway Variables; never log or commit it.
+     * Plan 1C: Morbeh's OWN Resend API key (`re_...`), for Morbeh -> merchant/staff mail only. SECRET — set it only in Railway Variables; never log or commit it.
      * Absent ⇒ emails are written to the log (recipient + subject only) instead of being sent.
      */
     RESEND_API_KEY: z.string().min(10).optional(),
     /** Plan 1C: the From header. The default is Resend's sandbox sender, which only delivers to the Resend account's own address. */
     EMAIL_FROM: z.string().min(3).default("Morbeh <onboarding@resend.dev>"),
+    /**
+     * Wave 2b2 (D45/D48): merchants' own email keys (Settings > Notifications > Email account) are
+     * sealed under this key-encryption key, SEPARATE from the payment and shipping ones. SECRET, min
+     * 32 chars. The two keys above are Morbeh's OWN account (staff invites, password reset, Morbeh ->
+     * merchant mail) and are NEVER used for a store's customer mail. Absent outside `local` => saving a
+     * store's email account answers 503 NOT_CONFIGURED "Not available yet" and no customer mail is sent.
+     */
+    EMAIL_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    /**
+     * Wave 2b2 Task 3 (D52): lets a store connect its own mailbox over SMTP (Gmail app password,
+     * Outlook, Zoho or any server) instead of a Resend key. NOT a secret. Off by default because
+     * Railway blocks outbound SMTP below the Pro plan: with it off, saving a mailbox answers 503
+     * NOT_CONFIGURED, `GET /notifications/email-connection` says `smtpAvailable: false`, and an
+     * existing mailbox connection sends nothing. Turn it on only after the plan allows SMTP.
+     */
+    EMAIL_SMTP_ENABLED: z
+      .string()
+      .default("false")
+      .transform((v) => v.trim().toLowerCase() === "true"),
     /** Plan 1C: public origin of admin-web; the password-reset email links to `${ADMIN_PUBLIC_URL}/reset-password`. */
     ADMIN_PUBLIC_URL: z.string().url().optional(),
     /** Plan 1B-2: first owner, created once at boot. Remove the password after first sign-in. */
@@ -93,6 +113,13 @@ const schema = z
     BOOTSTRAP_OWNER_PASSWORD: z.string().min(12).optional(),
     /** G-87: key the TOTP secrets are encrypted under. Secret, ≥32 chars. Absent ⇒ legacy constant (local only). */
     MFA_TOTP_KEY: z.string().min(32).optional(),
+    /**
+     * Wave 1f (D25/D31): two-step verification is mandatory for every staff and merchant sign-in
+     * (`required`, the default) or left to each person (`optional`, the Wave 1e behaviour). Enforced only
+     * while the code step is available (AUTH_MODE=native + the real TOTP provider + MFA_TOTP_KEY);
+     * outside `local` the API refuses to boot with `required` and no code step (fail closed).
+     */
+    STAFF_TWO_STEP: z.enum(["required", "optional"]).default("required"),
     KETO_READ_URL: z.string().url().optional(),
     /** Ory Keto write-API base (relation-tuple sync); required outside `local` (H-2, superRefine). */
     KETO_WRITE_URL: z.string().url().optional(),
@@ -236,6 +263,21 @@ const schema = z
     // the ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY;
     // with a KMS backend it is that KMS's key reference.
     PAYMENT_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    // O15 rotation: the KEK ref that was in use BEFORE the current one. Set only while rotating: rows
+    // sealed under it keep opening (the current ref is tried first, this one second) and the one-shot
+    // re-seal job at boot moves them to the current ref. Refused without the current ref, and refused
+    // when equal to it. SECRET (the ref IS the key material with the local backend). Delete it once
+    // the boot log line `credential reseal: ... failed 0` has been seen.
+    PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: z.string().min(32).optional(),
+
+    // ── Merchant carrier credentials (Project 5, Bosta). Merchants' carrier API keys and webhook
+    // secrets are sealed under this key-encryption key, SEPARATE from PAYMENT_CREDENTIALS_KEK_REF.
+    // Carriers need BOTH this and ADMIN_API_PUBLIC_URL (the admin API's public origin, where carriers
+    // post status updates); exactly one set refuses boot outside `local` (Ruling 31).
+    SHIPPING_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+    // O15 rotation: same contract as PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS, for the carrier key.
+    SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: z.string().min(32).optional(),
+    ADMIN_API_PUBLIC_URL: z.string().url().optional(),
 
     // ── Ad platform credentials (Lead Site Part D1). A merchant's Meta / TikTok / Snap / GA4 server token is
     // sealed with `@platform/secrets`' envelope encryption (alias `ad-platform-credentials`) before it reaches
@@ -528,11 +570,38 @@ const schema = z
 
 export type RuntimeConfig = z.infer<typeof schema>;
 
+/**
+ * O15: a `*_KEK_REF_PREVIOUS` only makes sense next to the current key it is being rotated to, and must
+ * differ from it. A stray one (current missing, or the same value) is a harmless operator slip while
+ * rotating, not a reason to take the API down (production incident 2026-11-27): it is dropped from the
+ * config so composition never sees it, with ONE warning per variable that names variables, never values.
+ */
+const ROTATION_PAIRS = [
+  ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
+  ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
+] as const;
+
+function dropUnusablePreviousKeys(config: RuntimeConfig): RuntimeConfig {
+  const result = { ...config };
+  for (const [current, previous] of ROTATION_PAIRS) {
+    const previousValue = config[previous];
+    if (previousValue === undefined) continue;
+    if (config[current] === undefined) {
+      logger.warn(`${previous} ignored: ${current} is not set`);
+      result[previous] = undefined;
+    } else if (previousValue === config[current]) {
+      logger.warn(`${previous} ignored: it equals ${current}, so there is nothing to rotate`);
+      result[previous] = undefined;
+    }
+  }
+  return result;
+}
+
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid runtime configuration: ${issues}`);
   }
-  return parsed.data;
+  return dropUnusablePreviousKeys(parsed.data);
 }

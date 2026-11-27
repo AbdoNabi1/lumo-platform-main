@@ -130,14 +130,29 @@ export class InMemoryPasswordAuthProvider implements AuthenticationProviderPort 
 export class InMemoryTotpMfaProvider implements MfaProviderPort {
   readonly method: MfaMethodKind = "totp";
   constructor(private readonly validCode = "123456") {}
-  async enroll(input: { principalRef: string }): Promise<{ secretRef: string }> {
-    return { secretRef: `totp:${input.principalRef}` };
+  async enroll(input: {
+    principalRef: string;
+    accountLabel: string;
+  }): Promise<{ secretRef: string; manualKey: string; provisioningUri: string }> {
+    const manualKey = "IN-MEMORY-KEY";
+    return {
+      secretRef: `totp:${input.principalRef}`,
+      manualKey,
+      provisioningUri:
+        `otpauth://totp/Morbeh:${encodeURIComponent(input.accountLabel)}` +
+        `?secret=${manualKey}&issuer=Morbeh&algorithm=SHA1&digits=6&period=30`,
+    };
   }
   async issueChallenge(): Promise<{ challengeRef: string }> {
     return { challengeRef: `chal_${Date.now()}` };
   }
   async verify(input: { secretRef: string | null; code: string }): Promise<boolean> {
     return input.code === this.validCode;
+  }
+  /** The fixed code maps to the CURRENT step; replay protection comes from the aggregate's `acceptStep`. */
+  verifyStep(input: { secretRef: string | null; code: string; at?: Date }): Promise<number | null> {
+    if (input.code !== this.validCode) return Promise.resolve(null);
+    return Promise.resolve(Math.floor((input.at ?? new Date()).getTime() / 30_000));
   }
 }
 

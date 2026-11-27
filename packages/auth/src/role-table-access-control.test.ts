@@ -20,12 +20,89 @@ describe("permissionMatches", () => {
 });
 
 describe("RoleTableAccessControl", () => {
+  it("carrier settings are admin-only even though operator has shipping:* (Ruling 26)", async () => {
+    const op = who(["operator"]);
+    expect(await acl.authorize(op, "shipping:create_label")).toBe(true);
+    expect(await acl.authorize(op, "shipping:read_settings")).toBe(false);
+    expect(await acl.authorize(op, "shipping:update_settings")).toBe(false);
+    expect(await acl.authorize(who(["admin"]), "shipping:update_settings")).toBe(true);
+    expect(await acl.authorize(who(["platform-admin"]), "shipping:read_settings")).toBe(true);
+    expect(await acl.authorize(who(["viewer"]), "shipping:read")).toBe(true);
+  });
+
   it("every staff role may change its own password; a customer may not (Plan 1C)", async () => {
     for (const role of ["admin", "operator", "viewer"]) {
       expect(await acl.authorize(who([role]), "account:update_self")).toBe(true);
     }
     const customer: Principal = { id: "c", kind: "customer", roles: ["viewer"], tenantId: "t" };
     expect(await acl.authorize(customer, "account:update_self")).toBe(false);
+  });
+
+  it("staff:* (Users and permissions) is admin-only: admin and platform-admin allowed, operator and viewer denied", async () => {
+    for (const permission of [
+      "staff:read",
+      "staff:invite",
+      "staff:change_role",
+      "staff:deactivate",
+    ]) {
+      expect([permission, await acl.authorize(who(["admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["platform-admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["operator"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who(["viewer"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who([]), permission)]).toEqual([permission, false]);
+    }
+  });
+
+  it("the Wave 1e policy and activity permissions are admin-only; every staff role may set up its own two-step", async () => {
+    for (const permission of [
+      "staff:read_policy",
+      "staff:set_policy",
+      "staff:read_activity",
+      "staff:reset_two_step",
+    ]) {
+      expect([permission, await acl.authorize(who(["admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["platform-admin"]), permission)]).toEqual([
+        permission,
+        true,
+      ]);
+      expect([permission, await acl.authorize(who(["operator"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who(["viewer"]), permission)]).toEqual([
+        permission,
+        false,
+      ]);
+      expect([permission, await acl.authorize(who([]), permission)]).toEqual([permission, false]);
+    }
+    // Self-service two-step rides on `account:update_self`: all three roles, never a customer.
+    for (const role of ["admin", "operator", "viewer"]) {
+      expect(await acl.authorize(who([role]), "account:update_self")).toBe(true);
+    }
+    const customer: Principal = { id: "c", kind: "customer", roles: ["viewer"], tenantId: "t" };
+    for (const permission of [
+      "account:update_self",
+      "staff:read_policy",
+      "staff:set_policy",
+      "staff:read_activity",
+    ]) {
+      expect([permission, await acl.authorize(customer, permission)]).toEqual([permission, false]);
+    }
   });
 
   it("admin and platform-admin can do everything", async () => {
@@ -49,6 +126,15 @@ describe("RoleTableAccessControl", () => {
     expect(await acl.authorize(viewer, "orders:read")).toBe(true);
     expect(await acl.authorize(viewer, "orders:update")).toBe(false);
     expect(await acl.authorize(viewer, "finance:read")).toBe(false);
+  });
+
+  it("settings:read and settings:update (the checkout and customer-account settings) are admin-only (Wave 2a)", async () => {
+    for (const permission of ["settings:read", "settings:update"]) {
+      expect(await acl.authorize(who(["admin"]), permission)).toBe(true);
+      expect(await acl.authorize(who(["platform-admin"]), permission)).toBe(true);
+      expect(await acl.authorize(who(["operator"]), permission)).toBe(false);
+      expect(await acl.authorize(who(["viewer"]), permission)).toBe(false);
+    }
   });
 
   it("no role, an unknown role, or a customer gets nothing", async () => {

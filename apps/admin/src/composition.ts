@@ -16,6 +16,8 @@ import {
   type OrderCancellationPort as CheckoutOrderCancellationPort,
   type OrderStockReservationPort as CheckoutStockReservationPort,
   type OrderCreationPort,
+  type OrderPlacedPort,
+  type ShopperMarketingConsentPort,
   type PaymentInitiationPort,
   type PaymentMethodPort,
   type PricingValidationPort,
@@ -44,7 +46,11 @@ import { wireFeatureFlags } from "@platform/feature-flags-service";
 import { wireFeatureRegistry } from "@platform/feature-registry";
 import { wireFinance } from "@platform/finance";
 import type { PostingAccounts } from "@platform/finance";
-import { type FulfillmentController, wireFulfillment } from "@platform/fulfillment";
+import {
+  type FulfillmentController,
+  type FulfillmentNotificationPort,
+  wireFulfillment,
+} from "@platform/fulfillment";
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
 import type { CredentialVaultPort, DeliverySyncPort } from "@platform/ad-platforms";
@@ -65,7 +71,11 @@ import {
   type ObjectStoragePort,
   type ResolveMediaImages,
 } from "@platform/media";
-import { wireNotifications } from "@platform/notifications";
+import {
+  wireNotifications,
+  type EmailConnectionVault,
+  type StoreEmailProvider,
+} from "@platform/notifications";
 import {
   wireOrders,
   type InventoryPort as OrdersInventoryPort,
@@ -115,10 +125,12 @@ import {
 import { wireSeo } from "@platform/seo";
 import {
   wireOnlineStore,
+  type OnlineStoreController,
   type OnlineStorePublicReads,
   type StorefrontPasswordHasher,
 } from "@platform/online-store";
-import { wireShipping } from "@platform/shipping";
+import { wireShipping, type ShippingController, type ShippingWiringDeps } from "@platform/shipping";
+import type { DistributedLock } from "@platform/contracts";
 import {
   wireTenancy,
   type DnsVerifier,
@@ -138,6 +150,11 @@ import {
   CheckoutShippingQuoteAdapter,
   CheckoutTaxCalculationAdapter,
 } from "./infrastructure/cross-context/checkout-shipping-tax.adapters";
+import {
+  PrismaCustomerSegmentQuery,
+  UnavailableCustomerSegmentQuery,
+  type CustomerSegmentQuery,
+} from "./infrastructure/cross-context/customer-segment-query";
 import { InventoryValidationAdapter } from "./infrastructure/cross-context/inventory-validation.adapter";
 import {
   mediaImageRefs,
@@ -149,6 +166,14 @@ import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-st
 import { tenancyShopFacts } from "./infrastructure/cross-context/leads-shop-facts.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
+import { ShopperMarketingConsentAdapter } from "./infrastructure/cross-context/shopper-marketing-consent.adapter";
+import { StoreSignupEmailAdapter } from "./infrastructure/store-signup-email-adapter";
+import { StoreProfileAdapter } from "./infrastructure/cross-context/store-profile.adapter";
+import { CustomerRecipientResolver } from "./infrastructure/cross-context/customer-recipient.adapter";
+import { DraftInvoiceNotificationAdapter } from "./infrastructure/cross-context/draft-invoice-notification.adapter";
+import { FulfillmentNotificationAdapter } from "./infrastructure/cross-context/fulfillment-notification.adapter";
+import { UnannouncedOrders } from "./infrastructure/cross-context/notification-trigger";
+import { OrderPlacedNotificationAdapter } from "./infrastructure/cross-context/order-placed-notification.adapter";
 import { OrdersNotificationAdapter } from "./infrastructure/cross-context/orders-notification.adapter";
 import { PrismaStaffDirectoryAdapter } from "./infrastructure/cross-context/staff-directory.adapter";
 import { OrdersPaymentAdapter } from "./infrastructure/cross-context/orders-payment.adapter";
@@ -175,6 +200,11 @@ import { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email
 import type { AdminResponse } from "./interfaces/admin-response";
 import { AccessAdminController } from "./interfaces/access.admin-controller";
 import { AdminGuard } from "./interfaces/admin-guard";
+import {
+  LiveStaffAccessControl,
+  securityStaffAccessReader,
+} from "./interfaces/live-staff-access-control";
+import { StaffAdminController } from "./interfaces/staff.admin-controller";
 import { CustomerAuthAdminController } from "./interfaces/customer-auth.admin-controller";
 import type { CustomerCredentialsPort } from "./interfaces/customer-credentials.port";
 import { CustomerGuard } from "./interfaces/customer-guard";
@@ -183,6 +213,8 @@ import {
   staffIdentifier,
 } from "./interfaces/staff-auth.admin-controller";
 import type { EmailSender } from "./interfaces/email-sender.port";
+import { NotificationSettingsAdminController } from "./interfaces/notification-settings.admin-controller";
+import { EmailConnectionAdminController } from "./interfaces/email-connection.admin-controller";
 import type { SignupEmailPort } from "./interfaces/signup-email.port";
 import { AnalyticsAdminController } from "./interfaces/analytics.admin-controller";
 import { AutomationAdminController } from "./interfaces/automation.admin-controller";
@@ -193,6 +225,7 @@ import { ContentAdminController } from "./interfaces/content.admin-controller";
 import { CouponsAdminController } from "./interfaces/coupons.admin-controller";
 import { Customer360AdminController } from "./interfaces/customer-360.admin-controller";
 import { CustomersAdminController } from "./interfaces/customers.admin-controller";
+import { CustomerSegmentsAdminController } from "./interfaces/customer-segments.admin-controller";
 import { ExperienceAdminController } from "./interfaces/experience.admin-controller";
 import { ExperimentationAdminController } from "./interfaces/experimentation.admin-controller";
 import { FeatureFlagsAdminController } from "./interfaces/feature-flags.admin-controller";
@@ -214,6 +247,7 @@ import { PaymentsAdminController } from "./interfaces/payments.admin-controller"
 import { PlatformConsoleAdminController } from "./interfaces/platform-console.admin-controller";
 import { PricingAdminController } from "./interfaces/pricing.admin-controller";
 import { ProductsAdminController } from "./interfaces/products.admin-controller";
+import { CollectionsAdminController } from "./interfaces/collections.admin-controller";
 import { PromotionsAdminController } from "./interfaces/promotions.admin-controller";
 import { DiscountsAdminController } from "./interfaces/discounts/discounts.admin-controller";
 import { RecommendationsAdminController } from "./interfaces/recommendations.admin-controller";
@@ -230,6 +264,13 @@ import { SecuritySessionsAdminController } from "./interfaces/security-sessions.
 import { SeoAdminController } from "./interfaces/seo.admin-controller";
 import { ShippingAdminController } from "./interfaces/shipping.admin-controller";
 import { ShippingZonesAdminController } from "./interfaces/shipping-zones.admin-controller";
+import { CarrierSettingsAdminController } from "./interfaces/carrier-settings.admin-controller";
+import { CarrierShippingAdminController } from "./interfaces/carrier-shipping.admin-controller";
+import { CarrierOrderAdapter } from "./carrier-shipping/carrier-order.adapter";
+import { CarrierFulfillmentAdapter } from "./carrier-shipping/carrier-fulfillment.adapter";
+import { ShipOrderWithCarrier } from "./carrier-shipping/ship-order-with-carrier";
+// type-only WiredAdmin import inside; no runtime cycle (preflight F23)
+import { resolveLineImages } from "./http/product-images";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
 import { LeadsAdminController } from "./interfaces/leads.admin-controller";
@@ -266,6 +307,10 @@ export interface StorefrontDnsTarget {
 }
 
 export interface AdminWiringDeps {
+  readonly carrierRegistrations?: ShippingWiringDeps["carrierRegistrations"];
+  readonly carrierCredentialVault?: ShippingWiringDeps["carrierCredentialVault"];
+  readonly randomSecret?: ShippingWiringDeps["randomSecret"];
+  readonly distributedLock?: DistributedLock;
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
   readonly clock: Clock;
@@ -289,6 +334,11 @@ export interface AdminWiringDeps {
    * their own yet and are unaffected either way — this does not add one for them.
    */
   readonly prisma?: Database;
+  /**
+   * Wave 1c: the live membership read behind Customers > Segments. Absent ⇒ the Prisma adapter when
+   * `prisma` is set, else the explicit "unavailable" one (503) — never an empty list.
+   */
+  readonly customerSegmentQuery?: CustomerSegmentQuery;
   /** Required alongside `prisma` (ADR-0008) by every context that reads it. */
   readonly tenantId?: string;
   /**
@@ -353,8 +403,37 @@ export interface AdminWiringDeps {
   readonly passwordAuthProvider?: AuthenticationProviderPort & PasswordRegistrar;
   /** Plan 1B-2: the platform's own token issuer; absent ⇒ staff login/JWKS answer 503. */
   readonly staffTokenIssuer?: NativeTokenIssuer;
+  /**
+   * Wave 1e: true only when the injected totp provider is the real one AND `MFA_TOTP_KEY` is set
+   * (`apps/runtime` decides). Passed straight through to `wireSecurity(deps)` (gates starting a
+   * setup) and, with `staffTokenIssuer`, decides the "code step is available" capability. Absent ⇒ false.
+   */
+  readonly mfaConfigured?: boolean;
+  /**
+   * Wave 1f (D25/D31): the runtime rule `STAFF_TWO_STEP=required`. Two-step is then mandatory for every
+   * staff and merchant sign-in, but ONLY when the code step is available (`staffTokenIssuer` + `mfaConfigured`):
+   * the rule never locks anyone out of a server that can't ask for a code. Absent/false ⇒ Wave 1e behaviour.
+   */
+  readonly staffTwoStepRequired?: boolean;
   /** Plan 1C: the platform's one email sender; absent ⇒ forgot-password answers 202 and sends nothing. */
   readonly emailSender?: EmailSender;
+  /**
+   * Wave 2b2 (D45/D46): a store's customer mail NEVER goes through `emailSender` (Morbeh's own
+   * account, for Morbeh -> merchant/staff mail only). It goes through the store's own email connection:
+   * `emailVault` seals the merchant's key (absent: saving a connection answers 503 NOT_CONFIGURED and
+   * nothing is sent) and `emailProvider` calls the merchant's own provider with THEIR key.
+   */
+  readonly emailVault?: EmailConnectionVault;
+  readonly emailProvider?: StoreEmailProvider;
+  /** Wave 2b2 Task 3: mailbox (SMTP) accounts may be connected and used (`EMAIL_SMTP_ENABLED`). */
+  readonly smtpEnabled?: boolean;
+  /**
+   * Wave 1d: a sender that REALLY delivers (Resend). Staff invitations are sent only through it, and only
+   * with `adminPublicUrl`; absent ⇒ inviting answers 503 NOT_CONFIGURED before anything is written. Kept
+   * apart from `emailSender` on purpose: that one may be the logging fallback (reset requests still answer
+   * 202 there), which must never pretend an invitation was delivered.
+   */
+  readonly staffInviteEmailSender?: EmailSender;
   /** Plan 1C: public origin of admin-web, used to build the reset link (e.g. https://admin.example.com). */
   readonly adminPublicUrl?: string;
   /** Plan 1C: where reset tokens live; passed straight through to `wireSecurity(deps)`. Absent ⇒ in-memory. */
@@ -494,6 +573,8 @@ export interface AdminWiringDeps {
    * 5 orchestration ports above do.
    */
   readonly orderCreation?: OrderCreationPort;
+  /** Wave 2a: overrides the Identity-backed recording of the shopper's marketing opt-in (tests). */
+  readonly marketingConsent?: ShopperMarketingConsentPort;
   /** WP-13: overrides for the checkout-to-Payments seams (tests). Absent ⇒ the real adapters over Payments. */
   readonly paymentMethods?: PaymentMethodPort;
   readonly paymentInitiation?: PaymentInitiationPort;
@@ -508,6 +589,10 @@ export interface AdminWiringDeps {
   readonly ordersPort?: PaymentsOrdersPort;
   readonly financePort?: PaymentsFinancePort;
   readonly paymentsNotifications?: PaymentsNotificationPort;
+  /** Wave 2b: the shipping-confirmation mail (named apart from `notifications`/`paymentsNotifications`: one deps object feeds every context). */
+  readonly fulfillmentNotifications?: FulfillmentNotificationPort;
+  /** Wave 2b: announces a placed order (confirmation + staff new-order). Absent ⇒ the real adapter. */
+  readonly orderPlaced?: OrderPlacedPort;
   /**
    * G-72: dispatches the "complete your account" / "you already have an account" signup emails.
    * Absent ⇒ `LoggingSignupEmailAdapter` (logs instead of sending), same as before this field
@@ -542,6 +627,7 @@ export interface AdminWiringDeps {
 export interface WiredAdmin {
   /** Products screen → Catalog. */
   readonly products: ProductsAdminController;
+  readonly collections: CollectionsAdminController;
   /** Inventory screen → Inventory. */
   readonly inventory: InventoryAdminController;
   /** Orders screen → Orders. */
@@ -550,6 +636,16 @@ export interface WiredAdmin {
   readonly draftOrders: DraftOrdersAdminController;
   /** Customers screen → Identity. */
   readonly customers: CustomersAdminController;
+  /** Customers > Segments screen → Identity's definitions + the live membership query (Wave 1c). */
+  readonly customerSegments: CustomerSegmentsAdminController;
+  /** Settings > Users and permissions → Security's staff use cases + the store directory (Wave 1d). */
+  readonly staff: StaffAdminController;
+  /**
+   * Wave 1d (D13): the ONE access control both guards use — this facade's `AdminGuard` and the HTTP
+   * transport's — so a deactivation or role change bites on every route within 30 seconds, or at once on
+   * the instance that made it (`StaffAdminController` invalidates it).
+   */
+  readonly liveAccessControl: LiveStaffAccessControl;
   /**
    * Customer 360 screen → Customer-360's read side (Sprint S1 — Customer-360's first
    * admin-transport wiring). Read-only, no outbox exposed beyond a no-op drain (in-memory slice
@@ -581,6 +677,8 @@ export interface WiredAdmin {
   readonly shipping: ShippingAdminController;
   /** Plan 3C: Settings → Shipping and delivery (zones and rates). */
   readonly shippingZones: ShippingZonesAdminController;
+  readonly carrierSettings: CarrierSettingsAdminController;
+  readonly carrierShipping: CarrierShippingAdminController;
   /** Returns screen → Returns (Sprint 4.11 — Returns' first admin-transport wiring). */
   readonly returns: ReturnsAdminController;
   /** Reviews screen → Reviews (Sprint S1 — Reviews' first admin-transport wiring). */
@@ -606,6 +704,12 @@ export interface WiredAdmin {
   readonly securityAiGovernance: SecurityAiGovernanceAdminController;
   /** Notifications screen → Notifications (Sprint 4.12 — Notifications' first admin-transport wiring). */
   readonly notifications: NotificationsAdminController;
+  /** Wave 2b: Settings > Notifications (sender, templates, preview, test-send). */
+  readonly notificationSettings: NotificationSettingsAdminController;
+  /** Wave 2b (D43): authenticate the store's own sending domain. */
+  readonly emailConnection: EmailConnectionAdminController;
+  /** Wave 2b: the draft order "Send invoice" customer mail (best effort, after the link is issued). */
+  readonly draftInvoiceNotifications: DraftInvoiceNotificationAdapter;
   /** Finance screen → Finance (ADR-0024). */
   readonly finance: FinanceAdminController;
   /** Plan 3C: Settings → Taxes and duties. */
@@ -848,6 +952,17 @@ export interface WiredAdmin {
    * `publicReads` above: the unguarded, framework-agnostic controller + the PSP port, exposed so a
    * `public: true` route can verify the signature itself before recording anything.
    */
+  /**
+   * The carrier webhook ingress seam (spec 9a.1). Like `paymentsWebhook`, a carrier presents no Bearer
+   * token: its authentication IS `verify` (the tenant's webhook secret), checked by a `public: true` route.
+   * `mirrorFulfillment` is the best-effort follow-up onto the fulfillment order (Ruling 25).
+   */
+  readonly carrierWebhooks: {
+    readonly verify: ShippingController["verifyCarrierWebhook"];
+    readonly record: ShippingController["recordWebhook"];
+    readonly mirrorFulfillment: FulfillmentController["mirrorShipmentStatus"];
+    readonly logger?: { warn(message: string, meta: Record<string, string>): void };
+  };
   readonly paymentsWebhook: {
     readonly recordWebhook: PaymentController["recordWebhook"];
     /**
@@ -889,7 +1004,56 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   // cannot receive a real NotificationPort adapter built from `notifications` if `notifications`
   // doesn't exist yet. Moved here (alongside `inventory` above) from its previous position much
   // further down (it used to be wired long after `orders`).
-  const notifications = wireNotifications(deps);
+  // Wave 2b: the store profile is read through closures over cells filled once Tenancy and the Online
+  // store are wired below (a closure, not the controller: the multi-tenant boot check walks the graph).
+  const storeProfileCells: {
+    tenancy?: Pick<TenancyController, "getStoreSettings">;
+    onlineStore?: Pick<OnlineStoreController, "getPreferences">;
+    customers?: Pick<CustomerController, "getCustomer">;
+  } = {};
+  const storeProfile = new StoreProfileAdapter(
+    {
+      getStoreSettings: (tenantId) => {
+        if (storeProfileCells.tenancy === undefined) {
+          throw new Error("StoreProfileAdapter: Tenancy requested before wireTenancy() completed");
+        }
+        return storeProfileCells.tenancy.getStoreSettings(tenantId);
+      },
+    },
+    {
+      getPreferences: (input) => {
+        if (storeProfileCells.onlineStore === undefined) {
+          throw new Error(
+            "StoreProfileAdapter: Online store requested before wireOnlineStore() completed",
+          );
+        }
+        return storeProfileCells.onlineStore.getPreferences(input);
+      },
+    },
+  );
+  const notifications = wireNotifications(deps, {
+    store: storeProfile,
+    // Customer mail goes only through the store's own email connection (D46); there is no platform sender here.
+    ...(deps.emailVault === undefined ? {} : { emailVault: deps.emailVault }),
+    ...(deps.emailProvider === undefined ? {} : { emailProvider: deps.emailProvider }),
+    ...(deps.smtpEnabled === undefined ? {} : { smtpEnabled: deps.smtpEnabled }),
+    // Customer name, address and language are read when a mail is sent, through a closure over the
+    // Identity cell (Identity is wired after Notifications). The logger gets short codes only.
+    recipients: new CustomerRecipientResolver({
+      getCustomer: (input) => {
+        if (storeProfileCells.customers === undefined) {
+          throw new Error(
+            "CustomerRecipientResolver: Identity requested before wireIdentity() completed",
+          );
+        }
+        return storeProfileCells.customers.getCustomer(input);
+      },
+    }),
+    log: adminLogger,
+  });
+  // Wave 2b: orders Checkout placed and undid for lack of stock were never announced, so cancelling
+  // them sends no "canceled" mail.
+  const unannouncedOrders = new UnannouncedOrders();
   // Phase 3 Task 12 (C-3): real `InventoryPort`/`NotificationPort` adapters for Orders' outbound
   // ports, wired here (after `inventory`/`notifications` above) rather than left to `wireOrders`'s
   // own `deps.inventoryPort ?? new InMemoryInventoryAdapter()` / `deps.notifications ?? new
@@ -1019,7 +1183,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         inventory.inventoryItemRepository,
         lazyOrdersController,
       ),
-    notifications: deps.notifications ?? new OrdersNotificationAdapter(notifications.notifications),
+    // Wave 2b: the generic "status changed" mail is gone (D41); cancellation mails `order_canceled`.
+    notifications:
+      deps.notifications ??
+      new OrdersNotificationAdapter(
+        notifications.notifier,
+        lazyOrdersController,
+        unannouncedOrders,
+      ),
     // G-126: cancelling an unpaid order cancels its payment intent too (best-effort).
     paymentVoid: deps.paymentVoid ?? new OrdersPaymentVoidAdapter(lazyPaymentsController),
     // G-130: cancelling an order cancels its open fulfillment order and releases its held stock.
@@ -1064,6 +1235,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const orders = wireOrders(ordersDeps);
   ordersControllerCell.controller = orders.orders;
   const identity = wireIdentity(deps);
+  storeProfileCells.customers = identity.customers;
   const customer360 = wireCustomer360(deps);
   const pricing = wirePricing(deps);
   const finance = wireFinance({ ...deps, postingAccounts: DEFAULT_FINANCE_POSTING_ACCOUNTS });
@@ -1134,6 +1306,9 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     draftCompletion: deps.draftCompletion ?? new DraftOrderCompletionAdapter(orders.orders),
     orderCreation:
       deps.orderCreation ?? new OrderCreationAdapter(orders.orders, identity.customers),
+    // Wave 2a: a ticked marketing box becomes a `shopper/checkout` consent record in Identity.
+    marketingConsent:
+      deps.marketingConsent ?? new ShopperMarketingConsentAdapter(identity.customers),
     // Plan 3C (G-114): the stock is held the moment the order is placed — the same Inventory logic
     // RequestFulfillment uses later (so that later call finds the reservation and adds none), with the
     // real release (G-130) and Orders' own cancellation behind it. Both read the REAL order, so they are
@@ -1158,7 +1333,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
               ),
             ),
           orderCancellation:
-            deps.orderCancellation ?? new CheckoutOrderCancellationAdapter(orders.orders),
+            deps.orderCancellation ??
+            new CheckoutOrderCancellationAdapter(orders.orders, unannouncedOrders),
+          // Wave 2b: the order confirmation and the staff new-order mail, after the checkout commits.
+          orderPlaced:
+            deps.orderPlaced ??
+            new OrderPlacedNotificationAdapter(notifications.notifier, orders.orders),
         }
       : {}),
   };
@@ -1197,14 +1377,21 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     ...deps,
     ordersPort: deps.ordersPort ?? new PaymentsOrdersAdapter(orders.orders),
     paymentsNotifications:
-      deps.paymentsNotifications ?? new PaymentsNotificationAdapter(notifications.notifications),
+      deps.paymentsNotifications ??
+      new PaymentsNotificationAdapter(notifications.notifier, orders.orders),
   };
   const payments = wirePayments(paymentsDeps);
   // Populates `paymentsControllerCell` (see its declaration above, alongside `ordersDeps`) — from
   // this point on, `lazyPaymentsController`/`OrdersPaymentAdapter` resolve to the real
   // `PaymentController` instead of throwing.
   paymentsControllerCell.controller = payments.payments;
-  const fulfillment = wireFulfillment(deps);
+  const fulfillment = wireFulfillment({
+    ...deps,
+    // Wave 2b: "your order is on its way" once a shipment has its tracking number.
+    fulfillmentNotifications:
+      deps.fulfillmentNotifications ??
+      new FulfillmentNotificationAdapter(notifications.notifier, orders.orders),
+  });
   fulfillmentControllerCell.controller = fulfillment.fulfillment;
   const recommendations = wireRecommendations(deps);
   const reporting = wireReporting(deps);
@@ -1234,9 +1421,38 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   const licensing = deps.licensing ?? wireLicensing(deps);
   const platformConsole = wirePlatformConsole();
   const wishlist = wireWishlist(deps);
-  const accessControl = deps.accessControl ?? new AllowAllAccessControl();
+  const liveAccessControl = new LiveStaffAccessControl({
+    inner: deps.accessControl ?? new AllowAllAccessControl(),
+    reader: securityStaffAccessReader(security.security),
+    clock: deps.clock,
+    // Live only under native sign-in (`staffTokenIssuer`): Security's tables are the staff source of truth
+    // there. With an external IdP (Ory/Keto) staff live in the IdP and a Security lookup would lock them out.
+    enabled: deps.staffTokenIssuer !== undefined,
+  });
   const auditTrail = deps.auditTrail ?? new InMemoryAuditTrail();
-  const guard = new AdminGuard({ accessControl, auditTrail, clock: deps.clock });
+  const guard = new AdminGuard({ accessControl: liveAccessControl, auditTrail, clock: deps.clock });
+  const carrierOrders = new CarrierOrderAdapter({
+    orders: orders.orders,
+    payments: payments.payments,
+    lineImageUrls: async (tenantId, lines) => {
+      const images = await resolveLineImages(
+        { mediaImages: mediaLibrary.images, publicReads: { products: catalog.products } } as Pick<
+          WiredAdmin,
+          "mediaImages" | "publicReads"
+        >,
+        tenantId,
+        lines,
+      );
+      return new Map([...images].map(([key, image]) => [key, image?.url ?? null]));
+    },
+  });
+  const carrierFulfillment = new CarrierFulfillmentAdapter(fulfillment.fulfillment);
+  const carrierShipper = new ShipOrderWithCarrier({
+    orders: carrierOrders,
+    fulfillment: carrierFulfillment,
+    shipping: shipping.shipping,
+    lock: deps.distributedLock,
+  });
 
   // ── T5.17 customer authentication (storefront) ──
   /**
@@ -1287,7 +1503,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
   };
   // G-72: absent ⇒ the logging dev adapter, guarded out of production by
   // `apps/runtime/src/api.ts`'s `assertProductionSignupEmailConfigured`.
-  const signupEmail: SignupEmailPort = deps.signupEmail ?? new LoggingSignupEmailAdapter();
+  // Wave 2b2 (D51): with the store email provider wired (production), sign-up mail goes through the
+  // store's own connection and never through the platform's sender. The logging dev adapter remains
+  // only when nothing is wired (tests, bare in-memory wiring) or a test injects its own.
+  const signupEmail: SignupEmailPort =
+    deps.signupEmail ??
+    (deps.emailProvider === undefined
+      ? new LoggingSignupEmailAdapter()
+      : new StoreSignupEmailAdapter(notifications.storeMail, storeProfile));
   const signupCompletionUrlBase = `${deps.storefrontPublicUrl ?? "http://localhost:3000"}/account/signup/complete`;
 
   // Project 4. Every port is a closure (Ruling 13): no tenancy, media, catalog or pages object hangs
@@ -1373,10 +1596,14 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     security: security.security,
     logger: adminLogger,
   });
+  const codeStepAvailable = deps.staffTokenIssuer !== undefined && deps.mfaConfigured === true;
+  const twoStepRequired = deps.staffTwoStepRequired === true && codeStepAvailable;
   const staffAuth = new StaffAuthAdminController({
     security: security.security,
+    twoStepRequired,
     ...(deps.staffTokenIssuer === undefined ? {} : { issuer: deps.staffTokenIssuer }),
     sessionTtlSeconds: deps.staffTokenTtlSeconds ?? 7200,
+    clock: deps.clock,
     ...(security.passwordReset === undefined ? {} : { passwordReset: security.passwordReset }),
     ...(deps.emailSender === undefined ? {} : { emailSender: deps.emailSender }),
     ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
@@ -1396,7 +1623,15 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     staffAuth,
   });
 
+  storeProfileCells.tenancy = tenancy.tenancy;
+  storeProfileCells.onlineStore = onlineStore.controller;
+  const tenancyAdmin = new TenancyAdminController({ tenancy: tenancy.tenancy, guard });
   return {
+    collections: new CollectionsAdminController({
+      collections: catalog.collections,
+      products: catalog.products,
+      guard,
+    }),
     products: new ProductsAdminController({
       products: catalog.products,
       categories: catalog.categories,
@@ -1416,6 +1651,46 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     draftOrders: new DraftOrdersAdminController({ orders: orders.orders, guard }),
     customers: new CustomersAdminController({ customers: identity.customers, guard }),
+    customerSegments: new CustomerSegmentsAdminController({
+      segments: identity.customerSegments,
+      query:
+        deps.customerSegmentQuery ??
+        (deps.prisma === undefined
+          ? new UnavailableCustomerSegmentQuery()
+          : new PrismaCustomerSegmentQuery({ prisma: deps.prisma })),
+      // A closure, not the controller: the multi-tenant boot check walks the graph for construction-time
+      // tenant ids and exempts only the root `tenancy` (ADR-0014 8f).
+      tenancy: {
+        getStoreRegion: (principal, tenantId) => tenancyAdmin.getStoreRegion(principal, tenantId),
+      },
+      guard,
+      clock: deps.clock,
+    }),
+    staff: new StaffAdminController({
+      security: security.security,
+      // Closures, not the tenancy controller: the multi-tenant boot check walks the composed graph for
+      // construction-time tenant ids and exempts only the root `tenancy` (ADR-0014 8f).
+      directory: {
+        find: async (email) => {
+          const entry = await tenancy.tenancy.findStaffDirectoryEntry(email);
+          return entry === null
+            ? null
+            : { shopId: entry.shopId, ownerExternalId: entry.ownerExternalId };
+        },
+        reserve: (input) => tenancy.tenancy.reserveStaffEmail(input),
+        release: (input) => tenancy.tenancy.releaseStaffEmail(input),
+      },
+      ...(deps.staffInviteEmailSender === undefined
+        ? {}
+        : { staffInviteEmailSender: deps.staffInviteEmailSender }),
+      ...(deps.adminPublicUrl === undefined ? {} : { adminPublicUrl: deps.adminPublicUrl }),
+      guard,
+      clock: deps.clock,
+      liveAccess: liveAccessControl,
+      codeStepAvailable,
+      twoStepRequired,
+    }),
+    liveAccessControl,
     customer360: new Customer360AdminController({
       customer360: customer360.customer360,
       guard,
@@ -1440,6 +1715,15 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
     shipping: new ShippingAdminController({ shipping: shipping.shipping, guard }),
     shippingZones: new ShippingZonesAdminController({ zones: shipping.zones, guard }),
+    carrierSettings: new CarrierSettingsAdminController({ shipping: shipping.shipping, guard }),
+    carrierShipping: new CarrierShippingAdminController({
+      guard,
+      orders: carrierOrders,
+      rawFulfillment: fulfillment.fulfillment,
+      fulfillment: carrierFulfillment,
+      shipping: shipping.shipping,
+      shipper: carrierShipper,
+    }),
     returns: new ReturnsAdminController({ returns: returns.returns, guard }),
     reviews: new ReviewsAdminController({ reviews: reviews.reviews, guard }),
     search: new SearchAdminController({ search: search.search, guard }),
@@ -1470,6 +1754,22 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     notifications: new NotificationsAdminController({
       notifications: notifications.notifications,
       guard,
+    }),
+    draftInvoiceNotifications: new DraftInvoiceNotificationAdapter(
+      notifications.notifier,
+      deps.storefrontPublicUrl,
+    ),
+    notificationSettings: new NotificationSettingsAdminController({
+      settings: notifications.settings,
+      guard,
+      actorEmail: (tenantId, principalExternalId) =>
+        staffAuth.ownEmail(tenantId, principalExternalId),
+    }),
+    emailConnection: new EmailConnectionAdminController({
+      emailConnection: notifications.emailConnection,
+      guard,
+      actorEmail: (tenantId, principalExternalId) =>
+        staffAuth.ownEmail(tenantId, principalExternalId),
     }),
     content: new ContentAdminController({ content: content.content, guard }),
     coupons: new CouponsAdminController({ coupons: coupons.coupons, guard }),
@@ -1513,7 +1813,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     mediaImages: mediaLibrary.images,
-    tenancy: new TenancyAdminController({ tenancy: tenancy.tenancy, guard }),
+    tenancy: tenancyAdmin,
     storeCurrency: new StoreCurrencyRelabelAdapter(catalog.products),
     tenantAvailability: tenancy.tenantAvailability,
     shopDomains: async (tenantId) => {
@@ -1585,6 +1885,12 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
         setDraftCheckout: (input) => orders.orders.setDraftCheckout(input),
         completeDraftFromCheckout: (input) => orders.orders.completeDraftFromCheckout(input),
       },
+    },
+    carrierWebhooks: {
+      verify: (input) => shipping.shipping.verifyCarrierWebhook(input),
+      record: (input) => shipping.shipping.recordWebhook(input),
+      mirrorFulfillment: (input) => fulfillment.fulfillment.mirrorShipmentStatus(input),
+      logger: adminLogger,
     },
     paymentsWebhook: {
       recordWebhook: (input) => payments.payments.recordWebhook(input),

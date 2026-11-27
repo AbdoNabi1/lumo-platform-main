@@ -12,7 +12,7 @@ import { PrismaConnectionRepository } from "./prisma-connection-repository";
  *
  *   DATABASE_URL_TEST=postgresql://lumo:<password>@localhost:5432/lumo_test pnpm --filter @platform/ad-platforms test
  *
- * (the migration `20261123000000_ad_platform_connections` must be applied to it). The use-case suite runs
+ * (the migration `20261204000000_ad_platform_connections` must be applied to it). The use-case suite runs
  * over the in-memory repository and over the Prisma repository on a real database, so the two are proven to
  * behave the same (round trip, version guard, unique row per shop and platform, RLS). The Prisma entries
  * are skipped unless `DATABASE_URL_TEST` is set.

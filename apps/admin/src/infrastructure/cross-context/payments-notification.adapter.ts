@@ -1,94 +1,51 @@
-import type { NotificationsController } from "@platform/notifications";
-import type { NotificationPort } from "@platform/payments";
-
-interface CreateNotificationBody {
-  readonly notificationId: string;
-}
+import type { Order, OrderController } from "@platform/orders";
+import type { NotificationPort, PaymentNotificationEvent } from "@platform/payments";
+import { orderMailVariables } from "./notification-mail-data";
+import { guardedTrigger, type MailNotifier } from "./notification-trigger";
 
 /**
- * Real `NotificationPort` over Notifications' own create -> queue -> send lifecycle (Phase 3 Task
- * 13, C-3) — Payments' lifecycle use cases call this instead of the offline
- * `InMemoryNotificationAdapter` stub (`services/payments/src/infrastructure/in-memory-port-
- * adapters.ts`), which was a pure no-op. Near-identical in shape to `OrdersNotificationAdapter`
- * (`orders-notification.adapter.ts`, Task 12a), which solves the exact same create -> queue -> send
- * problem for Orders — the 3-step sequence is Notifications' own real caller contract, not
- * invented here.
+ * Wave 2b: Payments' `NotificationPort` over the templated notifier. It replaces the generic "Payment
+ * for order X status changed to Y" mail (D41): the only thing mailed from here is a COMPLETED REFUND
+ * (`order_refunded`), once per refund (the refund id is the event, so two partial refunds are two
+ * mails and a replayed settle is none). Every other payment status says nothing to the customer.
  *
- * `NotificationPort` here is `notify(orderRef, status)` — Payments only knows `orderRef`, not a
- * separate customer reference the way Orders' port does. `recipientRef` uses `orderRef` as the
- * best available reference rather than adding a second `OrderController` dependency here just to
- * resolve a `customerRef` for a best-effort, may-be-dropped-entirely notification — that would be
- * scope creep for a port whose own contract says it may be dropped without consequence, and this
- * adapter deliberately stays self-contained rather than sharing a lookup with
- * `PaymentsOrdersAdapter` (a little duplication between two small, independent adapters is fine
- * and matches this phase's existing pattern).
- *
- * Deliberately minimal, generic glue content, matching Task 12a's posture exactly:
- *  - `channels`: a single default, `["email"]` — no multi-channel selection logic.
- *  - `templateId`/`bodyPattern`/`subjectPattern`: a generic "payment status changed" message; the
- *    order reference/status are interpolated via `variables`, not baked into the pattern strings.
- *  - `maxAttempts`: 3 — same deliberately small, defensible constant as Task 12a (Notifications'
- *    own `DeliveryPolicy` documents no house default).
- *  - `idempotencyKey`: `${orderRef}:${status}`, not a freshly generated id per call — `notify()`
- *    may be invoked more than once for the SAME logical transition (e.g. a settle retry), and
- *    `CreateNotification` is itself idempotent by `idempotencyKey` (a replay returns the
- *    already-created notification rather than a duplicate) — a fresh id per call would defeat that
- *    and mint a new notification on every retry.
- *  - `sourceRef`: `payments:${orderRef}` — identifies this as payments-lifecycle-sourced.
- *
- * Failure handling: `notify()`'s one caller, `notifyBestEffort`
- * (`services/payments/src/application/payment-lifecycle.use-cases.ts`), already wraps every call
- * in a swallowing try/catch — "a reference-only notification failure never fails the intent's own
- * transition." So this adapter does no internal error handling of its own: a failure from any of
- * the 3 steps propagates straight out and is swallowed by the caller, exactly as designed.
+ * `orderRef` is the order id. The order is read to learn its customer, number and currency. Called
+ * best-effort from the settle step; this adapter swallows and logs too (D42).
  */
 export class PaymentsNotificationAdapter implements NotificationPort {
-  private static readonly DEFAULT_MAX_ATTEMPTS = 3;
+  private readonly notifier: MailNotifier;
+  private readonly orders: Pick<OrderController, "getOrder">;
 
-  private readonly notifications: Pick<NotificationsController, "create" | "queue" | "send">;
-
-  /** ADR-0014 (WP-10, T10.3): stateless per tenant — `NotificationPort.notify` carries `tenantId` per call. */
-  constructor(notifications: Pick<NotificationsController, "create" | "queue" | "send">) {
-    this.notifications = notifications;
+  constructor(notifier: MailNotifier, orders: Pick<OrderController, "getOrder">) {
+    this.notifier = notifier;
+    this.orders = orders;
   }
 
-  async notify(orderRef: string, status: string, tenantId: string): Promise<void> {
-    const idempotencyKey = `${orderRef}:${status}`;
-
-    const createResponse = await this.notifications.create({
-      tenantId,
-      idempotencyKey,
-      sourceRef: `payments:${orderRef}`,
-      recipientRef: orderRef,
-      channels: ["email"],
-      templateId: "payment-status-changed",
-      bodyPattern: "Payment for order {{orderRef}} status changed to {{status}}.",
-      subjectPattern: "Payment update for order {{orderRef}}",
-      variables: { orderRef, status },
-      maxAttempts: PaymentsNotificationAdapter.DEFAULT_MAX_ATTEMPTS,
+  async notify(
+    orderRef: string,
+    _status: string,
+    tenantId: string,
+    event?: PaymentNotificationEvent,
+  ): Promise<void> {
+    if (event?.kind !== "refund_completed") return;
+    await guardedTrigger("order_refunded", { tenantId, orderRef }, async () => {
+      const response = await this.orders.getOrder({ tenantId, orderId: orderRef });
+      if (response.status !== 200) return { ok: false, error: { code: "ORDER_NOT_FOUND" } };
+      const order = response.body as Order;
+      const variables = orderMailVariables(order);
+      return this.notifier.execute({
+        tenantId,
+        template: "order_refunded",
+        eventKey: `${orderRef}:${event.refundId}`,
+        sourceRef: `payments:${variables["order_number"] ?? orderRef}`,
+        recipientRef: order.customerRef,
+        variables: {
+          order_number: variables["order_number"] ?? "",
+          customer_ref: order.customerRef,
+          currency: event.currency,
+          refund_minor: String(event.amountMinor),
+        },
+      });
     });
-    if (createResponse.status >= 400) {
-      throw new Error(
-        `PaymentsNotificationAdapter: create failed for order "${orderRef}" ` +
-          `(status ${createResponse.status}): ${JSON.stringify(createResponse.body)}`,
-      );
-    }
-    const { notificationId } = createResponse.body as CreateNotificationBody;
-
-    const queueResponse = await this.notifications.queue({ notificationId, tenantId });
-    if (queueResponse.status >= 400) {
-      throw new Error(
-        `PaymentsNotificationAdapter: queue failed for order "${orderRef}" ` +
-          `(status ${queueResponse.status}): ${JSON.stringify(queueResponse.body)}`,
-      );
-    }
-
-    const sendResponse = await this.notifications.send({ notificationId, tenantId });
-    if (sendResponse.status >= 400) {
-      throw new Error(
-        `PaymentsNotificationAdapter: send failed for order "${orderRef}" ` +
-          `(status ${sendResponse.status}): ${JSON.stringify(sendResponse.body)}`,
-      );
-    }
   }
 }

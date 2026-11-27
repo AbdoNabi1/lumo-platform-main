@@ -1,8 +1,18 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { cookies } from "next/headers";
-import { GeistSans } from "geist/font/sans";
 import { ThemeProvider, TooltipProvider } from "@platform/ui";
+import "@fontsource/plus-jakarta-sans/400.css";
+import "@fontsource/plus-jakarta-sans/500.css";
+import "@fontsource/plus-jakarta-sans/600.css";
+import "@fontsource/plus-jakarta-sans/700.css";
+import "@fontsource/zain/400.css";
+import "@fontsource/zain/700.css";
+import "@fontsource/zain/800.css";
+import "@fontsource/baloo-bhaijaan-2/600.css";
+import "@fontsource/baloo-bhaijaan-2/700.css";
+import "@fontsource/baloo-bhaijaan-2/800.css";
+// Plex stays loaded for the merchant theme editor's font samples (customize-panels.tsx).
 import "@fontsource/ibm-plex-sans-arabic/400.css";
 import "@fontsource/ibm-plex-sans-arabic/500.css";
 import "@fontsource/ibm-plex-sans-arabic/600.css";
@@ -16,8 +26,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f8fafc" },
-    { media: "(prefers-color-scheme: dark)", color: "#020617" },
+    { media: "(prefers-color-scheme: light)", color: "#fcf8f3" },
+    { media: "(prefers-color-scheme: dark)", color: "#141210" },
   ],
 };
 
@@ -26,12 +36,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   const locale = isLocale(stored) ? stored : DEFAULT_LOCALE;
 
   return (
-    <html
-      lang={locale}
-      dir={directionFor(locale)}
-      className={GeistSans.variable}
-      suppressHydrationWarning
-    >
+    <html lang={locale} dir={directionFor(locale)} suppressHydrationWarning>
       <body>
         <ThemeProvider>
           <TooltipProvider delayDuration={200}>{children}</TooltipProvider>

@@ -1,33 +1,42 @@
 import { describe, expect, it, vi } from "vitest";
-import { LoggingSignupEmailAdapter, type SignupEmailPort } from "@platform/admin";
+import { InMemoryEmailConnectionVault } from "@platform/notifications";
 import type { Database } from "@platform/db";
 import type { PaymentController } from "@platform/payments";
 import { loadRuntimeConfig } from "./config";
 import {
   buildPaymentCapturedRuntime,
   buildRuntimeCore,
+  isMfaConfigured,
   PrismaPaymentsPortAdapter,
   PrismaPaymentVerificationAdapter,
   PrismaRefundVerificationAdapter,
 } from "./composition";
+import { buildEmailConnectionVault } from "./email-wiring";
 import { buildJobs, startJobLoop } from "./scheduler";
 import {
+  assertProductionCarriersConfigured,
   assertProductionDunningNotificationsConfigured,
   assertProductionIntegrationPortsConfigured,
   assertProductionLicensingBillingConfigured,
   assertProductionObjectStorageConfigured,
   assertProductionPaymentProviderConfigured,
-  assertProductionSignupEmailConfigured,
+  assertProductionEmailVaultConfigured,
   startApi,
 } from "./api";
 import { InMemoryObjectStorage, StorageServiceObjectStorage } from "@platform/media";
-import { TotpMfaProvider } from "@platform/security";
+import {
+  InMemoryTotpMfaProvider,
+  MapMfaProviderResolver,
+  NodeCrypto,
+  TotpMfaProvider,
+} from "@platform/security";
 import { isPaymobRegion, PaymobPaymentProvider } from "@platform/psp-paymob";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import { InMemoryPaymentsAdapter, PlatformBillingPaymentsAdapter } from "@platform/licensing";
 import type { PaymentProvider } from "@platform/contracts";
 import type { PaymentCredentialVault, ProviderRegistration } from "@platform/payments";
-import type { Logger } from "@platform/utils";
+import type { CarrierCredentialVault } from "@platform/shipping";
+import { logger as moduleLogger, type Logger } from "@platform/utils";
 import { RedisClaimLedger } from "@platform/redis";
 
 const validEnv = {
@@ -183,6 +192,40 @@ describe("composition root (lazy clients — graph builds without any Docker run
     expect(core.mfaProviders.get("totp")).toBeInstanceOf(TotpMfaProvider);
   });
 
+  it("mfaConfigured (Wave 1e) is true only with the real TotpMfaProvider AND MFA_TOTP_KEY", () => {
+    const withoutKey = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(withoutKey.mfaProviders.get("totp")).toBeInstanceOf(TotpMfaProvider);
+    expect(withoutKey.mfaConfigured).toBe(false);
+
+    const withKey = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, MFA_TOTP_KEY: "k".repeat(32) }),
+    );
+    expect(withKey.mfaConfigured).toBe(true);
+  });
+
+  it("staffTwoStepRequired (Wave 1f) follows STAFF_TWO_STEP: required by default, off with optional", () => {
+    expect(buildRuntimeCore(loadRuntimeConfig(validEnv)).staffTwoStepRequired).toBe(true);
+    expect(
+      buildRuntimeCore(loadRuntimeConfig({ ...validEnv, STAFF_TWO_STEP: "optional" }))
+        .staffTwoStepRequired,
+    ).toBe(false);
+  });
+
+  it("isMfaConfigured refuses the in-memory reference provider even when the key is set", () => {
+    const key = { MFA_TOTP_KEY: "k".repeat(32) };
+    const reference = new MapMfaProviderResolver([new InMemoryTotpMfaProvider()]);
+    expect(isMfaConfigured(reference, key)).toBe(false);
+    const real = new MapMfaProviderResolver([
+      new TotpMfaProvider(
+        new NodeCrypto(),
+        { now: () => new Date() },
+        { keyRef: key.MFA_TOTP_KEY },
+      ),
+    ]);
+    expect(isMfaConfigured(real, key)).toBe(true);
+    expect(isMfaConfigured(real, { MFA_TOTP_KEY: undefined })).toBe(false);
+  });
+
   it("resolves paymentProvider=undefined when no Stripe config is present (C2-2) — unchanged prior behavior", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     expect(core.paymentProvider).toBeUndefined();
@@ -197,6 +240,95 @@ describe("composition root (lazy clients — graph builds without any Docker run
       }),
     );
     expect(core.paymentProvider).toBeInstanceOf(StripePaymentProvider);
+  });
+});
+
+describe("carrier composition (Ruling 31)", () => {
+  const kek = "k".repeat(32);
+
+  it("both set → bosta registered with a real vault", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        SHIPPING_CREDENTIALS_KEK_REF: kek,
+        ADMIN_API_PUBLIC_URL: "https://api.example.com/",
+      }),
+    );
+    expect(core.carrierRegistrations.map((r) => r.key)).toEqual(["bosta"]);
+    expect(core.carrierRegistrations[0]?.webhookUrl).toBe(
+      "https://api.example.com/api/v1/public/shipping/webhook/bosta",
+    );
+    expect(core.carrierCredentialVault?.backing).toBe("real");
+  });
+
+  it("neither → no registrations, vault undefined", () => {
+    const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
+    expect(core.carrierRegistrations).toEqual([]);
+    expect(core.carrierCredentialVault).toBeUndefined();
+  });
+
+  it("only the KEK set → no registration (half-configured is the guard's job)", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, SHIPPING_CREDENTIALS_KEK_REF: kek }),
+    );
+    expect(core.carrierRegistrations).toEqual([]);
+  });
+});
+
+describe("assertProductionCarriersConfigured", () => {
+  const realVault = { backing: "real" } as unknown as CarrierCredentialVault;
+  const stubVault = { backing: "stub" } as unknown as CarrierCredentialVault;
+  const both = {
+    kekConfigured: true,
+    webhookBaseConfigured: true,
+    webhookBaseUrl: "https://api.x.com",
+    vault: realVault,
+  };
+  const neither = {
+    kekConfigured: false,
+    webhookBaseConfigured: false,
+    webhookBaseUrl: undefined,
+    vault: undefined,
+  };
+
+  it("half-configured refuses outside local and warns in local", () => {
+    const kekOnly = { ...neither, kekConfigured: true, vault: realVault };
+    expect(() => assertProductionCarriersConfigured("production", kekOnly)).toThrow(
+      "carriers are half-configured: set both SHIPPING_CREDENTIALS_KEK_REF and ADMIN_API_PUBLIC_URL, or neither (Ruling 31)",
+    );
+    const urlOnly = { ...neither, webhookBaseConfigured: true, webhookBaseUrl: "https://a.b" };
+    expect(() => assertProductionCarriersConfigured("production", urlOnly)).toThrow(
+      /half-configured/,
+    );
+    const warn = vi.spyOn(moduleLogger, "warn").mockImplementation(() => undefined);
+    expect(() => assertProductionCarriersConfigured("local", kekOnly)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("half-configured"));
+    warn.mockRestore();
+  });
+
+  it("a stub vault is refused", () => {
+    expect(() =>
+      assertProductionCarriersConfigured("production", { ...both, vault: stubVault }),
+    ).toThrow(/in-memory/);
+  });
+
+  it("neither set passes", () => {
+    expect(() => assertProductionCarriersConfigured("production", neither)).not.toThrow();
+  });
+
+  it("both set with a real vault and https passes", () => {
+    expect(() => assertProductionCarriersConfigured("production", both)).not.toThrow();
+  });
+
+  it("an http:// origin is refused outside local (F13) and warns in local", () => {
+    const http = { ...both, webhookBaseUrl: "http://api.x.com" };
+    expect(() => assertProductionCarriersConfigured("production", http)).toThrow(
+      "ADMIN_API_PUBLIC_URL must use https outside local (preflight F13)",
+    );
+    const warn = vi.spyOn(moduleLogger, "warn").mockImplementation(() => undefined);
+    expect(() => assertProductionCarriersConfigured("local", http)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("https"));
+    warn.mockRestore();
   });
 });
 
@@ -216,8 +348,8 @@ describe("api entrypoint", () => {
 
   it("G0-4 (launch-readiness review): a fresh non-local boot names EVERY failed guard in one error, not just the first", async () => {
     // The default local composition core has no production PSP/Licensing/ObjectStorage/
-    // integration-port/SignupEmail adapters wired at all, and dunning notifications have no real
-    // delivery path anywhere (T14.5, unconditional) — every one of the 6 still-open guards should
+    // integration-port adapters wired at all, and dunning notifications have no real
+    // delivery path anywhere (T14.5, unconditional) — every one of the 5 still-open guards should
     // fail together. MFA (C2-4) is deliberately absent from this list — closed above.
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
     const prodConfig = loadRuntimeConfig({
@@ -225,12 +357,11 @@ describe("api entrypoint", () => {
       APP_ENV: "production",
       KETO_READ_URL: "https://keto.morbeh.local",
     });
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/6 production guards failed/);
+    await expect(startApi(prodConfig, core)).rejects.toThrow(/5 production guards failed/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/PaymentProvider/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/Licensing/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/object-storage/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/still offline in-memory/);
-    await expect(startApi(prodConfig, core)).rejects.toThrow(/SignupEmailPort/);
     await expect(startApi(prodConfig, core)).rejects.toThrow(/dunning is enabled/);
   });
 
@@ -525,29 +656,28 @@ describe("api entrypoint", () => {
     ).not.toThrow();
   });
 
-  it("G-72: FAILS CLOSED outside local while the resolved SignupEmailPort is still the logging adapter", () => {
+  it("D48: the in-memory email credential vault FAILS CLOSED outside local", () => {
     expect(() =>
-      assertProductionSignupEmailConfigured("production", new LoggingSignupEmailAdapter()),
-    ).toThrow(/SignupEmailPort/);
+      assertProductionEmailVaultConfigured("production", new InMemoryEmailConnectionVault()),
+    ).toThrow(/EMAIL_CREDENTIALS_KEK_REF/);
+    expect(() =>
+      assertProductionEmailVaultConfigured("staging", new InMemoryEmailConnectionVault()),
+    ).toThrow(/in-memory email credential vault/);
   });
 
-  it("G-72: stays permissive in local while still the logging adapter", () => {
+  it("D48: the in-memory vault is permitted in local; a real vault, or none (503 NOT_CONFIGURED), is fine anywhere", () => {
     expect(() =>
-      assertProductionSignupEmailConfigured("local", new LoggingSignupEmailAdapter()),
+      assertProductionEmailVaultConfigured("local", new InMemoryEmailConnectionVault()),
+    ).not.toThrow();
+    expect(() => assertProductionEmailVaultConfigured("production", undefined)).not.toThrow();
+    expect(() =>
+      assertProductionEmailVaultConfigured("production", buildEmailConnectionVault("k".repeat(32))),
     ).not.toThrow();
   });
 
-  it("G-72: does NOT throw outside local once a non-logging adapter is resolved", () => {
-    const realish: SignupEmailPort = {
-      sendCompleteAccountEmail: async () => undefined,
-      sendAlreadyRegisteredEmail: async () => undefined,
-    };
-    expect(() => assertProductionSignupEmailConfigured("production", realish)).not.toThrow();
-  });
-
-  it("G-72: buildRuntimeCore always resolves the logging adapter (no real provider is wired anywhere — D4, out of scope)", () => {
+  it("D45: buildRuntimeCore has no sign-up email adapter any more (customer mail is the store's own connection)", () => {
     const core = buildRuntimeCore(loadRuntimeConfig(validEnv));
-    expect(core.signupEmail).toBeInstanceOf(LoggingSignupEmailAdapter);
+    expect("signupEmail" in core).toBe(false);
   });
 
   it("T14.5: dunning is enabled + no real notification delivery path ⇒ FAILS CLOSED outside local", () => {
@@ -1142,5 +1272,99 @@ describe("scheduler jobs", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     for (const t of timers) clearInterval(t);
     expect(ran).toBe(0); // lock respected — single-flight across instances
+  });
+});
+
+describe("O15 rotation composition (…_KEK_REF_PREVIOUS)", () => {
+  const current = "kek-test-bbbb".padEnd(40, "b");
+  const previous = "kek-test-aaaa".padEnd(40, "a");
+  const carriers = { ADMIN_API_PUBLIC_URL: "https://api.example.com/" };
+
+  it("no PREVIOUS ⇒ no re-seal plan, whatever else is configured", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF: current.replace(/b/g, "c"),
+        ...carriers,
+      }),
+    );
+    expect(core.credentialReseal).toBeUndefined();
+  });
+
+  it("PAYMENT PREVIOUS ⇒ payments AND billing card tokens are re-sealed; shipping is not", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    );
+    expect(core.credentialReseal?.targets.map((target) => target.name)).toEqual([
+      "payments",
+      "billing",
+    ]);
+  });
+
+  it("SHIPPING PREVIOUS ⇒ only shipping is re-sealed", () => {
+    const core = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        SHIPPING_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+        ...carriers,
+      }),
+    );
+    expect(core.credentialReseal?.targets.map((target) => target.name)).toEqual(["shipping"]);
+  });
+
+  it("the payments vault seals under the CURRENT ref and still opens a row sealed under the previous one", async () => {
+    const before = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: previous }),
+    ).paymentCredentialVault;
+    const old = await before?.seal("t-1", "paymob", { secretKey: "sk-test-1111" });
+    expect(old).toBeDefined();
+
+    const rotated = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...validEnv,
+        PAYMENT_CREDENTIALS_KEK_REF: current,
+        PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    ).paymentCredentialVault;
+    expect(await rotated?.open("t-1", "paymob", old ?? "")).toEqual({ secretKey: "sk-test-1111" });
+
+    const fresh = await rotated?.seal("t-1", "paymob", { secretKey: "sk-test-1111" });
+    const currentOnly = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: current }),
+    ).paymentCredentialVault;
+    expect(await currentOnly?.open("t-1", "paymob", fresh ?? "")).toEqual({
+      secretKey: "sk-test-1111",
+    });
+    expect(fresh).not.toContain("kekRef");
+    expect(fresh).not.toContain(current);
+    expect(fresh).not.toContain(previous);
+    // The previous key alone no longer opens new rows: they really are under the current one.
+    const previousOnly = buildRuntimeCore(
+      loadRuntimeConfig({ ...validEnv, PAYMENT_CREDENTIALS_KEK_REF: previous }),
+    ).paymentCredentialVault;
+    await expect(previousOnly?.open("t-1", "paymob", fresh ?? "")).rejects.toThrow(
+      /could not be opened/,
+    );
+  });
+
+  it("the carrier vault does the same under its own alias", async () => {
+    const env = { ...validEnv, ...carriers };
+    const old = await buildRuntimeCore(
+      loadRuntimeConfig({ ...env, SHIPPING_CREDENTIALS_KEK_REF: previous }),
+    ).carrierCredentialVault?.seal("t-1", "bosta", { apiKey: "bosta-key-1" });
+    const rotated = buildRuntimeCore(
+      loadRuntimeConfig({
+        ...env,
+        SHIPPING_CREDENTIALS_KEK_REF: current,
+        SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: previous,
+      }),
+    ).carrierCredentialVault;
+    expect(await rotated?.open("t-1", "bosta", old ?? "")).toEqual({ apiKey: "bosta-key-1" });
   });
 });

@@ -204,6 +204,8 @@ export const en = {
     proceedToCheckout: "Proceed to checkout",
     startingCheckout: "Starting checkout…",
     checkoutErrorBody: "Couldn't start checkout. Try again.",
+    /** Wave 2a: the shop caps how many of one item a cart line may hold. */
+    lineLimit: "You can add up to {limit} of this item",
   },
   checkout: {
     title: "Checkout",
@@ -220,8 +222,15 @@ export const en = {
       country: "Country/region",
       selectCountry: "Select a country",
       name: "Full name",
+      /** Wave 2a: the shop makes the name optional. */
+      nameOptional: "Full name (optional)",
       line1: "Address",
       line2: "Apartment, suite, etc. (optional)",
+      /** Wave 2a: the shop requires a second address line. */
+      line2Required: "Apartment, suite, etc.",
+      /** Wave 2a: the server refused the saved address for a missing/blank field. */
+      nameMissing: "Enter your full name.",
+      line2Missing: "Enter your apartment, suite, etc.",
       city: "City",
       postalCode: "Postal code (optional)",
       phone: "Phone",
@@ -236,6 +245,17 @@ export const en = {
     contact: {
       label: "Email address",
       hint: "We'll send your order confirmation here.",
+    },
+    /** Wave 2a: the shop asks for marketing consent; the box is never ticked for the shopper unless the shop chose to. */
+    marketing: {
+      label: "Email me with news and offers",
+    },
+    /** Wave 2a: the shop only takes orders from signed-in customers. */
+    loginRequired: {
+      title: "Sign in to check out",
+      body: "This store asks customers to sign in before they place an order.",
+      signIn: "Sign in",
+      register: "Create an account",
     },
     shippingMethodHint: "Enter your shipping address to view available shipping methods.",
     noShippingRates: "Shipping isn't available for this address.",
@@ -425,6 +445,12 @@ export const en = {
       network: "Couldn't reach the account service. Try again.",
       /** G-72: a signup-completion link that's unknown, expired, already used, or tampered with — all indistinguishable, deliberately. */
       invalidToken: "This link is invalid or has expired.",
+      /** Wave 2a: the shop turned customer accounts off (sign-up, sign-in). */
+      accountsDisabled: "Customer accounts are turned off for this store",
+    },
+    accountsDisabled: {
+      title: "Customer accounts are turned off for this store",
+      body: "You can still check out as a guest.",
     },
     /** G-72: guest-to-account upgrade — the "check your email" outcome and the completion page. */
     signup: {

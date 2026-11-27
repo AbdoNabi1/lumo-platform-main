@@ -5,14 +5,17 @@ import { BrandMark } from "@/components/brand-mark";
 /** Plan 1B-2: the plain email/password form shown when AUTH_MODE=native (no Ory, no Kratos flow). */
 const ERROR_TEXT: Readonly<Record<string, string>> = {
   invalid: "Email or password is incorrect / الإيميل أو كلمة السر غلط",
-  mfa: "Two-step verification is required / مطلوب تحقق بخطوتين",
+  mfa: "Your store requires two-step verification. Ask your store admin. / متجرك بيطلب التحقق بخطوتين. اطلب من مدير المتجر.",
+  expired: "Your sign-in expired. Start again. / انتهت صلاحية تسجيل الدخول. ابدأ من تاني.",
   unavailable: "Sign-in is temporarily unavailable / الدخول غير متاح مؤقتاً",
 };
 
 /** Plan 1C: neutral notices after the forgot-password / reset-password round trips. */
 const NOTICE_TEXT: Readonly<Record<string, string>> = {
   done: "Password changed. Sign in / اتغيرت كلمة السر، ادخل",
-  ready: "Your store is ready — sign in / متجرك جاهز — سجّل دخول",
+  ready:
+    "Your store is ready. Sign in to set up two-step verification. / متجرك جاهز. سجّل الدخول عشان تجهّز التحقق بخطوتين.",
+  invited: "Your account is ready. Sign in. / حسابك جاهز. سجّل الدخول.",
   sent: "If the account exists, a reset link is on its way / لو الحساب موجود، هيوصلك لينك إعادة التعيين",
 };
 
@@ -21,6 +24,7 @@ export function NativeLoginForm({
   returnTo,
   reset,
   signup,
+  invited,
   signupEnabled = false,
 }: {
   readonly error: string | undefined;
@@ -28,12 +32,20 @@ export function NativeLoginForm({
   readonly reset?: string | undefined;
   /** `?signup=done` after a sign-up that still needs a sign-in. */
   readonly signup?: string | undefined;
+  /** `?invited=1` after an invitation was accepted (Wave 1d). */
+  readonly invited?: string | undefined;
   /** Whether to offer the "Open your store" link; decided by the server page, never here. */
   readonly signupEnabled?: boolean;
 }) {
   const message = error === undefined ? undefined : ERROR_TEXT[error];
   const notice =
-    reset !== undefined ? NOTICE_TEXT[reset] : signup === "done" ? NOTICE_TEXT["ready"] : undefined;
+    reset !== undefined
+      ? NOTICE_TEXT[reset]
+      : signup === "done"
+        ? NOTICE_TEXT["ready"]
+        : invited === "1"
+          ? NOTICE_TEXT["invited"]
+          : undefined;
   return (
     <main className="lumo-canvas flex min-h-dvh items-center justify-center px-4">
       <Card className="w-full max-w-sm">

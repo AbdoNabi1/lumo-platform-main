@@ -30,6 +30,8 @@ model Shipment {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, fulfillmentRef])
   @@index([tenantId, status])
+  // Project 5: webhook lookups by (tenant, carrier, tracking number).
+  @@index([tenantId, carrier, trackingNumber])
   @@map("shipments")
   @@schema("shipping")
 }
@@ -105,5 +107,20 @@ model ShippingRate {
 
   @@index([tenantId, zoneId])
   @@map("shipping_rates")
+  @@schema("shipping")
+}
+
+/// Project 5 — which carriers a merchant uses and how to reach them. `carrierSettings` is
+/// `{ [key]: { config, sealedCredentials, webhook: { sealedSecret, previousSealedSecret?, previousValidUntil? } } }`;
+/// sealed values are envelopes, never plaintext, and never returned by any read DTO.
+model MerchantCarrierSettings {
+  tenantId        String   @id @map("tenant_id")
+  enabledCarriers String[] @default([]) @map("enabled_carriers")
+  carrierSettings Json     @default("{}") @map("carrier_settings")
+  version         Int      @default(0)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("merchant_carrier_settings")
   @@schema("shipping")
 }

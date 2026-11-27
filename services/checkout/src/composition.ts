@@ -21,6 +21,13 @@ import {
 import type { AbandonedCheckoutQueries } from "./domain/abandoned-checkouts";
 import type { CheckoutLinkRepository } from "./domain/checkout-link-repository";
 import { InMemoryCheckoutLinkRepository } from "./infrastructure/in-memory-checkout-link-repository";
+import { InMemoryCheckoutSettingsRepository } from "./infrastructure/in-memory-checkout-settings-repository";
+import { PrismaCheckoutSettingsRepository } from "./infrastructure/prisma-checkout-settings-repository";
+import {
+  GetCheckoutSettings,
+  UpdateCheckoutSettings,
+} from "./application/checkout-settings.use-cases";
+import type { CheckoutSettingsRepository } from "./domain/checkout-settings-repository";
 import { PrismaCheckoutLinkRepository } from "./infrastructure/prisma-checkout-link-repository";
 import {
   LoadItems,
@@ -65,6 +72,7 @@ import type {
   DraftOrderCompletionPort,
   InventoryValidationPort,
   OrderCancellationPort,
+  OrderPlacedPort,
   OrderStockReservationPort,
   OrderCreationPort,
   PaymentInitiationPort,
@@ -72,6 +80,7 @@ import type {
   PricingValidationPort,
   PromotionValidationPort,
   ShippingCalculationPort,
+  ShopperMarketingConsentPort,
   TaxCalculationPort,
 } from "./application/ports";
 import { CheckoutEventTranslator } from "./infrastructure/checkout-event-translator";
@@ -127,6 +136,10 @@ export interface CheckoutWiringDeps {
    * persists anything). The real adapter over Orders' `CreateOrderFromCheckout` is a separate task.
    */
   readonly orderCreation?: OrderCreationPort;
+  /** Wave 2a: records the marketing box the shopper ticked (Identity owns the consent). Absent => not recorded. */
+  readonly marketingConsent?: ShopperMarketingConsentPort;
+  /** Wave 2b: announces a placed order (customer confirmation, staff new order). Absent => nobody is mailed. */
+  readonly orderPlaced?: OrderPlacedPort;
   /**
    * WP-13: the two seams to Payments — which methods the merchant offers, and opening the payment
    * for the shopper's selected method. Same `deps.X ?? new InMemoryXAdapter()` convention; `wireAdmin`
@@ -154,6 +167,7 @@ export interface WiredCheckout {
 function buildController(
   sessions: CheckoutSessionRepository & AbandonedCheckoutQueries,
   links: CheckoutLinkRepository,
+  settings: CheckoutSettingsRepository,
   unitOfWork: TransactionalUnitOfWork<unknown>,
   deps: CheckoutWiringDeps,
 ): CheckoutController {
@@ -206,6 +220,9 @@ function buildController(
       taxCalculation,
       ...(deps.discountUsage === undefined ? {} : { discountUsage: deps.discountUsage }),
       ...(deps.draftCompletion === undefined ? {} : { draftCompletion: deps.draftCompletion }),
+      settings,
+      ...(deps.marketingConsent === undefined ? {} : { marketingConsent: deps.marketingConsent }),
+      ...(deps.orderPlaced === undefined ? {} : { orderPlaced: deps.orderPlaced }),
     }),
     failCheckout: new FailCheckout({
       sessions,
@@ -215,8 +232,8 @@ function buildController(
     }),
     loadItems: new LoadItems({ sessions, unitOfWork }),
     setBillingAddress: new SetBillingAddress({ sessions, unitOfWork }),
-    setShippingAddress: new SetShippingAddress({ sessions, unitOfWork }),
-    setContactEmail: new SetContactEmail({ sessions, unitOfWork }),
+    setShippingAddress: new SetShippingAddress({ sessions, unitOfWork, settings }),
+    setContactEmail: new SetContactEmail({ sessions, unitOfWork, settings }),
     selectShipping: new SelectShipping({ sessions, unitOfWork, shippingCalculation }),
     selectPayment: new SelectPayment({ sessions, unitOfWork, paymentMethods }),
     listPaymentMethods: new ListPaymentMethods({ paymentMethods }),
@@ -284,6 +301,8 @@ function buildController(
     claimInvoiceCheckout: new ClaimInvoiceCheckout(draftDeps),
     revokeDraftLinks: new RevokeDraftLinks(draftDeps),
     listDraftLinks: new ListDraftLinks({ links }),
+    getCheckoutSettings: new GetCheckoutSettings({ settings }),
+    updateCheckoutSettings: new UpdateCheckoutSettings({ settings, unitOfWork }),
   });
 }
 
@@ -312,6 +331,7 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
       checkout: buildController(
         sessions,
         new PrismaCheckoutLinkRepository({ prisma: deps.prisma }),
+        new PrismaCheckoutSettingsRepository(deps.prisma),
         unitOfWork,
         deps,
       ),
@@ -339,6 +359,7 @@ export function wireCheckout(deps: CheckoutWiringDeps): WiredCheckout {
   const controller = buildController(
     sessions,
     new InMemoryCheckoutLinkRepository(),
+    new InMemoryCheckoutSettingsRepository(),
     unitOfWork,
     deps,
   );

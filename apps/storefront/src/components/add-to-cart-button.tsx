@@ -31,9 +31,11 @@ export function AddToCartButton({
 }) {
   const preview = usePreviewMode();
   const [isPending, startTransition] = useTransition();
-  const [result, setResult] = useState<"idle" | "ok" | "unavailable" | "choose-variant" | "error">(
-    "idle",
-  );
+  const [result, setResult] = useState<
+    "idle" | "ok" | "unavailable" | "choose-variant" | "limit" | "error"
+  >("idle");
+  /** Wave 2a: the shop's add-to-cart limit, as the server worded it. */
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
 
   function onClick(): void {
     startTransition(async () => {
@@ -45,7 +47,15 @@ export function AddToCartButton({
         setResult("ok");
         return;
       }
-      if (response.reason === "unavailable") setResult("unavailable");
+      if (response.reason === "limit") {
+        const limit = response.message === undefined ? null : /\d+/.exec(response.message)?.[0];
+        setLimitMessage(
+          limit === undefined || limit === null
+            ? (response.message ?? null)
+            : t.cart.lineLimit.replace("{limit}", limit),
+        );
+        setResult("limit");
+      } else if (response.reason === "unavailable") setResult("unavailable");
       else if (response.reason === "choose-variant") setResult("choose-variant");
       else setResult("error");
     });
@@ -74,6 +84,9 @@ export function AddToCartButton({
       )}
       {result === "unavailable" && (
         <p className="text-destructive text-xs">{t.product.addToCartUnavailable}</p>
+      )}
+      {result === "limit" && (
+        <p className="text-destructive text-xs">{limitMessage ?? t.product.addToCartError}</p>
       )}
       {result === "choose-variant" && (
         <p className="text-destructive text-xs">{t.product.chooseVariant}</p>

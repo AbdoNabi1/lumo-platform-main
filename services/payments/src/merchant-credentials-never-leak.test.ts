@@ -131,11 +131,13 @@ describe("merchant PSP credentials never leak", () => {
     // It is a genuine envelope (wrapped data key + ciphertext), not an encoding of the secrets.
     expect(JSON.parse(sealed)).toEqual(
       expect.objectContaining({
-        v: 1,
+        v: 2,
         wrappedDek: expect.any(String),
         ciphertext: expect.any(String),
       }),
     );
+    // O15: the key reference is never stored next to the ciphertext.
+    expect(JSON.parse(sealed)).not.toHaveProperty("kekRef");
   });
 
   it("are not in any Postgres column: the Prisma row written carries only the sealed string", async () => {

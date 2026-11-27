@@ -62,6 +62,8 @@ export class PrismaCustomerRepository implements CustomerRepository, CustomerCon
         where: { id: customerId, tenantId, version: customer.version },
         data: {
           name: customer.name,
+          phone: customer.phone,
+          language: customer.language,
           isGuest: customer.isGuest,
           emailVerifiedAt: customer.emailVerifiedAt,
           version: { increment: 1 },

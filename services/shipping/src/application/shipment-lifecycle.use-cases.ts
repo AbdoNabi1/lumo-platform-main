@@ -3,12 +3,7 @@ import type { Clock, IdGenerator } from "@platform/contracts";
 import { BusinessRuleError, Guard, isDomainError } from "@platform/domain";
 import type { TransactionalUnitOfWork } from "@platform/repository";
 import { err, ok, type Result } from "@platform/types";
-import {
-  ConcurrencyError,
-  type DomainError,
-  NotFoundError,
-  ValidationError,
-} from "@platform/utils";
+import { type DomainError, NotFoundError, ValidationError } from "@platform/utils";
 import type { Shipment } from "../domain/shipment";
 import type { ShipmentRepository } from "../domain/shipment-repository";
 import { Carrier, CarrierService } from "../domain/value-objects/carrier";
@@ -19,28 +14,20 @@ import {
   type ShipmentStatusValue,
 } from "../domain/value-objects/shipment-status";
 import type { ShipmentStatusOutput } from "./create-shipment.use-case";
+import { withConcurrencyRetry } from "./concurrency-retry";
 import type { CarrierProviderPort, FulfillmentPort, NotificationPort } from "./ports";
-
-/**
- * Bounded retry on optimistic-lock conflicts only (Phase A.15, reusing the shape Payments'
- * `withConcurrencyRetry` established in Phase A.4/A.8, duplicated per-context by convention).
- * `PrismaShipmentRepository.save` throws `ConcurrencyError` when a concurrent writer already
- * advanced the row's `version` — that is expected/recoverable (two racing label/void attempts for
- * the same shipment), so the read-check-write attempt is retried from scratch against the
- * now-current row. Any other error propagates immediately.
- */
-async function withConcurrencyRetry<T>(maxAttempts: number, attempt: () => Promise<T>): Promise<T> {
-  for (let i = 1; i <= maxAttempts; i += 1) {
-    try {
-      return await attempt();
-    } catch (error) {
-      if (!(error instanceof ConcurrencyError) || i === maxAttempts) {
-        throw error;
-      }
-    }
-  }
-  throw new Error("unreachable");
-}
+import { CarrierError } from "../domain/errors";
+import {
+  carrierFailureOf,
+  type CarrierDelivery,
+  type CarrierParcelRequest,
+  type CarrierProvider,
+} from "./carrier-provider";
+import {
+  CarrierResolutionError,
+  carrierResolutionToError,
+  type CarrierResolver,
+} from "./carrier-resolver";
 
 export interface ShipmentIdInput {
   /** ADR-0014: the caller's verified tenant. */
@@ -59,6 +46,7 @@ export interface ShipmentLifecycleDeps {
   readonly clock: Clock;
   readonly fulfillmentPort?: FulfillmentPort;
   readonly notifications?: NotificationPort;
+  readonly isCarrierManaged?: (carrierKey: string) => boolean;
 }
 
 export async function notifyBestEffort(
@@ -95,6 +83,15 @@ export class AdvanceShipment implements UseCase<
         return err(new NotFoundError("Shipment not found"));
       }
 
+      if (
+        shipment.carrier !== undefined &&
+        this.deps.isCarrierManaged?.(shipment.carrier.value) === true &&
+        !(shipment.status.value === "voided" && input.toStatus === "created")
+      ) {
+        return err(
+          new CarrierError("CARRIER_USE_CANCEL", "Use the carrier cancel for this shipment", 409),
+        );
+      }
       try {
         shipment.transition(
           input.toStatus,
@@ -113,8 +110,22 @@ export class AdvanceShipment implements UseCase<
   }
 }
 
+export interface CarrierLabelDetails extends CarrierParcelRequest {
+  readonly carrierKey: string;
+  readonly reference: string;
+}
+export interface CreateLabelInput extends ShipmentIdInput {
+  readonly carrier?: CarrierLabelDetails;
+}
+export interface CreateLabelOutput extends ShipmentStatusOutput {
+  readonly trackingNumber?: string;
+  readonly carrierDeliveryId?: string;
+  readonly carrierKey?: string;
+}
+export const IN_FLIGHT_GRACE_MS = 120_000;
 export interface CreateLabelDeps extends ShipmentLifecycleDeps {
   readonly carrierProvider: CarrierProviderPort;
+  readonly carriers?: CarrierResolver;
 }
 
 interface CreateLabelPrecheck {
@@ -152,7 +163,7 @@ interface CreateLabelPrecheck {
  * unchanged (no `settleFailure` step needed here, unlike `CollectInvoice`/`CapturePaymentLifecycle`,
  * because there is no in-flight status to unwind).
  */
-export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput, DomainError> {
+export class CreateLabel implements UseCase<CreateLabelInput, CreateLabelOutput, DomainError> {
   private readonly deps: CreateLabelDeps;
   private static readonly MAX_CONCURRENCY_RETRIES = 5;
 
@@ -160,7 +171,8 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
     this.deps = deps;
   }
 
-  async execute(input: ShipmentIdInput): Promise<Result<ShipmentStatusOutput, DomainError>> {
+  async execute(input: CreateLabelInput): Promise<Result<CreateLabelOutput, DomainError>> {
+    if (input.carrier !== undefined) return this.executeCarrier(input, input.carrier);
     const precheck = await this.precheck(input.shipmentId, input.tenantId);
     if (!precheck.ok) return err(precheck.error);
     if (precheck.value.alreadyLabeled) {
@@ -193,6 +205,265 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
     );
   }
 
+  private async executeCarrier(
+    input: ShipmentIdInput,
+    details: CarrierLabelDetails,
+  ): Promise<Result<CreateLabelOutput, DomainError>> {
+    const precheck = await this.deps.unitOfWork.run(async (tx) => {
+      const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
+      if (shipment === null) return err(new NotFoundError("Shipment not found"));
+      if (shipment.status.value === "label_created")
+        return ok({ mode: "done" as const, output: this.labelOutput(shipment) });
+      if (shipment.status.value === "exception")
+        return err(
+          new CarrierError("SHIPMENT_NEEDS_REVIEW", "Check the carrier before retrying", 409),
+        );
+      const pending = shipment.pendingLabelAttempt();
+      if (pending?.reference !== undefined)
+        return ok({
+          mode: "resume" as const,
+          reference: pending.reference,
+          startedAt: pending.occurredAt,
+        });
+      return ok({ mode: "fresh" as const });
+    });
+    if (!precheck.ok) return err(precheck.error);
+    if (precheck.value.mode === "done") return ok(precheck.value.output);
+    let provider: CarrierProvider;
+    try {
+      if (this.deps.carriers === undefined)
+        return err(new CarrierError("CARRIER_NOT_AVAILABLE", "Carrier unavailable", 409));
+      provider = await this.deps.carriers.resolve(
+        input.tenantId,
+        details.carrierKey,
+        precheck.value.mode === "fresh" ? "new_shipment" : "existing_shipment",
+      );
+    } catch (error) {
+      if (error instanceof CarrierResolutionError) return err(carrierResolutionToError(error));
+      throw error;
+    }
+    if (precheck.value.mode === "resume") {
+      const { reference, startedAt } = precheck.value;
+      if (this.deps.clock.now().getTime() - startedAt.getTime() < IN_FLIGHT_GRACE_MS)
+        return err(
+          new CarrierError("CARRIER_CREATE_IN_PROGRESS", "Carrier request is in progress", 409),
+        );
+      let deliveries: readonly CarrierDelivery[];
+      try {
+        deliveries = await provider.findDeliveriesByReference(reference);
+      } catch {
+        return this.unknown(input, reference);
+      }
+      if (deliveries.length > 1) return this.unknown(input, reference);
+      if (deliveries.length === 1)
+        return this.settleCarrier(input, details.carrierKey, reference, deliveries[0]!);
+      const problem = await this.prepareCarrier(provider, details);
+      if (!problem.ok) {
+        if (problem.error.httpStatus === 422) await this.failAttempt(input, reference);
+        return err(problem.error);
+      }
+      return this.createCarrier(input, details, provider, reference, true);
+    }
+    const prepared = await this.prepareCarrier(provider, details);
+    if (!prepared.ok) return err(prepared.error);
+    const begun = await withConcurrencyRetry(5, () =>
+      this.deps.unitOfWork.run(async (tx) => {
+        const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
+        if (shipment === null) return err(new NotFoundError("Shipment not found"));
+        if (shipment.status.value === "label_created")
+          return ok({ output: this.labelOutput(shipment) });
+        if (shipment.pendingLabelAttempt() !== undefined)
+          return err(
+            new CarrierError("CARRIER_CREATE_IN_PROGRESS", "Carrier request is in progress", 409),
+          );
+        if (!canTransitionShipment(shipment.status.value, "label_created"))
+          return err(
+            new BusinessRuleError(
+              `Cannot transition shipment from "${shipment.status.value}" to "label_created"`,
+            ),
+          );
+        const reference = shipment.nextLabelReference(details.reference);
+        shipment.beginLabelAttempt(reference, this.deps.clock.now());
+        await this.deps.shipments.save(shipment, input.tenantId, tx);
+        return ok({ reference });
+      }),
+    );
+    if (!begun.ok) return err(begun.error);
+    if ("output" in begun.value) return ok(begun.value.output);
+    return this.createCarrier(input, details, provider, begun.value.reference, false);
+  }
+
+  private labelOutput(shipment: Shipment): CreateLabelOutput {
+    return {
+      shipmentId: shipment.id.toString(),
+      status: shipment.status.value,
+      trackingNumber: shipment.trackingNumber?.value,
+      carrierDeliveryId: shipment.label?.carrierDeliveryId,
+      carrierKey: shipment.carrier?.value,
+    };
+  }
+
+  private async prepareCarrier(
+    provider: CarrierProvider,
+    details: CarrierLabelDetails,
+  ): Promise<Result<void, CarrierError>> {
+    try {
+      const problem = await provider.prepare(details);
+      return problem === null
+        ? ok(undefined)
+        : err(
+            new CarrierError(
+              problem.code,
+              "Carrier cannot prepare this shipment",
+              422,
+              problem.reason,
+            ),
+          );
+    } catch (error) {
+      if (carrierFailureOf(error) !== null)
+        return err(new CarrierError("CARRIER_UNAVAILABLE", "Carrier unavailable", 503));
+      throw error;
+    }
+  }
+
+  private async createCarrier(
+    input: ShipmentIdInput,
+    details: CarrierLabelDetails,
+    provider: CarrierProvider,
+    reference: string,
+    resumed: boolean,
+  ): Promise<Result<CreateLabelOutput, DomainError>> {
+    try {
+      const delivery = await provider.createDelivery({ ...details, reference });
+      return this.settleCarrier(input, details.carrierKey, reference, delivery);
+    } catch (error) {
+      const failure = carrierFailureOf(error);
+      if (failure === null) throw error;
+      if (failure.carrierFailure === "unavailable")
+        return err(
+          new CarrierError(
+            failure.timedOut ? "CARRIER_TIMEOUT" : "CARRIER_UNAVAILABLE",
+            "Carrier unavailable",
+            503,
+          ),
+        );
+      if (resumed) return this.unknown(input, reference);
+      await this.failAttempt(input, reference);
+      return failure.carrierFailure === "credentials_rejected"
+        ? err(new CarrierError("CARRIER_CREDENTIALS_REJECTED", "Carrier credentials rejected", 409))
+        : err(
+            new CarrierError(
+              failure.code ?? "CARRIER_REJECTED",
+              "Carrier rejected the shipment",
+              422,
+              failure.reason,
+            ),
+          );
+    }
+  }
+
+  private async failAttempt(input: ShipmentIdInput, reference: string): Promise<void> {
+    await withConcurrencyRetry(5, () =>
+      this.deps.unitOfWork.run(async (tx) => {
+        const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
+        if (shipment?.pendingLabelAttempt()?.reference === reference) {
+          shipment.failLabelAttempt(reference, this.deps.clock.now());
+          await this.deps.shipments.save(shipment, input.tenantId, tx);
+        }
+      }),
+    );
+  }
+
+  private async unknown(
+    input: ShipmentIdInput,
+    reference: string,
+  ): Promise<Result<CreateLabelOutput, DomainError>> {
+    await withConcurrencyRetry(5, () =>
+      this.deps.unitOfWork.run(async (tx) => {
+        const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
+        if (
+          shipment?.status.value === "created" &&
+          shipment.pendingLabelAttempt()?.reference === reference
+        ) {
+          shipment.markCarrierResultUnknown(
+            reference,
+            this.deps.idGenerator.generate(),
+            this.deps.clock.now(),
+          );
+          await this.deps.shipments.save(shipment, input.tenantId, tx);
+        }
+      }),
+    );
+    return err(
+      new CarrierError("CARRIER_RESULT_UNKNOWN", "Check the carrier before retrying", 409),
+    );
+  }
+
+  private async settleCarrier(
+    input: ShipmentIdInput,
+    key: string,
+    reference: string,
+    delivery: CarrierDelivery,
+  ): Promise<Result<CreateLabelOutput, DomainError>> {
+    const label = ShippingLabel.create(
+      delivery.deliveryId,
+      delivery.trackingNumber,
+      delivery.deliveryId,
+    );
+    if (!label.ok) return err(label.error);
+    const carrier = Carrier.create(key);
+    if (!carrier.ok) return err(carrier.error);
+    const service = CarrierService.create("standard");
+    if (!service.ok) return err(service.error);
+    const tracking = TrackingNumber.create(delivery.trackingNumber);
+    if (!tracking.ok) return err(tracking.error);
+    return withConcurrencyRetry(5, () =>
+      this.deps.unitOfWork.run(async (tx) => {
+        const shipment = await this.deps.shipments.findById(input.shipmentId, input.tenantId, tx);
+        if (shipment === null) return err(new NotFoundError("Shipment not found"));
+        if (shipment.status.value === "label_created") {
+          const isSameDelivery =
+            shipment.trackingNumber?.value === delivery.trackingNumber &&
+            shipment.label?.carrierDeliveryId === delivery.deliveryId &&
+            shipment.carrier?.value === key;
+          return isSameDelivery
+            ? ok(this.labelOutput(shipment))
+            : err(
+                new CarrierError(
+                  "CARRIER_RESULT_UNKNOWN",
+                  "Check the carrier before retrying",
+                  409,
+                ),
+              );
+        }
+        if (
+          shipment.pendingLabelAttempt()?.reference !== reference ||
+          !canTransitionShipment(shipment.status.value, "label_created")
+        )
+          return err(
+            new CarrierError("CARRIER_RESULT_UNKNOWN", "Check the carrier before retrying", 409),
+          );
+        try {
+          shipment.createLabel(
+            label.value,
+            carrier.value,
+            service.value,
+            tracking.value,
+            this.deps.idGenerator.generate(),
+            this.deps.clock.now(),
+            reference,
+          );
+        } catch (error) {
+          if (isDomainError(error)) return err(error);
+          throw error;
+        }
+        await this.deps.shipments.save(shipment, input.tenantId, tx);
+        await notifyBestEffort(this.deps, shipment);
+        return ok(this.labelOutput(shipment));
+      }),
+    );
+  }
+
   private async precheck(
     shipmentId: string,
     tenantId: string,
@@ -203,6 +474,18 @@ export class CreateLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutpu
         return err(new NotFoundError("Shipment not found"));
       }
 
+      if (
+        shipment.pendingLabelAttempt() !== undefined ||
+        (shipment.carrier !== undefined &&
+          this.deps.isCarrierManaged?.(shipment.carrier.value) === true) ||
+        shipment.attempts.some(
+          (a) => a.kind === "label" && a.reference !== undefined && /-\d+$/.test(a.reference),
+        )
+      ) {
+        return err(
+          new CarrierError("CARRIER_USE_CANCEL", "Use the carrier flow for this shipment", 409),
+        );
+      }
       const status = shipment.status.value;
       if (status === "label_created") {
         return ok({ alreadyLabeled: true, fulfillmentRef: shipment.fulfillmentRef, status });
@@ -317,6 +600,14 @@ export class VoidLabel implements UseCase<ShipmentIdInput, ShipmentStatusOutput,
       const shipment = await this.deps.shipments.findById(shipmentId, tenantId, tx);
       if (shipment === null) {
         return err(new NotFoundError("Shipment not found"));
+      }
+      if (
+        shipment.carrier !== undefined &&
+        this.deps.isCarrierManaged?.(shipment.carrier.value) === true
+      ) {
+        return err(
+          new CarrierError("CARRIER_USE_CANCEL", "Use the carrier cancel for this shipment", 409),
+        );
       }
       if (shipment.label === undefined) {
         return err(new ValidationError("Cannot void a label before one is created", []));

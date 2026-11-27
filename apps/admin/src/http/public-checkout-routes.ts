@@ -4,6 +4,7 @@ import type { Cart } from "@platform/cart";
 import {
   CheckoutSession,
   DRAFT_LOCKED,
+  cartLineLimitIssue,
   type CheckoutAddress,
   type CheckoutController,
   type DiscountCodeOutput,
@@ -16,7 +17,9 @@ import {
 } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import type { AdminResponse } from "../interfaces/admin-response";
+import { loginRequirement, readCheckoutSettings } from "./checkout-settings-guard";
 import { withLineImages } from "./product-images";
+import { resolveCustomerSessionId } from "./public-auth-routes";
 import { resolveSessionRef } from "./public-cart-routes";
 
 const checkoutSessionIdParams = z.object({ checkoutSessionId: z.string().min(1) });
@@ -55,7 +58,14 @@ const addressBody = z.object({
  * a body carrying `customerRef` (or anything else) is a spoof attempt, not a typo. The email only
  * ever feeds Identity's find-or-create at completion; it never confers access to a customer.
  */
-const contactBody = z.object({ sessionRef: z.string().min(1), email: z.string().min(1) }).strict();
+const contactBody = z
+  .object({
+    sessionRef: z.string().min(1),
+    email: z.string().min(1),
+    /** Wave 2a: the marketing box. Kept only while the shop shows the prompt; otherwise ignored. */
+    marketingOptIn: z.boolean().optional(),
+  })
+  .strict();
 /** Mirrors `checkout-routes.ts`'s Phase A.1 F-01 fix: the caller supplies only `method`, never a rate — `SelectShipping` re-derives the authoritative rate itself. */
 const shippingSelectionBody = z
   .object({ sessionRef: z.string().min(1), method: z.string().min(1) })
@@ -357,6 +367,36 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         "Public: start a checkout session for the caller's own cart (guest — no customerRef)",
       schema: { body: startCheckoutBody },
       handle: async ({ body, context }) => {
+        // Wave 2a (D34): the shop's rules are enforced here, whatever the storefront page shows.
+        const settings = await readCheckoutSettings(admin, context.tenantId);
+        const loginRequired = await loginRequirement(
+          admin,
+          context.tenantId,
+          resolveCustomerSessionId(context),
+          settings,
+        );
+        if (loginRequired !== null) return loginRequired;
+        if (settings.cartLineLimit !== null) {
+          // The limit may have been lowered after the cart was filled: re-check the cart's own lines.
+          const found = await admin.publicReads.cart.get({
+            tenantId: context.tenantId,
+            cartId: body.cartRef,
+          });
+          if (found.status >= 200 && found.status < 300) {
+            const cart = found.body as Cart;
+            if (cart.sessionRef === body.sessionRef) {
+              const over = cart.items
+                .map((line) => cartLineLimitIssue(settings.cartLineLimit, line.quantity.value))
+                .find((issue) => issue !== null);
+              if (over !== undefined && over !== null) {
+                return {
+                  status: 422,
+                  body: toErrorEnvelope(new ValidationError("Cart limit exceeded", [over])),
+                };
+              }
+            }
+          }
+        }
         const started = await admin.publicReads.checkout.start({
           tenantId: context.tenantId,
           cartRef: body.cartRef,
@@ -433,10 +473,12 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
         // contents into their own checkout session. Same 404-on-mismatch rule as everywhere else.
         if (cart.sessionRef !== body.sessionRef) return notFoundResponse();
         const items = checkoutItemsOf(cart);
+        const settings = await readCheckoutSettings(admin, context.tenantId);
         const result = await admin.publicReads.checkout.loadItems({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           items,
+          ...(settings.cartLineLimit === null ? {} : { maxLineQuantity: settings.cartLineLimit }),
         });
         if (result.status < 200 || result.status >= 300) return withDraftLockedCode(result);
         return mapSession(
@@ -539,6 +581,7 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,
           email: body.email,
+          ...(body.marketingOptIn === undefined ? {} : { marketingOptIn: body.marketingOptIn }),
         });
         if (result.status < 200 || result.status >= 300) return result;
         return mapSession(
@@ -769,6 +812,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
       summary: "Public: complete the caller's own checkout session, materializing the order",
       schema: { params: checkoutSessionIdParams, body: completeBody },
       handle: async ({ params, body, context }) => {
+        const loginRequired = await loginRequirement(
+          admin,
+          context.tenantId,
+          resolveCustomerSessionId(context),
+          await readCheckoutSettings(admin, context.tenantId),
+        );
+        if (loginRequired !== null) return loginRequired;
         const owned = await requireOwnedSession(
           admin,
           params.checkoutSessionId,

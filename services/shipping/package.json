@@ -6,7 +6,8 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/carrier-doubles.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -24,6 +25,7 @@
     "@platform/messaging": "workspace:*",
     "@platform/regions": "workspace:*",
     "@platform/repository": "workspace:*",
+    "@platform/secrets": "workspace:*",
     "@platform/types": "workspace:*",
     "@platform/utils": "workspace:*",
     "@prisma/client": "^6.5.0"

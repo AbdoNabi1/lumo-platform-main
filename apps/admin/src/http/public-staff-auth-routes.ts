@@ -1,8 +1,17 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { defineRoute, type RouteDefinition } from "@platform/http";
 import type { RateLimiter } from "@platform/contracts";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./rate-limited-response";
+import {
+  confirmStaffSetup,
+  finishStaffLogin,
+  loginVerifyBody,
+  setupConfirmBody,
+  setupStartBody,
+  startStaffSetup,
+} from "./staff-login-verify";
 import {
   staffIdentifier,
   STAFF_IDENTIFIER_PREFIX,
@@ -20,6 +29,12 @@ const staffResetCompleteBody = z
   .object({ token: z.string().min(1).max(256), password: z.string().min(1).max(256) })
   .strict();
 
+const staffInviteAcceptBody = z
+  .object({ token: z.string().min(1).max(512), password: z.string().max(256) })
+  .strict();
+
+const STAFF_INVITE_ACCEPT_LIMIT = 10;
+const STAFF_INVITE_ACCEPT_WINDOW_MS = 15 * 60 * 1000;
 const STAFF_RESET_REQUEST_LIMIT = 5;
 const STAFF_RESET_REQUEST_WINDOW_MS = 60 * 60 * 1000;
 const STAFF_RESET_COMPLETE_LIMIT = 10;
@@ -82,6 +97,61 @@ export function publicStaffAuthRoutes(
     }),
     defineRoute({
       method: "POST",
+      path: "/public/auth/staff/login/verify",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish a staff sign-in with the code from the authenticator app (or a backup code)",
+      schema: { body: loginVerifyBody },
+      // NOT idempotent: a replayed success would hand a second caller the first caller's token. The
+      // tenant is the signed challenge's; it must equal the request's (else the challenge is "expired").
+      handle: ({ body, context }) =>
+        finishStaffLogin({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/login/setup/start",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: start two-step setup at sign-in with the setup challenge (returns the key ONCE; never cached)",
+      schema: { body: setupStartBody },
+      // NOT idempotent: the secret must never sit in the idempotency cache. Tenant = the signed challenge's,
+      // which must equal the request's.
+      handle: ({ body, context }) =>
+        startStaffSetup({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/login/setup/confirm",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: finish setup at sign-in with the first code; returns the session token and the backup codes ONCE",
+      schema: { body: setupConfirmBody },
+      handle: ({ body, context }) =>
+        confirmStaffSetup({
+          admin,
+          body,
+          requestTenantId: context.tenantId,
+          ...(rateLimiter === undefined ? {} : { rateLimiter }),
+        }),
+    }),
+    defineRoute({
+      method: "POST",
       path: "/public/auth/staff/password-reset/request",
       version: 1,
       permission: "security:authenticate",
@@ -126,6 +196,34 @@ export function publicStaffAuthRoutes(
           }
         }
         return admin.staffAuth.completePasswordReset({
+          tenantId: context.tenantId,
+          token: body.token,
+          password: body.password,
+        });
+      },
+    }),
+    defineRoute({
+      method: "POST",
+      path: "/public/auth/staff/invitations/accept",
+      version: 1,
+      permission: "security:authenticate",
+      public: true,
+      summary:
+        "Public: accept a staff invitation by choosing a password (uniform 410 for any bad link)",
+      schema: { body: staffInviteAcceptBody },
+      handle: async ({ body, context }) => {
+        if (rateLimiter !== undefined) {
+          // Bucketed by a hash of the token: the token itself never reaches the limiter or its logs.
+          const decision = await rateLimiter.consume(
+            `rl:${context.tenantId}:staff-invite-accept:${createHash("sha256").update(body.token).digest("hex")}`,
+            STAFF_INVITE_ACCEPT_LIMIT,
+            STAFF_INVITE_ACCEPT_WINDOW_MS,
+          );
+          if (!decision.allowed) {
+            return rateLimited(decision.retryAfterMs, "Too many invitation attempts");
+          }
+        }
+        return admin.staff.acceptInvitation({
           tenantId: context.tenantId,
           token: body.token,
           password: body.password,

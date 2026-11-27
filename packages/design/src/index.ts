@@ -1,6 +1,9 @@
 /**
  * `@platform/design` — the Morbeh Design System token layer.
  *
+ * The brand is Nusuj — Warm Weave (نسيج), LOCKED BY OWNER on 2026-11-19: palette, fonts, radii,
+ * logo and button shape change only on an explicit owner order. See docs/ui/BRAND_LOCK.md.
+ *
  * Morbeh is the platform's single canonical design system. There is no second system and no
  * "legacy" system; anything visual in this repository resolves here.
  *
@@ -10,7 +13,7 @@
  *
  * Rules of use:
  *   - Components consume **semantic** tokens (`colors.light.card`, `bg-card`, `var(--card)`).
- *   - Primitive scales (`primary`, `neutral`, `status`) exist only to define the semantic
+ *   - Primitive scales (`primary`, `neutral`, `night`, `brand`, `status`) exist only to define the semantic
  *     layer. Do not reach past a semantic token into a scale from product code.
  *   - No component may hard-code a hex value.
  *
@@ -18,10 +21,13 @@
  */
 
 export {
+  brand,
   breakpoints,
   elevation,
   motion,
   neutral,
+  night,
+  onPrimaryInk,
   primary,
   radius,
   spacing,

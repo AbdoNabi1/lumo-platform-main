@@ -3,10 +3,12 @@ import { isDomainError, UniqueEntityId } from "@platform/domain";
 import { err, ok, type Result } from "@platform/types";
 import { type DomainError, BusinessRuleError, NotFoundError } from "@platform/utils";
 import { MfaEnrollment } from "../domain/mfa-enrollment";
+import type { Principal } from "../domain/principal";
 import type { MfaDecision } from "../domain/mfa-engine";
 import type { MfaMethodKind } from "../domain/value-objects/auth-method";
 import type { RiskBand } from "../domain/value-objects/scores";
 import { recordAudit, type SecurityDeps } from "./deps";
+import { STAFF_IDENTIFIER_PREFIX } from "./staff-support";
 
 export interface MfaEnrollmentOutput {
   readonly id: string;
@@ -53,6 +55,7 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
       return err(new BusinessRuleError(`MFA method "${input.method}" is disabled`));
     const { secretRef, provisioningUri } = await provider.enroll({
       principalRef: principal.id.toString(),
+      accountLabel: await this.accountLabelFor(input.tenantId, principal),
     });
     return this.deps.unitOfWork.run<Result<MfaEnrollmentOutput, DomainError>>(async (tx) => {
       const enrollment = MfaEnrollment.enroll(
@@ -72,6 +75,17 @@ export class EnrollMfa implements UseCase<EnrollMfaInput, MfaEnrollmentOutput, D
       });
       return ok(present(enrollment, provisioningUri));
     });
+  }
+
+  /** The name an authenticator app shows: the staff email when the principal has one, else its display name. */
+  private async accountLabelFor(tenantId: string, principal: Principal): Promise<string> {
+    const credential = await this.deps.staffCredentials.findByPrincipal(
+      tenantId,
+      principal.externalId,
+    );
+    if (credential !== null && credential.identifier.startsWith(STAFF_IDENTIFIER_PREFIX))
+      return credential.identifier.slice(STAFF_IDENTIFIER_PREFIX.length);
+    return principal.displayName;
   }
 }
 

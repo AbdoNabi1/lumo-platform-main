@@ -1,6 +1,10 @@
 import { headers } from "next/headers";
 import { SHOP_ID_HEADER } from "./shop-host";
 import type { ShippableCountries } from "./checkout-address";
+import {
+  parsePublicCheckoutSettings,
+  type PublicCheckoutSettings,
+} from "./checkout-settings-model";
 
 export const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const TENANT_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
@@ -379,6 +383,36 @@ export async function getShippableCountries(): Promise<ShippableCountries | null
     return null;
   }
   return { countries: body.countries, restOfWorld: body.restOfWorld };
+}
+
+/** A hung Runtime must not hang a page that only wants the settings: give up and use the defaults. */
+const CHECKOUT_SETTINGS_TIMEOUT_MS = 3_000;
+
+/**
+ * One shop's checkout and customer-account switches (`GET /public/checkout-settings`, Wave 2a) for an
+ * EXPLICIT shop: it never reads request headers, so it is safe inside `unstable_cache`. Always
+ * `no-store` at the fetch level, 3 s timeout. `null` for any failure, non-200, or a body that is not
+ * exactly a settings document; the caller decides what that means (never silently "no rules" here).
+ */
+export async function fetchPublicCheckoutSettings(
+  shopId: string,
+): Promise<PublicCheckoutSettings | null> {
+  try {
+    const response = await fetch(`${RUNTIME_API_URL}/api/v1/public/checkout-settings`, {
+      headers: { "x-tenant-id": shopId },
+      cache: "no-store",
+      signal: AbortSignal.timeout(CHECKOUT_SETTINGS_TIMEOUT_MS),
+    });
+    if (response.status !== 200) return null;
+    return parsePublicCheckoutSettings(await response.json().catch(() => null));
+  } catch {
+    return null;
+  }
+}
+
+/** This request's shop's checkout settings, read fresh (no cache); `null` when they could not be read. */
+export async function getPublicCheckoutSettings(): Promise<PublicCheckoutSettings | null> {
+  return fetchPublicCheckoutSettings(await currentShopId());
 }
 
 /** Compatibility reads retained for main's category and collection callers. */
@@ -1047,6 +1081,19 @@ export interface PaymentIntentRequestSummary {
 type CheckoutResult = { readonly status: number; readonly body: CheckoutSessionSummary | null };
 
 /**
+ * Wave 2a: when the shop requires sign-in to check out, the server wants the same proof every
+ * customer route takes, the opaque session id in `x-customer-session`, on checkout create and
+ * complete. Absent when nobody is signed in (a guest sends nothing, as before).
+ */
+function customerSessionHeader(
+  customerSessionId: string | undefined,
+): Readonly<Record<string, string>> | undefined {
+  return customerSessionId === undefined || customerSessionId === ""
+    ? undefined
+    : { "x-customer-session": customerSessionId };
+}
+
+/**
  * The guest Checkout transport (Phase 2 — Public checkout). Same ownership model as the guest Cart
  * transport above: every call carries the caller's `sessionRef` — in the `x-cart-session` header on
  * reads, in the body on writes — which the Runtime API checks against `session.sessionRef`. No
@@ -1057,12 +1104,13 @@ export function startCheckout(
   sessionRef: string,
   cartRef: string,
   currency: string,
+  customerSessionId?: string,
 ): Promise<CheckoutResult> {
-  return postItem<CheckoutSessionSummary>("/api/v1/public/checkouts", {
-    sessionRef,
-    cartRef,
-    currency,
-  });
+  return postItem<CheckoutSessionSummary>(
+    "/api/v1/public/checkouts",
+    { sessionRef, cartRef, currency },
+    customerSessionHeader(customerSessionId),
+  );
 }
 
 export function getCheckoutSession(
@@ -1145,10 +1193,12 @@ export function setCheckoutContact(
   checkoutSessionId: string,
   sessionRef: string,
   email: string,
+  marketingOptIn?: boolean,
 ): Promise<CheckoutResult> {
+  // Wave 2a: the answer travels only when the shop asked the question (the box was shown).
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/contact`,
-    { sessionRef, email },
+    { sessionRef, email, ...(marketingOptIn === undefined ? {} : { marketingOptIn }) },
   );
 }
 
@@ -1263,11 +1313,12 @@ export function completeCheckout(
   checkoutSessionId: string,
   sessionRef: string,
   idempotencyKey: string,
+  customerSessionId?: string,
 ): Promise<CheckoutResult> {
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/complete`,
     { sessionRef, idempotencyKey },
-    { "Idempotency-Key": idempotencyKey },
+    { "Idempotency-Key": idempotencyKey, ...customerSessionHeader(customerSessionId) },
   );
 }
 
