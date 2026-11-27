@@ -437,9 +437,12 @@ all, there is nothing to do for it):
 
 1. Generate a NEW random value (PowerShell, 64 characters):
    `$b = New-Object byte[] 48; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`
-2. Copy the **current** value of `PAYMENT_CREDENTIALS_KEK_REF` into a new variable
-   `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS`, then put the NEW value into `PAYMENT_CREDENTIALS_KEK_REF`.
-   Same for shipping: `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and `SHIPPING_CREDENTIALS_KEK_REF`.
+2. Keep `PAYMENT_CREDENTIALS_KEK_REF` under its own name: COPY its value into the
+   `PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS` variable, then put the new value into
+   `PAYMENT_CREDENTIALS_KEK_REF`. Apply/Deploy the change on runtime-api (and worker if it has the
+   variable). Same for shipping: `SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS` and
+   `SHIPPING_CREDENTIALS_KEK_REF`. Never rename or move the current variable: a `…_PREVIOUS` without its
+   current key is ignored.
 3. Publish. The API opens old rows with the previous key and, in the background after it starts
    listening, re-seals every stored credential under the new key (one replica does it, under a database
    lock; safe to repeat on every boot while `…_PREVIOUS` is set).
@@ -452,8 +455,9 @@ all, there is nothing to do for it):
 
 Notes:
 
-- `…_PREVIOUS` is secret like the key itself, 32+ characters, refused without the current value and
-  refused when equal to it (the API will not boot, or load config, with either mistake).
+- `…_PREVIOUS` is secret like the key itself, 32+ characters. Without the current value, or when equal to
+  it, it is ignored with a boot warning that names only the variables (never values), and no re-seal runs:
+  the API still boots, but the rotation has not happened. Fix the variables and redeploy.
 - `failed` above 0 means rows that neither key opens (or that kept changing while being re-sealed). They are
   left untouched. Keep `…_PREVIOUS` set, find out why, and redeploy; do not delete it with failures.
 - `EMAIL_CREDENTIALS_KEK_REF` needs no rotation for this: email accounts were never stored with their key

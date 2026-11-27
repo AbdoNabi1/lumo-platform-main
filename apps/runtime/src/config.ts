@@ -1,3 +1,4 @@
+import { logger } from "@platform/utils";
 import { z } from "zod";
 
 /**
@@ -400,27 +401,6 @@ const schema = z
       .transform((v) => v.toLowerCase() === "true"),
   })
   .superRefine((cfg, ctx) => {
-    // O15: a PREVIOUS key reference only makes sense next to the current one it is being rotated to,
-    // and must be a different key. The messages name the variables, never a value.
-    for (const [current, previous] of [
-      ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
-      ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
-    ] as const) {
-      if (cfg[previous] === undefined) continue;
-      if (cfg[current] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [previous],
-          message: `${previous} is set but ${current} is not: a previous key only exists while rotating to a current one (O15).`,
-        });
-      } else if (cfg[previous] === cfg[current]) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [previous],
-          message: `${previous} must differ from ${current}: rotating to the same key rotates nothing (O15).`,
-        });
-      }
-    }
     // H-2 (G-SEC-4): live identity binding (Keto relation-tuple sync + Kratos identity/session) is
     // mandatory outside `local` — the security enforcement sync must not silently no-op in production.
     if (cfg.AUTH_MODE === "ory") {
@@ -582,11 +562,38 @@ const schema = z
 
 export type RuntimeConfig = z.infer<typeof schema>;
 
+/**
+ * O15: a `*_KEK_REF_PREVIOUS` only makes sense next to the current key it is being rotated to, and must
+ * differ from it. A stray one (current missing, or the same value) is a harmless operator slip while
+ * rotating, not a reason to take the API down (production incident 2026-11-27): it is dropped from the
+ * config so composition never sees it, with ONE warning per variable that names variables, never values.
+ */
+const ROTATION_PAIRS = [
+  ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
+  ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
+] as const;
+
+function dropUnusablePreviousKeys(config: RuntimeConfig): RuntimeConfig {
+  const result = { ...config };
+  for (const [current, previous] of ROTATION_PAIRS) {
+    const previousValue = config[previous];
+    if (previousValue === undefined) continue;
+    if (config[current] === undefined) {
+      logger.warn(`${previous} ignored: ${current} is not set`);
+      result[previous] = undefined;
+    } else if (previousValue === config[current]) {
+      logger.warn(`${previous} ignored: it equals ${current}, so there is nothing to rotate`);
+      result[previous] = undefined;
+    }
+  }
+  return result;
+}
+
 export function loadRuntimeConfig(env: NodeJS.ProcessEnv = process.env): RuntimeConfig {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid runtime configuration: ${issues}`);
   }
-  return parsed.data;
+  return dropUnusablePreviousKeys(parsed.data);
 }
