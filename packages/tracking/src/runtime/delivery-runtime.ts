@@ -36,6 +36,7 @@
  */
 
 import {
+  deadLetterDelivery,
   deliver,
   renderPayload,
   type DeliveryDeps,
@@ -71,8 +72,15 @@ import {
   type EventRecord,
   type EventRecordWriterPort,
   type ProcessingVersions,
+  type RetryHistoryEntry,
   type StageHistoryEntry,
 } from "../inspector/event-record";
+import {
+  dispositionOf,
+  parkDelivery,
+  storableError,
+  type DeliveryRetryQueuePort,
+} from "./delivery-retry";
 
 /**
  * The runtime's phases, exported as data so the order is asserted by tests rather than only
@@ -172,6 +180,15 @@ export interface RecordingRuntimeDeps {
   readonly clock: { now(): Date };
   /** Default country used to normalize a national phone number. Omitted ⇒ such numbers are dropped. */
   readonly defaultCountryCode?: string;
+  /**
+   * Durable retry (P1-D2). When present, a delivery whose in-process tries ran out on a failure the
+   * vendor may recover from — or that an open circuit / empty bucket deferred — is parked here for the
+   * worker's sweeper instead of being dead-lettered, and is retried inside the vendor's window. Absent
+   * means the behaviour from before P1-D2 (an exhausted delivery is dead-lettered).
+   */
+  readonly retryQueue?: DeliveryRetryQueuePort;
+  /** Jitter source for the first durable retry slot; absent means the exact schedule. */
+  readonly random?: () => number;
 }
 
 export interface ReceiveEventInput {
@@ -380,11 +397,18 @@ export async function receiveAndDeliver(
   // --- Phase: deliver ---
   const results: { destination: DestinationKey; result: DeliveryResult }[] = [];
   const finalEntries: DestinationHistoryEntry[] = [];
+  // With a retry queue to park into, `deliver` leaves an exhausted transient failure for this function
+  // to park (it writes no dead letter). Set here, where the queue is known, so the two can never
+  // disagree: deferring with nowhere to park would lose the event.
+  const delivery: DeliveryDeps =
+    deps.retryQueue === undefined
+      ? deps.delivery
+      : { ...deps.delivery, deferTransientFailures: true };
 
   for (const { destination, payload } of prepared) {
     const state = deps.destinationState.get(destination, deps.clock.now().getTime());
 
-    const result = await deliver(deps.delivery, {
+    const result = await deliver(delivery, {
       envelope,
       destination,
       routingContext,
@@ -403,6 +427,14 @@ export async function receiveAndDeliver(
     const completedAt = deps.clock.now().toISOString();
     const pendingEntry = pending.find((entry) => entry.destination === destination.key);
 
+    const parked = await parkIfTransient(deps, {
+      envelope,
+      destination,
+      payload,
+      result,
+      now: deps.clock.now(),
+    });
+
     finalEntries.push({
       ...(pendingEntry ?? {
         destination: destination.key,
@@ -411,8 +443,11 @@ export async function receiveAndDeliver(
         mappingVersion: deps.versions.mappingVersion(destination.mappingProfileKey),
         renderedPayload: payload,
       }),
-      status: toDeliveryState(result.outcome),
-      attempts: buildRetryHistory(result, completedAt),
+      // A parked delivery is not a failure yet: it is `retrying` until the sweeper settles it.
+      status: parked ? "retrying" : toDeliveryState(result.outcome),
+      attempts: parked
+        ? markRetryable(buildRetryHistory(result, completedAt))
+        : buildRetryHistory(result, completedAt),
       firstAttemptAt: at,
       lastAttemptAt: completedAt,
     });
@@ -433,7 +468,7 @@ export async function receiveAndDeliver(
   const retryStage = stage(
     "retry",
     finishedAt,
-    results.some((r) => r.result.outcome.status === "dead_lettered") ? "failed" : "completed",
+    finalEntries.some((entry) => entry.status === "dead_lettered") ? "failed" : "completed",
   );
 
   await deps.records.appendHistory({
@@ -456,4 +491,64 @@ export async function receiveAndDeliver(
     results,
     renderFailures,
   };
+}
+
+/** The last attempt of a parked delivery was a retryable failure, not a permanent one. */
+function markRetryable(attempts: readonly RetryHistoryEntry[]): readonly RetryHistoryEntry[] {
+  return attempts.map((attempt, index) =>
+    index === attempts.length - 1 && attempt.outcome === "permanent_failure"
+      ? { ...attempt, outcome: "retryable_failure" }
+      : attempt,
+  );
+}
+
+/**
+ * Hands a delivery the sweeper can still save to the durable queue (P1-D2); returns whether it was
+ * parked. Anything the queue cannot take (no queue, a permanent outcome, a window with no useful
+ * moment left, a queue write that failed) falls back to what happened before: an exhausted transient
+ * failure, which `deliver` deliberately did not dead-letter, is dead-lettered here, so the event is
+ * never neither retried nor recorded as lost.
+ */
+async function parkIfTransient(
+  deps: RecordingRuntimeDeps,
+  input: {
+    readonly envelope: EnrichedEnvelope;
+    readonly destination: DestinationDefinition;
+    readonly payload: Readonly<Record<string, unknown>>;
+    readonly result: DeliveryResult;
+    readonly now: Date;
+  },
+): Promise<boolean> {
+  const { outcome } = input.result;
+  if (deps.retryQueue === undefined) return false;
+
+  const disposition = dispositionOf(outcome);
+  if (disposition.kind !== "transient") return false;
+
+  let parked = false;
+  try {
+    const result = await parkDelivery({
+      queue: deps.retryQueue,
+      envelope: input.envelope,
+      destination: input.destination,
+      disposition,
+      now: input.now,
+      ...(deps.random === undefined ? {} : { random: deps.random }),
+    });
+    parked = result.kind === "parked";
+  } catch {
+    // The queue is unreachable: fall through to the dead letter rather than lose the event.
+  }
+
+  if (!parked && outcome.status === "dead_lettered") {
+    await deadLetterDelivery(deps.delivery.deadLetters, {
+      envelope: input.envelope,
+      destination: input.destination.key,
+      payload: input.payload,
+      attempts: outcome.attempts,
+      error: storableError(outcome.error),
+      failedAt: input.now.toISOString(),
+    });
+  }
+  return parked;
 }

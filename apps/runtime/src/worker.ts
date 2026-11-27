@@ -3,6 +3,7 @@ import type { DirectConsumer } from "@platform/messaging";
 import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
+  buildDeliveryRetrySweep,
   buildPaymentCapturedRuntime,
   buildRuntimeCore,
   buildTrackingIngestRuntime,
@@ -13,6 +14,7 @@ import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-sett
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
 import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
+import { startDeliveryRetrySweep } from "./delivery-retry-runtime";
 import { startHealthServer } from "./health-server";
 import { startOutboxDelivery } from "./outbox-delivery-runtime";
 import { startOutboxRelay } from "./outbox-relay-runtime";
@@ -181,6 +183,12 @@ export async function startWorker(
     };
   }
 
+  // Tracking P1-D2: the durable per-destination retry. Deliveries parked by the ingest consumer are retried
+  // here inside the vendor's window. Independent of the transport (it reads the database, not the broker),
+  // so it starts under both; `null` when tracking ingest is off, since nothing is parked then.
+  const retrySweep = buildDeliveryRetrySweep(runtime);
+  const retryHandle = retrySweep === null ? null : startDeliveryRetrySweep(runtime, retrySweep);
+
   // F5/F3: the worker serves no business traffic, so it has no Fastify server — but its k8s manifest
   // probes /healthz + /readyz and Prometheus scrapes /metrics on the same port (21-deployment-worker
   // .yaml). Without this surface the pod never becomes ready and liveness eventually kills it, and the
@@ -196,6 +204,7 @@ export async function startWorker(
   const shutdown = async (): Promise<void> => {
     logger.info("worker shutting down");
     health.close();
+    retryHandle?.stop();
     await stopDelivery();
     await supervisor.stopAll();
     await runtime.redis.disconnect();

@@ -528,6 +528,29 @@ export {
   ingestTrackingEvent,
 } from "./runtime/ingest-runtime";
 
+// --- Runtime: durable per-destination retry within the vendor window (P1-D2) ---
+export type {
+  DeliveryRetryKey,
+  DeliveryRetryEntry,
+  DeliveryRetryQueuePort,
+  RetryDisposition,
+} from "./runtime/delivery-retry";
+export { dispositionOf, storableError } from "./runtime/delivery-retry";
+export type {
+  RetryTenantRuntime,
+  RetrySweepDeps,
+  RetrySweepReport,
+} from "./runtime/delivery-retry-sweeper";
+export { sweepDeliveryRetries } from "./runtime/delivery-retry-sweeper";
+export {
+  DURABLE_RETRY_BACKOFF_MS,
+  VENDOR_WINDOW_MS,
+  planNextRetry,
+  vendorWindowMs,
+  windowExpiresAtMs,
+} from "./delivery/retry-schedule";
+export type { NextRetry } from "./delivery/retry-schedule";
+
 // NOTE: "./runtime/replay-runtime" and "./runtime/telemetry" are not exported here — K7 partial,
 // no primary-source evidence found for their ownership. See K7_FINAL_RECONCILIATION_REPORT.md.
 

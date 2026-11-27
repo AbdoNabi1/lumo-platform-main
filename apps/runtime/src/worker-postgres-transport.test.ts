@@ -27,6 +27,15 @@ vi.mock("./outbox-delivery-runtime", () => ({
   },
 }));
 
+const retrySweepStarts: { sweep: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./delivery-retry-runtime", () => ({
+  startDeliveryRetrySweep: (_core: RuntimeCore, sweep: () => Promise<unknown>) => {
+    const start = { sweep, stop: vi.fn() };
+    retrySweepStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
 const BASE_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
@@ -84,6 +93,7 @@ function coreWithoutBroker(env: NodeJS.ProcessEnv): {
 
 afterEach(() => {
   deliveryStarts.length = 0;
+  retrySweepStarts.length = 0;
 });
 
 describe("startWorker under EVENT_TRANSPORT=postgres", () => {
@@ -159,6 +169,57 @@ describe("startWorker under EVENT_TRANSPORT=postgres", () => {
     expect(started).toContain("orders.order.paid.v1");
     expect(supervisor.status().every((status) => status.running)).toBe(true);
     await supervisor.stopAll();
+  });
+});
+
+describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres", () => {
+  const TRACKING_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" } as NodeJS.ProcessEnv;
+
+  it("starts the sweeper beside the outbox delivery loop when tracking ingest is on", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+
+    expect(retrySweepStarts).toHaveLength(1);
+    expect(typeof retrySweepStarts[0]?.sweep).toBe("function");
+    expect(deliveryStarts).toHaveLength(1);
+    // the tracking consumer reaches the delivery loop too, so the sweeper's parked rows have a producer
+    expect(deliveryStarts[0]?.consumers.map((c) => c.consumerGroup)).toContain("tracking.ingest");
+    expect(brokerCalls).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("does not start (and never reads the table) when tracking ingest is off", async () => {
+    const { core } = coreWithoutBroker(POSTGRES_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(POSTGRES_ENV), core);
+
+    expect(retrySweepStarts).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("is stopped with the worker", async () => {
+    const { core } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(retrySweepStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("config: the sweep interval defaults to a minute and refuses a busy loop", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_RETRY_SWEEP_INTERVAL_MS).toBe(60_000);
+    expect(() =>
+      loadRuntimeConfig({ ...BASE_ENV, TRACKING_RETRY_SWEEP_INTERVAL_MS: "10" }),
+    ).toThrow();
   });
 });
 

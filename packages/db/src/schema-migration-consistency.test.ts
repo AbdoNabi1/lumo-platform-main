@@ -1519,3 +1519,69 @@ describe("tracking.ad_platform_connections — migration history matches the Pri
     expect(sql).not.toMatch(/\bALTER TABLE\b(?![^\n]*"ad_platform_connections")/i);
   });
 });
+
+/**
+ * Tracking P1-D2: the durable delivery-retry queue. The generated client names every column of the
+ * model whenever it reads the table, so a model with no migration behind it would break every sweep in
+ * a deployment while the unit tests (fake-backed) stayed green.
+ */
+describe("tracking.delivery_retries — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const retrySql = readFileSync(
+    join(migrationsDir, "20261205000000_tracking_delivery_retry", "migration.sql"),
+    "utf-8",
+  );
+
+  function modelColumns(): string[] {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+      "utf-8",
+    );
+    const body = /model TrackingDeliveryRetry \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+\w+[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns()).toEqual(
+      expect.arrayContaining(["id", "tenant_id", "event_id", "destination", "next_retry_at"]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "delivery_retries", retrySql);
+    for (const column of modelColumns()) {
+      expect(actual.has(column), `expected "tracking"."delivery_retries"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-forced, tenant-isolated, readable cross-tenant for the due scan, with a tenant-led unique key", () => {
+    expect(retrySql).toContain(
+      'ALTER TABLE "tracking"."delivery_retries" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(retrySql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."delivery_retries" FOR ALL',
+    );
+    expect(retrySql).toContain(
+      'CREATE POLICY due_scan_read ON "tracking"."delivery_retries" FOR SELECT',
+    );
+    expect(retrySql).toContain(
+      'CREATE UNIQUE INDEX "delivery_retries_tenant_id_event_id_destination_key" ON "tracking"."delivery_retries" ("tenant_id", "event_id", "destination")',
+    );
+    expect(retrySql).toContain("CHECK (\"status\" IN ('pending', 'delivered', 'dead_lettered'))");
+  });
+
+  it("is the only migration at 20261205000000 (the profiles migration takes the next stamp)", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261205000000"))).toEqual([
+      "20261205000000_tracking_delivery_retry",
+    ]);
+  });
+});

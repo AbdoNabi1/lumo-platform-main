@@ -117,6 +117,8 @@ import {
 } from "./tracking/tracking-registry-handle";
 import { TenantRuntimes } from "./tracking/tenant-runtimes";
 import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
+import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue";
+import { sweepDeliveryRetries, type RetrySweepReport } from "@platform/tracking";
 
 /**
  * The production composition root (Sprint 2.9, D-050). EVERY dependency is wired here — no
@@ -996,37 +998,29 @@ export function buildPaymentCapturedRuntime(
 }
 
 /**
- * Tracking ingest slice (P1.3, investigation C-07): the consumer of
- * `tracking.event.captured.v1` — the one thing that was missing for the tracking platform to
- * function. The collector published to that topic and **nothing subscribed**, so every beacon was
- * accepted, written to Kafka, and aged out unprocessed: no validation, no enrichment, no identity
- * stitching, no attribution, no consent-gated delivery. All of it ran through
- * `ingestTrackingEvent`, which had zero callers.
- *
- * Reuses the SAME infrastructure the payments consumer uses — `KafkaConsumerRuntime`, the Postgres
- * inbox (`PrismaProcessedEventStore`), the DLQ topic + row, retry topics — rather than inventing a
- * second consumer stack.
- *
- * **Scope (P1.3).** Ingest only. Replay, the inspector timeline, and the event/parameter definition
- * registries are not wired: they need `packages/tracking`'s `runtime/{replay-runtime,telemetry}.ts`,
- * `inspector/timeline.ts` and `definitions/{event-definition,parameter}.ts`, which K7 deferred for
- * lack of primary-source evidence (`K7_FINAL_RECONCILIATION_REPORT.md`, and the per-symbol analysis
- * in `TRACKING_COMPATIBILITY_REPORT.md`). Nothing on the ingest path resolves any of them — the
- * records written here are the same immutable base-plus-revision rows replay reads, so enabling
- * replay later needs no data migration.
- *
- * Returns `null` when `TRACKING_INGEST_ENABLED` is off, so an unseeded deployment is unchanged.
+ * What the tracking consumer and the delivery-retry sweeper (P1-D2) share, built once per core: the
+ * lazily-built per-tenant runtimes (registry, hot-reload watcher, circuit-breaker and token-bucket state,
+ * credential resolution) and the durable retry queue. One set of runtimes, not two, so a retry is sent by
+ * the SAME adapters and judged by the SAME breaker state as a first send.
  */
-export function buildTrackingIngestRuntime(
-  core: RuntimeCore,
-): KafkaConsumerRuntime<TrackingCapturedPayload> | null {
-  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+interface TrackingTenantParts {
+  readonly consumerGroup: string;
+  readonly deadLetters: PrismaDeadLetterStore;
+  readonly retryQueue: PrismaDeliveryRetryQueue;
+  readonly tenantRuntimes: TenantRuntimes<TrackingRuntime>;
+}
+
+const trackingTenantPartsByCore = new WeakMap<RuntimeCore, TrackingTenantParts>();
+
+function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
+  const existing = trackingTenantPartsByCore.get(core);
+  if (existing !== undefined) return existing;
 
   const registryStore = new PrismaTrackingRegistryStore(core.prisma, core.idGenerator);
 
   const consumerGroup = "tracking.ingest";
-  const producer = new KafkaMessageProducer(core.kafka);
   const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
+  const retryQueue = new PrismaDeliveryRetryQueue(core.prisma, core.idGenerator);
   const secrets = createSecretProvider();
 
   // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
@@ -1058,12 +1052,77 @@ export function buildTrackingIngestRuntime(
       processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
       deadLetters,
       logger: core.logger,
+      retryQueue,
       ...(core.adPlatformConnections === undefined
         ? {}
         : { connectionCredentials: core.adPlatformConnections }),
     });
     return { runtime, stop: () => watcher.stop() };
   });
+
+  const parts: TrackingTenantParts = { consumerGroup, deadLetters, retryQueue, tenantRuntimes };
+  trackingTenantPartsByCore.set(core, parts);
+  return parts;
+}
+
+/** Entries claimed per round trip, how long a claim is reserved, and how long one pass may run. */
+const RETRY_SWEEP_BATCH = 25;
+const RETRY_SWEEP_LEASE_MS = 10 * 60_000;
+const RETRY_SWEEP_BUDGET_MS = 4 * 60_000;
+
+/**
+ * Tracking P1-D2: one pass of the durable per-destination retry — claims due rows from
+ * `tracking.delivery_retries` and re-delivers each with its original event id through the tenant's own
+ * tracking runtime. Returns `null` when tracking ingest is off (nothing is ever parked then), so an
+ * unseeded deployment never reads the table. The caller owns the schedule and the single-flight lock
+ * (`startDeliveryRetrySweep`); this is just the work.
+ */
+export function buildDeliveryRetrySweep(
+  core: RuntimeCore,
+): (() => Promise<RetrySweepReport>) | null {
+  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+  const { retryQueue, tenantRuntimes } = trackingTenantParts(core);
+  return () =>
+    sweepDeliveryRetries({
+      queue: retryQueue,
+      runtimeFor: async (tenantId) => (await tenantRuntimes.for(tenantId)).retry(),
+      clock: core.clock,
+      batchSize: RETRY_SWEEP_BATCH,
+      leaseMs: RETRY_SWEEP_LEASE_MS,
+      budgetMs: RETRY_SWEEP_BUDGET_MS,
+      random: Math.random,
+    });
+}
+
+/**
+ * Tracking ingest slice (P1.3, investigation C-07): the consumer of
+ * `tracking.event.captured.v1` — the one thing that was missing for the tracking platform to
+ * function. The collector published to that topic and **nothing subscribed**, so every beacon was
+ * accepted, written to Kafka, and aged out unprocessed: no validation, no enrichment, no identity
+ * stitching, no attribution, no consent-gated delivery. All of it ran through
+ * `ingestTrackingEvent`, which had zero callers.
+ *
+ * Reuses the SAME infrastructure the payments consumer uses — `KafkaConsumerRuntime`, the Postgres
+ * inbox (`PrismaProcessedEventStore`), the DLQ topic + row, retry topics — rather than inventing a
+ * second consumer stack.
+ *
+ * **Scope (P1.3).** Ingest only. Replay, the inspector timeline, and the event/parameter definition
+ * registries are not wired: they need `packages/tracking`'s `runtime/{replay-runtime,telemetry}.ts`,
+ * `inspector/timeline.ts` and `definitions/{event-definition,parameter}.ts`, which K7 deferred for
+ * lack of primary-source evidence (`K7_FINAL_RECONCILIATION_REPORT.md`, and the per-symbol analysis
+ * in `TRACKING_COMPATIBILITY_REPORT.md`). Nothing on the ingest path resolves any of them — the
+ * records written here are the same immutable base-plus-revision rows replay reads, so enabling
+ * replay later needs no data migration.
+ *
+ * Returns `null` when `TRACKING_INGEST_ENABLED` is off, so an unseeded deployment is unchanged.
+ */
+export function buildTrackingIngestRuntime(
+  core: RuntimeCore,
+): KafkaConsumerRuntime<TrackingCapturedPayload> | null {
+  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+
+  const { consumerGroup, deadLetters, tenantRuntimes } = trackingTenantParts(core);
+  const producer = new KafkaMessageProducer(core.kafka);
 
   return new KafkaConsumerRuntime({
     kafka: core.kafka,

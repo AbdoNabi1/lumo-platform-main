@@ -45,8 +45,10 @@ import {
   InMemoryDestinationState,
   type AdapterRegistryPort,
   type CredentialResolverPort,
+  type DeliveryRetryQueuePort,
   type IngestRuntimeDeps,
   type RecordingRuntimeDeps,
+  type RetryTenantRuntime,
 } from "@platform/tracking";
 
 import { ConnectionCredentialResolver } from "./connection-credential-resolver";
@@ -97,6 +99,11 @@ export interface TrackingRuntimeInput {
    * reference resolves to nothing (a permanent "credential unresolved" failure), never to a stub.
    */
   readonly connectionCredentials?: Pick<ConnectionsForDelivery, "openSecret">;
+  /**
+   * Tracking P1-D2: where a delivery that failed transiently is parked for the worker's retry sweeper.
+   * Absent ⇒ an exhausted delivery is dead-lettered as it was before the durable queue existed.
+   */
+  readonly retryQueue?: DeliveryRetryQueuePort;
 }
 
 export interface TrackingRuntime {
@@ -109,6 +116,12 @@ export interface TrackingRuntime {
    * exists to prevent.
    */
   ingest(): IngestRuntimeDeps;
+  /**
+   * What the delivery-retry sweeper (P1-D2) needs for this tenant, bound to the registry snapshot current
+   * at the moment of the call — the retry analogue of {@link TrackingRuntime.ingest}, sharing its
+   * process-lifetime circuit-breaker and token-bucket state, adapters and credential resolution.
+   */
+  retry(): RetryTenantRuntime;
   readonly store: PrismaEventRecordStore;
   readonly credentials: SecretCredentialResolver;
   readonly registry: TrackingRegistryHandle;
@@ -217,6 +230,10 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     versions: snapshot,
     destinationState,
     clock: input.clock,
+    // Jitter for the first durable retry slot, so a vendor outage's failures do not return in lockstep.
+    ...(input.retryQueue === undefined
+      ? {}
+      : { retryQueue: input.retryQueue, random: Math.random }),
   });
 
   return {
@@ -230,6 +247,15 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
         ruleSetKey: input.ruleSetKey,
         hasher,
         clock: input.clock,
+      };
+    },
+    retry: (): RetryTenantRuntime => {
+      const snapshot = input.registry.current();
+      return {
+        delivery: recordingFor(snapshot).delivery,
+        destinations: snapshot,
+        destinationState,
+        records: store,
       };
     },
     store,

@@ -151,3 +151,31 @@ model AdPlatformConnection {
   @@map("ad_platform_connections")
   @@schema("tracking")
 }
+
+// Tracking P1-D2: one row per (tenant, event, destination) whose vendor call failed in a way that may still
+// succeed. The worker's sweeper claims due rows (next_retry_at), re-delivers the SAME event id and settles
+// the row. window_expires_at is the event time + the vendor's accepted age (GA4 72 h; Meta, TikTok, Snap
+// 7 days minus 1 h): past it, or on a permanent refusal, the row is dead-lettered with a reason, never sent.
+// An operational queue beside the append-only event records: ids, counters, timestamps, a short error text.
+model TrackingDeliveryRetry {
+  id               String    @id @db.Uuid
+  tenantId         String    @map("tenant_id")
+  eventId          String    @map("event_id")
+  destination      String
+  platform         String
+  status           String    @default("pending") // pending | delivered | dead_lettered
+  attempts         Int       @default(1)
+  eventTimestamp   DateTime  @map("event_timestamp")
+  windowExpiresAt  DateTime  @map("window_expires_at")
+  nextRetryAt      DateTime  @map("next_retry_at")
+  lastError        String?   @map("last_error")
+  deadLetterReason String?   @map("dead_letter_reason")
+  createdAt        DateTime  @map("created_at")
+  updatedAt        DateTime  @map("updated_at")
+  settledAt        DateTime? @map("settled_at")
+
+  @@unique([tenantId, eventId, destination])
+  @@index([status, nextRetryAt])
+  @@map("delivery_retries")
+  @@schema("tracking")
+}
