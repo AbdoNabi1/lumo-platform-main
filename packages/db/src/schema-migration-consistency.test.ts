@@ -1585,3 +1585,102 @@ describe("tracking.delivery_retries — migration matches the Prisma model", () 
     ]);
   });
 });
+
+/**
+ * Tracking P1-D4: the TrackingProfile store. The generated client names every column of the model on every
+ * read, so a model with no migration behind it would break each ingest in a deployment while the fake-backed unit
+ * tests stayed green. Also pins the privacy shape: hashes only, tenant isolation, the retention scan policy.
+ */
+describe("tracking.tracking_profiles — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const profilesSql = readFileSync(
+    join(migrationsDir, "20261206000000_tracking_profiles", "migration.sql"),
+    "utf-8",
+  );
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  );
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingProfile")).toEqual(
+      expect.arrayContaining([
+        "id",
+        "tenant_id",
+        "visitor_id",
+        "email_std",
+        "lead_ids",
+        "click_ids",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "tracking_profiles", profilesSql);
+    for (const column of modelColumns("TrackingProfile")) {
+      expect(actual.has(column), `expected "tracking"."tracking_profiles"."${column}"`).toBe(true);
+    }
+  });
+
+  it("adds the redaction marker to the event records, nullable, matching the model", () => {
+    const added = columnsEverAddedTo("tracking", "tracking_event_records", profilesSql);
+    expect(added.has("network_redacted_at")).toBe(true);
+    expect(modelColumns("TrackingEventRecord")).toContain("network_redacted_at");
+    expect(profilesSql).toContain('ADD COLUMN "network_redacted_at" TIMESTAMP(3);');
+    expect(profilesSql).toContain("tracking_event_records_redaction_scan_idx");
+    expect(schema).toContain('map: "tracking_event_records_redaction_scan_idx"');
+  });
+
+  it("is RLS-forced and tenant-isolated; the cross-tenant scan is open only behind an explicit setting", () => {
+    expect(profilesSql).toContain(
+      'ALTER TABLE "tracking"."tracking_profiles" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(profilesSql).toContain(
+      'ALTER TABLE "tracking"."tracking_profiles" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(profilesSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."tracking_profiles" FOR ALL',
+    );
+    expect(profilesSql).toContain("current_setting('app.retention_scan', true) = 'on'");
+    // never an unconditional read policy on a table of hashed identity
+    expect(profilesSql).not.toMatch(/FOR SELECT\s+USING \(true\)/);
+  });
+
+  it("indexes the lookup keys tenant-first: visitor (unique), customer, email hash, phone hash", () => {
+    for (const index of [
+      'CREATE UNIQUE INDEX "tracking_profiles_tenant_id_visitor_id_key" ON "tracking"."tracking_profiles" ("tenant_id", "visitor_id")',
+      'CREATE INDEX "tracking_profiles_tenant_id_customer_id_idx" ON "tracking"."tracking_profiles" ("tenant_id", "customer_id")',
+      'CREATE INDEX "tracking_profiles_tenant_id_email_std_idx" ON "tracking"."tracking_profiles" ("tenant_id", "email_std")',
+      'CREATE INDEX "tracking_profiles_tenant_id_phone_e164_idx" ON "tracking"."tracking_profiles" ("tenant_id", "phone_e164")',
+    ]) {
+      expect(profilesSql).toContain(index);
+    }
+  });
+
+  it("stores no raw identity: no plain email / phone / name column exists", () => {
+    const actual = columnsEverAddedTo("tracking", "tracking_profiles", profilesSql);
+    for (const raw of ["email", "phone", "first_name", "last_name", "name", "address"]) {
+      expect(actual.has(raw), `raw column "${raw}" must not exist`).toBe(false);
+    }
+  });
+
+  it("is the only migration at 20261206000000 (blocked IPs take the next stamp)", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261206000000"))).toEqual([
+      "20261206000000_tracking_profiles",
+    ]);
+  });
+});

@@ -139,6 +139,28 @@ export function isClickIdValidAt(captured: CapturedClickId, at: Date): boolean {
 }
 
 /**
+ * The instant Meta stamped into an `_fbc` cookie (`fb.<subdomain index>.<creation ms>.<fbclid>`), or `undefined`
+ * when the value does not have that shape.
+ */
+export function fbcCreatedAtMs(fbc: string | undefined): number | undefined {
+  const match = fbc === undefined ? null : /^fb\.\d+\.(\d{10,})\./u.exec(fbc);
+  if (match?.[1] === undefined) return undefined;
+  const created = Number(match[1]);
+  return Number.isFinite(created) && created > 0 ? created : undefined;
+}
+
+/**
+ * True unless `fbc` is older than Meta's 90-day window at `at`. An `fbc` whose creation time cannot be read is
+ * passed through (a guessed expiry would drop a perfectly good value), and one created "in the future" — a
+ * client clock a little ahead — is not expired.
+ */
+export function isFbcValidAt(fbc: string, at: Date): boolean {
+  const created = fbcCreatedAtMs(fbc);
+  if (created === undefined) return true;
+  return at.getTime() - created <= CLICK_ID_DEFINITIONS.fbclid.ttlDays * 24 * 60 * 60 * 1000;
+}
+
+/**
  * Reads a single query parameter. Passing a lookup rather than a `URLSearchParams` keeps this
  * schema layer free of runtime globals, so the same code runs in a browser bundle, a Node server
  * and an edge worker. Adapters supply `(p) => url.searchParams.get(p)`.

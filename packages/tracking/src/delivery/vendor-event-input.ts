@@ -6,6 +6,7 @@
  * only as per-platform match keys (hashes or the platform's plain values) — never as raw PII.
  */
 
+import { isClickIdValidAt, isFbcValidAt } from "../envelope/click-ids";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import { deriveNumItems } from "../envelope/payload";
 import type { PlatformMatchKeys } from "../pipeline/platform-identity";
@@ -69,8 +70,19 @@ export function vendorEventInputFrom(
   const technical = envelope.context.technical;
   const attribution = envelope.context.attribution;
   const payload = envelope.payload;
-  const clickIds = attribution?.clickIds ?? [];
   const browserIds = attribution?.browserIds;
+
+  // Click-id windows (Tracking P1-X10): a vendor refuses a click id older than its attribution window and counts
+  // the refusal against match diagnostics, so an expired one is not forwarded at all. Judged at the later of the
+  // event's own time and the moment it was received — a conversion is credited to the click that preceded it.
+  const reference = new Date(
+    Math.max(envelope.eventTimestampMs, Date.parse(envelope.receivedAt) || 0),
+  );
+  const clickIds = (attribution?.clickIds ?? []).filter((click) =>
+    isClickIdValidAt(click, reference),
+  );
+  const fbc = attribution?.meta?.fbc;
+  const usableFbc = fbc !== undefined && isFbcValidAt(fbc, reference) ? fbc : undefined;
 
   const items = payload?.contents ?? [];
   const contents = items.map((item) => ({
@@ -99,7 +111,7 @@ export function vendorEventInputFrom(
     keys,
     browser: {
       fbp: nonEmpty(attribution?.meta?.fbp),
-      fbc: nonEmpty(attribution?.meta?.fbc),
+      fbc: nonEmpty(usableFbc),
       ttp: nonEmpty(browserIds?.ttp),
       scid: nonEmpty(browserIds?.scid),
       gaClientId: nonEmpty(browserIds?.gaClientId),

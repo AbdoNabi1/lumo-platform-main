@@ -61,7 +61,13 @@ export function mergeClickIds(
     byName.set(clickId.name, clickId);
   }
   for (const clickId of observed ?? []) {
-    // A fresh observation replaces a stored one: the campaign resolved now is more current.
+    // The newest capture wins per platform (TikTok: override the old ttclid with each new click). An
+    // observation replaces a stored id unless the stored one was captured strictly LATER — a redelivered
+    // or reordered older event must not push a newer click id out.
+    const stored = byName.get(clickId.name);
+    if (stored !== undefined && Date.parse(stored.capturedAt) > Date.parse(clickId.capturedAt)) {
+      continue;
+    }
     byName.set(clickId.name, clickId);
   }
 

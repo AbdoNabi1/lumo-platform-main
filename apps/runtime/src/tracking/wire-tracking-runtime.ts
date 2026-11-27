@@ -47,8 +47,11 @@ import {
   type CredentialResolverPort,
   type DeliveryRetryQueuePort,
   type IngestRuntimeDeps,
+  type ProfileEnricherPort,
   type RecordingRuntimeDeps,
   type RetryTenantRuntime,
+  type TrackingProfileStore,
+  TrackingProfileService,
 } from "@platform/tracking";
 
 import { ConnectionCredentialResolver } from "./connection-credential-resolver";
@@ -104,6 +107,12 @@ export interface TrackingRuntimeInput {
    * Absent ⇒ an exhausted delivery is dead-lettered as it was before the durable queue existed.
    */
   readonly retryQueue?: DeliveryRetryQueuePort;
+  /**
+   * Tracking P1-D4: where visitor profiles live. When present, every ingested event is merged with its visitor's
+   * profile BEFORE routing and delivery (click ids, browser ids, IP/UA, hashes the event lacks) and then recorded
+   * into it. Absent ⇒ events are forwarded exactly as they arrived.
+   */
+  readonly profiles?: TrackingProfileStore;
 }
 
 export interface TrackingRuntime {
@@ -211,6 +220,22 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
   // every bucket on every event — both protections would read as configured and enforce nothing.
   const destinationState = new InMemoryDestinationState();
 
+  // The profile step is stateless apart from its store, so one instance serves every event. A failure inside it
+  // never stops an event (the service returns the event unchanged); it is logged by NAME only — a profile row
+  // is hashes and ids, and an error message could echo one.
+  const profiles: ProfileEnricherPort | undefined =
+    input.profiles === undefined
+      ? undefined
+      : new TrackingProfileService({
+          store: input.profiles,
+          hasher,
+          clock: input.clock,
+          onError: (error) =>
+            input.logger.warn("tracking profile step failed; event delivered unchanged", {
+              error: error instanceof Error ? error.name : "unknown",
+            }),
+        });
+
   /** Binds the registry-derived ports to one snapshot, for one unit of work. */
   const recordingFor = (snapshot: TrackingRegistrySnapshot): RecordingRuntimeDeps => ({
     delivery: {
@@ -247,6 +272,7 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
         ruleSetKey: input.ruleSetKey,
         hasher,
         clock: input.clock,
+        ...(profiles === undefined ? {} : { profiles }),
       };
     },
     retry: (): RetryTenantRuntime => {

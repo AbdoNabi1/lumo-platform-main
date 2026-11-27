@@ -29,7 +29,7 @@ function envelope(overrides: Partial<EnrichedEnvelope> = {}): EnrichedEnvelope {
       technical: { clientIpAddress: "203.0.113.7", clientUserAgent: "Mozilla/5.0 (test)" },
       attribution: {
         clickIds,
-        meta: { fbp: "fb.1.1764000000000.123456789", fbc: "fb.1.1764000000000.AbCdEf" },
+        meta: { fbp: "fb.1.1764000000000.123456789", fbc: "fb.1.1795510800000.AbCdEf" },
         browserIds: {
           ttp: "ttp-abc",
           scid: "scid-xyz",
@@ -63,7 +63,7 @@ describe("vendorEventInputFrom", () => {
       keys: { em: "h-em" },
       browser: {
         fbp: "fb.1.1764000000000.123456789",
-        fbc: "fb.1.1764000000000.AbCdEf",
+        fbc: "fb.1.1795510800000.AbCdEf",
         ttp: "ttp-abc",
         scid: "scid-xyz",
         gaClientId: "111111111.1764000000",
@@ -213,5 +213,68 @@ describe("gaClientIdFromCookie", () => {
     [undefined, null],
   ])("%j → %j", (cookie, expected) => {
     expect(gaClientIdFromCookie(cookie)).toBe(expected);
+  });
+});
+
+describe("click-id windows (Tracking P1-X10)", () => {
+  beforeEach(() => {
+    expect.hasAssertions();
+  });
+
+  const DAY = 24 * 60 * 60 * 1000;
+  const received = Date.parse("2026-11-24T10:00:01.000Z");
+  const daysBefore = (days: number): string => new Date(received - days * DAY).toISOString();
+
+  function withClicks(
+    clicks: readonly { name: "ttclid" | "scclid" | "gclid"; value: string; capturedAt: string }[],
+    meta?: { fbp?: string; fbc?: string },
+  ): EnrichedEnvelope {
+    const base = envelope();
+    return {
+      ...base,
+      context: {
+        ...base.context,
+        attribution: {
+          ...base.context.attribution,
+          clickIds: clicks,
+          ...(meta === undefined ? {} : { meta }),
+        },
+      },
+    } as EnrichedEnvelope;
+  }
+
+  it("does not forward a ttclid or Snap click id that is past its platform window", () => {
+    const input = vendorEventInputFrom(
+      withClicks([
+        { name: "ttclid", value: "tt-ancient", capturedAt: daysBefore(120) }, // TikTok: 90 days
+        { name: "scclid", value: "sc-stale", capturedAt: daysBefore(40) }, // Snap: 28 days
+      ]),
+      {},
+    );
+    expect(input.browser.ttclid).toBeNull();
+    expect(input.browser.scClickId).toBeNull();
+  });
+
+  it("forwards click ids still inside their window", () => {
+    const input = vendorEventInputFrom(
+      withClicks([
+        { name: "ttclid", value: "tt-ok", capturedAt: daysBefore(80) },
+        { name: "scclid", value: "sc-ok", capturedAt: daysBefore(27) },
+      ]),
+      {},
+    );
+    expect(input.browser.ttclid).toBe("tt-ok");
+    expect(input.browser.scClickId).toBe("sc-ok");
+  });
+
+  it("does not forward an fbc older than Meta's 90 days, keeps a fresh one and an unreadable one", () => {
+    const stamped = (days: number): string => `fb.1.${String(received - days * DAY)}.AbCdEf`;
+    expect(vendorEventInputFrom(withClicks([], { fbc: stamped(120) }), {}).browser.fbc).toBeNull();
+    expect(vendorEventInputFrom(withClicks([], { fbc: stamped(10) }), {}).browser.fbc).toBe(
+      stamped(10),
+    );
+    expect(vendorEventInputFrom(withClicks([], { fbc: "opaque-value" }), {}).browser.fbc).toBe(
+      "opaque-value",
+    );
   });
 });

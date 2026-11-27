@@ -315,6 +315,12 @@ const schema = z
     TRACKING_EDGE_SECRET: z.string().min(32).optional(),
     /** Milliseconds between delivery-retry sweeps in the worker (durable per-destination retry, P1-D2). */
     TRACKING_RETRY_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
+    /**
+     * Milliseconds between tracking privacy-retention passes in the worker (P1-D10): anonymous visitor profiles are
+     * deleted 400 days after last seen, and IP/user agent are removed from event records older than 90 days.
+     * Default 6 h; each pass is idempotent and bounded.
+     */
+    TRACKING_RETENTION_INTERVAL_MS: z.coerce.number().int().min(60_000).default(21_600_000),
 
     // ── H-3 (G-SEC-2) cloud KMS / HSM / Vault + threat-intel provider selection ──
     /** Which KMS/crypto provider backs Security's key operations (default `local` = node:crypto). */

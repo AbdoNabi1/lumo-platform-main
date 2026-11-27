@@ -4,6 +4,7 @@ import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
   buildDeliveryRetrySweep,
+  buildTrackingRetention,
   buildPaymentCapturedRuntime,
   buildRuntimeCore,
   buildTrackingIngestRuntime,
@@ -15,6 +16,7 @@ import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consume
 import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startDeliveryRetrySweep } from "./delivery-retry-runtime";
+import { startTrackingRetention } from "./tracking-retention-runtime";
 import { startHealthServer } from "./health-server";
 import { startOutboxDelivery } from "./outbox-delivery-runtime";
 import { startOutboxRelay } from "./outbox-relay-runtime";
@@ -189,6 +191,12 @@ export async function startWorker(
   const retrySweep = buildDeliveryRetrySweep(runtime);
   const retryHandle = retrySweep === null ? null : startDeliveryRetrySweep(runtime, retrySweep);
 
+  // Tracking P1-D10: the privacy retention (anonymous profiles after 400 days, IP/UA in event records after 90).
+  // Database-only like the retry sweep, so it starts under both transports; `null` when tracking ingest is off.
+  const retentionRun = buildTrackingRetention(runtime);
+  const retentionHandle =
+    retentionRun === null ? null : startTrackingRetention(runtime, retentionRun);
+
   // F5/F3: the worker serves no business traffic, so it has no Fastify server — but its k8s manifest
   // probes /healthz + /readyz and Prometheus scrapes /metrics on the same port (21-deployment-worker
   // .yaml). Without this surface the pod never becomes ready and liveness eventually kills it, and the
@@ -205,6 +213,7 @@ export async function startWorker(
     logger.info("worker shutting down");
     health.close();
     retryHandle?.stop();
+    retentionHandle?.stop();
     await stopDelivery();
     await supervisor.stopAll();
     await runtime.redis.disconnect();

@@ -57,6 +57,7 @@ import type { HashPort } from "../ids/dedup-id";
 import { hashIdentity } from "../pipeline/hashing";
 import { normalizeIdentity } from "../pipeline/normalization";
 import { platformMatchKeys, type PlatformMatchKeys } from "../pipeline/platform-identity";
+import { withProfileKeys, type ProfileMatchKeys } from "../profile/profile-identity";
 import { MATCH_PLATFORM_OF } from "../delivery/vendor-event-names";
 import type { AttributionSnapshot } from "../pipeline/attribution";
 import {
@@ -197,6 +198,12 @@ export interface ReceiveEventInput {
   readonly routing: RoutingDecision;
   readonly attribution?: AttributionSnapshot;
   readonly identityConfidence?: number;
+  /**
+   * Match keys the visitor profile holds (P1-D4), per platform. They fill what the event's own identity block did
+   * not provide — an event's own value always wins — so a server event with no email or phone of its own still
+   * leaves with the hashes of the visitor's earlier events.
+   */
+  readonly profileMatchKeys?: ProfileMatchKeys;
 }
 
 export interface ReceiveEventOutput {
@@ -311,14 +318,12 @@ export async function receiveAndDeliver(
     if (builderKey !== undefined) {
       let keys = keysByBuilder.get(builderKey);
       if (keys === undefined) {
-        keys =
+        const platform = MATCH_PLATFORM_OF[builderKey];
+        const own =
           normalizedIdentity === null
             ? {}
-            : await platformMatchKeys(
-                MATCH_PLATFORM_OF[builderKey],
-                normalizedIdentity,
-                deps.hasher,
-              );
+            : await platformMatchKeys(platform, normalizedIdentity, deps.hasher);
+        keys = withProfileKeys(own, input.profileMatchKeys?.[platform]);
         keysByBuilder.set(builderKey, keys);
       }
       extras = { envelope, keys };

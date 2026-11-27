@@ -118,7 +118,14 @@ import {
 import { TenantRuntimes } from "./tracking/tenant-runtimes";
 import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
 import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue";
-import { sweepDeliveryRetries, type RetrySweepReport } from "@platform/tracking";
+import { PrismaEventNetworkRedaction } from "./tracking/prisma-event-network-redaction";
+import { PrismaTrackingProfileStore } from "./tracking/prisma-tracking-profile-store";
+import {
+  runTrackingRetention,
+  sweepDeliveryRetries,
+  type RetrySweepReport,
+  type TrackingRetentionReport,
+} from "@platform/tracking";
 
 /**
  * The production composition root (Sprint 2.9, D-050). EVERY dependency is wired here — no
@@ -1007,6 +1014,7 @@ interface TrackingTenantParts {
   readonly consumerGroup: string;
   readonly deadLetters: PrismaDeadLetterStore;
   readonly retryQueue: PrismaDeliveryRetryQueue;
+  readonly profiles: PrismaTrackingProfileStore;
   readonly tenantRuntimes: TenantRuntimes<TrackingRuntime>;
 }
 
@@ -1021,6 +1029,7 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
   const consumerGroup = "tracking.ingest";
   const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
   const retryQueue = new PrismaDeliveryRetryQueue(core.prisma, core.idGenerator);
+  const profiles = new PrismaTrackingProfileStore(core.prisma, core.idGenerator);
   const secrets = createSecretProvider();
 
   // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
@@ -1053,6 +1062,7 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
       deadLetters,
       logger: core.logger,
       retryQueue,
+      profiles,
       ...(core.adPlatformConnections === undefined
         ? {}
         : { connectionCredentials: core.adPlatformConnections }),
@@ -1060,9 +1070,41 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
     return { runtime, stop: () => watcher.stop() };
   });
 
-  const parts: TrackingTenantParts = { consumerGroup, deadLetters, retryQueue, tenantRuntimes };
+  const parts: TrackingTenantParts = {
+    consumerGroup,
+    deadLetters,
+    retryQueue,
+    profiles,
+    tenantRuntimes,
+  };
   trackingTenantPartsByCore.set(core, parts);
   return parts;
+}
+
+/** Records redacted per transaction, and how long one retention pass may run. */
+const RETENTION_BATCH = 100;
+const RETENTION_BUDGET_MS = 4 * 60_000;
+
+/**
+ * Tracking P1-D10: one pass of the privacy retention — deletes anonymous visitor profiles past their 400 days and
+ * removes the IP and user agent from event records older than 90 days. Returns `null` when tracking ingest is
+ * off (no profile or record is written then, so there is nothing to retain). The caller owns the schedule and the
+ * single-flight lock (`startTrackingRetention`); this is just the work.
+ */
+export function buildTrackingRetention(
+  core: RuntimeCore,
+): (() => Promise<TrackingRetentionReport>) | null {
+  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+  const { profiles } = trackingTenantParts(core);
+  const events = new PrismaEventNetworkRedaction(core.prisma);
+  return () =>
+    runTrackingRetention({
+      profiles,
+      events,
+      clock: core.clock,
+      batchSize: RETENTION_BATCH,
+      budgetMs: RETENTION_BUDGET_MS,
+    });
 }
 
 /** Entries claimed per round trip, how long a claim is reserved, and how long one pass may run. */

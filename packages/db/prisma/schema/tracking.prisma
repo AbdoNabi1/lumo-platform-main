@@ -90,6 +90,10 @@ model TrackingEventRecord {
   state     String
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Tracking P1-D10: set once the IP and user agent inside this record (and its revisions) were nulled
+  // after the 90-day retention. The only column of this table that is ever updated, and only by that job.
+  networkRedactedAt DateTime? @map("network_redacted_at")
+
   revisions TrackingEventRevision[]
 
   // One record per event: a duplicate `event_id` must be REJECTED, never overwrite. `event_id` is
@@ -100,6 +104,7 @@ model TrackingEventRecord {
   @@index([tenantId, eventName, capturedAt])
   @@index([tenantId, state])
   @@index([tenantId, dedupId])
+  @@index([tenantId, networkRedactedAt, capturedAt], map: "tracking_event_records_redaction_scan_idx")
   @@map("tracking_event_records")
   @@schema("tracking")
 }
@@ -177,5 +182,79 @@ model TrackingDeliveryRetry {
   @@unique([tenantId, eventId, destination])
   @@index([status, nextRetryAt])
   @@map("delivery_retries")
+  @@schema("tracking")
+}
+
+// Tracking P1-D4: the visitor/customer profile that completes later server events (the Enricher + cookie vault
+// of a Stape-style server). HASHES ONLY — never a raw email, phone or name. One row per (tenant, visitor id);
+// several cookies of one person are folded into one row by identity resolution (customer id, email hash, phone
+// hash, visitor cookie, in that order), and every absorbed cookie id stays behind as a data-free TOMBSTONE
+// (`merged_into` set, every other column empty) so the old cookie keeps resolving to the surviving profile.
+//
+// Retention (owner 2026-11-27): an anonymous profile (`customer_id` null) is deleted 400 days after it was last
+// seen (`expires_at`); a customer's profiles and their tombstones are erased with the customer. `version` is an
+// optimistic lock: two events for one visitor processed at once must not overwrite each other's click ids.
+model TrackingProfile {
+  id         String  @id @db.Uuid
+  tenantId   String  @map("tenant_id")
+  visitorId  String  @map("visitor_id")
+  mergedInto String? @map("merged_into")
+  customerId String? @map("customer_id")
+
+  // Per-platform hash sets (sha256 hex): the email in the form each platform wants, phone with / without "+".
+  emailStd    String? @map("email_std")
+  emailGads   String? @map("email_gads")
+  emailGa4    String? @map("email_ga4")
+  phoneDigits String? @map("phone_digits")
+  phoneE164   String? @map("phone_e164")
+  fn          String?
+  ln          String?
+  ct          String?
+  st          String?
+  country     String?
+  externalId  String? @map("external_id") // hash
+
+  // Click ids by registry name: { ttclid: { value, capturedAt }, ... }. Not truncated (ttclid can be 1000 chars).
+  clickIds Json @default("{}") @map("click_ids")
+
+  fbp           String?   @map("fbp")
+  fbc           String?   @map("fbc")
+  fbcCapturedAt DateTime? @map("fbc_captured_at")
+  ttp           String?   @map("ttp")
+  scid          String?   @map("scid")
+  gaClientId    String?   @map("ga_client_id")
+  gaSessionId   String?   @map("ga_session_id")
+
+  lastIp        String?  @map("last_ip")
+  lastUserAgent String?  @map("last_user_agent")
+  lastPageUrl   String?  @map("last_page_url")
+  lastSeenAt    DateTime @map("last_seen_at")
+
+  // Filled by the edge-enrichment step (P1 T4); nullable until then.
+  geoCountry    String? @map("geo_country")
+  geoRegion     String? @map("geo_region")
+  geoCity       String? @map("geo_city")
+  aiSource      String? @map("ai_source")
+  botScore      Int?    @map("bot_score")
+  fingerprintId String? @map("fingerprint_id")
+
+  // The last landing touch: { utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer, pageUrl, at }.
+  landingTouch Json? @map("landing_touch")
+
+  leadIds  String[] @default([]) @map("lead_ids")
+  orderIds String[] @default([]) @map("order_ids")
+
+  version   Int      @default(0)
+  createdAt DateTime @map("created_at")
+  updatedAt DateTime @map("updated_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@unique([tenantId, visitorId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, emailStd])
+  @@index([tenantId, phoneE164])
+  @@index([tenantId, mergedInto])
+  @@index([tenantId, expiresAt])
+  @@map("tracking_profiles")
   @@schema("tracking")
 }

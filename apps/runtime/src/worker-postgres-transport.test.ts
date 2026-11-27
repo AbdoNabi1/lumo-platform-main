@@ -36,6 +36,15 @@ vi.mock("./delivery-retry-runtime", () => ({
   },
 }));
 
+const retentionStarts: { run: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./tracking-retention-runtime", () => ({
+  startTrackingRetention: (_core: RuntimeCore, run: () => Promise<unknown>) => {
+    const start = { run, stop: vi.fn() };
+    retentionStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
 const BASE_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
@@ -94,6 +103,7 @@ function coreWithoutBroker(env: NodeJS.ProcessEnv): {
 afterEach(() => {
   deliveryStarts.length = 0;
   retrySweepStarts.length = 0;
+  retentionStarts.length = 0;
 });
 
 describe("startWorker under EVENT_TRANSPORT=postgres", () => {
@@ -213,6 +223,32 @@ describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres
     } finally {
       once.mockRestore();
     }
+  });
+
+  it("starts the privacy retention pass with the worker when tracking ingest is on, and stops it with it", async () => {
+    const { core } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      expect(retentionStarts).toHaveLength(1);
+      expect(typeof retentionStarts[0]?.run).toBe("function");
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(retentionStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("does not start the retention pass (and never reads the tables) when tracking ingest is off", async () => {
+    const { core } = coreWithoutBroker(POSTGRES_ENV);
+    const supervisor = await startWorker(loadRuntimeConfig(POSTGRES_ENV), core);
+    expect(retentionStarts).toEqual([]);
+    await supervisor.stopAll();
   });
 
   it("config: the sweep interval defaults to a minute and refuses a busy loop", () => {

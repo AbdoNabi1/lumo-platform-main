@@ -830,6 +830,14 @@ Under `EVENT_TRANSPORT=postgres`:
   6 h, 12 h, then daily — until the vendor's own window closes (GA4 72 h; Meta, TikTok, Snap 7 days minus
   1 h), then the delivery is dead-lettered with its reason. The retry state lives in
   `tracking.delivery_retries` (migration `20261205000000_tracking_delivery_retry`).
+- **Visitor profiles and privacy retention.** With tracking ingest on, the worker keeps a profile per visitor
+  (`tracking.tracking_profiles`, migration `20261206000000_tracking_profiles` — deploy it BEFORE the release that
+  reads it): hashes of email / phone / names, click ids with their capture time, browser ids, the last IP / user
+  agent / page. It completes later server events (a Purchase days after the click) with what earlier events of
+  the same visitor left, and applies each platform's click-id window. The worker's retention pass (every
+  `TRACKING_RETENTION_INTERVAL_MS`, 6 h) deletes an anonymous profile 400 days after it was last seen and removes
+  the IP and user agent from event records older than 90 days; a customer's profile is erased with the customer.
+  It runs in the worker, so it does not need the scheduler.
 - **Nothing prunes the outbox unless the scheduler runs.** Delivered rows are deleted after
   `OUTBOX_RETENTION_DAYS` by `apps/runtime/src/scheduler.ts`, which this guide does not deploy.
 - **Switching to `kafka` later** needs no data change: the two columns are ignored by the Kafka

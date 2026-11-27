@@ -39,6 +39,8 @@ import { route, type RoutingDecision, type RuleSetRegistryPort } from "../delive
 import type { EnrichedEnvelope, TrackingEnvelope } from "../envelope/envelope";
 import { deriveDedupId, type HashPort, type NaturalKeyStrategy } from "../ids/dedup-id";
 import type { AttributionSnapshot } from "../pipeline/attribution";
+import type { ProfileEnricherPort } from "../profile/profile-service";
+import type { ProfileMatchKeys } from "../profile/profile-identity";
 import {
   combineValidation,
   validateDeduplication,
@@ -102,6 +104,13 @@ export interface IngestRuntimeDeps {
   readonly ruleSetKey: string;
   readonly hasher: HashPort;
   readonly clock: { now(): Date };
+  /**
+   * Tracking P1-D4: the visitor profile. When present, every event is merged with it BEFORE routing — a server
+   * event that carries no click id, browser id, IP or match key of its own leaves with the ones the same
+   * visitor's earlier events left behind (click-id windows applied). Absent ⇒ events are forwarded as they
+   * arrived. A profile failure never stops an event: the enricher returns the event unchanged.
+   */
+  readonly profiles?: ProfileEnricherPort;
 }
 
 export interface IngestInput {
@@ -213,8 +222,23 @@ export async function ingestTrackingEvent(
     };
   }
 
-  const enriched = await enrich(input.envelope, deps);
-  if ("refusal" in enriched) return { status: "refused", refusal: enriched.refusal };
+  const completed = await enrich(input.envelope, deps);
+  if ("refusal" in completed) return { status: "refused", refusal: completed.refusal };
+
+  // Merge-then-enrich BEFORE routing and delivery: the routing context, the recorded envelope and the vendor
+  // payloads are all built from the completed event, so a later server event is indistinguishable, to every
+  // later stage, from one that arrived with its identity attached.
+  let enriched: EnrichedEnvelope = completed;
+  let profileKeys: ProfileMatchKeys | undefined;
+  if (deps.profiles !== undefined) {
+    try {
+      const withProfile = await deps.profiles.enrich(completed);
+      enriched = withProfile.envelope;
+      profileKeys = withProfile.matchKeys;
+    } catch {
+      // A profile is an improvement, never a precondition: deliver the event as it arrived.
+    }
+  }
 
   // Re-checked after completion: `validateEnvelope` cannot assert a dedup id the pipeline supplies.
   // Combining the results keeps every violation visible instead of reporting them one stage at a time.
@@ -239,6 +263,7 @@ export async function ingestTrackingEvent(
   const delivery = await receiveAndDeliver(deps.recording, {
     envelope: enriched,
     routing,
+    ...(profileKeys === undefined ? {} : { profileMatchKeys: profileKeys }),
     ...(input.attribution === undefined ? {} : { attribution: input.attribution }),
     ...(input.identityConfidence === undefined
       ? {}

@@ -422,3 +422,20 @@ describe("pipeline order invariants", () => {
     expect(stagePrecedes("attribution", "pii_hashing")).toBe(true);
   });
 });
+
+describe("mergeClickIds — newest capture wins", () => {
+  it("an older observation (a redelivered event) does not replace a newer stored click id", () => {
+    const stored: CapturedClickId = {
+      name: "ttclid",
+      value: "tt-new",
+      capturedAt: "2026-07-19T11:00:00.000Z",
+    };
+    const older: CapturedClickId = {
+      name: "ttclid",
+      value: "tt-old",
+      capturedAt: "2026-07-18T11:00:00.000Z",
+    };
+    expect(mergeClickIds([stored], [older], NOW)).toEqual([stored]);
+    expect(mergeClickIds([older], [stored], NOW)).toEqual([stored]);
+  });
+});

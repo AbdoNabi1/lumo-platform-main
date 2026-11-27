@@ -586,3 +586,70 @@ export {
 // "./browser" (E2) and "./execution" (entangled with the unevidenced definitions cluster) are not
 // exported here. See K7_FINAL_RECONCILIATION_REPORT.md.
 export * from "./intelligence";
+
+// --- Tracking P1-D4/D10: the visitor profile store, merge/enrich and retention ---
+export {
+  EVENT_NETWORK_RETENTION_DAYS,
+  MAX_CLICK_ID_LENGTH,
+  PROFILE_HASH_KEYS,
+  PROFILE_TTL_DAYS,
+  PROFILE_TTL_MS,
+  expiresAtFor,
+  hasMatchKeys,
+  isAnonymousProfile,
+} from "./profile/tracking-profile";
+export type {
+  ProfileBrowserIds,
+  ProfileClickId,
+  ProfileClickIds,
+  ProfileGeo,
+  ProfileHashes,
+  ProfileLandingTouch,
+  ProfileLookupKeys,
+  ProfileObservation,
+  TrackingProfile,
+} from "./profile/tracking-profile";
+export {
+  applyObservation,
+  createProfile,
+  customersConflict,
+  mergeProfileClickIds,
+  mergeProfiles,
+  pruneClickIds,
+  survivorOf,
+} from "./profile/profile-merge";
+export { InMemoryTrackingProfileStore } from "./profile/profile-store";
+export type {
+  ExpiredProfileScan,
+  ProfileChange,
+  TrackingProfileStore,
+} from "./profile/profile-store";
+export { deriveProfileHashes, profileMatchKeys, withProfileKeys } from "./profile/profile-identity";
+export type { ProfileMatchKeys } from "./profile/profile-identity";
+export {
+  customerIdOf,
+  enrichEnvelopeWithProfile,
+  isObservable,
+  observationFromEnvelope,
+  visitorIdOf,
+} from "./profile/profile-envelope";
+export { TrackingProfileService, resolveProfile } from "./profile/profile-service";
+export type {
+  ProfileEnricherPort,
+  ProfileEnrichment,
+  ProfileResolution,
+  ProfileServiceDeps,
+} from "./profile/profile-service";
+export {
+  eraseCustomerProfiles,
+  redactDestinationEntries,
+  redactEnvelopeNetwork,
+  redactPayloadNetwork,
+  runTrackingRetention,
+} from "./profile/retention";
+export type {
+  EventNetworkRedactionPort,
+  TrackingRetentionDeps,
+  TrackingRetentionReport,
+} from "./profile/retention";
+export { fbcCreatedAtMs, isFbcValidAt } from "./envelope/click-ids";
