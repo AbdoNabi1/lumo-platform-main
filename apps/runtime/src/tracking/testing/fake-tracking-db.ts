@@ -22,7 +22,7 @@ type Row = Record<string, unknown>;
 
 export interface FakeTrackingDb {
   readonly prisma: Database;
-  /** Committed registry rows. */
+  /** Committed registry rows, in registry read order (kind, key, version) like `loadAll`. */
   readonly entries: FakeEntry[];
   /** Every raw statement run on a transaction client, with its bound values. */
   readonly statements: { readonly sql: string; readonly values: readonly unknown[] }[];
@@ -47,7 +47,22 @@ export function fakeTrackingDb(): FakeTrackingDb {
   const matches = (row: Row, where: Row | undefined): boolean =>
     Object.entries(where ?? {}).every(([k, v]) => row[k] === v);
 
+  // The registry's own read order (`orderBy kind, key, version`), as `loadAll` asks Prisma for it.
+  const read = (rows: readonly FakeEntry[], where: Row | undefined): FakeEntry[] =>
+    rows
+      .filter((entry) => matches(entry as unknown as Row, where))
+      .sort(
+        (a, b) =>
+          a.kind.localeCompare(b.kind) || a.key.localeCompare(b.key) || a.version - b.version,
+      );
+
   const prisma = {
+    // The real root client exposes every model delegate too: `loadTrackingRegistry` reads through it (only
+    // committed rows are visible outside a transaction), while the sync's writes go through `$transaction`.
+    trackingRegistryEntry: {
+      findMany: ({ where }: { where: Row }) => Promise.resolve(read(entries, where)),
+      count: ({ where }: { where: Row }) => Promise.resolve(read(entries, where).length),
+    },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const staged: FakeEntry[] = [];
       const releases: (() => void)[] = [];
@@ -73,16 +88,7 @@ export function fakeTrackingDb(): FakeTrackingDb {
         },
         trackingRegistryEntry: {
           findMany: ({ where }: { where: Row }) =>
-            Promise.resolve(
-              [...entries, ...staged]
-                .filter((entry) => matches(entry as unknown as Row, where))
-                .sort(
-                  (a, b) =>
-                    a.kind.localeCompare(b.kind) ||
-                    a.key.localeCompare(b.key) ||
-                    a.version - b.version,
-                ),
-            ),
+            Promise.resolve(read([...entries, ...staged], where)),
           create: ({ data }: { data: FakeEntry }) => {
             state.creates += 1;
             if (state.failCreateNumber === state.creates) {
@@ -124,7 +130,12 @@ export function fakeTrackingDb(): FakeTrackingDb {
       };
       try {
         const result = await fn(tx);
+        // `entries` is the table in registry read order, whatever order the rows were written in.
         entries.push(...staged);
+        entries.sort(
+          (a, b) =>
+            a.kind.localeCompare(b.kind) || a.key.localeCompare(b.key) || a.version - b.version,
+        );
         return result;
       } finally {
         for (const release of releases) release();
