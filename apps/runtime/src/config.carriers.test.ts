@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { logger } from "@platform/utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadRuntimeConfig } from "./config";
 
 beforeEach(() => {
   expect.hasAssertions();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 const base = {
@@ -60,28 +65,46 @@ describe("O15 rotation envs (…_KEK_REF_PREVIOUS)", () => {
   it.each([
     ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
     ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
-  ] as const)("refuses %s_PREVIOUS without the current ref", (current, previous) => {
-    expect(() => loadRuntimeConfig({ ...base, [previous]: B })).toThrow(
-      new RegExp(`${previous} is set but ${current} is not`),
-    );
-  });
+  ] as const)(
+    "ignores %s_PREVIOUS without the current ref: no throw, dropped, names-only warning",
+    (current, previous) => {
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const config = loadRuntimeConfig({ ...base, [previous]: B });
+      expect(config[previous]).toBeUndefined();
+      expect(config[current]).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).toContain(`${previous} ignored: ${current} is not set`);
+      expect(logged).not.toContain(B);
+    },
+  );
 
   it.each([
     ["PAYMENT_CREDENTIALS_KEK_REF", "PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS"],
     ["SHIPPING_CREDENTIALS_KEK_REF", "SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS"],
   ] as const)(
-    "refuses %s_PREVIOUS equal to the current ref, without printing the value",
+    "ignores %s_PREVIOUS equal to the current ref: no throw, dropped, names-only warning",
     (current, previous) => {
-      let message = "";
-      try {
-        loadRuntimeConfig({ ...base, [current]: A, [previous]: A });
-      } catch (error) {
-        message = (error as Error).message;
-      }
-      expect(message).toMatch(new RegExp(`${previous} must differ from ${current}`));
-      expect(message).not.toContain(A);
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      const config = loadRuntimeConfig({ ...base, [current]: A, [previous]: A });
+      expect(config[previous]).toBeUndefined();
+      expect(config[current]).toBe(A);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).toContain(`${previous} ignored: it equals ${current}`);
+      expect(logged).not.toContain(A);
     },
   );
+
+  it("does not warn for a valid rotation pair", () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    loadRuntimeConfig({
+      ...base,
+      PAYMENT_CREDENTIALS_KEK_REF: A,
+      PAYMENT_CREDENTIALS_KEK_REF_PREVIOUS: B,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
 
   it("the two rotations are independent: payments may rotate while shipping does not", () => {
     const config = loadRuntimeConfig({
