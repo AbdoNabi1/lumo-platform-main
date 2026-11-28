@@ -368,6 +368,11 @@ export function publicTrackingRoutes(deps: PublicTrackingRouteDeps): readonly Ro
           return { status: 422, body: refusalBody(outcome.refusal) };
         }
 
+        // P2-D10: the browser's dedup id was invalid and replaced (ingest keys the event by its event id). A count only.
+        if (outcome.dedupIdReplaced === true) {
+          logger.warn("tracking edge: browser dedup id replaced", { count: 1 });
+        }
+
         // The block list (P1-D9): an ordinary event from a listed address is accepted and dropped here — the
         // storefront is told 202 so it neither retries nor treats it as an error. An order or a lead is never
         // dropped, whatever the address. The check fails open (service) and so does this wrapper.

@@ -161,6 +161,19 @@ describe("CollectorEndpoint — publishes exactly one event and runs no pipeline
     expect(message.payload.envelope.eventId).toBe(message.messageId);
   });
 
+  it("drops an invalid browser dedup id, counts it, and keeps a valid one (P2-D10)", async () => {
+    const { endpoint, sent } = endpointWith();
+
+    await endpoint.handle(beacon({ dedupId: "undefined" }));
+    await endpoint.handle(
+      beacon({ eventId: "01920000-0000-7000-8000-000000000002", dedupId: "ord_o-1" }),
+    );
+
+    expect(decode(sent[0] as PublishRecord).payload.envelope.dedupId).toBeUndefined();
+    expect(decode(sent[1] as PublishRecord).payload.envelope.dedupId).toBe("ord_o-1");
+    expect(endpoint.counters().dedupIdReplaced).toBe(1);
+  });
+
   it("partitions by tenant so one merchant's spike cannot reorder another's", async () => {
     const { endpoint, sent } = endpointWith();
     await endpoint.handle(beacon());

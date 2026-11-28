@@ -32,6 +32,7 @@ afterAll(async () => {
 interface DecodedEnvelope {
   eventId: string;
   tenancy: unknown;
+  dedupId?: string;
   context: {
     technical: { clientIpAddress: string; clientUserAgent: string; deviceType: string };
     page: unknown;
@@ -114,6 +115,20 @@ describe("POST /public/tracking/collect — accepted", () => {
     expect((await sendSigned(app, body)).statusCode).toBe(202);
 
     expect(decoded(published[0]).payload.envelope.tenancy).toEqual({ tenantId: SHOP });
+  });
+
+  it("replaces an invalid browser dedup id and keeps a valid one (P2-D10)", async () => {
+    const { app, published } = await boot();
+    const invalid = edgeBody();
+    (invalid["event"] as Record<string, unknown>)["dedupId"] = "undefined";
+    const valid = edgeBody();
+    (valid["event"] as Record<string, unknown>)["dedupId"] = "ord_o-1";
+
+    expect((await sendSigned(app, invalid)).statusCode).toBe(202);
+    expect((await sendSigned(app, valid)).statusCode).toBe(202);
+
+    const dedupIds = published.map((r) => decoded(r).payload.envelope.dedupId);
+    expect(dedupIds).toEqual([undefined, "ord_o-1"]);
   });
 
   it("a business event id that is not a UUID gets a stable UUID message id, so a retry collapses", async () => {

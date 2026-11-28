@@ -43,6 +43,7 @@ import type { TrackingEnvelope, EventSource } from "../envelope/envelope";
 import type { ConsentSnapshot } from "../envelope/consent";
 import type { CapturedClickId } from "../envelope/click-ids";
 import { extractClickIds } from "../envelope/click-ids";
+import { checkProvidedDedupId } from "../ids/event-id";
 import { validateEnvelope, type ValidationViolation } from "../pipeline/validation";
 import {
   COLLECTOR_COOKIES,
@@ -118,6 +119,11 @@ export type CollectorOutcome =
       readonly envelope: TrackingEnvelope;
       /** First-party ids minted this request. Empty when the browser already had them. */
       readonly cookies: readonly CookieDirective[];
+      /**
+       * Present (true) when the browser sent a dedup id that failed `checkProvidedDedupId` and it was dropped, so
+       * ingest keys the event by `explicit:<eventId>` instead (P2-D10). A flag for the caller to count; never the value.
+       */
+      readonly dedupIdReplaced?: true;
     }
   | { readonly status: "refused"; readonly refusal: CollectorRefusal };
 
@@ -200,8 +206,12 @@ export function collect(request: CollectorRequest, deps: CollectorDeps): Collect
   const metaIds = resolveMetaIds(cookies.fbp, cookies.fbc, clickIds, nowMs);
 
   // --- 6. Compose the envelope --------------------------------------------
+  //
+  // A browser-provided `dedupId` is trusted only when it is a Morbeh id or a 64-hex legacy id. Anything else is
+  // dropped here, which makes ingest derive `explicit:<eventId>`; it is reported, never forwarded to a vendor.
+  const dedupIdReplaced = checkProvidedDedupId(event["dedupId"]) === "invalid";
   const envelope = composeEnvelope({
-    event,
+    event: dedupIdReplaced ? withoutDedupId(event) : event,
     owner,
     environment,
     now,
@@ -229,7 +239,12 @@ export function collect(request: CollectorRequest, deps: CollectorDeps): Collect
     };
   }
 
-  return { status: "accepted", envelope, cookies: minted };
+  return {
+    status: "accepted",
+    envelope,
+    cookies: minted,
+    ...(dedupIdReplaced ? { dedupIdReplaced: true as const } : {}),
+  };
 }
 
 /** Permanent refusals: retrying the identical request cannot change the outcome. */
@@ -262,6 +277,12 @@ function parseBody(
   }
 
   return { writeKey, event };
+}
+
+function withoutDedupId(event: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...event };
+  delete copy["dedupId"];
+  return copy;
 }
 
 interface ComposeInput {

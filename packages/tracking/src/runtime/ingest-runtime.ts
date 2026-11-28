@@ -70,7 +70,6 @@ export type IngestRefusal =
   | { readonly code: "validation_failed"; readonly violations: readonly ValidationViolation[] }
   | { readonly code: "environment_unknown" }
   | { readonly code: "non_production_event"; readonly environment: string }
-  | { readonly code: "dedup_key_unavailable" }
   | { readonly code: "rule_set_unavailable"; readonly ruleSetKey: string };
 
 /**
@@ -86,7 +85,6 @@ export const PERMANENT_INGEST_REFUSALS: readonly IngestRefusal["code"][] = [
   "validation_failed",
   "environment_unknown",
   "non_production_event",
-  "dedup_key_unavailable",
 ];
 
 export function isPermanentRefusal(refusal: IngestRefusal): boolean {
@@ -144,24 +142,18 @@ export interface IngestInput {
 }
 
 /**
- * Chooses the natural key two independent emitters would both arrive at.
+ * Chooses the natural key for an event that arrived without a `dedupId`.
  *
- * An order id is authoritative and stable, so it is preferred. A session plus a minute bucket is
- * the fallback for events with no natural key: it is coarse, but both emitters of one page view
- * will agree on it, which is the only property that matters. Anything weaker (a random id, the
- * event id, a millisecond timestamp) would differ between emitters and defeat deduplication while
- * appearing to work.
+ * An order id is authoritative and stable, so it is preferred. Everything else is keyed by its own `eventId`
+ * (P2-D10): unique per occurrence, so two page views of one session in one minute are never merged. Browser events
+ * carry `mb_<uuid>` and server business events carry their `ord_/dlv_/cnl_/lead_` id as `dedupId`, so neither
+ * reaches this fallback expecting to collapse with a copy from another emitter.
  */
-function naturalKeyFor(envelope: TrackingEnvelope): NaturalKeyStrategy | null {
+function naturalKeyFor(envelope: TrackingEnvelope): NaturalKeyStrategy {
   const orderId = envelope.payload?.orderId;
   if (orderId !== undefined && orderId.trim() !== "") return { kind: "order", orderId };
 
-  const sessionId = envelope.context.session?.sessionId;
-  if (sessionId !== undefined && sessionId.trim() !== "") {
-    return { kind: "session_minute", sessionId };
-  }
-
-  return null;
+  return { kind: "explicit", key: envelope.eventId };
 }
 
 /**
@@ -200,7 +192,6 @@ async function enrich(
 
   if (dedupId === undefined || dedupId.trim() === "") {
     const strategy = naturalKeyFor(envelope);
-    if (strategy === null) return { refusal: { code: "dedup_key_unavailable" } };
     dedupId = await deriveDedupId(
       {
         tenantId,
