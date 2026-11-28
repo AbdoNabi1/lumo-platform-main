@@ -30,6 +30,16 @@ export interface TechnicalContext {
   readonly countryDetected?: string;
   readonly regionDetected?: string;
   readonly cityDetected?: string;
+
+  /**
+   * Bot score 0–100 stamped at collect time (P1-D8). At or above 50 a marketing destination is skipped for a
+   * non-conversion event; a real order or lead is never skipped. Absent = not scored (never "human").
+   */
+  readonly botScore?: number;
+  /** The signals behind the score, for the inspector (`declared_crawler`, `missing_accept_language`, …). */
+  readonly botReasons?: readonly string[];
+  /** Cookieless visitor id: HMAC(per-store key, IP /24 ‖ user agent ‖ host). Last-resort identity only. */
+  readonly fingerprintId?: string;
 }
 
 export type DeviceType = "desktop" | "mobile" | "tablet" | "tv" | "wearable" | "bot" | "unknown";

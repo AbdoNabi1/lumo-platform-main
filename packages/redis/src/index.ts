@@ -12,6 +12,7 @@ export { createRedisHealthCheck } from "./health";
 export { RedisDistributedLock } from "./locks";
 export { RedisRateLimiter } from "./rate-limiter";
 export { RedisIdempotencyKeyStore } from "./idempotency";
+export { RedisClaimLedger } from "./claim-ledger";
 
 /** A managed Redis handle: client, cache, health probe, and lifecycle. */
 export interface RedisHandle {

@@ -35,6 +35,7 @@ import {
   GetPublicStore,
   DismissSetupGuide,
   GetStoreSettings,
+  SettleSignupSiteType,
   UpdateStoreSettings,
 } from "./application/store-settings.use-cases";
 import {
@@ -157,10 +158,13 @@ function buildController(
     listShopDomains: new ListShopDomains(tenancyDeps),
     resolveHost: new ResolveHost(tenancyDeps),
     getStoreSettings: new GetStoreSettings({ settings: repos.storeSettings }),
-    updateStoreSettings: new UpdateStoreSettings({ settings: repos.storeSettings, unitOfWork }),
+    updateStoreSettings: new UpdateStoreSettings({ settings: repos.storeSettings }),
     dismissSetupGuide: new DismissSetupGuide({
       settings: repos.storeSettings,
-      unitOfWork,
+      clock: deps.clock,
+    }),
+    settleSignupSiteType: new SettleSignupSiteType({
+      settings: repos.storeSettings,
       clock: deps.clock,
     }),
     getPublicStore: new GetPublicStore({ settings: repos.storeSettings }),

@@ -61,6 +61,16 @@ const whatsapp = (over: Settings = {}) =>
     message: { en: "Hi" },
     ...over,
   });
+const leadForm = (over: Settings = {}) =>
+  section("lead_form", {
+    heading: { en: "Get in touch" },
+    text: { en: "Leave your details" },
+    submitLabel: { en: "Send" },
+    successMessage: { en: "Thanks" },
+    showEmail: true,
+    showMessage: true,
+    ...over,
+  });
 
 beforeEach(() => {
   expect.hasAssertions();
@@ -96,6 +106,41 @@ describe("readPublicSection: the storefront re-validates everything (spec Securi
     expect(readPublicSection(whatsapp(), "live")).toMatchObject({
       settings: { phone: "201001234567", buttonLabel: { en: "Message us" } },
     });
+  });
+
+  it("a lead form is kept with its six settings, even when empty of text", () => {
+    expect(readPublicSection(leadForm(), "live")).toEqual({
+      id: id(1),
+      type: "lead_form",
+      settings: {
+        heading: { en: "Get in touch" },
+        text: { en: "Leave your details" },
+        submitLabel: { en: "Send" },
+        successMessage: { en: "Thanks" },
+        showEmail: true,
+        showMessage: true,
+      },
+    });
+    const bare = readPublicSection(
+      leadForm({ heading: {}, text: {}, submitLabel: {}, successMessage: {} }),
+      "live",
+    );
+    expect(bare).toMatchObject({ type: "lead_form" });
+    expect(bare).not.toHaveProperty("incomplete");
+  });
+
+  it("a lead form keeps false flags and reads a missing or odd flag as true", () => {
+    expect(
+      readPublicSection(leadForm({ showEmail: false, showMessage: false }), "live"),
+    ).toMatchObject({ settings: { showEmail: false, showMessage: false } });
+    expect(
+      readPublicSection(leadForm({ showEmail: "no", showMessage: undefined }), "live"),
+    ).toMatchObject({ settings: { showEmail: true, showMessage: true } });
+  });
+
+  it("at most one lead form is kept", () => {
+    const forms = Array.from({ length: 3 }, (_, i) => ({ ...leadForm(), id: id(i + 20) }));
+    expect(readPublicSections(forms, "live")).toHaveLength(SECTION_LIMITS.leadFormPerPage);
   });
 
   it("a javascript: href or a //evil link becomes null", () => {

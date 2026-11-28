@@ -27,6 +27,42 @@ vi.mock("./outbox-delivery-runtime", () => ({
   },
 }));
 
+const retrySweepStarts: { sweep: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./delivery-retry-runtime", () => ({
+  startDeliveryRetrySweep: (_core: RuntimeCore, sweep: () => Promise<unknown>) => {
+    const start = { sweep, stop: vi.fn() };
+    retrySweepStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
+const leadSweepStarts: { sweep: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./lead-tracking-sweep-runtime", () => ({
+  startLeadTrackingSweep: (_core: RuntimeCore, sweep: () => Promise<unknown>) => {
+    const start = { sweep, stop: vi.fn() };
+    leadSweepStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
+const retentionStarts: { run: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./tracking-retention-runtime", () => ({
+  startTrackingRetention: (_core: RuntimeCore, run: () => Promise<unknown>) => {
+    const start = { run, stop: vi.fn() };
+    retentionStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
+/** The order events the tracking business consumers turn into server Purchase / Delivered / Cancelled events. */
+const TRACKING_BUSINESS_TOPICS = [
+  "orders.order.created.v1",
+  "orders.order.placed.v1",
+  "orders.order.cancelled.v1",
+  "fulfillment.order.returned.v1",
+  "fulfillment.order.delivered.v1",
+];
+
 const BASE_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
@@ -84,6 +120,9 @@ function coreWithoutBroker(env: NodeJS.ProcessEnv): {
 
 afterEach(() => {
   deliveryStarts.length = 0;
+  retrySweepStarts.length = 0;
+  retentionStarts.length = 0;
+  leadSweepStarts.length = 0;
 });
 
 describe("startWorker under EVENT_TRANSPORT=postgres", () => {
@@ -157,8 +196,163 @@ describe("startWorker under EVENT_TRANSPORT=postgres", () => {
 
     expect(deliveryStarts).toEqual([]);
     expect(started).toContain("orders.order.paid.v1");
+    // Tracking P2-D3: ingest is on by default, so the five order consumers subscribe too.
+    expect(started).toEqual(expect.arrayContaining(TRACKING_BUSINESS_TOPICS));
     expect(supervisor.status().every((status) => status.running)).toBe(true);
     await supervisor.stopAll();
+  });
+});
+
+describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres", () => {
+  const TRACKING_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" } as NodeJS.ProcessEnv;
+
+  it("starts the sweeper beside the outbox delivery loop when tracking ingest is on", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+
+    expect(retrySweepStarts).toHaveLength(1);
+    expect(typeof retrySweepStarts[0]?.sweep).toBe("function");
+    expect(deliveryStarts).toHaveLength(1);
+    // the tracking consumer reaches the delivery loop too, so the sweeper's parked rows have a producer
+    expect(deliveryStarts[0]?.consumers.map((c) => c.consumerGroup)).toContain("tracking.ingest");
+    expect(brokerCalls).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("hands the delivery loop the five order consumers of the tracking revenue path (P2-D3)", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+
+    const handedOver = deliveryStarts[0]?.consumers.map((c) => `${c.consumerGroup}@${c.topic}`);
+    expect(handedOver).toEqual(
+      expect.arrayContaining([
+        "tracking.business.order-created@orders.order.created.v1",
+        "tracking.business.order-placed@orders.order.placed.v1",
+        "tracking.business.order-cancelled@orders.order.cancelled.v1",
+        "tracking.business.fulfillment-returned@fulfillment.order.returned.v1",
+        "tracking.business.fulfillment-delivered@fulfillment.order.delivered.v1",
+      ]),
+    );
+    // each is a real direct consumer (asDirectConsumers refused none), and the broker is untouched
+    expect(handedOver).toHaveLength(supervisor.status().length);
+    expect(brokerCalls).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("registers no order consumer when tracking ingest is off (same gate as the ingest consumer)", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+
+    const groups = deliveryStarts[0]?.consumers.map((c) => c.consumerGroup) ?? [];
+    expect(groups.filter((group) => group.startsWith("tracking."))).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("does not start (and never reads the table) when tracking ingest is off", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+
+    expect(retrySweepStarts).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("is stopped with the worker", async () => {
+    const { core } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(retrySweepStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("starts the privacy retention pass with the worker when tracking ingest is on, and stops it with it", async () => {
+    const { core } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      expect(retentionStarts).toHaveLength(1);
+      expect(typeof retentionStarts[0]?.run).toBe("function");
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(retentionStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("does not start the retention pass (and never reads the tables) when tracking ingest is off", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+    expect(retentionStarts).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("starts the lead tracking sweeper with the worker when tracking ingest is on, and stops it with it (P2-D9)", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      expect(leadSweepStarts).toHaveLength(1);
+      expect(typeof leadSweepStarts[0]?.sweep).toBe("function");
+      expect(brokerCalls).toEqual([]);
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(leadSweepStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("does not start the lead sweeper (and never reads the leads table) when tracking ingest is off", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+    expect(leadSweepStarts).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("config: tracking ingest is ON by default (P2-D2, zero setup) and `off` / `false` turn it off", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_INGEST_ENABLED).toBe(true);
+    for (const value of ["off", "false", "OFF"]) {
+      expect(
+        loadRuntimeConfig({ ...BASE_ENV, TRACKING_INGEST_ENABLED: value }).TRACKING_INGEST_ENABLED,
+      ).toBe(false);
+    }
+    for (const value of ["on", "true", "ON"]) {
+      expect(
+        loadRuntimeConfig({ ...BASE_ENV, TRACKING_INGEST_ENABLED: value }).TRACKING_INGEST_ENABLED,
+      ).toBe(true);
+    }
+  });
+
+  it("config: the sweep interval defaults to a minute and refuses a busy loop", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_RETRY_SWEEP_INTERVAL_MS).toBe(60_000);
+    expect(() =>
+      loadRuntimeConfig({ ...BASE_ENV, TRACKING_RETRY_SWEEP_INTERVAL_MS: "10" }),
+    ).toThrow();
   });
 });
 
@@ -189,10 +383,19 @@ describe("config: EVENT_TRANSPORT", () => {
     );
   });
 
-  it("refuses postgres with tracking ingest on — the collector bypasses the outbox", () => {
-    expect(() => loadRuntimeConfig({ ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" })).toThrow(
-      /TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka/,
-    );
+  it("accepts postgres with tracking ingest on — the runtime API appends events to the outbox (P1-D1)", () => {
+    const config = loadRuntimeConfig({ ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "true" });
+    expect(config.EVENT_TRANSPORT).toBe("postgres");
+    expect(config.TRACKING_INGEST_ENABLED).toBe(true);
+  });
+
+  it("TRACKING_EDGE_SECRET is optional and needs at least 32 characters when present", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_EDGE_SECRET).toBeUndefined();
+    expect(() => loadRuntimeConfig({ ...BASE_ENV, TRACKING_EDGE_SECRET: "too-short" })).toThrow();
+    const secret = "edge-secret-".padEnd(40, "x");
+    expect(
+      loadRuntimeConfig({ ...BASE_ENV, TRACKING_EDGE_SECRET: secret }).TRACKING_EDGE_SECRET,
+    ).toBe(secret);
   });
 
   it("rejects an unknown transport instead of silently falling back to kafka", () => {

@@ -43,6 +43,7 @@ import type { TrackingEnvelope, EventSource } from "../envelope/envelope";
 import type { ConsentSnapshot } from "../envelope/consent";
 import type { CapturedClickId } from "../envelope/click-ids";
 import { extractClickIds } from "../envelope/click-ids";
+import { checkProvidedDedupId } from "../ids/event-id";
 import { validateEnvelope, type ValidationViolation } from "../pipeline/validation";
 import {
   COLLECTOR_COOKIES,
@@ -118,12 +119,17 @@ export type CollectorOutcome =
       readonly envelope: TrackingEnvelope;
       /** First-party ids minted this request. Empty when the browser already had them. */
       readonly cookies: readonly CookieDirective[];
+      /**
+       * Present (true) when the browser sent a dedup id that failed `checkProvidedDedupId` and it was dropped, so
+       * ingest keys the event by `explicit:<eventId>` instead (P2-D10). A flag for the caller to count; never the value.
+       */
+      readonly dedupIdReplaced?: true;
     }
   | { readonly status: "refused"; readonly refusal: CollectorRefusal };
 
 /** A visitor id outlives sessions; a session id rolls after inactivity. Both first-party. */
 const VISITOR_TTL_SECONDS = 400 * 24 * 60 * 60; // 400d — the browser cap for a Set-Cookie lifetime
-const SESSION_TTL_SECONDS = 30 * 60;
+export const SESSION_TTL_SECONDS = 30 * 60;
 
 /** The shape the browser SDK posts. Every field is untrusted and optional until validated. */
 interface CollectorBody {
@@ -200,8 +206,12 @@ export function collect(request: CollectorRequest, deps: CollectorDeps): Collect
   const metaIds = resolveMetaIds(cookies.fbp, cookies.fbc, clickIds, nowMs);
 
   // --- 6. Compose the envelope --------------------------------------------
+  //
+  // A browser-provided `dedupId` is trusted only when it is a Morbeh id or a 64-hex legacy id. Anything else is
+  // dropped here, which makes ingest derive `explicit:<eventId>`; it is reported, never forwarded to a vendor.
+  const dedupIdReplaced = checkProvidedDedupId(event["dedupId"]) === "invalid";
   const envelope = composeEnvelope({
-    event,
+    event: dedupIdReplaced ? withoutDedupId(event) : event,
     owner,
     environment,
     now,
@@ -229,7 +239,12 @@ export function collect(request: CollectorRequest, deps: CollectorDeps): Collect
     };
   }
 
-  return { status: "accepted", envelope, cookies: minted };
+  return {
+    status: "accepted",
+    envelope,
+    cookies: minted,
+    ...(dedupIdReplaced ? { dedupIdReplaced: true as const } : {}),
+  };
 }
 
 /** Permanent refusals: retrying the identical request cannot change the outcome. */
@@ -262,6 +277,12 @@ function parseBody(
   }
 
   return { writeKey, event };
+}
+
+function withoutDedupId(event: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...event };
+  delete copy["dedupId"];
+  return copy;
 }
 
 interface ComposeInput {
@@ -335,25 +356,17 @@ function composeEnvelope(input: ComposeInput): TrackingEnvelope {
 }
 
 /**
- * Reads the consent block, **failing closed**.
+ * The consent a collected event carries into ingest, **failing closed** (P2-D1).
  *
- * An absent or malformed consent block means "no consent granted", never "consent assumed". D-077
- * makes consent mandatory and fail-closed, and this is the point where a permissive default would be
- * easiest to introduce and hardest to notice: every event would still flow, and the only symptom
- * would be forwarding data the visitor declined.
+ * The browser's own consent block is NOT trusted: whatever a beacon claims, the snapshot here is "nothing granted".
+ * The store's consent policy decides what an event is forwarded under, once, server-side, in `ingestTrackingEvent`:
+ * `notice_only` (the default) stamps the notice-only grant there; `opt_in` keeps this deny until a signed consent
+ * decision reaches the collector — none exists yet, so an `opt_in` store forwards nothing to marketing destinations.
+ * Trusting a body `true` would let any visitor, or a script that can reach the signed storefront path, grant
+ * marketing consent to itself in a store that asked for opt-in.
  */
-function resolveConsent(raw: unknown): ConsentSnapshot {
-  const consent = asRecord(raw);
-  if (consent === undefined) {
-    return { analytics: false, marketing: false, personalization: false };
-  }
-
-  return {
-    ...consent,
-    analytics: consent["analytics"] === true,
-    marketing: consent["marketing"] === true,
-    personalization: consent["personalization"] === true,
-  };
+function resolveConsent(_raw: unknown): ConsentSnapshot {
+  return { analytics: false, marketing: false, personalization: false };
 }
 
 /** `_fbc` is derived only when Meta's pixel has not already set it — see `deriveFbc`. */

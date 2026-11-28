@@ -33,6 +33,7 @@ import {
 import { postFocus, PREVIEW_READY_MESSAGE, previewOrigin } from "@/lib/online-store/preview-focus";
 import { findSection, updateSectionSettings } from "@/lib/online-store/section-tree";
 import { themeFieldErrors } from "@/lib/online-store/theme-field-errors";
+import type { SiteType } from "@/lib/api/store-settings";
 import type { Locale } from "@/lib/i18n";
 import type { Dictionary } from "@/messages/en";
 import {
@@ -84,6 +85,7 @@ export function CustomizeEditor({
   role,
   storeName,
   menus,
+  siteType,
 }: {
   readonly t: Dictionary;
   readonly locale: Locale;
@@ -92,6 +94,8 @@ export function CustomizeEditor({
   readonly storeName: string;
   /** The shop's menus for the header and footer selects (the two defaults when the list failed). */
   readonly menus: readonly MenuChoice[];
+  /** Decides which sections the editor offers to add; `null` when it could not be read. */
+  readonly siteType: SiteType | null;
 }) {
   const c = t.onlineStoreCustomize;
   const canEdit = role !== "viewer";
@@ -491,6 +495,7 @@ export function CustomizeEditor({
                     selectedId={selectedId}
                     disabled={!canEdit || locked}
                     menus={menus}
+                    siteType={siteType}
                     handleRef={treeRef}
                     onSelect={setSelectedId}
                     onCopied={() => {

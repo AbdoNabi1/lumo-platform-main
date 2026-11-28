@@ -31,7 +31,7 @@
  * renumbered registry is not.
  */
 
-import type { Database } from "@platform/db";
+import { runInTenantTransaction, type Database } from "@platform/db";
 import type { IdGenerator } from "@platform/contracts";
 import { Registry } from "@platform/registry";
 import type { RuleSet } from "@platform/rules";
@@ -149,7 +149,70 @@ export class PrismaTrackingRegistryStore {
       },
     });
   }
+
+  /**
+   * Runs `fn` in ONE tenant transaction that holds a per-tenant advisory lock.
+   *
+   * Plan D1 Task 4: connections change one at a time but each change rewrites the shop's destinations,
+   * mappings and rule set. Two saves landing together would each read the same rows and both append the
+   * same next version (a unique-key collision, or worse, a rule set that forgets the other platform). The
+   * transaction-scoped advisory lock (`pg_advisory_xact_lock`, released on commit or rollback, keyed on the
+   * tenant) serializes them, so the second sync reads what the first one wrote. Every query runs on the
+   * transaction client and names the tenant; the root-bound `append` above is never used in here.
+   */
+  async withTenantRegistryTransaction<T>(
+    tenantId: string,
+    fn: (writer: TenantRegistryWriter) => Promise<T>,
+  ): Promise<T> {
+    return runInTenantTransaction(this.db, tenantId, async (tx) => {
+      // `$executeRaw` rather than `$queryRaw`: `pg_advisory_xact_lock` returns `void`, which Prisma cannot
+      // deserialize as a result column. The key is a bound parameter, never SQL text.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tracking-registry:${tenantId}`}))`;
+      const entries = (tx as unknown as RegistryTransactionClient).trackingRegistryEntry;
+      return fn({
+        loadAll: () =>
+          entries.findMany({
+            where: { tenantId },
+            orderBy: [{ kind: "asc" }, { key: "asc" }, { version: "asc" }],
+          }),
+        append: async (row) => {
+          await entries.create({
+            data: {
+              id: this.idGenerator.generate(),
+              tenantId,
+              kind: row.kind,
+              key: row.key,
+              version: row.version,
+              status: row.status,
+              value: row.value,
+              registeredAt: row.at,
+            },
+          });
+        },
+      });
+    });
+  }
 }
+
+/** One definition version to append inside a tenant registry transaction. */
+export interface TrackingRegistryAppend {
+  readonly kind: TrackingRegistryKind;
+  readonly key: string;
+  readonly version: number;
+  readonly status: string;
+  readonly value: unknown;
+  readonly at: Date;
+}
+
+/** The registry as seen from inside one tenant transaction (every query runs on the transaction client). */
+export interface TenantRegistryWriter {
+  loadAll(): Promise<readonly TrackingRegistryRow[]>;
+  append(row: TrackingRegistryAppend): Promise<void>;
+}
+
+type RegistryTransactionClient = {
+  trackingRegistryEntry: Pick<RegistryDb["trackingRegistryEntry"], "create" | "findMany">;
+};
 
 /** Thrown when persisted versions cannot be reproduced faithfully — see the module note. */
 export class RegistryVersionParityError extends Error {
@@ -321,22 +384,19 @@ export function ruleSetRegistryOf(snapshot: TrackingRegistrySnapshot): RuleSetRe
 /**
  * Loads the registry for a tenant.
  *
- * **Fails when the registry is empty.** An empty registry is not a neutral starting state: every
- * event would route nowhere, `receiveAndDeliver` would record each one with no destinations, and
- * the platform would report perfect health while forwarding nothing at all. That failure is silent
- * and can run for weeks. Refusing to start is loud and takes minutes to fix.
+ * **An empty registry is a valid state** (Tracking P2-D2, zero merchant setup). A store that has not connected an ad
+ * platform has no definitions at all: its snapshot has no destination and no rule set, `ingestTrackingEvent` answers
+ * `unrouted` (visitor profile updated, nothing recorded, nothing sent), and the registry watcher keeps polling, so
+ * the first connection save — which writes the destinations and the rule set — is picked up within one poll
+ * interval. The old behaviour (throw, retry, dead-letter every event of every unconnected store) was a boot-time
+ * safety net for a seeded-registry deployment that no longer exists; `TrackingRegistryHandle` documents why a
+ * failed *reload* still keeps the previous snapshot serving.
  */
 export async function loadTrackingRegistry(
   store: PrismaTrackingRegistryStore,
   tenantId: string,
 ): Promise<TrackingRegistrySnapshot> {
   const rows = await store.loadAll(tenantId);
-  if (rows.length === 0) {
-    throw new Error(
-      `tracking: no registry definitions for tenant "${tenantId}" — seed the registry before ` +
-        `starting ingest, or every event will be captured and forwarded nowhere`,
-    );
-  }
   return new TrackingRegistrySnapshot(rows);
 }
 

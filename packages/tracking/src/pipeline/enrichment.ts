@@ -16,6 +16,7 @@ import type { CapturedClickId, ClickIdName, MetaBrowserIds } from "../envelope/c
 import { isClickIdValidAt } from "../envelope/click-ids";
 import type { PageContext, TrackingContext } from "../envelope/envelope";
 import type { TechnicalContext } from "../envelope/technical-context";
+import { resolveAiSource } from "../enrichment/ai-referrer";
 import { resolveChannel } from "./channel-resolver";
 
 /** Campaign/click state carried forward for a visitor, supplied by the session store. */
@@ -61,7 +62,13 @@ export function mergeClickIds(
     byName.set(clickId.name, clickId);
   }
   for (const clickId of observed ?? []) {
-    // A fresh observation replaces a stored one: the campaign resolved now is more current.
+    // The newest capture wins per platform (TikTok: override the old ttclid with each new click). An
+    // observation replaces a stored id unless the stored one was captured strictly LATER — a redelivered
+    // or reordered older event must not push a newer click id out.
+    const stored = byName.get(clickId.name);
+    if (stored !== undefined && Date.parse(stored.capturedAt) > Date.parse(clickId.capturedAt)) {
+      continue;
+    }
     byName.set(clickId.name, clickId);
   }
 
@@ -118,6 +125,7 @@ export function enrichAttribution(input: EnrichmentInput): AttributionContext {
     exitPage: firstPresent(input.page?.url, existing?.exitPage),
     channelGroup: resolution.channelGroup,
     trafficSource: firstPresent(existing?.trafficSource, resolution.source),
+    aiSource: firstPresent(existing?.aiSource, resolveAiSource({ utmSource, referrer })?.key),
     campaign: firstPresent(existing?.campaign, utmCampaign),
     journeyId: firstPresent(existing?.journeyId, persisted?.journeyId),
     meta: { ...persisted?.meta, ...existing?.meta },

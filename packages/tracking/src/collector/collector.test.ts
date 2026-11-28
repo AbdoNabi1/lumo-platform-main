@@ -111,6 +111,16 @@ describe("Collector — parse, validate, resolve, publish once", () => {
     });
   });
 
+  it("does NOT trust a body that claims consent: true flags are ignored, the store's policy decides at ingest (P2-D1)", () => {
+    const out = accepted(collect(request(), deps()));
+
+    expect(out.envelope.consent).toEqual({
+      analytics: false,
+      marketing: false,
+      personalization: false,
+    });
+  });
+
   it("treats a non-boolean consent value as NOT granted", () => {
     const req = request();
     (req.body as { event: Record<string, unknown> }).event["consent"] = {
@@ -289,5 +299,41 @@ describe("User agent classification stays shallow and honest", () => {
   it("carries the raw user agent verbatim — it is what conversions APIs require", () => {
     const raw = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)";
     expect(ua(raw).clientUserAgent).toBe(raw);
+  });
+});
+
+describe("Collector — browser-provided dedup ids (P2-D10)", () => {
+  const withDedupId = (dedupId: unknown): CollectorRequest => {
+    const req = request();
+    (req.body as { event: Record<string, unknown> }).event["dedupId"] = dedupId;
+    return req;
+  };
+  const UUID = "0192b3c4-d5e6-7f80-9a1b-2c3d4e5f6a7b";
+
+  it.each([`mb_${UUID}`, "ord_o-1", "a".repeat(64)])("keeps the valid dedup id %s", (id) => {
+    expect.hasAssertions();
+    const out = accepted(collect(withDedupId(id), deps()));
+
+    expect(out.envelope.dedupId).toBe(id);
+    expect(out.dedupIdReplaced).toBeUndefined();
+  });
+
+  it.each([null, "", "undefined", "mb_not-a-uuid", 42, { id: "x" }])(
+    "drops the invalid dedup id %j and reports it, so ingest derives explicit:eventId",
+    (id) => {
+      expect.hasAssertions();
+      const out = accepted(collect(withDedupId(id), deps()));
+
+      expect(out.envelope.dedupId).toBeUndefined();
+      expect(out.dedupIdReplaced).toBe(true);
+    },
+  );
+
+  it("reports nothing when the browser sent no dedup id", () => {
+    expect.hasAssertions();
+    const out = accepted(collect(request(), deps()));
+
+    expect(out.envelope.dedupId).toBeUndefined();
+    expect(out.dedupIdReplaced).toBeUndefined();
   });
 });

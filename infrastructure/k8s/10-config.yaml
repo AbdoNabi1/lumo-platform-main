@@ -46,12 +46,12 @@ data:
   OTEL_TRACES_ENABLED: "true"
   OTEL_METRICS_ENABLED: "true"
   # H-06: the tracking.event.captured.v1 consumer (C-07) is config-gated. Values below match
-  # config.ts's own defaults, so this changes no current behaviour — it makes the gate visible and
-  # discoverable in the deployment manifest instead of only in source. Sequence to enable ingest in
-  # a real cluster: 1) topic exists (bootstrap-topics.sh, added alongside this), 2) the tracking
-  # registry is seeded (loadTrackingRegistry refuses to start against an empty one — correct), THEN
-  # 3) flip TRACKING_INGEST_ENABLED to "true". Flipping it here first would crash-loop the worker.
-  TRACKING_INGEST_ENABLED: "false"
+  # config.ts's own defaults — it makes the gate visible and discoverable in the deployment manifest
+  # instead of only in source. Default ON since Tracking P2-D2 (zero merchant setup): a store with no
+  # ad platform connected has an empty registry, which is valid (profile update only, nothing recorded
+  # or sent). Prerequisites: 1) the topic exists (bootstrap-topics.sh), 2) migrations through
+  # 20261210000000 are applied BEFORE the release. Set "false" to stop the consumer.
+  TRACKING_INGEST_ENABLED: "true"
   TRACKING_RULE_SET_KEY: "tracking.routing.default"
   TRACKING_REGISTRY_POLL_MS: "30000"
   # Phase A.23 (Task 3): activates the scheduler's CDC watchdog job — same-namespace Service defined

@@ -13,6 +13,11 @@ import {
   type OrderPaymentStatus,
   RefundPolicy,
 } from "@platform/orders";
+import type {
+  BlockedIpService,
+  TestEventService,
+  TrackingSettingsService,
+} from "@platform/tracking";
 import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
@@ -56,6 +61,10 @@ import { licensingRoutes } from "./licensing-routes";
 import { localizationRoutes } from "./localization-routes";
 import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
+import { adPlatformsRoutes } from "./ad-platforms-routes";
+import { blockedIpsRoutes } from "./blocked-ips-routes";
+import { publicTrackingSettingsRoutes, trackingSettingsRoutes } from "./tracking-settings-routes";
+import { leadsRoutes } from "./leads-routes";
 import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
 import { paymentsWebhookRoutes } from "./payments-webhook-routes";
@@ -87,6 +96,10 @@ import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutLinkRoutes } from "./public-checkout-link-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import type { CheckoutSnapshotRecorder } from "./public-checkout-tracking";
+import { publicAdPlatformsRoutes } from "./public-ad-platforms-routes";
+import { publicLeadsRoutes } from "./public-leads-routes";
+import { publicTrackingRoutes, type PublicTrackingRouteDeps } from "./public-tracking-routes";
 import { publicOnlineStoreRoutes } from "./public-online-store-routes";
 import { publicContentRoutes } from "./public-content-routes";
 import { publicShippingRoutes } from "./public-shipping-routes";
@@ -1020,6 +1033,16 @@ export function adminRoutes(
     /** Set only under TENANT_MODE=multi; without it merchant sign-up answers 503. */
     readonly platformTenantId?: string;
     readonly onTenantLifecycleChange?: (tenantId: string) => void;
+    /** Tracking P1-D3: the storefront-signed capture route. Absent ⇒ the route is not mounted. */
+    readonly trackingEdge?: PublicTrackingRouteDeps;
+    /** Tracking P1-D9: Settings → Tracking → excluded IP addresses. Absent ⇒ the routes are not mounted. */
+    readonly trackingBlockedIps?: BlockedIpService;
+    /** Tracking P2-D1: Settings → Tracking → consent policy and cookie notice. Absent ⇒ the routes are not mounted. */
+    readonly trackingSettings?: TrackingSettingsService;
+    /** Tracking P2-D11: sends one synthetic purchase to an ad platform. Absent ⇒ the route answers 503 NOT_CONFIGURED. */
+    readonly adPlatformTestEvents?: TestEventService;
+    /** Tracking P2-D8: keeps the attribution snapshot of a checkout. Absent ⇒ the `tracking` object is ignored. */
+    readonly trackingAttributionSnapshots?: CheckoutSnapshotRecorder;
   } = {},
 ): readonly RouteDefinition[] {
   // Under TENANT_MODE=multi a merchant's own owner holds `admin` (`*:*` in the role table), so a
@@ -2373,17 +2396,41 @@ export function adminRoutes(
     ...staffAccountRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
-    ...publicCheckoutRoutes(admin),
+    ...publicCheckoutRoutes(
+      admin,
+      options.trackingAttributionSnapshots === undefined
+        ? {}
+        : { attributionSnapshots: options.trackingAttributionSnapshots },
+    ),
     ...publicCheckoutLinkRoutes(admin),
     ...publicShippingRoutes(admin),
     ...publicOnlineStoreRoutes(admin, options.rateLimiter),
     ...publicContentRoutes(admin),
     ...publicReviewsRoutes(admin),
     ...publicWishlistRoutes(admin),
+    ...publicLeadsRoutes(admin, options.rateLimiter),
+    ...(options.trackingEdge === undefined ? [] : publicTrackingRoutes(options.trackingEdge)),
+    ...publicAdPlatformsRoutes(admin),
     ...publicLoyaltyRoutes(admin),
     ...recommendationsRoutes(admin),
     ...reportingRoutes(admin),
     ...wishlistRoutes(admin),
+    ...leadsRoutes(admin),
+    ...adPlatformsRoutes(admin, {
+      ...(options.adPlatformTestEvents === undefined
+        ? {}
+        : { service: options.adPlatformTestEvents }),
+      ...(options.rateLimiter === undefined ? {} : { rateLimiter: options.rateLimiter }),
+    }),
+    ...(options.trackingBlockedIps === undefined
+      ? []
+      : blockedIpsRoutes(options.trackingBlockedIps)),
+    ...(options.trackingSettings === undefined
+      ? []
+      : [
+          ...trackingSettingsRoutes(options.trackingSettings),
+          ...publicTrackingSettingsRoutes(options.trackingSettings),
+        ]),
     ...customer360Routes(admin),
   ] as readonly RouteDefinition[];
 }

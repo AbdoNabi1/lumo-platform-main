@@ -60,6 +60,7 @@ function Harness({
         selectedId={selectedId}
         disabled={false}
         menus={[{ handle: "main-menu", title: "Main menu" }]}
+        siteType="store"
         onSelect={(id) => {
           onSelect(id);
           setSelectedId(id);

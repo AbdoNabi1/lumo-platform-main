@@ -33,6 +33,7 @@ const signupBase = {
   email: "o@x.test",
   password: "fake-password-1",
   country: "EG" as const,
+  siteType: "store" as const,
 };
 
 afterEach(() => {
@@ -76,7 +77,14 @@ describe("signUpMerchant", () => {
       email: "o@x.test",
       password: "fake-password-1",
       country: "EG",
+      siteType: "store",
     });
+  });
+
+  it("sends the chosen siteType in the JSON body", async () => {
+    const { fetchImpl, seen } = spy(201, { accessToken: "tok", expiresIn: 900 });
+    await signUpMerchant({ ...signupBase, siteType: "lead_site", fetchImpl });
+    expect(String(seen[0]?.init?.body)).toContain('"siteType":"lead_site"');
   });
 
   it("maps a 201 with signInRequired to signInRequired", async () => {

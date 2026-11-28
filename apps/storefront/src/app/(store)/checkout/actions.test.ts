@@ -43,6 +43,7 @@ const revalidatePath = vi.fn();
 vi.mock("next/cache", () => ({ revalidatePath: (...args: unknown[]) => revalidatePath(...args) }));
 
 let cookieStore = new Map<string, string>();
+let requestHeaders = new Map<string, string>();
 const cookieSet = vi.fn((name: string, value: string) => {
   cookieStore.set(name, value);
 });
@@ -58,6 +59,7 @@ vi.mock("next/headers", () => ({
     set: cookieSet,
     delete: cookieDelete,
   }),
+  headers: async () => ({ get: (name: string) => requestHeaders.get(name) ?? null }),
 }));
 
 // Imported after the mocks above so the module under test picks them up.
@@ -104,6 +106,7 @@ const address = { line1: "1 Main St", city: "Springfield", postalCode: "00000", 
 
 beforeEach(() => {
   cookieStore = new Map();
+  requestHeaders = new Map();
   vi.clearAllMocks();
 });
 
@@ -261,6 +264,74 @@ describe("completeCheckout", () => {
     expect(completeCheckoutApi).toHaveBeenCalledWith("checkout-1", "session-a", expect.any(String));
     expect(cookieDelete).not.toHaveBeenCalled();
     expect(cookieStore.get("morbeh_checkout_session")).toBe("checkout-1");
+  });
+});
+
+describe("completeCheckout — attribution snapshot (Tracking P2-D8)", () => {
+  const VISITOR = "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b";
+
+  beforeEach(() => {
+    requestHeaders = new Map();
+    cookieStore.set("morbeh-storefront-guest-session", "session-a");
+    completeCheckoutApi.mockResolvedValue({ status: 200, body: session({ orderRef: "order-1" }) });
+  });
+
+  it("sends what the server-side jar and headers carry, as the 5th argument", async () => {
+    cookieStore.set("_mb_id", VISITOR);
+    cookieStore.set("_fbp", "fb.1.1.2");
+    requestHeaders.set("x-forwarded-for", "203.0.113.9");
+    requestHeaders.set("user-agent", "Mozilla/5.0");
+
+    await actions.completeCheckout("checkout-1");
+
+    expect(completeCheckoutApi).toHaveBeenCalledWith(
+      "checkout-1",
+      "session-a",
+      expect.any(String),
+      undefined,
+      {
+        visitorId: VISITOR,
+        ip: "203.0.113.9",
+        userAgent: "Mozilla/5.0",
+        cookies: { fbp: "fb.1.1.2" },
+      },
+    );
+  });
+
+  it("keeps the signed-in customer's session id in the 4th position", async () => {
+    cookieStore.set("_mb_id", VISITOR);
+    cookieStore.set("morbeh-storefront-customer-session", "cust-1");
+
+    await actions.completeCheckout("checkout-1");
+
+    const call = completeCheckoutApi.mock.calls.at(-1) as unknown[];
+    expect(call[3]).toBe("cust-1");
+    expect(call[4]).toMatchObject({ visitorId: VISITOR });
+  });
+
+  it("takes nothing from the caller: extra arguments a hostile client sends change nothing", async () => {
+    cookieStore.set("_mb_id", VISITOR);
+    const hostile = { visitorId: "evil-visitor-id-0000", ip: "6.6.6.6", clickIds: [] };
+
+    await (actions.completeCheckout as (...args: unknown[]) => Promise<unknown>)(
+      "checkout-1",
+      hostile,
+      { tracking: hostile },
+    );
+
+    const sent = (completeCheckoutApi.mock.calls.at(-1) as unknown[])[4];
+    expect(sent).toEqual({ visitorId: VISITOR });
+    expect(JSON.stringify(sent)).not.toContain("evil");
+    expect(JSON.stringify(sent)).not.toContain("6.6.6.6");
+  });
+
+  it("a request that carried nothing completes with the old three-argument call", async () => {
+    await actions.completeCheckout("checkout-1");
+    expect(completeCheckoutApi).toHaveBeenLastCalledWith(
+      "checkout-1",
+      "session-a",
+      expect.any(String),
+    );
   });
 });
 

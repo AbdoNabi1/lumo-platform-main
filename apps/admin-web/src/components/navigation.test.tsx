@@ -143,12 +143,27 @@ describe("SidebarNav (Shopify layout)", () => {
       en.nav.orders,
       en.nav.products,
       en.nav.customers,
+      en.nav.leads,
       en.nav.growth,
       en.nav.discounts,
       en.nav.content,
       en.nav.finance,
       en.nav.analytics,
     ]);
+  });
+
+  it("puts Leads right after Customers, as a top-level link to /leads", () => {
+    renderNav("leads");
+
+    const primary = screen.getByRole("navigation", { name: en.nav.primary });
+    const labels = within(primary)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(labels.indexOf(en.nav.leads)).toBe(labels.indexOf(en.nav.customers) + 1);
+    const link = within(primary).getByRole("link", { name: en.nav.leads });
+    expect(link).toHaveAttribute("href", "/leads");
+    expect(link).toHaveAttribute("aria-current", "page");
+    expect(PRIMARY_NAV.find((item) => item.id === "leads")?.label(en)).toBe(en.nav.leads);
   });
 
   it("opens a section's sub-pages only while one of its pages is current", () => {

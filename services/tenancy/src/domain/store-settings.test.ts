@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ValidationError } from "@platform/utils";
-import { StoreSettings, type StoreSettingsInput } from "./store-settings";
+import { StoreSettings, isSiteType, type StoreSettingsInput } from "./store-settings";
 
 const valid: StoreSettingsInput = {
   storeName: "Lumo",
@@ -89,5 +89,39 @@ describe("StoreSettings", () => {
     expect(
       fieldsOf({ ...valid, currency: "ZZZ", weightUnit: "x", contactEmail: "nope" }).sort(),
     ).toEqual(["contactEmail", "currency", "weightUnit"]);
+  });
+
+  it('gives the site type "store" from defaults() and create()', () => {
+    expect(StoreSettings.defaults().siteType).toBe("store");
+    const created = StoreSettings.create(valid);
+    expect(created.ok && created.value.siteType).toBe("store");
+  });
+
+  it("withSiteType keeps every other field", () => {
+    const at = new Date("2026-10-16T10:00:00.000Z");
+    const base = StoreSettings.defaults().withSetupGuideDismissed(at);
+    const lead = base.withSiteType("lead_site");
+    expect(lead.siteType).toBe("lead_site");
+    expect(lead.currency).toBe("EGP");
+    expect(lead.timezone).toBe("Africa/Cairo");
+    expect(lead.setupGuideDismissedAt).toEqual(at);
+    expect(base.siteType).toBe("store");
+  });
+
+  it("every with* method keeps the site type", () => {
+    const lead = StoreSettings.defaults().withSiteType("lead_site");
+    expect(lead.withSetupGuideDismissedAt(null).siteType).toBe("lead_site");
+    expect(lead.withSetupGuideDismissed(new Date("2026-10-16T10:00:00.000Z")).siteType).toBe(
+      "lead_site",
+    );
+  });
+
+  it("isSiteType is true only for store and lead_site", () => {
+    expect(isSiteType("store")).toBe(true);
+    expect(isSiteType("lead_site")).toBe(true);
+    expect(isSiteType("lead")).toBe(false);
+    expect(isSiteType("")).toBe(false);
+    expect(isSiteType(undefined)).toBe(false);
+    expect(isSiteType(1)).toBe(false);
   });
 });

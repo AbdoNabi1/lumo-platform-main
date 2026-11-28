@@ -20,3 +20,6 @@ d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/app/settings/notific
 d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/components/settings/notifications/email-account-card.test.tsx:generic-api-key:32
 d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/lib/api/notification-settings.test.ts:generic-api-key:240
 d883f51dd53188ec548195071b9022ea2c26ac35:apps/admin-web/src/lib/api/notification-settings.test.ts:generic-api-key:252
+# Part D1 plan docs (a5e7cf6f): placeholder example values in prose, not credentials; the lines now read as obvious fakes.
+a5e7cf6f33d62008c6b48b1458c87d8190b0f68a:docs/superpowers/plans/2026-11-23-lead-site-part-d1-ad-platform-connections-and-payloads.md:generic-api-key:685
+a5e7cf6f33d62008c6b48b1458c87d8190b0f68a:docs/superpowers/plans/2026-11-23-lead-site-part-d1-plan-review-1.md:generic-api-key:23

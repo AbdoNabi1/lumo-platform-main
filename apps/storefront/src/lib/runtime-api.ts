@@ -335,16 +335,24 @@ async function postItem<T>(
   }
 }
 
-/** What the storefront may know about the shop without signing in (Plan 3C): its name and currency. */
+/** What the storefront may know about the shop without signing in (Plan 3C): its name, currency and site type. */
 export interface PublicStore {
   readonly name: string;
   /** The store currency (ISO 4217): every price, cart and order of the shop is in it. */
   readonly currency: string;
+  /** Fixed at sign-up: an online store, or a lead website that takes enquiries instead of orders. */
+  readonly siteType: "store" | "lead_site";
 }
 
-/** The shop's name and currency (`GET /public/store`); `null` when the Runtime API cannot answer. */
+/**
+ * The shop's name, currency and site type (`GET /public/store`); `null` when the Runtime API cannot
+ * answer or names a site type this storefront does not know. A body without `siteType` (an older
+ * runtime) is a store.
+ */
 export async function getPublicStore(): Promise<PublicStore | null> {
-  const response = await fetchItem<PublicStore>("/api/v1/public/store");
+  const response = await fetchItem<Omit<PublicStore, "siteType"> & { siteType?: unknown }>(
+    "/api/v1/public/store",
+  );
   const body = response.body;
   if (
     response.status !== 200 ||
@@ -354,7 +362,9 @@ export async function getPublicStore(): Promise<PublicStore | null> {
   ) {
     return null;
   }
-  return { name: body.name, currency: body.currency };
+  const siteType = body.siteType === undefined ? "store" : body.siteType;
+  if (siteType !== "store" && siteType !== "lead_site") return null;
+  return { name: body.name, currency: body.currency, siteType };
 }
 
 /**
@@ -890,6 +900,128 @@ export function createProductReview(
   });
 }
 
+/**
+ * The public lead-form submission body, exactly the strict zod body of
+ * `apps/admin/src/http/public-leads-routes.ts` (no tenant: the shop comes from `x-tenant-id`).
+ */
+export interface CreateLeadBody {
+  readonly formId: string;
+  readonly name: string;
+  readonly phone: string;
+  readonly email?: string;
+  readonly message?: string;
+  readonly sessionId: string;
+  readonly sessionAlreadyEmitted: boolean;
+  readonly spamSignals: { readonly honeypot: boolean; readonly elapsedMs: number };
+  readonly context: {
+    readonly pageUrl: string | null;
+    readonly referrer: string | null;
+    readonly ip: string | null;
+    readonly userAgent: string | null;
+    readonly cookies: {
+      readonly fbp?: string;
+      readonly fbc?: string;
+      readonly ttp?: string;
+      readonly scid?: string;
+      readonly ga?: string;
+    };
+    /** `_mb_id`, the master visitor cookie (Tracking P2-D8). Omitted when absent or malformed. */
+    readonly visitorId?: string;
+    /** Latest click per platform from the HttpOnly `_mb_clk` jar, inside each platform's window. */
+    readonly clickIds?: readonly {
+      readonly name: string;
+      readonly value: string;
+      readonly capturedAt: string;
+    }[];
+    /** UTM labels of the page the form sits on (from the referer's query). */
+    readonly utm?: {
+      readonly source?: string;
+      readonly medium?: string;
+      readonly campaign?: string;
+      readonly content?: string;
+      readonly term?: string;
+    };
+  };
+}
+
+/**
+ * What the visitor's browser carried when they placed an order (Tracking P2-D8): the optional `tracking` object of
+ * `POST /public/checkouts/:id/complete`, exactly the strict zod body of `apps/admin/src/http/public-checkout-tracking.ts`.
+ * Built ONLY by `lib/tracking-snapshot.ts` from the server-side cookie jar and request headers.
+ */
+export interface CheckoutTracking {
+  readonly visitorId?: string;
+  readonly sessionId?: string;
+  readonly ip?: string;
+  readonly userAgent?: string;
+  readonly pageUrl?: string;
+  readonly cookies?: {
+    readonly fbp?: string;
+    readonly fbc?: string;
+    readonly ttp?: string;
+    readonly scid?: string;
+    readonly ga?: string;
+  };
+  readonly clickIds?: readonly {
+    readonly name: string;
+    readonly value: string;
+    readonly capturedAt: string;
+  }[];
+  readonly utm?: {
+    readonly source?: string;
+    readonly medium?: string;
+    readonly campaign?: string;
+    readonly content?: string;
+    readonly term?: string;
+  };
+}
+
+/** The route's 201 body: what the lead was decided as (`emit` = forward it, Plan D). */
+export interface CreateLeadResult {
+  readonly leadId: string;
+  readonly eventId: string;
+  readonly emission: "emit" | "suppressed" | "spam";
+}
+
+const LEAD_EMISSIONS: ReadonlySet<unknown> = new Set(["emit", "suppressed", "spam"]);
+
+export function isCreateLeadResult(value: unknown): value is CreateLeadResult {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.leadId === "string" &&
+    v.leadId !== "" &&
+    typeof v.eventId === "string" &&
+    v.eventId !== "" &&
+    LEAD_EMISSIONS.has(v.emission)
+  );
+}
+
+/** The `fields[].field` strings of an API error envelope (422), in order; anything else is `[]`. */
+export function validationFieldsOf(value: unknown): readonly string[] {
+  if (typeof value !== "object" || value === null) return [];
+  const fields = (value as { readonly fields?: unknown }).fields;
+  if (!Array.isArray(fields)) return [];
+  return fields.flatMap((issue: unknown) => {
+    if (typeof issue !== "object" || issue === null) return [];
+    const field = (issue as { readonly field?: unknown }).field;
+    return typeof field === "string" ? [field] : [];
+  });
+}
+
+/**
+ * Lead Part C: an anonymous lead-form submission. The body is `unknown` on purpose: the caller
+ * checks it with `isCreateLeadResult` (201) or `validationFieldsOf` (422). The key is stored on the
+ * lead server-side, so a repeat with the same key replays the saved result (`Idempotency-Key`,
+ * 8-128 letters, digits and hyphens).
+ */
+export function createLead(
+  body: CreateLeadBody,
+  idempotencyKey: string,
+): Promise<{ readonly status: number; readonly body: unknown }> {
+  return postItem<unknown>("/api/v1/public/leads", body, { "Idempotency-Key": idempotencyKey });
+}
+
 export interface CheckoutAddressInput {
   /** Plan 3A: who receives the order and how to reach them. */
   readonly name?: string;
@@ -1230,10 +1362,11 @@ export function completeCheckout(
   sessionRef: string,
   idempotencyKey: string,
   customerSessionId?: string,
+  tracking?: CheckoutTracking,
 ): Promise<CheckoutResult> {
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/complete`,
-    { sessionRef, idempotencyKey },
+    { sessionRef, idempotencyKey, ...(tracking === undefined ? {} : { tracking }) },
     { "Idempotency-Key": idempotencyKey, ...customerSessionHeader(customerSessionId) },
   );
 }

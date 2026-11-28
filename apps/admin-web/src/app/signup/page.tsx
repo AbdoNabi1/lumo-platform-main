@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Card, CardContent, Input, Label } from "@platform/ui";
+import { Card, CardContent, Input, Label, cn, focusRing } from "@platform/ui";
 import { BrandMark } from "@/components/brand-mark";
 import { signupEnabled } from "@/lib/auth/merchant";
 import { isNativeAuth } from "@/lib/auth/native";
@@ -13,12 +13,30 @@ const ERROR_TEXT: Readonly<Record<string, string>> = {
   limited: "Too many attempts, try again later / محاولات كتير، حاول تاني بعدين",
   invalid:
     "Check your details: store name 2–60 characters, a valid email, password at least 8 characters / راجع بياناتك: اسم المتجر من 2 لـ 60 حرف، إيميل صحيح، وكلمة سر 8 حروف على الأقل",
+  "site-type": "Choose what you're building / اختار نوع موقعك",
   unavailable:
     "Opening new stores isn't available right now — try again later / فتح متاجر جديدة مش متاح دلوقتي، حاول تاني بعدين",
 };
 
 const SELECT_CLASS =
   "border-input bg-card text-foreground hover:border-foreground/40 duration-(--duration-fast) h-10 w-full rounded-xl border px-3.5 text-sm transition-colors ease-out";
+
+const SITE_TYPE_OPTIONS = [
+  {
+    value: "store",
+    title: "Online store / متجر إلكتروني",
+    help: "Sell products with a cart and cash on delivery / بيع منتجات بسلة ودفع عند الاستلام",
+  },
+  {
+    value: "lead_site",
+    title: "Lead website / موقع لجمع العملاء",
+    help: "Collect enquiries through a form, WhatsApp and calls / استقبل طلبات العملاء من فورم وواتساب واتصال",
+  },
+] as const;
+
+/** One bordered card per option; the whole card is the label. Checked = thicker primary border plus the filled radio dot. */
+const SITE_TYPE_CARD_CLASS =
+  "border-border bg-card hover:border-foreground/40 has-[:checked]:border-primary has-[:checked]:ring-primary duration-(--duration-fast) flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 text-start leading-normal transition-colors ease-out has-[:checked]:ring-1";
 
 export default async function SignupPage({
   searchParams,
@@ -79,6 +97,38 @@ export default async function SignupPage({
                 autoComplete="new-password"
               />
             </div>
+            <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0">
+              <legend className="text-foreground mb-2 p-0 text-base font-medium">
+                What are you building? / بتعمل إيه؟
+              </legend>
+              {SITE_TYPE_OPTIONS.map((option, index) => (
+                <Label key={option.value} className={SITE_TYPE_CARD_CLASS}>
+                  <input
+                    type="radio"
+                    name="siteType"
+                    value={option.value}
+                    required={index === 0}
+                    aria-labelledby={`siteType-${option.value}-title`}
+                    aria-describedby={`siteType-${option.value}-help`}
+                    className={cn("accent-primary mt-0.5 size-4 shrink-0", focusRing)}
+                  />
+                  <span className="flex flex-col gap-1">
+                    <span id={`siteType-${option.value}-title`} className="text-sm font-medium">
+                      {option.title}
+                    </span>
+                    <span
+                      id={`siteType-${option.value}-help`}
+                      className="text-muted-foreground text-sm font-normal"
+                    >
+                      {option.help}
+                    </span>
+                  </span>
+                </Label>
+              ))}
+              <p className="text-muted-foreground text-sm">
+                You can&apos;t change this later / مش هتقدر تغيّر النوع بعد كده
+              </p>
+            </fieldset>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="country">Country / البلد</Label>
               <select id="country" name="country" defaultValue="EG" className={SELECT_CLASS}>

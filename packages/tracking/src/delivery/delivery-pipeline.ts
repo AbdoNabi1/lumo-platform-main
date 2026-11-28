@@ -27,15 +27,19 @@ import type { RetryPolicy } from "@platform/messaging";
 import { evaluateConsent } from "../envelope/consent";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import { isForwardable } from "../pipeline/hashing";
+import type { PlatformMatchKeys } from "../pipeline/platform-identity";
 import { validateDeduplication, validateEnvelope } from "../pipeline/validation";
 import {
   type AdapterRegistryPort,
   type DeliveryRequest,
   type DeliveryResponse,
   type DestinationDefinition,
+  type DestinationKey,
   type RoutingContext,
 } from "./destination";
 import { applyMapping, type MappingRegistryPort, type TransformRegistryPort } from "./mapping";
+import { buildVendorPayload } from "./vendor-builders";
+import { vendorEventInputFrom } from "./vendor-event-input";
 import {
   canAttempt,
   consumeToken,
@@ -63,7 +67,18 @@ export type DeliveryOutcome =
   | { readonly status: "circuit_open" }
   /** The destination's token bucket is empty. `retryAfterMs` tells the Queue when to reschedule. */
   | { readonly status: "rate_limited"; readonly retryAfterMs: number }
-  | { readonly status: "dead_lettered"; readonly attempts: number; readonly error: string };
+  | {
+      readonly status: "dead_lettered";
+      readonly attempts: number;
+      readonly error: string;
+      /**
+       * The last failure was one the vendor may recover from (5xx, 429, timeout) — in-process retries
+       * ran out, the event itself is fine. Absent/false ⇒ a permanent refusal (4xx, revoked token, no
+       * credential). With `DeliveryDeps.deferTransientFailures` a retryable outcome writes NO dead
+       * letter: the caller owns parking it for the durable sweeper (P1-D2).
+       */
+      readonly retryable?: boolean;
+    };
 
 /**
  * The delivery guarantee this engine provides, stated precisely.
@@ -189,6 +204,13 @@ export interface DeliveryDeps {
     }): Promise<void>;
   };
   readonly metrics?: DeliveryMetricsPort;
+  /**
+   * Durable retry (P1-D2): when true, a failure the vendor may still recover from is NOT dead-lettered
+   * after the in-process tries — the outcome says `retryable` and the caller parks the delivery for the
+   * sweeper. Set only by a caller that really parks it (`receiveAndDeliver` with a retry queue);
+   * otherwise an exhausted transient failure would be neither retried nor dead-lettered.
+   */
+  readonly deferTransientFailures?: boolean;
   /** Injected so backoff is testable without real waiting. */
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => Date;
@@ -209,12 +231,30 @@ export interface DeliverInput {
    * that never happened.
    */
   readonly renderedPayload?: Readonly<Record<string, unknown>>;
+  /**
+   * The instant the enforcement gate judges the envelope at (default: now). A durable retry runs hours
+   * or days after capture, when the 24-hour clock-skew rule of `validateEnvelope` would refuse a
+   * perfectly good event; the sweeper passes the envelope's own `receivedAt`, because the event WAS
+   * valid when accepted and its age is bounded by the vendor window instead (`retry-schedule.ts`).
+   */
+  readonly evaluateAt?: Date;
 }
 
 /** A payload rendered for one destination, or the gate that refused to render it. */
 export type RenderOutcome =
   | { readonly ok: true; readonly payload: Readonly<Record<string, unknown>> }
   | { readonly ok: false; readonly failure: EnforcementFailure };
+
+/**
+ * What a vendor builder needs beyond the routing context: the envelope itself and the match keys
+ * computed for **this** destination's platform. Absent for destinations that use the mapper.
+ */
+export interface RenderExtras {
+  readonly envelope: EnrichedEnvelope;
+  readonly keys: PlatformMatchKeys;
+  /** The instant the payload is built (epoch ms); vendors that refuse old events (GA4, 72 h) judge age against it. */
+  readonly nowMs?: number;
+}
 
 /**
  * The **Map** phase, extracted so it can run independently of transmission.
@@ -228,7 +268,29 @@ export function renderPayload(
   deps: Pick<DeliveryDeps, "mappings" | "transforms">,
   destination: DestinationDefinition,
   routingContext: RoutingContext,
+  extras?: RenderExtras,
 ): RenderOutcome {
+  // A destination that names a vendor builder never touches the generic mapper. Every refusal is
+  // translated into the existing `mapping` gate so the record/inspector see one vocabulary, and
+  // the builder's raw `{ ok: false }` shape never escapes this function.
+  if (destination.builderKey !== undefined) {
+    if (destination.vendorTarget === undefined) {
+      return { ok: false, failure: { gate: "mapping", detail: "vendor target missing" } };
+    }
+    if (extras === undefined) {
+      return { ok: false, failure: { gate: "mapping", detail: "vendor builder input missing" } };
+    }
+
+    const built = buildVendorPayload(
+      destination.builderKey,
+      vendorEventInputFrom(extras.envelope, extras.keys, extras.nowMs),
+      destination.vendorTarget,
+    );
+    return built.ok
+      ? { ok: true, payload: built.payload }
+      : { ok: false, failure: { gate: "mapping", detail: built.reason } };
+  }
+
   const profile = deps.mappings.resolve(destination.mappingProfileKey);
   if (profile === null) {
     return {
@@ -285,7 +347,11 @@ export async function deliver(deps: DeliveryDeps, input: DeliverInput): Promise<
   let rateLimit = input.rateLimit;
 
   // --- Enforcement gate (fail closed) ---
-  const breach = enforceDeliveryPreconditions(input.envelope, input.destination, now());
+  const breach = enforceDeliveryPreconditions(
+    input.envelope,
+    input.destination,
+    input.evaluateAt ?? now(),
+  );
   if (breach !== null) {
     metrics = {
       ...metrics,
@@ -450,19 +516,19 @@ export async function deliver(deps: DeliveryDeps, input: DeliverInput): Promise<
     await sleep(backoffMs);
   }
 
-  await deps.deadLetters.add({
-    messageId: input.envelope.eventId,
-    topic: `tracking.delivery.${input.destination.key}`,
-    value: encodePayload(payload),
-    headers: {
+  // A failure the vendor may recover from is handed back to the caller to park (P1-D2) instead of being
+  // dead-lettered here; a permanent refusal (`retryable: false`) is always dead-lettered immediately.
+  const retryable = lastResponse?.retryable === true;
+  if (!(retryable && deps.deferTransientFailures === true)) {
+    await deadLetterDelivery(deps.deadLetters, {
+      envelope: input.envelope,
       destination: input.destination.key,
-      dedupId: input.envelope.dedupId,
-      tenantId: input.envelope.tenancy.tenantId,
-    },
-    attempts,
-    error: lastError,
-    failedAt: now().toISOString(),
-  });
+      payload,
+      attempts,
+      error: lastError,
+      failedAt: now().toISOString(),
+    });
+  }
 
   metrics = {
     ...metrics,
@@ -474,7 +540,12 @@ export async function deliver(deps: DeliveryDeps, input: DeliverInput): Promise<
   deps.metrics?.emit(metrics);
 
   return {
-    outcome: { status: "dead_lettered", attempts, error: lastError },
+    outcome: {
+      status: "dead_lettered",
+      attempts,
+      error: lastError,
+      ...(retryable ? { retryable: true } : {}),
+    },
     circuit: circuitState,
     rateLimit,
     metrics,
@@ -493,6 +564,37 @@ function breakerFor(destination: DestinationDefinition): {
       halfOpenSuccesses: 2,
     }
   );
+}
+
+/**
+ * Writes the dead-letter row for one (event, destination). The one place its shape is built: `deliver`
+ * uses it for a permanent refusal, and the durable retry (P1-D2) uses it when a parked delivery runs
+ * out of vendor window — the row an operator finds is the same either way.
+ */
+export async function deadLetterDelivery(
+  deadLetters: DeliveryDeps["deadLetters"],
+  input: {
+    readonly envelope: EnrichedEnvelope;
+    readonly destination: DestinationKey;
+    readonly payload: Readonly<Record<string, unknown>>;
+    readonly attempts: number;
+    readonly error: string;
+    readonly failedAt: string;
+  },
+): Promise<void> {
+  await deadLetters.add({
+    messageId: input.envelope.eventId,
+    topic: `tracking.delivery.${input.destination}`,
+    value: encodePayload(input.payload),
+    headers: {
+      destination: input.destination,
+      dedupId: input.envelope.dedupId,
+      tenantId: input.envelope.tenancy.tenantId,
+    },
+    attempts: input.attempts,
+    error: input.error,
+    failedAt: input.failedAt,
+  });
 }
 
 /** Encodes the payload for dead-letter storage, preserving it verbatim for byte-identical replay. */

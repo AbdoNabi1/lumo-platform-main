@@ -14,7 +14,6 @@ import {
   dedupKeyMaterial,
   deriveDedupId,
   isWithinDedupWindow,
-  minuteBucket,
   type HashPort,
 } from "../ids/dedup-id";
 
@@ -109,15 +108,16 @@ describe("dedup id (D-077: distinct from event_id, shared across emitters)", () 
     expect(dedupKeyMaterial(base)).not.toBe(dedupKeyMaterial({ ...base, eventVersion: 2 }));
   });
 
-  it("buckets session_minute events to the minute so emitters agree", () => {
-    const at = new Date("2026-07-19T10:30:45.123Z");
-    const later = new Date("2026-07-19T10:30:59.999Z");
-    const strategy = { kind: "session_minute", sessionId: "s-1" } as const;
+  it("keys an explicit strategy by its own key, whatever the time", () => {
+    const strategy = { kind: "explicit", key: "mb_1" } as const;
+    const later = new Date("2026-07-19T10:31:59.999Z");
 
-    expect(dedupKeyMaterial({ ...base, strategy, occurredAt: at })).toBe(
+    expect(dedupKeyMaterial({ ...base, strategy })).toBe(
       dedupKeyMaterial({ ...base, strategy, occurredAt: later }),
     );
-    expect(minuteBucket(at)).toBe("2026-07-19T10:30");
+    expect(dedupKeyMaterial({ ...base, strategy })).not.toBe(
+      dedupKeyMaterial({ ...base, strategy: { kind: "explicit", key: "mb_2" } }),
+    );
   });
 
   it("treats a repeat outside the 7-day window as a genuine new occurrence", () => {

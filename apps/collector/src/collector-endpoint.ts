@@ -54,6 +54,8 @@ export interface CollectorCounters {
   readonly published: number;
   readonly refused: number;
   readonly publishFailed: number;
+  /** Browser-provided dedup ids that failed validation and were replaced by `explicit:<eventId>` (P2-D10). */
+  readonly dedupIdReplaced: number;
 }
 
 export class CollectorEndpoint {
@@ -61,6 +63,7 @@ export class CollectorEndpoint {
   private published = 0;
   private refused = 0;
   private publishFailed = 0;
+  private dedupIdReplaced = 0;
 
   constructor(private readonly deps: CollectorEndpointDeps) {}
 
@@ -70,6 +73,7 @@ export class CollectorEndpoint {
       published: this.published,
       refused: this.refused,
       publishFailed: this.publishFailed,
+      dedupIdReplaced: this.dedupIdReplaced,
     };
   }
 
@@ -82,6 +86,8 @@ export class CollectorEndpoint {
       this.refused += 1;
       return this.refuse(outcome.refusal);
     }
+
+    if (outcome.dedupIdReplaced === true) this.dedupIdReplaced += 1;
 
     const { envelope } = outcome;
     const payload: TrackingCapturedEventPayload = { envelope };

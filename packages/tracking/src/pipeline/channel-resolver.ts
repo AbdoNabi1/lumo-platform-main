@@ -10,6 +10,7 @@
  * paid click, an explicit `utm_medium` is a declared intent, and a referrer is only an inference.
  */
 
+import { resolveAiSource } from "../enrichment/ai-referrer";
 import type { ChannelGroup } from "../envelope/attribution-context";
 import {
   CLICK_ID_DEFINITIONS,
@@ -139,6 +140,29 @@ export function resolveChannel(signals: ChannelSignals): ChannelResolution {
   if (referrerHost !== undefined && signals.selfHosts !== undefined) {
     if (matchesHost(referrerHost, signals.selfHosts)) {
       return { channelGroup: "internal", basis: "internal", source: referrerHost };
+    }
+  }
+
+  // 2b. An AI assistant (ChatGPT appends `utm_source=chatgpt.com` to the links it shows; Perplexity and Claude
+  // send a referrer). Paid, email, SMS… mediums still win — an ad that points at ChatGPT is not an AI citation —
+  // but the loose mediums (`organic`, `referral`, `social`) do not hide it.
+  const ai = resolveAiSource({ utmSource: source, referrer: signals.referrer });
+  if (ai !== undefined) {
+    const declaredMedium =
+      medium !== undefined && medium !== "" ? channelForMedium(medium, source) : undefined;
+    if (
+      declaredMedium === undefined ||
+      declaredMedium === "organic_search" ||
+      declaredMedium === "organic_social" ||
+      declaredMedium === "referral"
+    ) {
+      const fromUtm = resolveAiSource({ utmSource: source }) !== undefined;
+      return {
+        channelGroup: "ai_assistant",
+        basis: fromUtm ? "utm_source" : "referrer",
+        source: ai.key,
+        medium: medium ?? "ai",
+      };
     }
   }
 

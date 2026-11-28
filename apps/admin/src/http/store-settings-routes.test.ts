@@ -104,20 +104,21 @@ describe("store settings API (Plan 3C)", () => {
       timezone: "Africa/Cairo",
       weightUnit: "kg",
       setupGuideDismissedAt: null,
+      siteType: "store",
     });
   });
 
   it("saves and reads back, and the public route shows only name and currency", async () => {
     const saved = await put(app, settings);
     expect(saved.statusCode).toBe(200);
-    expect(saved.json()).toEqual({ ...settings, setupGuideDismissedAt: null });
+    expect(saved.json()).toEqual({ ...settings, setupGuideDismissedAt: null, siteType: "store" });
 
     const read = await app.inject({
       method: "GET",
       url: "/api/v1/store/settings",
       headers: authed,
     });
-    expect(read.json()).toEqual({ ...settings, setupGuideDismissedAt: null });
+    expect(read.json()).toEqual({ ...settings, setupGuideDismissedAt: null, siteType: "store" });
 
     const pub = await app.inject({
       method: "GET",
@@ -125,7 +126,7 @@ describe("store settings API (Plan 3C)", () => {
       headers: { "x-tenant-id": "t-1" },
     });
     expect(pub.statusCode).toBe(200);
-    expect(pub.json()).toEqual({ name: "Lumo", currency: "SAR" });
+    expect(pub.json()).toEqual({ name: "Lumo", currency: "SAR", siteType: "store" });
   });
 
   it("rejects an invalid currency with 422 and keeps the saved settings", async () => {
@@ -136,7 +137,7 @@ describe("store settings API (Plan 3C)", () => {
       url: "/api/v1/public/store",
       headers: { "x-tenant-id": "t-1" },
     });
-    expect(pub.json()).toEqual({ name: "Lumo", currency: "SAR" });
+    expect(pub.json()).toEqual({ name: "Lumo", currency: "SAR", siteType: "store" });
   });
 
   it("relabels the variants to the new currency and keeps their amounts", async () => {
@@ -229,7 +230,7 @@ describe("store settings API — one row per request tenant", () => {
         url: "/api/v1/public/store",
         headers: { "x-tenant-id": "shop-b" },
       });
-      expect(pub.json()).toEqual({ name: "Shop B", currency: "SAR" });
+      expect(pub.json()).toEqual({ name: "Shop B", currency: "SAR", siteType: "store" });
     } finally {
       await app.close();
     }
@@ -281,7 +282,7 @@ describe("store settings API — permissions (Plan 3C)", () => {
         headers: { "x-tenant-id": "t-1" },
       });
       expect(res.statusCode).toBe(200);
-      expect(Object.keys(res.json() as object).sort()).toEqual(["currency", "name"]);
+      expect(Object.keys(res.json() as object).sort()).toEqual(["currency", "name", "siteType"]);
     } finally {
       await app.close();
     }

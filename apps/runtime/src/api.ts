@@ -25,6 +25,12 @@ import {
   type RuntimeCore,
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
+import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
+import { buildLeadTrackingEmitter } from "./tracking/lead-tracking-wiring";
+import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
+import { buildTestEventSender } from "./tracking/test-event-wiring";
+import { buildTrackingCollectWiring } from "./tracking/tracking-collect-enrichment";
+import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
 
 /**
@@ -597,6 +603,19 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // Started after the fail-closed guards above so a boot-time rejection never spins up telemetry.
   const telemetry = startRuntimeTelemetry(config, "api");
 
+  const trackingCookieKeeper = buildTrackingCookieKeeper(runtime);
+  const leadTracking = buildLeadTrackingEmitter(runtime);
+  // P1-D8 / D9: collect-time enrichment and the store's excluded-address list (one service for the admin routes
+  // and the collect route, so an edit applies at once).
+  const trackingCollect = buildTrackingCollectWiring(runtime);
+  const trackingTestEvents = buildTestEventSender({
+    connections: runtime.adPlatformConnections,
+    prisma: runtime.prisma,
+    platformTenantId: runtime.platformTenantId,
+    storefrontPublicUrl: runtime.config.STOREFRONT_PUBLIC_URL,
+    clock: runtime.clock,
+    logger: runtime.logger,
+  });
   const app = await createAdminHttpApi({
     ...integrationPorts,
     // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
@@ -611,6 +630,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     accessControl: runtime.accessControl,
     authenticator: runtime.authenticator,
     rateLimiter: runtime.rateLimiter,
+    leadEmissionLedger: runtime.leadEmissionLedger,
+    // P2-D9: a saved lead is sent as a server `form_submitted` event through the outbox (the worker's sweeper re-sends
+    // any that could not be). Only while tracking ingest is on, like every other tracking write.
+    ...(leadTracking === null ? {} : { leadTracking }),
     idempotencyKeys: runtime.idempotencyKeys,
     responseCache: runtime.redis.cache,
     health: runtime.health,
@@ -644,6 +667,25 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
         }),
     tenantMode: runtime.config.TENANT_MODE,
     tenantId: runtime.config.TENANT_DEFAULT_ID,
+    // Tracking P1-D3: the storefront-signed capture route. The secret is optional on purpose: absent ⇒
+    // the route answers 503 NOT_CONFIGURED and the storefront sends nothing. The sink is the outbox
+    // under EVENT_TRANSPORT=postgres and the broker under kafka (P1-D1).
+    trackingEventSink: buildTrackingEventSink(runtime),
+    // P1-D6 Cookie Keeper: reads the visitor profile, so it exists only while tracking ingest (which writes it) is on.
+    ...(trackingCookieKeeper === null ? {} : { trackingCookieKeeper }),
+    ...(trackingCollect.enricher === undefined
+      ? {}
+      : { trackingEnricher: trackingCollect.enricher }),
+    trackingBlocklist: trackingCollect.blockedIps,
+    trackingBlockedIps: trackingCollect.blockedIps,
+    trackingSettings: trackingCollect.settings,
+    // P2-D8: only where the tracking tables exist (the same switch as the ingest and the retention pass).
+    ...(runtime.config.TRACKING_INGEST_ENABLED
+      ? { trackingAttributionSnapshots: new PrismaAttributionSnapshotStore(runtime.prisma) }
+      : {}),
+    ...(runtime.config.TRACKING_EDGE_SECRET === undefined
+      ? {}
+      : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),
     ...(runtime.config.PLATFORM_STORE_DOMAIN === undefined
       ? {}
       : { platformStoreDomain: runtime.config.PLATFORM_STORE_DOMAIN }),
@@ -682,6 +724,18 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     // sealed credentials) and the vault that seals them. Neither is a process-wide provider.
     providerRegistrations: runtime.providerRegistrations,
     paymentCredentialVault: runtime.paymentCredentialVault,
+    // Lead Site Part D1: the envelope vault merchants' ad platform tokens are sealed with. Passed explicitly
+    // (absent when AD_PLATFORM_CREDENTIALS_KEK_REF is unset ⇒ the admin API refuses to store a token).
+    ...(runtime.adPlatformCredentialVault === undefined
+      ? {}
+      : { adPlatformCredentialVault: runtime.adPlatformCredentialVault }),
+    // Lead Site Part D1 (Task 4): saving a connection re-syncs the shop's tracking destinations. Passed
+    // explicitly, like the vault; present exactly when the vault is.
+    ...(runtime.adPlatformDeliverySync === undefined
+      ? {}
+      : { adPlatformDeliverySync: runtime.adPlatformDeliverySync }),
+    // P2-D11: "send a test event" (Settings > Ad platforms). Present exactly when the connection reader is.
+    ...(trackingTestEvents === undefined ? {} : { adPlatformTestEvents: trackingTestEvents }),
     // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
     // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
     ...(runtime.platformBillingPayments === undefined

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import {
   FEATURE_ICONS,
@@ -22,7 +22,10 @@ import {
   OVERLAY_CLASSES,
 } from "./section-styles";
 import { TestimonialsSection } from "./testimonials";
+import { LeadFormSection } from "./lead-form";
 import { WhatsAppCtaSection } from "./whatsapp-cta";
+
+vi.mock("@/app/(store)/lead-actions", () => ({ submitLead: vi.fn() }));
 
 const ID = "00000000-0000-4000-8000-000000000001";
 const lt = (text: string) => ({ ar: text, en: text });
@@ -490,6 +493,7 @@ describe("Sections dispatch of the content types (T8 carry)", () => {
         previewToken={mode === "preview" ? "tok" : null}
         mode={mode}
         eagerHeroId={ids[0]!}
+        siteType="store"
       />,
     );
 
@@ -578,6 +582,7 @@ describe("fix round 1", () => {
       t: en,
       locale: "en" as const,
       eagerHeroId: null,
+      siteType: "store" as const,
     };
     const prev = render(<Sections {...props} previewToken="tok" mode="preview" />);
     expect(prev.container.querySelector(`[data-section-id="${ID}"]`)).toHaveTextContent(
@@ -613,5 +618,107 @@ describe("fix round 1", () => {
     );
     expect(a.container.innerHTML).toContain(ANNOUNCEMENT_STYLES.accent);
     expect(a.container.innerHTML).not.toContain("undefined");
+  });
+});
+
+describe("LeadFormSection", () => {
+  const form = (over: Partial<S<"lead_form">> = {}): Of<"lead_form"> => ({
+    id: ID,
+    type: "lead_form",
+    settings: {
+      heading: lt("Get in touch"),
+      text: lt("Leave your details"),
+      submitLabel: { ar: "ابعت", en: "Send" },
+      successMessage: lt("Thanks!"),
+      showEmail: true,
+      showMessage: true,
+      ...over,
+    },
+  });
+
+  it("renders the heading, the text and a form named by the heading", () => {
+    render(<LeadFormSection section={form()} locale="en" t={en} />);
+    expect(screen.getByRole("heading", { level: 2, name: "Get in touch" })).toHaveAttribute(
+      "id",
+      `${ID}-heading`,
+    );
+    expect(screen.getByText("Leave your details")).toHaveAttribute("dir", "auto");
+    expect(screen.getByRole("form", { name: "Get in touch" })).toBeInTheDocument();
+    expect(screen.getByLabelText(en.leadForm.name)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+  });
+
+  it("uses the Arabic submit label in Arabic and the Arabic form copy", () => {
+    render(<LeadFormSection section={form()} locale="ar" t={ar} />);
+    expect(screen.getByRole("button", { name: "ابعت" })).toBeInTheDocument();
+    expect(screen.getByLabelText("رقم التليفون")).toBeInTheDocument();
+  });
+
+  it("falls back to the dictionary when the merchant left the submit label empty", () => {
+    render(<LeadFormSection section={form({ submitLabel: {} })} locale="en" t={en} />);
+    expect(screen.getByRole("button", { name: en.leadForm.submitDefault })).toBeInTheDocument();
+  });
+
+  it("falls back to the other locale's submit label", () => {
+    render(<LeadFormSection section={form({ submitLabel: { ar: "ابعت" } })} locale="en" t={en} />);
+    expect(screen.getByRole("button", { name: "ابعت" })).toBeInTheDocument();
+  });
+
+  it("omits the heading and the text when empty, and the form is then named by nothing", () => {
+    render(<LeadFormSection section={form({ heading: {}, text: {} })} locale="en" t={en} />);
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.queryByText("Leave your details")).toBeNull();
+    expect(screen.getByLabelText(en.leadForm.name)).toBeInTheDocument();
+  });
+
+  it("shows only the configured fields", () => {
+    render(
+      <LeadFormSection
+        section={form({ showEmail: false, showMessage: false })}
+        locale="en"
+        t={en}
+      />,
+    );
+    expect(screen.queryByLabelText(en.leadForm.email)).toBeNull();
+    expect(screen.queryByLabelText(en.leadForm.message)).toBeNull();
+  });
+
+  it("Sections gives it a frame and aria-labelledby on a lead site", () => {
+    const { container } = render(
+      <Sections
+        sections={[form()]}
+        data={new Map()}
+        availability={null}
+        t={en}
+        locale="en"
+        previewToken="tok"
+        mode="preview"
+        eagerHeroId={null}
+        siteType="lead_site"
+      />,
+    );
+    const frame = container.querySelector(`[data-section-id="${ID}"]`)!;
+    expect(frame).toHaveAttribute("aria-labelledby", `${ID}-heading`);
+  });
+
+  it("Sections shows an incomplete lead form as a placeholder in preview only", () => {
+    const stub = { id: ID, type: "lead_form", incomplete: true } as unknown as PublicSection;
+    const props = {
+      sections: [stub],
+      data: new Map(),
+      availability: null,
+      t: en,
+      locale: "en" as const,
+      eagerHeroId: null,
+      siteType: "lead_site" as const,
+    };
+    const prev = render(<Sections {...props} previewToken="tok" mode="preview" />);
+    expect(prev.container.querySelector(`[data-section-id="${ID}"]`)).toHaveTextContent(
+      en.sections.incompletePlaceholder,
+    );
+    prev.unmount();
+    expect(
+      render(<Sections {...props} previewToken={null} mode="live" />).container,
+    ).toBeEmptyDOMElement();
   });
 });

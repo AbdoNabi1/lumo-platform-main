@@ -9,6 +9,7 @@ import {
   normalizeName,
   normalizePhone,
   normalizePostalCode,
+  toLatinDigits,
 } from "./normalization";
 import {
   combineValidation,
@@ -223,5 +224,55 @@ describe("combineValidation", () => {
 
   it("is valid only when every stage is valid", () => {
     expect(combineValidation({ valid: true }, { valid: true }).valid).toBe(true);
+  });
+});
+
+describe("normalizePhone — Egyptian and Gulf input", () => {
+  it.each([
+    ["01012345678", "20", "+201012345678"],
+    ["٠١٠١٢٣٤٥٦٧٨", "20", "+201012345678"],
+    ["۰۱۰۱۲۳۴۵۶۷۸", "20", "+201012345678"],
+    ["1012345678", "20", "+201012345678"],
+    ["201012345678", "20", "+201012345678"],
+    ["00201012345678", "20", "+201012345678"],
+    ["+20 101 234 5678", "20", "+201012345678"],
+    ["0223456789", "20", "+20223456789"],
+    ["0501234567", "966", "+966501234567"],
+    ["966501234567", "966", "+966501234567"],
+    ["0501234567", "971", "+971501234567"],
+    ["07911123456", "44", "+447911123456"],
+    ["123456", "44", "+44123456"], // unknown cc, total 8 digits
+    ["1234567890123", "44", "+441234567890123"], // unknown cc, total 15 digits
+  ])("%s with cc %s → %s", (input, cc, expected) => {
+    expect(normalizePhone(input, cc)).toBe(expected);
+  });
+  it("accepts an 00-prefixed international number without a default country", () => {
+    expect(normalizePhone("00201012345678")).toBe("+201012345678");
+  });
+  it.each([
+    ["010123456", "20"], // 8 national digits
+    ["010123456789", "20"], // 11 national digits
+    ["+0201012345678", "20"], // international starting with 0
+    ["0000201012345678", "20"], // 00 then a leading 0
+    ["   ", "20"],
+    ["01012345678", ""], // no usable country
+    ["0123", "44"], // unknown cc, total 5 digits
+    ["12345", "44"], // unknown cc, total 7 digits
+    ["12345678901234", "44"], // unknown cc, total 16 digits
+    ["01012345678", "020"], // default country code starting with 0
+    ["0000", "20"], // nothing after the zeros
+  ])("%j with cc %j → undefined", (input, cc) => {
+    expect(normalizePhone(input, cc)).toBeUndefined();
+  });
+});
+describe("normalizeName — Arabic", () => {
+  it("removes tatweel and diacritics", () => {
+    expect(normalizeName("أحمـــد")).toBe("أحمد");
+    expect(normalizeName("مُحَمَّد")).toBe("محمد");
+  });
+});
+describe("toLatinDigits", () => {
+  it("converts Arabic-Indic and Persian digits only", () => {
+    expect(toLatinDigits("٠١٢٣٤٥٦٧٨٩ ۰۱۲ abc")).toBe("0123456789 012 abc");
   });
 });

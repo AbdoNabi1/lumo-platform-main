@@ -54,6 +54,18 @@ import {
 import { wireIdentity, type CustomerController } from "@platform/identity";
 import { wireInventory, type InventoryController } from "@platform/inventory";
 import {
+  wireAdPlatforms,
+  type CredentialPolicy,
+  type CredentialVaultPort,
+  type DeliverySyncPort,
+} from "@platform/ad-platforms";
+import {
+  wireLeads,
+  type LeadsController,
+  type LeadTrackingPort,
+  type ShopFactsPort,
+} from "@platform/leads";
+import {
   wireLicensing,
   type FinanceLedgerPort,
   type LicensingController,
@@ -132,6 +144,7 @@ import type { DistributedLock } from "@platform/contracts";
 import {
   wireTenancy,
   type DnsVerifier,
+  type SiteType,
   type TenancyController,
   type TenantAvailability,
 } from "@platform/tenancy";
@@ -140,6 +153,7 @@ import type { ShopDomainLike } from "./http/shop-link-url";
 import { TenantProvisioner } from "./tenant-provisioning";
 import { MerchantOnboarding } from "./merchant-onboarding/merchant-onboarding";
 import { wireTheme } from "@platform/theme";
+import type { LeadEmissionLedgerPort } from "@platform/tracking";
 import { wireWishlist, type WishlistController } from "@platform/wishlist";
 import { AllowAllAccessControl } from "./infrastructure/allow-all-access-control";
 import {
@@ -159,6 +173,7 @@ import {
   tenancyStoreIdentity,
 } from "./infrastructure/cross-context/online-store.adapters";
 import { onlineStoreLinkTargets } from "./infrastructure/cross-context/online-store-link-targets.adapter";
+import { tenancyShopFacts } from "./infrastructure/cross-context/leads-shop-facts.adapter";
 import { OrdersInventoryAdapter } from "./infrastructure/cross-context/orders-inventory.adapter";
 import { OrderCreationAdapter } from "./infrastructure/cross-context/order-creation.adapter";
 import { ShopperMarketingConsentAdapter } from "./infrastructure/cross-context/shopper-marketing-consent.adapter";
@@ -268,6 +283,8 @@ import { ShipOrderWithCarrier } from "./carrier-shipping/ship-order-with-carrier
 import { resolveLineImages } from "./http/product-images";
 import { TenancyAdminController } from "./interfaces/tenancy.admin-controller";
 import { ThemeAdminController } from "./interfaces/theme.admin-controller";
+import { AdPlatformsAdminController } from "./interfaces/ad-platforms.admin-controller";
+import { LeadsAdminController } from "./interfaces/leads.admin-controller";
 import { WishlistAdminController } from "./interfaces/wishlist.admin-controller";
 
 /**
@@ -496,6 +513,24 @@ export interface AdminWiringDeps {
   readonly providerRegistrations?: readonly ProviderRegistration[];
   readonly paymentCredentialVault?: PaymentCredentialVault;
   /**
+   * Lead Site Part D1: the real envelope vault ad platform tokens are sealed with (`apps/runtime` builds it from
+   * `AD_PLATFORM_CREDENTIALS_KEK_REF`). Absent ⇒ the ad-platform connections refuse to store a token
+   * (503), never a stub. Consumed when the admin mounts the connections (Task 5).
+   */
+  readonly adPlatformCredentialVault?: CredentialVaultPort;
+  /**
+   * Lead Site Part D1 (Task 4): re-syncs the shop's tracking destinations after a connection changes
+   * (`apps/runtime` builds it over the same tables and vault). Absent ⇒ a save syncs nothing. Consumed when the
+   * admin mounts the connections (Task 5).
+   */
+  readonly adPlatformDeliverySync?: DeliverySyncPort;
+  /**
+   * Lead Site Part D1 (Task 5): overrides the credential policy of the ad platform connections. Absent ⇒ the
+   * default of `wireAdPlatforms`: with `prisma` a stub vault never stores a token (`require_real_vault`);
+   * without it (tests, local in-memory) a stub is allowed. A test seam; the runtime never passes it.
+   */
+  readonly adPlatformCredentialPolicy?: CredentialPolicy;
+  /**
    * Stage 5 (audit remediation, C-03 partial): the 4 outbound ports Orders' `RequestPaymentCapture`/
    * `RequestFulfillment` use-cases call. Passed straight through to `wireOrders(deps)` below;
    * absent ⇒ Orders' own offline in-memory stubs, no behavior change for existing callers/tests.
@@ -594,6 +629,21 @@ export interface AdminWiringDeps {
    * pass a fast fake so 21 unlock attempts do not cost 21 scrypt runs.
    */
   readonly onlineStorePasswordHasher?: StorefrontPasswordHasher;
+  /**
+   * Lead Site Part C: the once-per-session claim store behind the lead form. Production passes the
+   * Redis-backed ledger (`apps/runtime`); absent ⇒ Leads composes an in-memory ledger (tests/dev).
+   */
+  readonly leadEmissionLedger?: LeadEmissionLedgerPort;
+  /**
+   * TEST SEAM (Lead Site Part C): the shop facts (site type, currency) Leads reads. Absent ⇒ the
+   * tenancy-backed adapter. Route tests inject one that rejects or answers a fixed site type.
+   */
+  readonly leadsShopFacts?: ShopFactsPort;
+  /**
+   * Tracking P2-D9: sends a saved lead to the tracking pipeline as a server `form_submitted` event. Production passes
+   * the outbox adapter (`apps/runtime`, only while `TRACKING_INGEST_ENABLED`); absent ⇒ leads stay `pending`.
+   */
+  readonly leadTracking?: LeadTrackingPort;
 }
 
 export interface WiredAdmin {
@@ -767,6 +817,10 @@ export interface WiredAdmin {
   readonly platformConsole: PlatformConsoleAdminController;
   /** Wishlist screen → Wishlist (Sprint S1 — Wishlist's first admin-transport wiring). */
   readonly wishlist: WishlistAdminController;
+  /** Leads inbox screens → Leads (Lead Site Part C). */
+  readonly leads: LeadsAdminController;
+  /** Settings → Ad platforms → Ad platforms (Lead Site Part D1). */
+  readonly adPlatforms: AdPlatformsAdminController;
   /**
    * The storefront's customer authentication surface (T5.17) → Security + Identity. Deliberately
    * NOT a `*AdminController`: it is gated by {@link CustomerGuard} (valid customer session) rather
@@ -886,6 +940,21 @@ export interface WiredAdmin {
      * request's tenant (spec "Composition"); `public-online-store-routes.ts` is their only caller.
      */
     readonly onlineStore: OnlineStorePublicReads;
+    /**
+     * Lead Site Part C: Leads' raw controller for the lead form's anonymous submit. Same reasoning as
+     * `reviews`/`wishlist` above: the guarded `LeadsAdminController` needs a staff `Principal`, and a
+     * visitor has none. `public-leads-routes.ts` calls only `.submit()`, with the request's tenant, a
+     * `.strict()` body that carries none, and its own rate limits.
+     */
+    readonly leads: LeadsController;
+    /**
+     * Lead Site Part D1: the shop's enabled ad platforms' PUBLIC ids (pixel ids, measurement id), for the
+     * storefront's browser tags (D2). A closure taking the request's tenant; `public-ad-platforms-routes.ts`
+     * is its only caller. Never a token, test event code or sealed value.
+     */
+    readonly adPlatforms: {
+      readonly publicView: (tenantId: string) => Promise<AdminResponse>;
+    };
     /**
      * Online Store Part 2: the storefront's published `/pages/<handle>` pages, one by handle and
      * the list (at most 500). Closures taking the request's tenant, never the Pages controller
@@ -1503,6 +1572,36 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     }),
   });
 
+  // Lead Site Part C. The shop facts are a closure over tenancy's public store view (ADR-0014 8f).
+  const leads = wireLeads({
+    clock: deps.clock,
+    idGenerator: deps.idGenerator,
+    shop:
+      deps.leadsShopFacts ??
+      tenancyShopFacts((tenantId) => tenancy.tenancy.getPublicStore(tenantId)),
+    ...(deps.leadEmissionLedger === undefined ? {} : { ledger: deps.leadEmissionLedger }),
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+    ...(deps.leadTracking === undefined ? {} : { tracking: deps.leadTracking }),
+    logger: adminLogger,
+  });
+
+  // Lead Site Part D1. Only `controller` leaves this block: `internal` (opened secrets) is the delivery
+  // side's, built separately by `apps/runtime` over the same tables, and is never reachable from here.
+  const adPlatforms = wireAdPlatforms({
+    clock: deps.clock,
+    idGenerator: deps.idGenerator,
+    ...(deps.adPlatformCredentialVault === undefined
+      ? {}
+      : { vault: deps.adPlatformCredentialVault }),
+    ...(deps.adPlatformDeliverySync === undefined
+      ? {}
+      : { deliverySync: deps.adPlatformDeliverySync }),
+    ...(deps.adPlatformCredentialPolicy === undefined
+      ? {}
+      : { credentialPolicy: deps.adPlatformCredentialPolicy }),
+    ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+  });
+
   const contexts: readonly DrainableContext[] = [
     catalog,
     inventory,
@@ -1541,6 +1640,7 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
     tenancy,
     licensing,
     wishlist,
+    leads,
   ];
 
   const tenantProvisioner = new TenantProvisioner({
@@ -1786,6 +1886,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       guard,
     }),
     wishlist: new WishlistAdminController({ wishlist: wishlist.wishlist, guard }),
+    leads: new LeadsAdminController({ leads: leads.controller, guard }),
+    adPlatforms: new AdPlatformsAdminController({ connections: adPlatforms.controller, guard }),
     customerAuth: new CustomerAuthAdminController({
       security: security.security,
       customers: identity.customers,
@@ -1823,6 +1925,11 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       wishlist: wishlist.wishlist,
       loyalty: loyalty.loyalty,
       onlineStore: onlineStore.publicReads,
+      leads: leads.controller,
+      // A closure, not the controller: `save` (a write) is not reachable through this key.
+      adPlatforms: {
+        publicView: (tenantId) => adPlatforms.controller.publicView({ tenantId }),
+      },
       pages: {
         byHandle: (tenantId, handle) =>
           pages.pages.publishedPageByPath({ routePath: `/pages/${handle}`, tenantId }),
@@ -1931,6 +2038,11 @@ function buildMerchantOnboarding(wiring: MerchantOnboardingWiring): MerchantOnbo
         password,
         principalExternalId: ownerExternalId,
       });
+    },
+    settleSiteType: async (tenantId, siteType) => {
+      const r = await tenancy.settleSignupSiteType(tenantId, siteType);
+      expectSuccess(r, "settleSignupSiteType");
+      return (r.body as { siteType: SiteType }).siteType;
     },
     saveStoreSettings: async (tenantId, input) => {
       expectSuccess(await tenancy.updateStoreSettings(tenantId, input), "updateStoreSettings");

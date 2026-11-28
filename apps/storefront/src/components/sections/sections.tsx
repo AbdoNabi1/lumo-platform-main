@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
-import { isWhatsAppDigits, pickText, type PublicSection } from "@platform/storefront-content";
+import {
+  COMMERCE_SECTION_TYPES,
+  isWhatsAppDigits,
+  pickText,
+  type PublicSection,
+} from "@platform/storefront-content";
 import type { AvailabilityBook } from "@/lib/catalog";
 import type { Locale } from "@/lib/i18n";
 import type { SectionData } from "@/lib/section-data";
@@ -10,6 +15,7 @@ import { FeaturedProducts } from "./featured-products";
 import { FeaturesSection } from "./features";
 import { HeroSection } from "./hero";
 import { ImageWithTextSection } from "./image-with-text";
+import { LeadFormSection } from "./lead-form";
 import { RichTextSection } from "./rich-text-section";
 import { SectionFrame } from "./section-frame";
 import { TestimonialsSection } from "./testimonials";
@@ -25,9 +31,18 @@ interface SectionsProps {
   readonly mode: "live" | "preview";
   /** The first hero id: its picture loads eagerly (Task 9 uses it). */
   readonly eagerHeroId: string | null;
+  /** A store drops `lead_form`; a lead site drops the commerce sections (Part C, D3). */
+  readonly siteType: "store" | "lead_site";
 }
 
 const NO_DATA: SectionData = { kind: "none" };
+const COMMERCE_TYPES: ReadonlySet<string> = new Set(COMMERCE_SECTION_TYPES);
+
+/** Whether this kind of site shows this section: lead forms only on lead sites, shelves only on stores. */
+function isOfferedTo(type: string, siteType: "store" | "lead_site"): boolean {
+  if (type === "lead_form") return siteType === "lead_site";
+  return siteType === "store" || !COMMERCE_TYPES.has(type);
+}
 const HANDLED: ReadonlySet<string> = new Set([
   "featured_products",
   "featured_collection",
@@ -38,6 +53,7 @@ const HANDLED: ReadonlySet<string> = new Set([
   "testimonials",
   "features",
   "whatsapp_cta",
+  "lead_form",
 ]);
 
 /** The content of one complete section of a handled type. */
@@ -102,6 +118,8 @@ function contentOf(section: PublicSection, data: SectionData, props: SectionsPro
       return <FeaturesSection section={section} locale={locale} t={t} />;
     case "whatsapp_cta":
       return <WhatsAppCtaSection section={section} locale={locale} t={t} />;
+    case "lead_form":
+      return <LeadFormSection section={section} locale={locale} t={t} />;
     default:
       return null;
   }
@@ -135,6 +153,7 @@ function headingIdOf(section: PublicSection, locale: Locale): string | undefined
     case "testimonials":
     case "features":
     case "whatsapp_cta":
+    case "lead_form":
       return pickText(section.settings.heading, locale) === null
         ? undefined
         : `${section.id}-heading`;
@@ -156,6 +175,7 @@ export function Sections(props: SectionsProps) {
     <>
       {sections.map((section) => {
         if (!HANDLED.has(section.type)) return null;
+        if (!isOfferedTo(section.type, props.siteType)) return null;
         const sectionData = data.get(section.id) ?? NO_DATA;
         const failed = sectionData === "error";
         if (failed && !preview) return null;

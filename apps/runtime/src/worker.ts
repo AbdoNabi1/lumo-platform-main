@@ -3,6 +3,8 @@ import type { DirectConsumer } from "@platform/messaging";
 import { logger } from "@platform/utils";
 import { loadRuntimeConfig, type RuntimeConfig } from "./config";
 import {
+  buildDeliveryRetrySweep,
+  buildTrackingRetention,
   buildPaymentCapturedRuntime,
   buildRuntimeCore,
   buildTrackingIngestRuntime,
@@ -11,9 +13,14 @@ import {
 import { buildDunningNotificationsConsumerRuntimes } from "./consumers/dunning-notifications.consumers";
 import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
+import { buildTrackingBusinessConsumerRuntimes } from "./consumers/tracking-business.consumers";
 import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
+import { startDeliveryRetrySweep } from "./delivery-retry-runtime";
+import { startLeadTrackingSweep } from "./lead-tracking-sweep-runtime";
+import { startTrackingRetention } from "./tracking-retention-runtime";
 import { startHealthServer } from "./health-server";
+import { buildLeadTrackingSweep } from "./tracking/lead-tracking-wiring";
 import { startOutboxDelivery } from "./outbox-delivery-runtime";
 import { startOutboxRelay } from "./outbox-relay-runtime";
 import { wireSecurityProvisioning } from "./security/wire-security-provisioning";
@@ -141,10 +148,17 @@ export async function startWorker(
 
   // C-07: the consumer of `tracking.event.captured.v1`. Until this line the collector published to
   // that topic and nothing subscribed — every beacon was accepted, written to Kafka and aged out
-  // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default off) because the registry must be
-  // seeded first; `buildTrackingIngestRuntime` returns null when it is off.
+  // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default on since P2-D2: an unconnected store has an
+  // empty registry, which is valid); `buildTrackingIngestRuntime` returns null when it is off.
   const trackingIngest = buildTrackingIngestRuntime(runtime);
   if (trackingIngest !== null) register(trackingIngest);
+
+  // Tracking P2-D3/D6: the order events that become server Purchase / Delivered / Cancelled tracking events
+  // (`tracking.event.captured.v1` through the outbox, so they run through the ingest consumer above). Same gate as
+  // the ingest consumer: an empty list when `TRACKING_INGEST_ENABLED` is off.
+  for (const consumerRuntime of buildTrackingBusinessConsumerRuntimes(runtime, runtime.metrics)) {
+    register(consumerRuntime);
+  }
 
   // H-04: bootstrapSecurity + the three principal-provisioning consumers (security-provisioning.
   // consumers.ts) had zero callers — the Security principal/role store was never populated from
@@ -181,6 +195,24 @@ export async function startWorker(
     };
   }
 
+  // Tracking P1-D2: the durable per-destination retry. Deliveries parked by the ingest consumer are retried
+  // here inside the vendor's window. Independent of the transport (it reads the database, not the broker),
+  // so it starts under both; `null` when tracking ingest is off, since nothing is parked then.
+  const retrySweep = buildDeliveryRetrySweep(runtime);
+  const retryHandle = retrySweep === null ? null : startDeliveryRetrySweep(runtime, retrySweep);
+
+  // Tracking P1-D10: the privacy retention (anonymous profiles after 400 days, IP/UA in event records after 90).
+  // Database-only like the retry sweep, so it starts under both transports; `null` when tracking ingest is off.
+  const retentionRun = buildTrackingRetention(runtime);
+  const retentionHandle =
+    retentionRun === null ? null : startTrackingRetention(runtime, retentionRun);
+
+  // Tracking P2-D9: the lead sweeper. A lead whose server event could not be handed over at submit time stays `pending`;
+  // this re-sends those older than two minutes (and marks the ones older than seven days failed). Database-only like
+  // the sweeps above, so it starts under both transports; `null` when tracking ingest is off (no lead is emitted then).
+  const leadSweep = buildLeadTrackingSweep(runtime);
+  const leadSweepHandle = leadSweep === null ? null : startLeadTrackingSweep(runtime, leadSweep);
+
   // F5/F3: the worker serves no business traffic, so it has no Fastify server — but its k8s manifest
   // probes /healthz + /readyz and Prometheus scrapes /metrics on the same port (21-deployment-worker
   // .yaml). Without this surface the pod never becomes ready and liveness eventually kills it, and the
@@ -196,6 +228,9 @@ export async function startWorker(
   const shutdown = async (): Promise<void> => {
     logger.info("worker shutting down");
     health.close();
+    retryHandle?.stop();
+    retentionHandle?.stop();
+    leadSweepHandle?.stop();
     await stopDelivery();
     await supervisor.stopAll();
     await runtime.redis.disconnect();

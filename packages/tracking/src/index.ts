@@ -86,11 +86,15 @@ export type {
   ConsentDenial,
   ConsentDecision,
   ConsentSnapshot,
+  ConsentPolicy,
 } from "./envelope/consent";
 export {
   CONSENT_CATEGORIES,
+  CONSENT_POLICIES,
   CONSENT_REQUIREMENTS,
+  DEFAULT_CONSENT_POLICY,
   DENY_ALL_CONSENT,
+  applyConsentPolicy,
   evaluateConsent,
 } from "./envelope/consent";
 
@@ -166,6 +170,7 @@ export {
 // --- Pipeline: validation (failing events are never delivered) ------------
 export type { ValidationRule, ValidationViolation, ValidationResult } from "./pipeline/validation";
 export {
+  MAX_BUSINESS_EVENT_AGE_MS,
   MAX_CLOCK_SKEW_MS,
   MAX_FUTURE_SKEW_MS,
   validateEnvelope,
@@ -224,6 +229,32 @@ export {
   stagePrecedes,
 } from "./pipeline/hashing";
 
+// --- Lead-site plan B — match keys, event ids, lead decision ----------------------------
+export type { MatchPlatform, PlatformMatchKeys } from "./pipeline/platform-identity";
+export {
+  splitFullName,
+  emailForPlatform,
+  phoneForPlatform,
+  platformMatchKeys,
+} from "./pipeline/platform-identity";
+export type { BusinessEventKind } from "./ids/event-id";
+export {
+  EVENT_ID_PREFIX,
+  isBusinessRef,
+  newBrowserEventId,
+  businessEventId,
+  isMorbehEventId,
+  checkProvidedDedupId,
+} from "./ids/event-id";
+export type { LeadEmissionLedgerPort } from "./leads/lead-emission";
+export {
+  LEAD_CLAIM_TTL_SECONDS,
+  leadEmissionKey,
+  decideLeadEmission,
+  extendLeadClaim,
+  InMemoryLeadEmissionLedger,
+} from "./leads/lead-emission";
+
 // --- Delivery: destination contracts + Registry ports ---------------------
 export type {
   DestinationKey,
@@ -241,6 +272,7 @@ export type {
   AdapterRegistryPort,
   DestinationStatus,
   RoutingContext,
+  EndpointAuth,
 } from "./delivery/destination";
 export {
   DESTINATION_STATUS_TO_REGISTRY,
@@ -302,7 +334,7 @@ export type {
   DeliverInput,
   DeliveryResult,
 } from "./delivery/delivery-pipeline";
-export type { RenderOutcome } from "./delivery/delivery-pipeline";
+export type { RenderOutcome, RenderExtras } from "./delivery/delivery-pipeline";
 export {
   ZERO_METRICS,
   DELIVERY_GUARANTEES,
@@ -318,7 +350,28 @@ export type {
   CredentialResolverPort,
   HttpJsonAdapterDeps,
 } from "./delivery/adapters";
-export { HttpJsonAdapter, NoopAdapter, isRetryableStatus } from "./delivery/adapters";
+export {
+  HttpJsonAdapter,
+  NoopAdapter,
+  isRetryableStatus,
+  redactSecrets,
+} from "./delivery/adapters";
+
+// --- Delivery: per-vendor typed request builders (lead-site plan D1) -------
+export type { VendorBuilderKey, CanonicalEvent } from "./delivery/vendor-event-names";
+export {
+  VENDOR_BUILDER_KEYS,
+  isVendorBuilderKey,
+  MATCH_PLATFORM_OF,
+  CANONICAL_EVENTS,
+  VENDOR_EVENT_NAMES,
+  vendorEventName,
+  SITE_TYPE_EVENTS,
+} from "./delivery/vendor-event-names";
+export type { VendorEventInput } from "./delivery/vendor-event-input";
+export { vendorEventInputFrom, gaClientIdFromCookie } from "./delivery/vendor-event-input";
+export type { VendorTarget, BuildResult } from "./delivery/vendor-builders";
+export { buildVendorPayload, GA4_MAX_EVENT_AGE_MS } from "./delivery/vendor-builders";
 
 // --- Delivery: business payload vs transport envelope ---------------------
 export type {
@@ -337,6 +390,7 @@ export {
   SEED_DESTINATIONS,
   SEED_MAPPING_PROFILES,
   SEED_PROFILE_KEYS,
+  STANDARD_RETRY,
 } from "./delivery/platform-profiles";
 
 // --- Inspector: the immutable event record (canonical source of truth) ----
@@ -472,12 +526,36 @@ export type {
   IngestOutcome,
   IngestRuntimeDeps,
   IngestInput,
+  UnroutedReason,
 } from "./runtime/ingest-runtime";
 export {
   PERMANENT_INGEST_REFUSALS,
   isPermanentRefusal,
   ingestTrackingEvent,
 } from "./runtime/ingest-runtime";
+
+// --- Runtime: durable per-destination retry within the vendor window (P1-D2) ---
+export type {
+  DeliveryRetryKey,
+  DeliveryRetryEntry,
+  DeliveryRetryQueuePort,
+  RetryDisposition,
+} from "./runtime/delivery-retry";
+export { dispositionOf, storableError } from "./runtime/delivery-retry";
+export type {
+  RetryTenantRuntime,
+  RetrySweepDeps,
+  RetrySweepReport,
+} from "./runtime/delivery-retry-sweeper";
+export { sweepDeliveryRetries } from "./runtime/delivery-retry-sweeper";
+export {
+  DURABLE_RETRY_BACKOFF_MS,
+  VENDOR_WINDOW_MS,
+  planNextRetry,
+  vendorWindowMs,
+  windowExpiresAtMs,
+} from "./delivery/retry-schedule";
+export type { NextRetry } from "./delivery/retry-schedule";
 
 // NOTE: "./runtime/replay-runtime" and "./runtime/telemetry" are not exported here — K7 partial,
 // no primary-source evidence found for their ownership. See K7_FINAL_RECONCILIATION_REPORT.md.
@@ -486,7 +564,6 @@ export {
 export type { HashPort, NaturalKeyStrategy } from "./ids/dedup-id";
 export {
   DEDUP_WINDOW_DAYS,
-  minuteBucket,
   dedupKeyMaterial,
   deriveDedupId,
   isWithinDedupWindow,
@@ -514,3 +591,190 @@ export {
 // "./browser" (E2) and "./execution" (entangled with the unevidenced definitions cluster) are not
 // exported here. See K7_FINAL_RECONCILIATION_REPORT.md.
 export * from "./intelligence";
+
+// --- Tracking P1-D4/D10: the visitor profile store, merge/enrich and retention ---
+export {
+  EVENT_NETWORK_RETENTION_DAYS,
+  MAX_CLICK_ID_LENGTH,
+  PROFILE_HASH_KEYS,
+  PROFILE_TTL_DAYS,
+  PROFILE_TTL_MS,
+  expiresAtFor,
+  hasMatchKeys,
+  isAnonymousProfile,
+} from "./profile/tracking-profile";
+export type {
+  ProfileBrowserIds,
+  ProfileClickId,
+  ProfileClickIds,
+  ProfileGeo,
+  ProfileHashes,
+  ProfileLandingTouch,
+  ProfileLookupKeys,
+  ProfileObservation,
+  TrackingProfile,
+} from "./profile/tracking-profile";
+export {
+  applyObservation,
+  createProfile,
+  customersConflict,
+  mergeProfileClickIds,
+  mergeProfiles,
+  pruneClickIds,
+  survivorOf,
+} from "./profile/profile-merge";
+export { InMemoryTrackingProfileStore } from "./profile/profile-store";
+export type {
+  ExpiredProfileScan,
+  ProfileChange,
+  TrackingProfileStore,
+} from "./profile/profile-store";
+export { deriveProfileHashes, profileMatchKeys, withProfileKeys } from "./profile/profile-identity";
+export type { ProfileMatchKeys } from "./profile/profile-identity";
+export {
+  customerIdOf,
+  enrichEnvelopeWithProfile,
+  isObservable,
+  observationFromEnvelope,
+  visitorIdOf,
+} from "./profile/profile-envelope";
+export { TrackingProfileService, resolveProfile } from "./profile/profile-service";
+export type {
+  ProfileEnricherPort,
+  ProfileEnrichment,
+  ProfileResolution,
+  ProfileServiceDeps,
+} from "./profile/profile-service";
+export {
+  eraseCustomerProfiles,
+  redactDestinationEntries,
+  redactEnvelopeNetwork,
+  redactPayloadNetwork,
+  runTrackingRetention,
+} from "./profile/retention";
+export type {
+  EventNetworkRedactionPort,
+  TrackingRetentionDeps,
+  TrackingRetentionReport,
+} from "./profile/retention";
+export { fbcCreatedAtMs, isFbcValidAt } from "./envelope/click-ids";
+export {
+  COOKIE_KEEPER_MAX_VALUE,
+  COOKIE_KEEPER_NAMES,
+  restorableCookies,
+} from "./profile/cookie-keeper";
+export type { CookieKeeperInput, CookieKeeperName } from "./profile/cookie-keeper";
+
+// Tracking P1-D8 / D9: collect-time enrichment and the per-store IP block list.
+export { parseUserAgent } from "./enrichment/user-agent";
+export type { BotMarker, BotMarkerKind, UserAgentInfo } from "./enrichment/user-agent";
+export { BOT_REASON_POINTS, BOT_SKIP_THRESHOLD, botBand, scoreBot } from "./enrichment/bot-score";
+export type { BotBand, BotReason, BotScore, BotSignals } from "./enrichment/bot-score";
+export { AI_SOURCES, aiSourceKeyOf, resolveAiSource } from "./enrichment/ai-referrer";
+export type { AiSource, AiSourceSignals } from "./enrichment/ai-referrer";
+export { computeFingerprintId, fingerprintKeyFor } from "./enrichment/fingerprint";
+export type { FingerprintInput, HmacSha256Hex } from "./enrichment/fingerprint";
+export {
+  MmdbFormatError,
+  MmdbGeoLookup,
+  UNKNOWN_GEO,
+  createMmdbGeoLookup,
+} from "./enrichment/geo-mmdb";
+export type { GeoLookupPort, GeoResult } from "./enrichment/geo-mmdb";
+export {
+  compileIpMatcher,
+  formatCidr,
+  isPublicIp,
+  normalizeCidr,
+  parseCidr,
+  parseIp,
+} from "./enrichment/ip-cidr";
+export type { IpMatcher } from "./enrichment/ip-cidr";
+export { BUSINESS_CONVERSION_EVENTS, isBusinessConversion } from "./enrichment/business-conversion";
+export { createCollectEnricher } from "./enrichment/collect-enrichment";
+export type {
+  BurstPort,
+  BurstVerdict,
+  CollectEnricher,
+  CollectEnricherDeps,
+  CollectSignals,
+} from "./enrichment/collect-enrichment";
+export {
+  BlockedIpService,
+  InMemoryBlockedIpStore,
+  MAX_BLOCKED_IPS_PER_STORE,
+  MAX_NOTE_LENGTH,
+} from "./blocking/blocked-ips";
+export type {
+  AddBlockedIpResult,
+  BlockedIpEntry,
+  BlockedIpServiceDeps,
+  BlockedIpStore,
+} from "./blocking/blocked-ips";
+
+// --- Per-store tracking settings: consent policy, cookie notice (P2-D1) ---
+export {
+  InMemoryTrackingSettingsStore,
+  SETTINGS_CACHE_TTL_MS,
+  TrackingSettingsService,
+  defaultTrackingSettings,
+} from "./settings/store-settings";
+export type {
+  ConsentPolicyPort,
+  TrackingSettingsInput,
+  TrackingSettingsSave,
+  TrackingSettingsServiceDeps,
+  TrackingSettingsStore,
+  TrackingSettingsUpdate,
+  TrackingStoreSettings,
+} from "./settings/store-settings";
+
+// --- Business events: orders and leads to server-side conversions (P2 Task 2) ---
+// Read models are plain data: the runtime adapters (orders reader, lead emitter) return them, the mappers consume them.
+export type {
+  BusinessAttributionSnapshot,
+  BusinessEventContext,
+  LeadTrackingReadModel,
+  OrderTrackingCustomer,
+  OrderTrackingLine,
+  OrderTrackingReadModel,
+  OrderTrackingShipping,
+  OrderTrackingTotals,
+  SnapshotClickId,
+  TransitionEventContext,
+} from "./business/order-read-model";
+export { cancelledEnvelope, deliveredEnvelope, purchaseEnvelope } from "./business/order-events";
+export { leadEnvelope } from "./business/lead-event";
+export { contentIdOf } from "./business/content-id";
+export {
+  InMemoryAttributionSnapshotStore,
+  SNAPSHOT_NETWORK_RETENTION_DAYS,
+  SNAPSHOT_RETENTION_DAYS,
+  recordAttributionSnapshot,
+  sanitizeAttributionSnapshot,
+} from "./business/attribution-snapshot";
+export type {
+  AttributionSnapshotInput,
+  AttributionSnapshotRetentionPort,
+  AttributionSnapshotStore,
+  AttributionSnapshotWrite,
+  AttributionSubjectKind,
+  RecordAttributionSnapshotDeps,
+} from "./business/attribution-snapshot";
+export { businessValueMinor } from "./business/value";
+export type { OrderValueTotals } from "./business/value";
+export { businessMessageId } from "./business/event-uuid";
+export { syntheticGaClientId } from "./business/ga4-client-id";
+export {
+  callingCodeForCurrency,
+  CURRENCY_CALLING_CODES,
+  DEFAULT_CALLING_CODE,
+} from "./business/calling-code";
+export { TEST_EVENT_CODE_PATTERN } from "./business/test-event";
+export type {
+  TestEventFailureCode,
+  TestEventOutcome,
+  TestEventRequest,
+  TestEventResult,
+  TestEventService,
+} from "./business/test-event";

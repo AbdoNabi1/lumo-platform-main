@@ -80,7 +80,15 @@ const menus = [
 
 const renderEditor = (role: "operator" | "admin" = "admin", s: typeof state = state) =>
   render(
-    <CustomizeEditor t={en} locale="en" state={s} role={role} storeName="Nour" menus={menus} />,
+    <CustomizeEditor
+      t={en}
+      locale="en"
+      state={s}
+      role={role}
+      storeName="Nour"
+      menus={menus}
+      siteType="store"
+    />,
   );
 
 const tick = (ms = 0) =>
@@ -526,6 +534,7 @@ describe("CustomizeEditor", () => {
           role={admin}
           storeName="Nour"
           menus={menus}
+          siteType="store"
         />
       </StrictMode>,
     );

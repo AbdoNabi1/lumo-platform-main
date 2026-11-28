@@ -279,26 +279,56 @@ const schema = z
     SHIPPING_CREDENTIALS_KEK_REF_PREVIOUS: z.string().min(32).optional(),
     ADMIN_API_PUBLIC_URL: z.string().url().optional(),
 
+    // ── Ad platform credentials (Lead Site Part D1). A merchant's Meta / TikTok / Snap / GA4 server token is
+    // sealed with `@platform/secrets`' envelope encryption (alias `ad-platform-credentials`) before it reaches
+    // Postgres; this is the key-encryption key reference it is sealed under. Absent ⇒ saving a token answers
+    // 503 and nothing is stored (never a stub next to a real database). With the local `NodeCrypto` backend the
+    // ref IS the key material (an AES key is derived from it), so treat it like STRIPE_SECRET_KEY and use a
+    // value different from PAYMENT_CREDENTIALS_KEK_REF; with a KMS backend it is that KMS's key reference.
+    AD_PLATFORM_CREDENTIALS_KEK_REF: z.string().min(32).optional(),
+
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
-     * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `off`: the collector
-     * publishes regardless, and a runtime whose tracking registry has not been seeded would refuse
-     * every event at `loadTrackingRegistry` rather than start. Turn on once the registry is seeded.
+     * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `on` (Tracking P2-D2, zero merchant
+     * setup): a store that has connected nothing has an EMPTY registry, which is a valid state - its events update
+     * the visitor profile and nothing else (no record, no delivery, no retry), and the first connection save is picked
+     * up by the registry watcher. Set `off` to stop the consumer (the collector still publishes; the outbox marks
+     * those rows delivered unprocessed).
      */
     TRACKING_INGEST_ENABLED: z
       .string()
-      .default("off")
+      .default("on")
       .transform((v) => v.toLowerCase() === "on" || v.toLowerCase() === "true"),
     /**
      * Registry key of the routing rule set the ingest pipeline resolves against. Configuration,
-     * never a compiled-in default (`IngestRuntimeDeps.ruleSetKey`) — a wrong key refuses every event
-     * with `rule_set_unavailable` rather than silently routing to nothing. The default matches
-     * `DEFAULT_RULE_SET_KEY` in `tracking/tracking-registry-seed.ts`, so a seeded registry works
-     * without extra configuration.
+     * never a compiled-in default (`IngestRuntimeDeps.ruleSetKey`). A store whose registry has destinations but not
+     * this rule set (a wrong key) forwards nothing and logs a warning per event (P2-D2: never a retry or a dead
+     * letter). The default matches `DEFAULT_RULE_SET_KEY` in `tracking/tracking-registry-seed.ts` and what the ad
+     * platform connections write.
      */
     TRACKING_RULE_SET_KEY: z.string().default("tracking.routing.default"),
     /** Registry hot-reload poll interval (`TrackingRegistryWatcher`). */
     TRACKING_REGISTRY_POLL_MS: z.coerce.number().int().positive().default(30_000),
+    /**
+     * Tracking P1-D3: the secret the storefront SERVER signs `POST /public/tracking/collect` with
+     * (HMAC-SHA256 over timestamp + body). The SAME value must be set on the storefront. Absent ⇒ the
+     * route answers 503 NOT_CONFIGURED and nothing is collected (fail safe, never a crash).
+     */
+    TRACKING_EDGE_SECRET: z.string().min(32).optional(),
+    /**
+     * Tracking P1-D8: path of a MaxMind-format country database (`.mmdb`: GeoLite2-Country, DB-IP Lite) the operator
+     * put on disk, for `countryDetected` on collected events. Unset ⇒ geo is off (no failure); a missing or corrupt
+     * file ⇒ geo is off and one warning is logged. Never downloaded at runtime; no licence key in the repository.
+     */
+    TRACKING_GEO_DB_PATH: z.string().min(1).optional(),
+    /** Milliseconds between delivery-retry sweeps in the worker (durable per-destination retry, P1-D2). */
+    TRACKING_RETRY_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
+    /**
+     * Milliseconds between tracking privacy-retention passes in the worker (P1-D10): anonymous visitor profiles are
+     * deleted 400 days after last seen, and IP/user agent are removed from event records older than 90 days.
+     * Default 6 h; each pass is idempotent and bounded.
+     */
+    TRACKING_RETENTION_INTERVAL_MS: z.coerce.number().int().min(60_000).default(21_600_000),
 
     // ── H-3 (G-SEC-2) cloud KMS / HSM / Vault + threat-intel provider selection ──
     /** Which KMS/crypto provider backs Security's key operations (default `local` = node:crypto). */
@@ -462,17 +492,9 @@ const schema = z
           "EVENT_TRANSPORT=postgres requires OUTBOX_RELAY_ENABLED=true: under this transport the outbox relay is the only thing that delivers events.",
       });
     }
-    // The collector publishes beacons straight to the broker (`tracking.event.captured.v1`), never
-    // through the outbox, so without a broker the ingest consumer would be registered and receive
-    // nothing, forever. Refuse the combination rather than report a healthy consumer that is deaf.
-    if (cfg.EVENT_TRANSPORT === "postgres" && cfg.TRACKING_INGEST_ENABLED) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["TRACKING_INGEST_ENABLED"],
-        message:
-          "TRACKING_INGEST_ENABLED=true requires EVENT_TRANSPORT=kafka: the collector publishes tracking events to the broker directly, not through the outbox, so the Postgres transport can never deliver them.",
-      });
-    }
+    // (Tracking ingest under EVENT_TRANSPORT=postgres is supported since Tracking P1/T1: the runtime
+    // API's `POST /public/tracking/collect` appends `tracking.event.captured.v1` to the outbox, so
+    // the relay can deliver it. The former refusal of that combination is gone on purpose.)
     // H-01: `buildSecurityHttpGuard` (apps/runtime/src/security/wire-security-runtime.ts) is not called
     // by any entrypoint — api.ts still authorizes every request through AdminGuard + Keto. Accepting this
     // flag would tell an operator that zero-trust enforcement ("authn → threat → risk → device → policy →

@@ -40,7 +40,7 @@ const customDomain = {
   isPrimary: true,
   verifiedAt: "2026-10-01T00:00:00.000Z",
 };
-const settings = (dismissedAt?: string | null) => ({
+const settings = (dismissedAt?: string | null, siteType?: "store" | "lead_site") => ({
   outcome: "ok",
   settings: {
     storeName: "Shop",
@@ -48,6 +48,7 @@ const settings = (dismissedAt?: string | null) => ({
     currency: "EGP",
     timezone: "Africa/Cairo",
     weightUnit: "kg",
+    ...(siteType === undefined ? {} : { siteType }),
     ...(dismissedAt === undefined ? {} : { setupGuideDismissedAt: dismissedAt }),
   },
 });
@@ -73,6 +74,13 @@ async function section(options: { welcome?: boolean; locale?: "en" | "ar" } = {}
       welcome: options.welcome ?? false,
     }),
   );
+}
+
+function expectNoCommerceLinks() {
+  const hrefs = screen.queryAllByRole("link").map((link) => link.getAttribute("href"));
+  for (const commerce of ["/products/new", "/settings/shipping", "/settings/payments", "/orders"]) {
+    expect(hrefs).not.toContain(commerce);
+  }
 }
 
 describe("SetupGuideSection", () => {
@@ -116,12 +124,13 @@ describe("SetupGuideSection", () => {
     expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
   });
 
-  it("still renders when every request fails, with every step open", async () => {
+  it("still renders when every request fails, with only the theme and domain steps", async () => {
     for (const fn of Object.values(api)) fn.mockResolvedValue(failure);
 
     await section();
 
-    expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 tasks complete")).toBeInTheDocument();
+    expectNoCommerceLinks();
   });
 
   it("still renders when a request throws", async () => {
@@ -137,8 +146,27 @@ describe("SetupGuideSection", () => {
 
     await section();
 
-    expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
+    expect(screen.getByText("0 of 1 tasks complete")).toBeInTheDocument();
+    expectNoCommerceLinks();
     expect(screen.queryByRole("button", { name: en.setupGuide.dismiss })).not.toBeInTheDocument();
+  });
+
+  it("shows only the theme and domain steps for a lead site, with Dismiss offered", async () => {
+    api.fetchStoreSettings.mockResolvedValue(settings(null, "lead_site"));
+
+    await section();
+
+    expect(screen.getByText("0 of 1 tasks complete")).toBeInTheDocument();
+    expectNoCommerceLinks();
+    expect(screen.getByRole("button", { name: en.setupGuide.dismiss })).toBeInTheDocument();
+  });
+
+  it("shows the five tracked steps for a store", async () => {
+    api.fetchStoreSettings.mockResolvedValue(settings(null, "store"));
+
+    await section();
+
+    expect(screen.getByText("0 of 5 tasks complete")).toBeInTheDocument();
   });
 
   it("offers Dismiss when store settings could be read", async () => {

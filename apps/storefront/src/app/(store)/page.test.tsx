@@ -9,12 +9,15 @@ import { ar } from "@/messages/ar";
 const request = vi.hoisted(() => ({
   shell: null as StorefrontShell | null,
   token: null as string | null,
+  publicStore: null as { name: string; currency: string; siteType: "store" | "lead_site" } | null,
 }));
 vi.mock("@/lib/request-locale", () => ({
   getRequestShell: async () => request.shell,
   getRequestLocale: async () => "ar",
   getPreviewToken: async () => request.token,
+  getRequestPublicStore: async () => request.publicStore,
 }));
+vi.mock("@/app/(store)/lead-actions", () => ({ submitLead: vi.fn() }));
 
 const book = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock("@/lib/catalog", () => ({
@@ -66,6 +69,7 @@ async function renderHome(storeName: string, token: string | null = null) {
 
 beforeEach(() => {
   expect.hasAssertions();
+  request.publicStore = { name: "Shop", currency: "EGP", siteType: "store" };
   home.getHomepage.mockReset().mockResolvedValue(DEFAULT_HOME);
   sectionData.loadSectionData.mockReset().mockImplementation(async () => defaultData());
   book.load.mockReset().mockResolvedValue(null);
@@ -139,5 +143,50 @@ describe("Home page sections", () => {
     request.token = "tok";
     const { container } = render(await Home());
     expect(container.querySelectorAll("[data-section-id]")).toHaveLength(2);
+  });
+});
+
+describe("Home page site type", () => {
+  const leadForm = {
+    id: "00000000-0000-4000-8000-0000000000f1",
+    type: "lead_form",
+    settings: {
+      heading: { ar: "اطلب استشارة", en: "Get in touch" },
+      text: { ar: "", en: "" },
+      submitLabel: { ar: "ابعت", en: "Send" },
+      successMessage: { ar: "", en: "" },
+      showEmail: true,
+      showMessage: true,
+    },
+  } as PublicSection;
+  const withLeadForm = () => {
+    home.getHomepage.mockResolvedValue({
+      mode: "live",
+      sections: [...(DEFAULT_HOME.sections as readonly PublicSection[]), leadForm],
+    });
+  };
+
+  it("a lead site renders the lead form and drops the commerce sections", async () => {
+    withLeadForm();
+    request.publicStore = { name: "Shop", currency: "EGP", siteType: "lead_site" };
+    await renderHome("n");
+    expect(screen.getByRole("heading", { level: 2, name: "اطلب استشارة" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "المنتجات" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "المجموعات" })).toBeNull();
+  });
+
+  it("a store renders the commerce sections and drops the lead form", async () => {
+    withLeadForm();
+    await renderHome("n");
+    expect(screen.getByRole("heading", { level: 2, name: "المنتجات" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "اطلب استشارة" })).toBeNull();
+  });
+
+  it("treats the shop as a store when the public store read fails", async () => {
+    withLeadForm();
+    request.publicStore = null;
+    await renderHome("n");
+    expect(screen.getByRole("heading", { level: 2, name: "المنتجات" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "اطلب استشارة" })).toBeNull();
   });
 });

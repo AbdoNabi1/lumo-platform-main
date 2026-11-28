@@ -164,6 +164,7 @@ const nour = {
   email: "Owner@Nour.test",
   password: "correct-horse-1",
   country: "SA",
+  siteType: "store",
 };
 
 describe("merchant sign-up", () => {
@@ -181,10 +182,21 @@ describe("merchant sign-up", () => {
     expect(typeof res.body.accessToken).toBe("string");
     expect(typeof res.body.tenantId).toBe("string");
     expect(typeof res.body.expiresIn).toBe("number");
+    expect(res.body.siteType).toBe("store");
 
     const again = await call(signup, { ...nour, email: "owner@nour.test" });
     expect(again.status).toBe(409);
     expect(again.body).toMatchObject({ code: "EMAIL_TAKEN", retryable: false, fields: [] });
+  });
+
+  it("a lead website sign-up answers 201 with the persisted siteType", async () => {
+    const { admin } = await setup();
+    const routes = publicMerchantRoutes(admin, { platformTenantId: PLATFORM });
+
+    const res = await call(find(routes, "POST", SIGNUP), { ...nour, siteType: "lead_site" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.siteType).toBe("lead_site");
   });
 
   it("is refused on any tenant but the platform's", async () => {
@@ -287,6 +299,7 @@ describe("merchant sign-up", () => {
             kind: "created",
             tenantId: "t-1",
             storeUrl: "https://x.morbeh.test",
+            siteType: "lead_site",
             session: failed,
           }),
       },
@@ -297,6 +310,7 @@ describe("merchant sign-up", () => {
     expect(res.body).toEqual({
       tenantId: "t-1",
       storeUrl: "https://x.morbeh.test",
+      siteType: "lead_site",
       signInRequired: true,
     });
   });

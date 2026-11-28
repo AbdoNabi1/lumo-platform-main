@@ -249,6 +249,18 @@ describe("middleware role table for the Settings sub-navigation (Shopify parity 
     }
   });
 
+  it("keeps Settings > Ad platforms admin-only: operator and viewer go to /forbidden", async () => {
+    expect.hasAssertions();
+    for (const role of ["operator", "viewer"]) {
+      jwtVerifyMock.mockResolvedValue({ payload: { roles: [role] } });
+      const response = await middleware(requestFor("/settings/ad-platforms", "good.token"));
+      expect(response.headers.get("location"), role).toContain("/forbidden");
+    }
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["admin"] } });
+    const allowed = await middleware(requestFor("/settings/ad-platforms", "good.token"));
+    expect(allowed.headers.get("location")).toBeNull();
+  });
+
   it("keeps every coming-soon placeholder admin-only", async () => {
     expect.hasAssertions();
     const placeholders = ["markets", "apps", "customer-events", "custom-data", "customer-privacy"];
@@ -456,6 +468,14 @@ describe("middleware role table for the orders screens", () => {
       "/abandoned-checkouts",
       "/abandoned-checkouts/2f6f1c52-5c3a-4a53-8c0a-3f4f3d7a0c11",
     ]) {
+      const response = await middleware(requestFor(path, "good.token"));
+      expect(response.headers.get("location"), path).toBeNull();
+    }
+  });
+
+  it("lets a viewer open the leads inbox, a lead and the export route (the export route refuses viewers itself)", async () => {
+    jwtVerifyMock.mockResolvedValue({ payload: { roles: ["viewer"] } });
+    for (const path of ["/leads", "/leads/lead-1", "/leads/export"]) {
       const response = await middleware(requestFor(path, "good.token"));
       expect(response.headers.get("location"), path).toBeNull();
     }

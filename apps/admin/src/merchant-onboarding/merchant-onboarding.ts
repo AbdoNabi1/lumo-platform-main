@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SiteType } from "@platform/tenancy";
 import type { Logger } from "@platform/utils";
 import type { AdminResponse } from "../interfaces/admin-response";
 import { COUNTRY_DEFAULTS, type SignupCountry } from "./country";
@@ -12,6 +13,8 @@ export interface SignupInput {
   readonly email: string;
   readonly password: string;
   readonly country: SignupCountry;
+  /** What the merchant is building; fixed for good once the store settles it (see `settleSiteType`). */
+  readonly siteType: SiteType;
 }
 
 export type SignupOutcome =
@@ -20,6 +23,8 @@ export type SignupOutcome =
       readonly tenantId: string;
       /** `https://<slug>.<platform zone>`; `null` without a zone, or when an earlier attempt made the store. */
       readonly storeUrl: string | null;
+      /** The persisted type: what `settleSiteType` returned, which is not the request's after a settled resume. */
+      readonly siteType: SiteType;
       /** The staff login response (200 with `accessToken`). */
       readonly session: AdminResponse;
     }
@@ -78,6 +83,11 @@ export interface MerchantOnboardingPorts {
   }) => Promise<string | null>;
   /** Runs (or finishes) the tenant's security baseline and owner; `true` when complete. */
   readonly provision: (tenantId: string, ownerExternalId: string) => Promise<boolean>;
+  /**
+   * Writes the shop's site type once and returns the persisted type: the first settlement wins, so a
+   * resume that finds it settled gets the earlier value back, not its own.
+   */
+  readonly settleSiteType: (tenantId: string, siteType: SiteType) => Promise<SiteType>;
   readonly setOwnerPassword: (
     tenantId: string,
     email: string,
@@ -135,6 +145,9 @@ export class MerchantOnboarding {
       // A retry for a PENDING email completes that store with the retrier's password, name and
       // country: no email-ownership proof exists (same as a first sign-up). Safe because merchant
       // login refuses pending entries, so nobody can sign in before the store is activated.
+      // The site type is settled BEFORE the credential is set: a retry that failed before settlement
+      // (tenant, provision) applies the retrier's choice, since no credential existed and nobody could
+      // have used the store; from settlement on the type is fixed and a resume keeps the persisted one.
       tenantId = existing.shopId; // resume the half-created store, never a second one
       ownerExternalId = existing.ownerExternalId;
     } else {
@@ -151,6 +164,10 @@ export class MerchantOnboarding {
       p.logger.error("merchant signup: provisioning incomplete; a retry resumes", { tenantId });
       return { kind: "unavailable", reason: "provisioning-incomplete" };
     }
+    const siteType = await p.settleSiteType(tenantId, input.siteType);
+    if (siteType !== input.siteType) {
+      p.logger.warn("merchant signup: site type already settled; keeping it", { tenantId });
+    }
     await p.setOwnerPassword(tenantId, email, input.password, ownerExternalId);
     const defaults = COUNTRY_DEFAULTS[input.country];
     await p.saveStoreSettings(tenantId, {
@@ -166,7 +183,7 @@ export class MerchantOnboarding {
     const zone = p.platformStoreDomain;
     const storeUrl =
       slug !== null && zone !== undefined && zone !== "" ? `https://${slug}.${zone}` : null;
-    return { kind: "created", tenantId, storeUrl, session };
+    return { kind: "created", tenantId, storeUrl, siteType, session };
   }
 
   private async createUniqueTenant(name: string): Promise<{ tenantId: string; slug: string }> {

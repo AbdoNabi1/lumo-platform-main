@@ -6,6 +6,7 @@ import { ar } from "@/messages/ar";
 import { GRID_COLUMNS, columnsClass } from "./section-styles";
 
 vi.mock("@/app/(store)/cart/actions", () => ({ addToCart: vi.fn() }));
+vi.mock("@/app/(store)/lead-actions", () => ({ submitLead: vi.fn() }));
 vi.mock("@/lib/catalog", () => ({
   priceOf: () => ({ status: "unavailable" }),
   AvailabilityBook: { load: async () => null },
@@ -41,6 +42,7 @@ function renderSections(
   sections: PublicSection[],
   data: Map<string, SectionData | "error">,
   mode: "live" | "preview" = "live",
+  siteType: "store" | "lead_site" = "store",
 ) {
   return render(
     <Sections
@@ -52,6 +54,7 @@ function renderSections(
       previewToken={mode === "preview" ? "tok" : null}
       mode={mode}
       eagerHeroId={null}
+      siteType={siteType}
     />,
   );
 }
@@ -243,5 +246,80 @@ describe("Sections", () => {
       "T-feat",
       "T-wa",
     ]);
+  });
+});
+
+describe("Sections by site type", () => {
+  const leadForm = (n: number): PublicSection =>
+    ({
+      id: id(n),
+      type: "lead_form",
+      settings: {
+        heading: heading(`Form ${n}`),
+        text: { ar: "", en: "" },
+        submitLabel: { ar: "", en: "" },
+        successMessage: { ar: "", en: "" },
+        showEmail: true,
+        showMessage: true,
+      },
+    }) as PublicSection;
+  const featuredCollection = (n: number): PublicSection =>
+    ({
+      id: id(n),
+      type: "featured_collection",
+      settings: { collection: null, count: 4, heading: heading(`Coll ${n}`), columns: 2 },
+    }) as unknown as PublicSection;
+  const collectionList = (n: number): PublicSection =>
+    ({
+      id: id(n),
+      type: "collection_list",
+      settings: { heading: heading(`List ${n}`), columns: 2 },
+    }) as unknown as PublicSection;
+  const data = new Map<string, SectionData | "error">([
+    [id(1), productsData],
+    [id(3), { kind: "products", products: [product(1)] }],
+    [id(4), { kind: "collections", collections: [] }],
+  ]);
+
+  it("a store drops the lead form and keeps the products grid", () => {
+    renderSections([leadForm(2), newest(1)], data, "live", "store");
+    expect(screen.queryByRole("heading", { name: "Form 2" })).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Grid 1" })).toBeInTheDocument();
+  });
+
+  it("a store drops the lead form in preview too, with no frame", () => {
+    const { container } = renderSections([leadForm(2)], new Map(), "preview", "store");
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("a lead site keeps the lead form and drops every commerce section", () => {
+    const { container } = renderSections(
+      [newest(1), leadForm(2), featuredCollection(3), collectionList(4)],
+      data,
+      "live",
+      "lead_site",
+    );
+    expect(screen.getByRole("heading", { name: "Form 2" })).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Form 2" })).toBeInTheDocument();
+    for (const name of ["Grid 1", "Coll 3", "List 4"]) {
+      expect(screen.queryByRole("heading", { name })).toBeNull();
+    }
+    expect(container.querySelectorAll("section")).toHaveLength(1);
+  });
+
+  it("a lead site drops a commerce section in preview too", () => {
+    const { container } = renderSections([newest(1)], data, "preview", "lead_site");
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("a lead site still renders its other sections", () => {
+    const rich = {
+      id: id(5),
+      type: "rich_text",
+      settings: { heading: heading("About"), body: heading("b"), button: null, align: "start" },
+    } as PublicSection;
+    renderSections([rich], new Map(), "live", "lead_site");
+    expect(screen.getByRole("heading", { name: "About" })).toBeInTheDocument();
   });
 });

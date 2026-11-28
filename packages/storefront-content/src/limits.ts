@@ -49,6 +49,8 @@ export const SECTION_LIMITS = Object.freeze({
   rating: Object.freeze({ min: 0, max: 5 }),
   heroPerPage: 3,
   whatsAppPerPage: 2,
+  leadFormPerPage: 1,
+  leadSuccess: 200,
 } as const);
 
 /** An image reference: an asset id, never a path or a URL. */

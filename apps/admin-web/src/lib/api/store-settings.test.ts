@@ -65,6 +65,36 @@ describe("store settings API (Plan 3C)", () => {
     expect((await fetchStoreSettings()).outcome).toBe("error");
   });
 
+  it("accepts siteType absent, store or lead_site, and refuses anything else", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, settings))
+        .mockResolvedValueOnce(jsonResponse(200, { ...settings, siteType: "store" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ...settings, siteType: "lead_site" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ...settings, siteType: "x" }))
+        .mockResolvedValueOnce(jsonResponse(200, { ...settings, siteType: null })),
+    );
+    expect((await fetchStoreSettings()).outcome).toBe("ok");
+    expect((await fetchStoreSettings()).outcome).toBe("ok");
+    const lead = await fetchStoreSettings();
+    expect(lead.outcome === "ok" && lead.settings.siteType).toBe("lead_site");
+    expect((await fetchStoreSettings()).outcome).toBe("error");
+    expect((await fetchStoreSettings()).outcome).toBe("error");
+  });
+
+  it("never sends siteType when saving settings", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, settings));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await updateStoreSettings({ ...settings, siteType: "lead_site" }, "k");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual(settings);
+    expect(JSON.parse(init.body as string)).not.toHaveProperty("siteType");
+  });
+
   it("PUTs the settings with the idempotency key", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, settings));
     vi.stubGlobal("fetch", fetchMock);
@@ -86,6 +116,7 @@ describe("store settings API (Plan 3C)", () => {
       currency: "EGP",
       timezone: "Africa/Cairo",
       weightUnit: "kg",
+      siteType: "store",
     });
   });
 });

@@ -13,6 +13,8 @@ import type { EvaluationContext } from "@platform/expression";
 
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import type { ConsentPurpose } from "../envelope/consent";
+import type { VendorTarget } from "./vendor-builders";
+import type { VendorBuilderKey } from "./vendor-event-names";
 
 /** Stable identifier of a configured destination, e.g. `meta.capi.main`. */
 export type DestinationKey = string;
@@ -49,7 +51,27 @@ export interface DestinationDefinition {
   readonly circuitBreaker?: CircuitBreakerDescriptor;
   /** Disabled destinations resolve but never receive events. */
   readonly enabled: boolean;
+  /**
+   * When set, the payload is built by that vendor's typed builder instead of the generic mapping
+   * profile (`mappingProfileKey` stays for versioning and provenance). Absent ⇒ the mapper, exactly
+   * as before.
+   */
+  readonly builderKey?: VendorBuilderKey;
+  /** Pixel id / pixel code / measurement id (+ optional test code) the builder addresses. */
+  readonly vendorTarget?: VendorTarget;
 }
+
+/**
+ * How the credential resolved from `credentialRef` is presented to the vendor.
+ * - `query`: appended as `?param=<secret>` (Meta/Snap `access_token`, GA4 `api_secret`) after the
+ *   payload is recorded — the recorded request never contains it.
+ * - `header`: sent as header `name: <secret>` (TikTok `Access-Token`).
+ * - `bearer` (and absent): `authorization: Bearer <secret>`, the behaviour of every older destination.
+ */
+export type EndpointAuth =
+  | { readonly kind: "query"; readonly param: string }
+  | { readonly kind: "header"; readonly name: string }
+  | { readonly kind: "bearer" };
 
 /**
  * Where and how to call the vendor. Credentials are **references**, never values — secrets live in
@@ -61,6 +83,8 @@ export interface EndpointDescriptor {
   readonly headers?: Readonly<Record<string, string>>;
   /** Vault reference for the credential, e.g. `vault://tracking/meta/access_token`. */
   readonly credentialRef?: string;
+  /** Presentation of the credential; absent ⇒ `bearer`. */
+  readonly auth?: EndpointAuth;
   readonly timeoutMs: number;
 }
 

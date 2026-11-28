@@ -631,3 +631,95 @@ describe("storefront middleware (spec 1.12)", () => {
     });
   });
 });
+
+describe("visitor session cookie", () => {
+  const sidOf = (res: Response) =>
+    res.headers.getSetCookie().find((c) => c.startsWith("morbeh_sid="));
+
+  it("a normal page response re-issues the session cookie for 30 minutes", async () => {
+    const res = await run("/", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(sidOf(res)).toMatch(/^morbeh_sid=visitor-1;/);
+    expect(sidOf(res)).toMatch(/Max-Age=1800/);
+    expect(sidOf(res)).toMatch(/Path=\//);
+    expect(sidOf(res)).not.toMatch(/httponly/i);
+  });
+
+  it("a first visit mints one", async () => {
+    const res = await run("/");
+    expect(sidOf(res)).toMatch(/^morbeh_sid=[0-9a-f-]{36};/);
+  });
+
+  it("the lock gate's redirect carries it", async () => {
+    access["shop-a"] = { locked: true, accessVersion: 1 };
+    const res = await run("/products", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("/password");
+    expect(sidOf(res)).toMatch(/^morbeh_sid=visitor-1;/);
+  });
+
+  it("the gate page itself and a gated refusal carry it", async () => {
+    access["shop-a"] = { locked: true, accessVersion: 1 };
+    const gate = await run("/password", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(sidOf(gate)).toMatch(/^morbeh_sid=visitor-1;/);
+
+    const refused = await run("/", { method: "POST", headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(refused.status).toBe(403);
+    expect(sidOf(refused)).toMatch(/^morbeh_sid=visitor-1;/);
+  });
+
+  it("the redirect away from an open gate carries it", async () => {
+    const away = await run("/password", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(away.status).toBe(302);
+    expect(sidOf(away)).toMatch(/^morbeh_sid=visitor-1;/);
+  });
+
+  it("error texts carry it: unavailable access state, preview write, unknown or inactive host", async () => {
+    access["shop-a"] = "fail";
+    const down = await run("/", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(down.status).toBe(503);
+    expect(sidOf(down)).toMatch(/^morbeh_sid=visitor-1;/);
+
+    access["shop-a"] = { locked: false, accessVersion: 1 };
+    const preview = await run(`/?preview=${TOKEN}`, {
+      method: "POST",
+      headers: { cookie: "morbeh_sid=visitor-1" },
+    });
+    expect(preview.status).toBe(403);
+    expect(sidOf(preview)).toMatch(/^morbeh_sid=visitor-1;/);
+
+    vi.stubEnv("STOREFRONT_HOST_ROUTING", "on");
+    const unknown = await run("/", {
+      host: "nowhere.example",
+      headers: { cookie: "morbeh_sid=visitor-1" },
+    });
+    expect(unknown.status).toBe(404);
+    expect(sidOf(unknown)).toMatch(/^morbeh_sid=visitor-1;/);
+    const inactive = await run("/", {
+      host: "c.example",
+      headers: { cookie: "morbeh_sid=visitor-1" },
+    });
+    expect(inactive.status).toBe(503);
+    expect(sidOf(inactive)).toMatch(/^morbeh_sid=visitor-1;/);
+  });
+
+  it("the sent marker slides while it names the session and goes when it does not", async () => {
+    const same = await run("/", {
+      headers: { cookie: "morbeh_sid=visitor-1; morbeh_lead_sent=visitor-1" },
+    });
+    expect(same.cookies.get("morbeh_lead_sent")).toMatchObject({
+      value: "visitor-1",
+      maxAge: 1800,
+    });
+
+    const other = await run("/", {
+      headers: { cookie: "morbeh_sid=visitor-1; morbeh_lead_sent=visitor-2" },
+    });
+    expect(other.cookies.get("morbeh_lead_sent")).toMatchObject({ value: "", maxAge: 0 });
+  });
+
+  it("does not change what the page receives", async () => {
+    const res = await run("/", { headers: { cookie: "morbeh_sid=visitor-1" } });
+    expect(forwarded(res, "x-morbeh-return-path")).toBe("/");
+    expect(res.headers.get("x-middleware-next")).toBe("1");
+  });
+});

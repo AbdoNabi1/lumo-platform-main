@@ -21,6 +21,7 @@ function signupRequest(fields: Record<string, string> = {}): NextRequest {
     email: "owner@nile.example",
     password: "pw-12345678",
     country: "EG",
+    siteType: "store",
     ...fields,
   };
   for (const [key, value] of Object.entries(values)) form.set(key, value);
@@ -46,8 +47,40 @@ describe("POST /auth/signup", () => {
         email: "owner@nile.example",
         password: "pw-12345678",
         country: "EG",
+        siteType: "store",
       }),
     );
+  });
+
+  it("passes a lead_site choice through to the runtime", async () => {
+    signUpMock.mockResolvedValue({ ok: true, token: "tok", expiresIn: 3600 });
+    await POST(signupRequest({ siteType: "lead_site" }));
+    expect(signUpMock).toHaveBeenCalledWith(expect.objectContaining({ siteType: "lead_site" }));
+  });
+
+  it.each([
+    ["no siteType", undefined],
+    ["an empty siteType", ""],
+    ["an unknown siteType", "lead"],
+  ])("redirects %s to site-type without calling the runtime", async (_label, siteType) => {
+    const form = new FormData();
+    for (const [key, value] of Object.entries({
+      storeName: "Nile Shop",
+      email: "owner@nile.example",
+      password: "pw-12345678",
+      country: "EG",
+      ...(siteType === undefined ? {} : { siteType }),
+    })) {
+      form.set(key, value);
+    }
+    const request = new NextRequest(new URL("/auth/signup", ORIGIN), {
+      method: "POST",
+      body: form,
+    });
+    const response = await POST(request);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(`${ORIGIN}/signup?error=site-type`);
+    expect(signUpMock).not.toHaveBeenCalled();
   });
 
   it("trims the store name and email before sending them", async () => {

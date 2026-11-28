@@ -8,6 +8,7 @@ import {
   DisablePrincipalOnUserDeactivated,
   ProvisionPrincipalOnUserCreated,
 } from "./security/security-provisioning.consumers";
+import { trackingBusinessHandlers } from "./consumers/tracking-business.consumers";
 import { TrackingIngestHandler } from "./tracking/tracking-ingest";
 import { buildAlwaysOnConsumerRuntimes } from "./worker";
 
@@ -25,7 +26,7 @@ import { buildAlwaysOnConsumerRuntimes } from "./worker";
  * REALLY subscribes to, and every one of those must be in the inventory and in the compose manifest.
  * The always-on list comes from `buildAlwaysOnConsumerRuntimes` — the same function `startWorker`
  * registers — over an inert core, so a consumer added there is checked the day it lands. The two
- * config-gated wirings (`buildTrackingIngestRuntime`, `wireSecurityProvisioning`) need real
+ * config-gated wirings (`buildTrackingIngestRuntime`, `buildTrackingBusinessConsumerRuntimes`, `wireSecurityProvisioning`) need real
  * infrastructure to construct, so their handlers are listed explicitly; when either gains one, add it.
  */
 
@@ -48,6 +49,8 @@ const GATED_HANDLERS = [
   new DisablePrincipalOnUserDeactivated(inert()),
   new AssignRoleOnMembershipCreated(inert()),
   new TrackingIngestHandler(inert()),
+  // Tracking P2-D3: the five order consumers (created, placed, cancelled, returned, delivered), gated like ingest.
+  ...trackingBusinessHandlers(inert()).map(({ handler }) => handler),
 ];
 
 function subscribedTopics(): readonly string[] {

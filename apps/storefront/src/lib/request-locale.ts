@@ -4,6 +4,7 @@ import { isLocale, LOCALE_COOKIE, type Locale } from "./i18n";
 import { LOCKED_VIEW_HEADER } from "./locked-routes";
 import { getStorefrontShell, PREVIEW_HEADER, type StorefrontShell } from "./online-store";
 import { RETURN_PATH_HEADER } from "./return-to";
+import { getPublicStore } from "./runtime-api";
 
 /** The preview token the middleware forwarded (client-sent copies were stripped there). */
 export const getPreviewToken = cache(async (): Promise<string | null> =>
@@ -26,6 +27,9 @@ export const getLockedView = cache(
 export const getRequestShell = cache(async (): Promise<StorefrontShell> =>
   getStorefrontShell(await getPreviewToken()),
 );
+
+/** The shop's public facts (name, currency, site type), read once per request. */
+export const getRequestPublicStore = cache(getPublicStore);
 
 /** Ruling 22: the shopper's cookie, else the shop's default language (Arabic when unset). */
 export const getRequestLocale = cache(async (): Promise<Locale> => {

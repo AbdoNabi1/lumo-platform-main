@@ -1,6 +1,7 @@
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
 export type WeightUnit = "kg" | "g" | "lb" | "oz";
+export type SiteType = "store" | "lead_site";
 
 /** `GET /store/settings` — Shopify's Settings → General for the shop. */
 export interface StoreSettingsDto {
@@ -12,9 +13,12 @@ export interface StoreSettingsDto {
   readonly weightUnit: WeightUnit;
   /** When the merchant dismissed Home's setup guide; optional so an older API still validates. */
   readonly setupGuideDismissedAt?: string | null;
+  /** Fixed at sign-up, read-only here; optional so an older API still validates. */
+  readonly siteType?: SiteType;
 }
 
 const WEIGHT_UNITS: readonly string[] = ["kg", "g", "lb", "oz"];
+const SITE_TYPES: readonly string[] = ["store", "lead_site"];
 
 function isStoreSettingsDto(value: unknown): value is StoreSettingsDto {
   if (typeof value !== "object" || value === null) return false;
@@ -28,7 +32,9 @@ function isStoreSettingsDto(value: unknown): value is StoreSettingsDto {
     WEIGHT_UNITS.includes(candidate["weightUnit"]) &&
     (candidate["setupGuideDismissedAt"] === undefined ||
       candidate["setupGuideDismissedAt"] === null ||
-      typeof candidate["setupGuideDismissedAt"] === "string")
+      typeof candidate["setupGuideDismissedAt"] === "string") &&
+    (candidate["siteType"] === undefined ||
+      (typeof candidate["siteType"] === "string" && SITE_TYPES.includes(candidate["siteType"])))
   );
 }
 
@@ -49,9 +55,17 @@ export function updateStoreSettings(
   settings: StoreSettingsDto,
   idempotencyKey: string,
 ): Promise<MutationResult<StoreSettingsDto>> {
+  // The API's allow-list is these five fields; siteType is never written after sign-up.
+  const body = {
+    storeName: settings.storeName,
+    contactEmail: settings.contactEmail,
+    currency: settings.currency,
+    timezone: settings.timezone,
+    weightUnit: settings.weightUnit,
+  };
   return mutateAdminApi(
     "/api/v1/store/settings",
-    { method: "PUT", body: settings, idempotencyKey },
+    { method: "PUT", body, idempotencyKey },
     isStoreSettingsDto,
   );
 }
@@ -74,6 +88,7 @@ export const DEFAULT_STORE_SETTINGS: StoreSettingsDto = {
   currency: "EGP",
   timezone: "Africa/Cairo",
   weightUnit: "kg",
+  siteType: "store",
 };
 
 /** The settings, or the defaults when they cannot be read (the product editor must still open). */

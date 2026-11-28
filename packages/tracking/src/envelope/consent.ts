@@ -132,3 +132,45 @@ export const DENY_ALL_CONSENT: ConsentSnapshot = {
     personalization: false,
   },
 };
+
+/**
+ * A store's consent policy (Tracking P2-D1). `notice_only` is the default and the Egypt/MENA norm: the storefront
+ * shows a notice, the visitor is not asked, and tracking runs. `opt_in` keeps the fail-closed gate: an event is
+ * forwarded to a marketing destination only when its snapshot carries explicit grants.
+ */
+export type ConsentPolicy = "notice_only" | "opt_in";
+
+export const CONSENT_POLICIES: readonly ConsentPolicy[] = ["notice_only", "opt_in"];
+
+/** What a store with no saved settings gets (and what an unreadable settings row falls back to). */
+export const DEFAULT_CONSENT_POLICY: ConsentPolicy = "notice_only";
+
+/**
+ * Stamps the consent an event is forwarded under, from the STORE's policy — never from what the browser claimed.
+ *
+ * - `notice_only`: the snapshot is overwritten with analytics and marketing granted (`ad_storage`, `ad_user_data`,
+ *   `analytics_storage` granted, `ad_personalization` denied) and personalization denied, marked
+ *   `framework: "notice_only"` and `capturedAt` now, so a record states under which rule it was forwarded.
+ * - `opt_in`: the snapshot is left as it arrived (an absent one is deny-all). Nothing grants consent here; the
+ *   router's and the delivery pipeline's fail-closed gates do the refusing.
+ */
+export function applyConsentPolicy(
+  consent: ConsentSnapshot | undefined,
+  policy: ConsentPolicy,
+  now: Date,
+): ConsentSnapshot {
+  if (policy === "opt_in") return consent ?? DENY_ALL_CONSENT;
+  return {
+    analytics: true,
+    marketing: true,
+    personalization: false,
+    grants: {
+      analytics_storage: true,
+      ad_storage: true,
+      ad_user_data: true,
+      ad_personalization: false,
+    },
+    framework: "notice_only",
+    capturedAt: now.toISOString(),
+  };
+}

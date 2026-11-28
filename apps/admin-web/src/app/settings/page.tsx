@@ -9,6 +9,7 @@ import {
   LanguagesIcon,
   LockIcon,
   MapPinIcon,
+  MegaphoneIcon,
   ReceiptIcon,
   ScrollTextIcon,
   StoreIcon,
@@ -87,6 +88,12 @@ const SECTIONS: readonly SettingsSection[] = [
     Icon: GlobeIcon,
     title: (t) => t.settingsPage.domainsTitle,
     body: (t) => t.settingsPage.domainsBody,
+  },
+  {
+    href: "/settings/ad-platforms",
+    Icon: MegaphoneIcon,
+    title: (t) => t.settingsPage.adPlatformsTitle,
+    body: (t) => t.settingsPage.adPlatformsBody,
   },
   {
     href: "/locales",

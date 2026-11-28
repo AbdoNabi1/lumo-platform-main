@@ -144,6 +144,7 @@ describe("createAdminHttpApi — merchant sign-up availability", () => {
       email: "owner@nour.test",
       password: "correct-horse-1",
       country: "SA",
+      siteType: "store",
     },
   };
 
@@ -156,6 +157,28 @@ describe("createAdminHttpApi — merchant sign-up availability", () => {
     });
     expect(res.statusCode).toBe(503);
     expect(res.json()).toMatchObject({ code: "SIGNUP_UNAVAILABLE" });
+  });
+
+  it.each([
+    ["no siteType", undefined],
+    ["a siteType that is neither store nor lead_site", "lead"],
+  ])("refuses a sign-up with %s as 422 VALIDATION from the real server", async (_, siteType) => {
+    const { deps } = harness();
+    const app = await boot({ ...deps, tenantId: "tenant-local" });
+    const { storeName, email, password, country } = signup.payload;
+    const res = await app.inject({
+      ...signup,
+      headers: { ...signup.headers, "x-tenant-id": "tenant-local" },
+      payload: {
+        storeName,
+        email,
+        password,
+        country,
+        ...(siteType === undefined ? {} : { siteType }),
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json()).toMatchObject({ code: "VALIDATION" });
   });
 });
 

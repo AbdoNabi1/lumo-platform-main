@@ -18,7 +18,7 @@ import type {
 } from "../domain/repositories";
 import type { ShopDomain } from "../domain/shop-domain";
 import { StaffDirectoryEntry, type StaffDirectoryStatus } from "../domain/staff-directory";
-import type { StoreSettings } from "../domain/store-settings";
+import { StoreSettings, type SiteType } from "../domain/store-settings";
 import type { Tenant } from "../domain/tenant";
 import type { Workspace } from "../domain/workspace";
 import {
@@ -272,13 +272,8 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
   }
 
   async save(tenantId: string, settings: StoreSettings, tx?: unknown): Promise<void> {
-    const data = StoreSettingsMapper.toRow(settings);
     const run = async (client: TransactionClient): Promise<void> => {
-      await client.storeSettings.upsert({
-        where: { tenantId },
-        create: { tenantId, ...data },
-        update: data,
-      });
+      await upsertSettings(client, tenantId, settings);
     };
     // Reuse the caller's transaction; without one, open our own so `app.tenant_id` is set for RLS.
     if (tx !== undefined && tx !== null) {
@@ -287,6 +282,50 @@ export class PrismaStoreSettingsRepository implements StoreSettingsRepository {
     }
     await runInTenantTransaction(this.deps.prisma, tenantId, run);
   }
+
+  async modify(
+    tenantId: string,
+    change: (current: StoreSettings) => StoreSettings,
+  ): Promise<StoreSettings> {
+    return runInTenantTransaction(this.deps.prisma, tenantId, async (client) => {
+      const row = await client.storeSettings.findFirst({ where: { tenantId } });
+      const next = change(
+        row === null ? StoreSettings.defaults() : StoreSettingsMapper.toDomain(row),
+      );
+      // What the upsert returns is what is persisted (the site type is never part of the write).
+      return StoreSettingsMapper.toDomain(await upsertSettings(client, tenantId, next));
+    });
+  }
+
+  async settleSignupSiteType(tenantId: string, requested: SiteType, at: Date): Promise<SiteType> {
+    return runInTenantTransaction(this.deps.prisma, tenantId, async (client) => {
+      // Each statement is one atomic single-row write: a concurrent second settle blocks on the row
+      // lock, re-evaluates `siteTypeSettledAt IS NULL` as false and then reads the winner's type.
+      const created = await client.storeSettings.createMany({
+        data: [{ tenantId, siteType: requested, siteTypeSettledAt: at }],
+        skipDuplicates: true,
+      });
+      if (created.count === 0) {
+        await client.storeSettings.updateMany({
+          where: { tenantId, siteTypeSettledAt: null },
+          data: { siteType: requested, siteTypeSettledAt: at },
+        });
+      }
+      const row = await client.storeSettings.findFirst({ where: { tenantId } });
+      if (row === null) throw new Error("store_settings row missing after settling the site type");
+      return StoreSettingsMapper.toSiteType(row.siteType);
+    });
+  }
+}
+
+/** The one write path for settings: neither site-type column is in `create` or `update`. */
+function upsertSettings(client: TransactionClient, tenantId: string, settings: StoreSettings) {
+  const data = StoreSettingsMapper.toRow(settings);
+  return client.storeSettings.upsert({
+    where: { tenantId },
+    create: { tenantId, ...data },
+    update: data,
+  });
 }
 
 /** Platform-scoped like `PrismaShopDomainRepository`: every row carries the deployment's `tenantId`. */

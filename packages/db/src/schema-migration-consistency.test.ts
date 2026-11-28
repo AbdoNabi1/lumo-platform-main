@@ -1361,14 +1361,13 @@ describe("email connection SMTP kind (20261201000000)", () => {
     expect(columns).toEqual([]);
   });
 
-  it("sorts after the store email connections migration, last of all", () => {
+  it("sorts after the store email connections migration", () => {
     const names = readdirSync(migrationsDir)
       .filter((entry) => /^\d{14}_/.test(entry))
       .sort();
     expect(names.indexOf(name)).toBeGreaterThan(
       names.indexOf("20261130000000_store_email_connections"),
     );
-    expect(names.at(-1)).toBe(name);
   });
 
   it("the Prisma model keeps `kind` a plain string (the CHECK is the rule)", () => {
@@ -1378,5 +1377,691 @@ describe("email connection SMTP kind (20261201000000)", () => {
     );
     const model = /model EmailConnection \{([\s\S]*?)\n\}/.exec(text)?.[1] ?? "";
     expect(model).toMatch(/kind\s+String/);
+  });
+});
+
+describe("leads.leads — migration history matches the Prisma model (Lead Site Part C)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n")
+    .replace(/\r\n/g, "\n");
+  const model = /model Lead \{([\s\S]*?)\n\}/.exec(
+    readFileSync(join(migrationsDir, "..", "leads.prisma"), "utf-8").replace(/\r\n/g, "\n"),
+  )?.[1];
+
+  // The columns come from the model itself (`@map` or the field name), so adding a field to the
+  // model without a migration column fails here.
+  const modelColumns = (model ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("//") && !line.startsWith("@@"))
+    .map((line) => /@map\("(\w+)"\)/.exec(line)?.[1] ?? /^(\w+)\s/.exec(line)?.[1] ?? "");
+
+  it("reads the model's columns", () => {
+    expect(modelColumns).toHaveLength(18);
+    expect(modelColumns).toContain("submission_key");
+    expect(modelColumns).not.toContain("");
+  });
+
+  it("creates the schema before its table", () => {
+    expect(allSql).toContain('CREATE SCHEMA IF NOT EXISTS "leads";');
+  });
+
+  it("leads has exactly the model's columns", () => {
+    expect([...columnsEverAddedTo("leads", "leads", allSql)].sort()).toEqual(
+      [...modelColumns].sort(),
+    );
+  });
+
+  it("leads is RLS-forced with the exact tenant_isolation predicate", () => {
+    expect(allSql).toContain('ALTER TABLE "leads"."leads" ENABLE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('ALTER TABLE "leads"."leads" FORCE ROW LEVEL SECURITY;');
+    expect(allSql).toContain('DROP POLICY IF EXISTS tenant_isolation ON "leads"."leads";');
+    expect(allSql).toContain(
+      `CREATE POLICY tenant_isolation ON "leads"."leads" FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+
+  it("has the checks, the unique submission key and the two list indexes", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_status_check" CHECK ("status" IN ('new', 'contacted', 'qualified', 'converted', 'rejected', 'spam'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_tracking_status_check" CHECK ("tracking_status" IN ('pending', 'suppressed', 'skipped_spam', 'sent', 'failed'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "leads_spam_reason_check" CHECK ("spam_reason" IS NULL OR "spam_reason" IN ('honeypot', 'too_fast'))`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "leads_tenant_id_submission_key_key" ON "leads"."leads" ("tenant_id", "submission_key");',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "leads_tenant_id_id_idx" ON "leads"."leads" ("tenant_id", "id" DESC);',
+    );
+    expect(allSql).toContain(
+      'CREATE INDEX "leads_tenant_id_status_id_idx" ON "leads"."leads" ("tenant_id", "status", "id" DESC);',
+    );
+  });
+
+  it("is registered in the datasource schemas list", () => {
+    const main = readFileSync(join(migrationsDir, "..", "main.prisma"), "utf-8");
+    expect(main).toMatch(/schemas\s*=\s*\[[^\]]*"leads"/);
+  });
+});
+
+describe("tracking.ad_platform_connections — migration history matches the Prisma model (Lead Site Part D1)", () => {
+  const allSql = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort()
+    .map((dir) => readFileSync(join(migrationsDir, dir, "migration.sql"), "utf-8"))
+    .join("\n")
+    .replace(/\r\n/g, "\n");
+  const model = /model AdPlatformConnection \{([\s\S]*?)\n\}/.exec(
+    readFileSync(join(migrationsDir, "..", "tracking.prisma"), "utf-8").replace(/\r\n/g, "\n"),
+  )?.[1];
+
+  const modelColumns = (model ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("//") && !line.startsWith("@@"))
+    .map((line) => /@map\("(\w+)"\)/.exec(line)?.[1] ?? /^(\w+)\s/.exec(line)?.[1] ?? "");
+
+  it("reads the model's columns", () => {
+    expect(modelColumns).toHaveLength(11);
+    expect(modelColumns).toContain("sealed_secret");
+    expect(modelColumns).not.toContain("");
+  });
+
+  it("has exactly the model's columns", () => {
+    expect([...columnsEverAddedTo("tracking", "ad_platform_connections", allSql)].sort()).toEqual(
+      [...modelColumns].sort(),
+    );
+  });
+
+  it("is RLS-forced with the exact tenant_isolation predicate", () => {
+    const table = '"tracking"."ad_platform_connections"';
+    expect(allSql).toContain(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`);
+    expect(allSql).toContain(`ALTER TABLE ${table} FORCE ROW LEVEL SECURITY;`);
+    expect(allSql).toContain(`DROP POLICY IF EXISTS tenant_isolation ON ${table};`);
+    expect(allSql).toContain(
+      `CREATE POLICY tenant_isolation ON ${table} FOR ALL\n` +
+        `  USING (tenant_id = current_setting('app.tenant_id', true))\n` +
+        `  WITH CHECK (tenant_id = current_setting('app.tenant_id', true));`,
+    );
+  });
+
+  it("has the platform CHECK, the no-secret-for-google-ads CHECK and the unique (tenant, platform) index", () => {
+    expect(allSql).toContain(
+      `CONSTRAINT "ad_platform_connections_platform_check" CHECK ("platform" IN ('meta', 'tiktok', 'snap', 'ga4', 'google_ads'))`,
+    );
+    expect(allSql).toContain(
+      `CONSTRAINT "ad_platform_connections_google_ads_no_secret_check" CHECK ("sealed_secret" IS NULL OR "platform" <> 'google_ads')`,
+    );
+    expect(allSql).toContain(
+      'CREATE UNIQUE INDEX "ad_platform_connections_tenant_id_platform_key" ON "tracking"."ad_platform_connections" ("tenant_id", "platform");',
+    );
+  });
+
+  it("is additive: the migration only creates the table (no drop, no alter of existing objects)", () => {
+    const sql = readFileSync(
+      join(migrationsDir, "20261204000000_ad_platform_connections", "migration.sql"),
+      "utf-8",
+    ).replace(/\r\n/g, "\n");
+    expect(sql).toMatch(/^SET row_security = off;$/m);
+    expect(sql).toMatch(/^RESET row_security;$/m);
+    expect(sql).not.toMatch(/\bDROP (TABLE|COLUMN|SCHEMA|INDEX)\b/i);
+    expect(sql).not.toMatch(/\bALTER TABLE\b(?![^\n]*"ad_platform_connections")/i);
+  });
+});
+
+/**
+ * Tracking P1-D2: the durable delivery-retry queue. The generated client names every column of the
+ * model whenever it reads the table, so a model with no migration behind it would break every sweep in
+ * a deployment while the unit tests (fake-backed) stayed green.
+ */
+describe("tracking.delivery_retries — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const retrySql = readFileSync(
+    join(migrationsDir, "20261205000000_tracking_delivery_retry", "migration.sql"),
+    "utf-8",
+  );
+
+  function modelColumns(): string[] {
+    const schema = readFileSync(
+      join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+      "utf-8",
+    );
+    const body = /model TrackingDeliveryRetry \{([\s\S]*?)\n\}/.exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+\w+[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns()).toEqual(
+      expect.arrayContaining(["id", "tenant_id", "event_id", "destination", "next_retry_at"]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "delivery_retries", retrySql);
+    for (const column of modelColumns()) {
+      expect(actual.has(column), `expected "tracking"."delivery_retries"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-forced, tenant-isolated, readable cross-tenant for the due scan, with a tenant-led unique key", () => {
+    expect(retrySql).toContain(
+      'ALTER TABLE "tracking"."delivery_retries" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(retrySql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."delivery_retries" FOR ALL',
+    );
+    expect(retrySql).toContain(
+      'CREATE POLICY due_scan_read ON "tracking"."delivery_retries" FOR SELECT',
+    );
+    expect(retrySql).toContain(
+      'CREATE UNIQUE INDEX "delivery_retries_tenant_id_event_id_destination_key" ON "tracking"."delivery_retries" ("tenant_id", "event_id", "destination")',
+    );
+    expect(retrySql).toContain("CHECK (\"status\" IN ('pending', 'delivered', 'dead_lettered'))");
+  });
+
+  it("is the only migration at 20261205000000 (the profiles migration takes the next stamp)", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261205000000"))).toEqual([
+      "20261205000000_tracking_delivery_retry",
+    ]);
+  });
+});
+
+/**
+ * Tracking P1-D4: the TrackingProfile store. The generated client names every column of the model on every
+ * read, so a model with no migration behind it would break each ingest in a deployment while the fake-backed unit
+ * tests stayed green. Also pins the privacy shape: hashes only, tenant isolation, the retention scan policy.
+ */
+describe("tracking.tracking_profiles — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const profilesSql = readFileSync(
+    join(migrationsDir, "20261206000000_tracking_profiles", "migration.sql"),
+    "utf-8",
+  );
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  );
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingProfile")).toEqual(
+      expect.arrayContaining([
+        "id",
+        "tenant_id",
+        "visitor_id",
+        "email_std",
+        "lead_ids",
+        "click_ids",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "tracking_profiles", profilesSql);
+    for (const column of modelColumns("TrackingProfile")) {
+      expect(actual.has(column), `expected "tracking"."tracking_profiles"."${column}"`).toBe(true);
+    }
+  });
+
+  it("adds the redaction marker to the event records, nullable, matching the model", () => {
+    const added = columnsEverAddedTo("tracking", "tracking_event_records", profilesSql);
+    expect(added.has("network_redacted_at")).toBe(true);
+    expect(modelColumns("TrackingEventRecord")).toContain("network_redacted_at");
+    expect(profilesSql).toContain('ADD COLUMN "network_redacted_at" TIMESTAMP(3);');
+    expect(profilesSql).toContain("tracking_event_records_redaction_scan_idx");
+    expect(schema).toContain('map: "tracking_event_records_redaction_scan_idx"');
+  });
+
+  it("is RLS-forced and tenant-isolated; the cross-tenant scan is open only behind an explicit setting", () => {
+    expect(profilesSql).toContain(
+      'ALTER TABLE "tracking"."tracking_profiles" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(profilesSql).toContain(
+      'ALTER TABLE "tracking"."tracking_profiles" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(profilesSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."tracking_profiles" FOR ALL',
+    );
+    expect(profilesSql).toContain("current_setting('app.retention_scan', true) = 'on'");
+    // never an unconditional read policy on a table of hashed identity
+    expect(profilesSql).not.toMatch(/FOR SELECT\s+USING \(true\)/);
+  });
+
+  it("indexes the lookup keys tenant-first: visitor (unique), customer, email hash, phone hash", () => {
+    for (const index of [
+      'CREATE UNIQUE INDEX "tracking_profiles_tenant_id_visitor_id_key" ON "tracking"."tracking_profiles" ("tenant_id", "visitor_id")',
+      'CREATE INDEX "tracking_profiles_tenant_id_customer_id_idx" ON "tracking"."tracking_profiles" ("tenant_id", "customer_id")',
+      'CREATE INDEX "tracking_profiles_tenant_id_email_std_idx" ON "tracking"."tracking_profiles" ("tenant_id", "email_std")',
+      'CREATE INDEX "tracking_profiles_tenant_id_phone_e164_idx" ON "tracking"."tracking_profiles" ("tenant_id", "phone_e164")',
+    ]) {
+      expect(profilesSql).toContain(index);
+    }
+  });
+
+  it("stores no raw identity: no plain email / phone / name column exists", () => {
+    const actual = columnsEverAddedTo("tracking", "tracking_profiles", profilesSql);
+    for (const raw of ["email", "phone", "first_name", "last_name", "name", "address"]) {
+      expect(actual.has(raw), `raw column "${raw}" must not exist`).toBe(false);
+    }
+  });
+
+  it("is the only migration at 20261206000000 (blocked IPs take the next stamp)", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261206000000"))).toEqual([
+      "20261206000000_tracking_profiles",
+    ]);
+  });
+});
+
+/**
+ * Tracking P1-D9: the per-store IP block list. A model with no migration behind it would break every read of the
+ * list in a deployment while the in-memory-backed unit tests stayed green; and a tenant table without a forced,
+ * tenant-scoped policy would let one merchant read (or write) another's list.
+ */
+describe("tracking.blocked_ips — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const blockedSql = readFileSync(
+    join(migrationsDir, "20261207000000_tracking_blocked_ips", "migration.sql"),
+    "utf-8",
+  );
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  );
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingBlockedIp")).toEqual(
+      expect.arrayContaining(["id", "tenant_id", "cidr", "note", "created_at", "created_by"]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "blocked_ips", blockedSql);
+    for (const column of modelColumns("TrackingBlockedIp")) {
+      expect(actual.has(column), `expected "tracking"."blocked_ips"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(blockedSql).toContain('ALTER TABLE "tracking"."blocked_ips" ENABLE ROW LEVEL SECURITY;');
+    expect(blockedSql).toContain('ALTER TABLE "tracking"."blocked_ips" FORCE ROW LEVEL SECURITY;');
+    expect(blockedSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."blocked_ips" FOR ALL',
+    );
+    expect(blockedSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(blockedSql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+    // never an open read policy on a tenant's list
+    expect(blockedSql).not.toMatch(/USING \(true\)/);
+  });
+
+  it("keeps one row per (tenant, range) — a repeat add is a unique-key no-op — and indexes tenant-first", () => {
+    expect(blockedSql).toContain(
+      'CREATE UNIQUE INDEX "blocked_ips_tenant_id_cidr_key" ON "tracking"."blocked_ips" ("tenant_id", "cidr")',
+    );
+    expect(blockedSql).toContain(
+      'CREATE INDEX "blocked_ips_tenant_id_created_at_idx" ON "tracking"."blocked_ips" ("tenant_id", "created_at")',
+    );
+    expect(schema).toMatch(/model TrackingBlockedIp \{[\s\S]*@@unique\(\[tenantId, cidr\]\)/);
+  });
+
+  it("adds the fingerprint lookup index the model declares, and nothing else to the profiles table", () => {
+    expect(blockedSql).toContain(
+      'CREATE INDEX "tracking_profiles_tenant_id_fingerprint_id_idx"\n  ON "tracking"."tracking_profiles" ("tenant_id", "fingerprint_id");',
+    );
+    expect(schema).toContain("@@index([tenantId, fingerprintId])");
+    expect(blockedSql).not.toMatch(/ALTER TABLE "tracking"\."tracking_profiles" (ADD|DROP)/);
+  });
+
+  it("is additive: nothing is dropped or rewritten", () => {
+    expect(blockedSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(blockedSql).not.toMatch(/\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/i);
+  });
+
+  it("is the only migration at 20261207000000", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261207000000"))).toEqual([
+      "20261207000000_tracking_blocked_ips",
+    ]);
+  });
+});
+
+/**
+ * Tracking P2-D1: `tracking.store_tracking_settings`, hand-written and applied by the owner before the release whose
+ * runtime reads it. A model without its migration would 500 the settings routes and, because the ingest runtime reads
+ * the policy for every event, fall back to the default policy for every store in a deployment while the in-memory
+ * tests stayed green; a tenant table without a forced, tenant-scoped policy would let one merchant read (or write)
+ * another's consent policy.
+ */
+describe("tracking.store_tracking_settings — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  // hand-written files are CRLF in a Windows working tree: compare on LF
+  const settingsSql = readFileSync(
+    join(migrationsDir, "20261208000000_tracking_store_settings", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  function modelColumns(model: string): string[] {
+    const start = schema.indexOf(`model ${model} {`);
+    const body = start < 0 ? "" : schema.slice(start, schema.indexOf("\n}", start));
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingStoreSettings")).toEqual(
+      expect.arrayContaining([
+        "tenant_id",
+        "consent_policy",
+        "cookie_notice_enabled",
+        "version",
+        "updated_at",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "store_tracking_settings", settingsSql);
+    for (const column of modelColumns("TrackingStoreSettings")) {
+      expect(actual.has(column), `expected "tracking"."store_tracking_settings"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is keyed by the tenant: one row per store, tenant id as the primary key", () => {
+    expect(settingsSql).toContain(
+      'CONSTRAINT "store_tracking_settings_pkey" PRIMARY KEY ("tenant_id")',
+    );
+    expect(schema).toMatch(
+      /model TrackingStoreSettings \{\s+tenantId\s+String\s+@id @map\("tenant_id"\)/,
+    );
+    expect(schema).toContain('@@map("store_tracking_settings")');
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(settingsSql).toContain(
+      'ALTER TABLE "tracking"."store_tracking_settings" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(settingsSql).toContain(
+      'ALTER TABLE "tracking"."store_tracking_settings" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(settingsSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."store_tracking_settings" FOR ALL',
+    );
+    expect(settingsSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(settingsSql).toContain(
+      "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))",
+    );
+    // never an open read policy on a tenant's settings
+    expect(settingsSql).not.toMatch(/USING \(true\)/);
+  });
+
+  it("defaults to today's behaviour (notice_only, notice shown) and refuses any other policy", () => {
+    expect(settingsSql).toContain(
+      `"consent_policy"        TEXT         NOT NULL DEFAULT 'notice_only'`,
+    );
+    expect(settingsSql).toContain(`CHECK ("consent_policy" IN ('notice_only', 'opt_in'))`);
+    expect(settingsSql).toContain(`"cookie_notice_enabled" BOOLEAN      NOT NULL DEFAULT true`);
+    expect(schema).toContain('@default("notice_only") @map("consent_policy")');
+    expect(schema).toContain('@default(true) @map("cookie_notice_enabled")');
+  });
+
+  it("is additive: one new table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(settingsSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(settingsSql).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(settingsSql.match(/CREATE TABLE/g)).toHaveLength(1);
+  });
+
+  it("is the only migration at 20261208000000", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261208000000"))).toEqual([
+      "20261208000000_tracking_store_settings",
+    ]);
+  });
+});
+
+/**
+ * Tracking P2-D8: `tracking.attribution_snapshots`, hand-written and applied by the owner before the release whose
+ * checkout route writes it. A model without its migration would make every `complete` call fail its (swallowed)
+ * snapshot write while the in-memory tests stayed green and every Purchase would go out with no visitor; a tenant
+ * table without a forced, tenant-scoped policy would let one merchant read another's visitor IPs and click ids; a
+ * missing retention policy would keep IPs forever.
+ */
+describe("tracking.attribution_snapshots — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const snapshotSql = readFileSync(
+    join(migrationsDir, "20261209000000_tracking_attribution_snapshots", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingAttributionSnapshot")).toEqual(
+      expect.arrayContaining([
+        "tenant_id",
+        "subject_kind",
+        "subject_ref",
+        "visitor_id",
+        "ip",
+        "user_agent",
+        "click_ids",
+        "captured_at",
+        "network_redacted_at",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "attribution_snapshots", snapshotSql);
+    for (const column of modelColumns("TrackingAttributionSnapshot")) {
+      expect(actual.has(column), `expected "tracking"."attribution_snapshots"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is keyed (tenant, kind, ref) so a second write for a subject is a conflict, tenant first", () => {
+    expect(snapshotSql).toContain(
+      'CONSTRAINT "attribution_snapshots_pkey" PRIMARY KEY ("tenant_id", "subject_kind", "subject_ref")',
+    );
+    expect(schema).toMatch(
+      /model TrackingAttributionSnapshot \{[\s\S]*@@id\(\[tenantId, subjectKind, subjectRef\]\)/,
+    );
+    expect(schema).toContain('@@map("attribution_snapshots")');
+    expect(snapshotSql).toContain(
+      'CREATE INDEX "attribution_snapshots_tenant_id_captured_at_idx" ON "tracking"."attribution_snapshots" ("tenant_id", "captured_at")',
+    );
+    expect(schema).toContain("@@index([tenantId, capturedAt])");
+  });
+
+  it("limits the subject kind to checkout and lead", () => {
+    expect(snapshotSql).toContain(`CHECK ("subject_kind" IN ('checkout', 'lead'))`);
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(snapshotSql).toContain(
+      'ALTER TABLE "tracking"."attribution_snapshots" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(snapshotSql).toContain(
+      'ALTER TABLE "tracking"."attribution_snapshots" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(snapshotSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."attribution_snapshots" FOR ALL',
+    );
+    expect(snapshotSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(snapshotSql).toContain(
+      "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))",
+    );
+  });
+
+  it("the only cross-tenant read is the retention scan, behind its explicit switch, and SELECT only", () => {
+    expect(snapshotSql).toContain(
+      "CREATE POLICY retention_scan_read ON \"tracking\".\"attribution_snapshots\" FOR SELECT\n  USING (current_setting('app.retention_scan', true) = 'on');",
+    );
+    expect(snapshotSql).not.toMatch(/USING \(true\)/);
+    expect(snapshotSql.match(/CREATE POLICY/g)).toHaveLength(2);
+  });
+
+  it("holds the network columns the retention nulls, and no contact data", () => {
+    expect(snapshotSql).toContain('"ip"                  TEXT,');
+    expect(snapshotSql).toContain('"user_agent"          TEXT,');
+    expect(snapshotSql).toContain('"network_redacted_at" TIMESTAMP(3)');
+    const columns = modelColumns("TrackingAttributionSnapshot");
+    for (const forbidden of ["email", "phone", "name", "address"]) {
+      expect(columns.filter((column) => column.includes(forbidden))).toEqual([]);
+    }
+  });
+
+  it("is additive: one new table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(snapshotSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(snapshotSql).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(snapshotSql.match(/CREATE TABLE/g)).toHaveLength(1);
+    expect(snapshotSql).not.toMatch(
+      /ALTER TABLE "tracking"\."(?!attribution_snapshots)\w+" (ADD|DROP)/,
+    );
+  });
+
+  it("is the only migration at 20261209000000, and sorts after the settings migration", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261209000000"))).toEqual([
+      "20261209000000_tracking_attribution_snapshots",
+    ]);
+    expect(dirs.indexOf("20261209000000_tracking_attribution_snapshots")).toBeGreaterThan(
+      dirs.indexOf("20261208000000_tracking_store_settings"),
+    );
+  });
+});
+
+describe("leads.leads tracking sweep — migration matches the Prisma model (P2-D9)", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const sweepSql = readFileSync(
+    join(migrationsDir, "20261210000000_leads_tracking_pending", "migration.sql"),
+    "utf-8",
+  );
+  const sweep = sweepSql.replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "leads.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  it("is hand-written: it opens with its own explanation, switches row security off and back on", () => {
+    // (line endings are not asserted: the working tree is CRLF on Windows, the repository normalises to LF)
+    expect(sweep.startsWith("-- Tracking P2-D9")).toBe(true);
+    expect(sweep).toContain("NOT applied by the agent");
+    expect(sweep).toContain("SET row_security = off;");
+    expect(sweep.trimEnd().endsWith("RESET row_security;")).toBe(true);
+  });
+
+  it("creates the (tenant, tracking status, created at) index the model declares, tenant first", () => {
+    expect(sweep).toContain(
+      'CREATE INDEX "leads_tenant_id_tracking_status_created_at_idx" ON "leads"."leads" ("tenant_id", "tracking_status", "created_at");',
+    );
+    expect(schema).toContain("@@index([tenantId, trackingStatus, createdAt])");
+  });
+
+  it("keeps the table RLS-enabled and forced", () => {
+    expect(sweep).toContain('ALTER TABLE "leads"."leads" ENABLE ROW LEVEL SECURITY;');
+    expect(sweep).toContain('ALTER TABLE "leads"."leads" FORCE ROW LEVEL SECURITY;');
+  });
+
+  it("the only cross-tenant read is the sweep scan: SELECT only, pending rows only, behind its explicit switch", () => {
+    expect(sweep).toContain(
+      "CREATE POLICY tracking_sweep_read ON \"leads\".\"leads\" FOR SELECT\n  USING (current_setting('app.tracking_sweep', true) = 'on' AND tracking_status = 'pending');",
+    );
+    expect(sweep).not.toMatch(/USING \(true\)/);
+    expect(sweep.match(/CREATE POLICY/g)).toHaveLength(1);
+    // no write policy, no widening of tenant_isolation
+    expect(sweep).not.toMatch(/FOR (ALL|INSERT|UPDATE|DELETE)/);
+  });
+
+  it("is additive: no column, no table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(sweep).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(sweep).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(sweep).not.toMatch(/CREATE TABLE|ADD COLUMN|ALTER COLUMN/i);
+    expect(sweep.match(/CREATE (UNIQUE )?INDEX/g)).toHaveLength(1);
+  });
+
+  it("is the only migration at 20261210000000 and sorts after the snapshot migration", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261210000000"))).toEqual([
+      "20261210000000_leads_tracking_pending",
+    ]);
+    expect(dirs.indexOf("20261210000000_leads_tracking_pending")).toBeGreaterThan(
+      dirs.indexOf("20261209000000_tracking_attribution_snapshots"),
+    );
   });
 });

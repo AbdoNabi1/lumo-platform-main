@@ -21,6 +21,11 @@ import { loginRequirement, readCheckoutSettings } from "./checkout-settings-guar
 import { withLineImages } from "./product-images";
 import { resolveCustomerSessionId } from "./public-auth-routes";
 import { resolveSessionRef } from "./public-cart-routes";
+import {
+  checkoutTrackingBody,
+  recordCheckoutSnapshot,
+  type CheckoutSnapshotRecorder,
+} from "./public-checkout-tracking";
 
 const checkoutSessionIdParams = z.object({ checkoutSessionId: z.string().min(1) });
 /** Same H-05 rationale as `public-cart-routes.ts`'s identical field — see its doc comment. */
@@ -95,6 +100,11 @@ const discountCodeParams = z.object({
 const completeBody = z.object({
   sessionRef: z.string().min(1),
   idempotencyKey: z.string().min(1),
+  /**
+   * Tracking P2-D8: what the visitor's browser carried (attribution snapshot). OPTIONAL — a body without it
+   * completes exactly as before — and strict with size caps inside (`public-checkout-tracking.ts`).
+   */
+  tracking: checkoutTrackingBody.optional(),
 });
 
 /**
@@ -354,7 +364,13 @@ export function checkoutItemsOf(
   }));
 }
 
-export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinition[] {
+export function publicCheckoutRoutes(
+  admin: WiredAdmin,
+  options: {
+    /** Tracking P2-D8: keeps the attribution snapshot of an order. Absent ⇒ `tracking` is accepted and ignored. */
+    readonly attributionSnapshots?: CheckoutSnapshotRecorder;
+  } = {},
+): readonly RouteDefinition[] {
   return withLineImages(admin, [
     defineRoute({
       method: "POST",
@@ -826,6 +842,13 @@ export function publicCheckoutRoutes(admin: WiredAdmin): readonly RouteDefinitio
           context.tenantId,
         );
         if (!(owned instanceof CheckoutSession)) return owned;
+        // P2-D8: BEFORE the order exists, so any `orders.order.created` finds it. First write wins; never blocks.
+        await recordCheckoutSnapshot(
+          options.attributionSnapshots,
+          context.tenantId,
+          params.checkoutSessionId,
+          body.tracking,
+        );
         const result = await admin.publicReads.checkout.complete({
           tenantId: context.tenantId,
           checkoutSessionId: params.checkoutSessionId,

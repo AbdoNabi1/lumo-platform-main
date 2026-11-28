@@ -286,6 +286,15 @@ function settingsOf(type: SectionType, raw: Raw): PublicSettings | null {
         message: r.text("message"),
       };
     }
+    case "lead_form":
+      return {
+        heading: r.text("heading"),
+        text: r.text("text"),
+        submitLabel: r.text("submitLabel"),
+        successMessage: r.text("successMessage"),
+        showEmail: r.boolean("showEmail"),
+        showMessage: r.boolean("showMessage"),
+      };
   }
 }
 

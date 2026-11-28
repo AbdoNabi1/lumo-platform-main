@@ -463,6 +463,66 @@ Notes:
 - `EMAIL_CREDENTIALS_KEK_REF` needs no rotation for this: email accounts were never stored with their key
   reference.
 
+### 4g. Tracking capture secret (`TRACKING_EDGE_SECRET`) — owner step, optional
+
+The storefront's server sends its tracking events to `runtime-api` (`POST /api/v1/public/tracking/collect`)
+signed with a shared secret (HMAC-SHA256 over a timestamp and the body; a request more than 5 minutes old is
+refused). Nothing is captured until **the same random value is set on both services**:
+
+1. Generate one value, at least 32 characters (PowerShell):
+   `$b = New-Object byte[] 32; [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); ($b | ForEach-Object { $_.ToString('x2') }) -join ''`
+2. Set it as `TRACKING_EDGE_SECRET` on `runtime-api` **and** on `storefront` (a secret in the secret manager,
+   never in git or a chat). Redeploy both.
+3. Either side missing it is safe: `runtime-api` answers `503 NOT_CONFIGURED` and the storefront sends
+   nothing. Nothing crashes and no page slows down.
+
+Events then travel over whichever transport is configured (`EVENT_TRANSPORT`): under `postgres` the API
+appends each one to `platform.outbox` and the worker's relay hands it to the tracking ingest consumer, which
+is on by default (`TRACKING_INGEST_ENABLED`; set `off` to stop it) and needs no registry seeding: a store with no ad
+platform connected has an empty registry and its events only update the visitor profile. Rotate the secret by setting a new
+value on both services in the same deploy window; requests signed with the old one fail with 401 until both
+have restarted.
+
+### 4h. Edge capture on the store's own domain (P1) — nothing to configure
+
+With §4g set, the storefront's middleware does the following on every **page navigation** (never on assets,
+prefetches, crawlers or staff previews), with no database or network call on a plain page view:
+
+- sets the first-party master cookie `_mb_id` (UUID, 400 days, `Secure`, `SameSite=Lax`, host-only, readable by
+  scripts) from the server response, and keeps the latest click id per platform in an HttpOnly `_mb_clk`
+  cookie (90 days) and Meta's `_fbc` (derived from `fbclid`);
+- reads click ids from the landing URL with their documented aliases (`ScCid`/`sccid`/`sc_click_id`, `gclid`,
+  `gbraid`, `wbraid`, `ttclid`, `msclkid`, `twclid`, `li_fat_id`, `epik`) and swaps in the backup parameters
+  `mb_gclid`, `mb_fbclid`, `mb_ttclid`, `mb_sccid`, … when a browser stripped the native one;
+- for a brand-new visitor or a landing that carries a click id/UTM, sends ONE signed background `visitor_touch`
+  event (no vendor receives it; it teaches the visitor's profile). The answer can carry cookies the browser lost
+  (Cookie Keeper); they are set on that visitor's next request.
+
+**Client IP.** `X-Forwarded-For` is only believed from the right: `STOREFRONT_TRUSTED_PROXIES` is the number of
+proxies in front of the storefront that append to it. Railway's edge is one, so the default `1` (the LAST entry
+is the visitor) is right for the normal deployment. Set `2` when a CDN sits in front of Railway, `0` when nothing
+appends the header (the address is then simply not recorded). The lead form uses the same rule. Never set it
+higher than the real chain: a value that is too high selects a value the visitor typed.
+
+### 4i. Collect-time enrichment and excluded addresses (P1-D8 / D9) — one optional file
+
+Nothing to configure for the common case. On every collected event the runtime adds the browser / OS / device
+parsed from the user agent, a bot score (0–100; at 50 or more an ordinary page event is recorded but **not** sent to
+the ad platforms — a real order or lead is never held back), the AI assistant a visit came from (ChatGPT,
+Perplexity, Gemini, Copilot, Claude, …) and a per-store cookieless visitor id (last-resort identity only; it never
+overrides a cookie or a customer). The bot score never looks at the IP address, because one Egyptian mobile carrier
+address is shared by thousands of real shoppers.
+
+- **Country (optional).** Put a MaxMind-format country database (`GeoLite2-Country.mmdb` from a free MaxMind
+  account, or DB-IP Lite) on the runtime API's disk and set `TRACKING_GEO_DB_PATH` to its path. The file is read
+  once at boot; nothing is downloaded at runtime. Unset, missing or corrupt ⇒ country detection is simply off (one
+  warning in the log). Keep the vendor's licence / attribution terms.
+- **Excluded addresses.** `tracking.blocked_ips` (migration `20261207000000_tracking_blocked_ips` — deploy it
+  BEFORE the release that reads it) holds the addresses a merchant asked to ignore, managed through the admin API
+  `GET/POST /tracking/blocked-ips`, `POST /tracking/blocked-ips/exclude-this-device`, `DELETE
+/tracking/blocked-ips/:id` (admin level). It is manual only, never blocks an order or a lead, and an unreadable
+  list blocks nothing. The same migration adds a lookup index on the cookieless id.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.
@@ -558,15 +618,16 @@ transaction as the change, and a **worker** delivers those rows to the consumers
 Without a worker none of that happens: the rows accumulate in the outbox and nothing reads them.
 Concretely, these do not run today:
 
-| Consumer (topic)                                  | What it does                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------- |
-| `payments.payment_intent.captured.v1`             | marks the order paid; Finance posts the fee entry                         |
-| `payments.payment_intent.refunded.v1`             | Finance posts the contra entry                                            |
-| `orders.order.paid.v1` (four consumers)           | ledger entry, loyalty points, customer profile, confirmation notification |
-| `licensing.subscription.*` (three dunning events) | opens the dunning notification record                                     |
-| `platform.usage.recorded.v1`                      | counts usage into Licensing's usage counters (G-79)                       |
-| `identity.user.*`, `identity.membership.created`  | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
-| `tracking.event.captured.v1`                      | tracking ingest — only if `TRACKING_INGEST_ENABLED` is on                 |
+| Consumer (topic)                                                                        | What it does                                                              |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `payments.payment_intent.captured.v1`                                                   | marks the order paid; Finance posts the fee entry                         |
+| `payments.payment_intent.refunded.v1`                                                   | Finance posts the contra entry                                            |
+| `orders.order.paid.v1` (four consumers)                                                 | ledger entry, loyalty points, customer profile, confirmation notification |
+| `licensing.subscription.*` (three dunning events)                                       | opens the dunning notification record                                     |
+| `platform.usage.recorded.v1`                                                            | counts usage into Licensing's usage counters (G-79)                       |
+| `identity.user.*`, `identity.membership.created`                                        | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
+| `tracking.event.captured.v1`                                                            | tracking ingest — on by default; skipped if `TRACKING_INGEST_ENABLED=off` |
+| `orders.order.created/placed/cancelled`, `fulfillment.order.delivered/returned` (`.v1`) | server Purchase / Delivered / Cancelled tracking events (same switch)     |
 
 The worker can get the rows to its consumers in one of two ways, chosen by `EVENT_TRANSPORT`:
 
@@ -661,9 +722,9 @@ environment is a boot failure waiting to happen rather than a shortcut.
 | `OUTBOX_RELAY_ENABLED` | `true`                 | required with `postgres`, or the config refuses to load     |
 
 `KAFKA_BROKERS` is not needed. `REDIS_URL` still is: the delivery loop takes a Redis lock so two
-workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**, and do not set
-`TRACKING_INGEST_ENABLED=true` — the collector publishes to a broker, so the config refuses that
-combination.
+workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**. Tracking ingest is on by default (`TRACKING_INGEST_ENABLED`, no registry
+seeding needed — Tracking P2-D2) and works under this
+transport (`runtime-api` appends events to the outbox; see §4g).
 
 How it behaves (`apps/runtime/src/outbox-delivery-runtime.ts`): every `OUTBOX_RELAY_INTERVAL_MS`
 (2 s) the worker takes the pending rows that are due, oldest first, and hands each to every consumer
@@ -804,7 +865,21 @@ Under `EVENT_TRANSPORT=postgres`:
   deliver the same rows; the consumers' inbox (`platform.inbox_processed_events`) absorbs that.
 - **A consumer added later does not see earlier events** — rows on a topic with no subscriber are
   marked `published` immediately.
-- **No tracking ingest.** The collector needs a broker.
+- **Tracking ingest takes events from `runtime-api` only.** The standalone `apps/collector` publishes to a
+  broker and is not part of this deployment; the storefront-signed route (§4g) is.
+- **Tracking deliveries are retried durably.** A vendor call that fails transiently is retried by the
+  worker (every `TRACKING_RETRY_SWEEP_INTERVAL_MS`, 1 min) with growing delays — 1 min, 5 min, 30 min, 2 h,
+  6 h, 12 h, then daily — until the vendor's own window closes (GA4 72 h; Meta, TikTok, Snap 7 days minus
+  1 h), then the delivery is dead-lettered with its reason. The retry state lives in
+  `tracking.delivery_retries` (migration `20261205000000_tracking_delivery_retry`).
+- **Visitor profiles and privacy retention.** With tracking ingest on, the worker keeps a profile per visitor
+  (`tracking.tracking_profiles`, migration `20261206000000_tracking_profiles` — deploy it BEFORE the release that
+  reads it): hashes of email / phone / names, click ids with their capture time, browser ids, the last IP / user
+  agent / page. It completes later server events (a Purchase days after the click) with what earlier events of
+  the same visitor left, and applies each platform's click-id window. The worker's retention pass (every
+  `TRACKING_RETENTION_INTERVAL_MS`, 6 h) deletes an anonymous profile 400 days after it was last seen and removes
+  the IP and user agent from event records older than 90 days; a customer's profile is erased with the customer.
+  It runs in the worker, so it does not need the scheduler.
 - **Nothing prunes the outbox unless the scheduler runs.** Delivered rows are deleted after
   `OUTBOX_RETENTION_DAYS` by `apps/runtime/src/scheduler.ts`, which this guide does not deploy.
 - **Switching to `kafka` later** needs no data change: the two columns are ignored by the Kafka

@@ -47,6 +47,14 @@ import {
   type PaymentCredentialVault,
   type ProviderRegistration,
 } from "@platform/payments";
+import {
+  EnvelopeCredentialVault,
+  connectionsForDelivery,
+  wireAdPlatforms,
+  type ConnectionsForDelivery,
+  type CredentialVaultPort,
+  type DeliverySyncPort,
+} from "@platform/ad-platforms";
 import { paymobRegistration } from "./paymob-registration";
 import { StripePaymentProvider } from "@platform/psp-stripe";
 import {
@@ -70,6 +78,7 @@ import type {
 } from "@platform/returns";
 import {
   createRedis,
+  RedisClaimLedger,
   RedisDistributedLock,
   RedisIdempotencyKeyStore,
   RedisRateLimiter,
@@ -100,6 +109,7 @@ import type { RuntimeConfig } from "./config";
 import { RuntimeMetrics } from "./metrics";
 import { createOryFetch, isOryNetworkApiKey } from "./ory-fetch";
 import { TrackingIngestHandler, type TrackingCapturedPayload } from "./tracking/tracking-ingest";
+import { AdPlatformDeliverySync, type SiteType } from "./tracking/ad-platform-destinations";
 import { loadTrackingRegistry, PrismaTrackingRegistryStore } from "./tracking/tracking-registry";
 import {
   TrackingRegistryHandle,
@@ -107,6 +117,19 @@ import {
 } from "./tracking/tracking-registry-handle";
 import { TenantRuntimes } from "./tracking/tenant-runtimes";
 import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
+import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue";
+import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
+import { PrismaEventNetworkRedaction } from "./tracking/prisma-event-network-redaction";
+import { PrismaTrackingProfileStore } from "./tracking/prisma-tracking-profile-store";
+import { PrismaTrackingStoreSettingsStore } from "./tracking/prisma-tracking-store-settings";
+import { prismaStoreCallingCodeOf } from "./tracking/prisma-store-calling-code";
+import {
+  runTrackingRetention,
+  sweepDeliveryRetries,
+  TrackingSettingsService,
+  type RetrySweepReport,
+  type TrackingRetentionReport,
+} from "@platform/tracking";
 
 /**
  * The production composition root (Sprint 2.9, D-050). EVERY dependency is wired here — no
@@ -132,6 +155,8 @@ export interface RuntimeCore {
   /** Plan 1B-2: the platform's own staff token issuer. Present only when AUTH_MODE=native. */
   readonly staffTokenIssuer?: NativeTokenIssuer;
   readonly rateLimiter: RedisRateLimiter;
+  /** Lead Site Part C: the once-per-session lead claim store (`SET NX EX`), handed to the admin API. */
+  readonly leadEmissionLedger: RedisClaimLedger;
   readonly idempotencyKeys: RedisIdempotencyKeyStore;
   readonly distributedLock: RedisDistributedLock;
   readonly health: HealthRegistry;
@@ -182,6 +207,23 @@ export interface RuntimeCore {
    * otherwise. `api.ts` starts it once the server is listening.
    */
   readonly credentialReseal: CredentialResealPlan | undefined;
+  /**
+   * Lead Site Part D1: the REAL envelope vault the merchants' ad platform tokens are sealed with, built only
+   * when `AD_PLATFORM_CREDENTIALS_KEK_REF` is configured. Absent ⇒ the admin API saves public ids but answers
+   * 503 to a token (never a stub next to a real database).
+   */
+  readonly adPlatformCredentialVault?: CredentialVaultPort;
+  /**
+   * Lead Site Part D1 (Task 4): the delivery-side read of the sealed connections (live connections, opened
+   * secrets), built over the SAME tables with the SAME real vault — only when the vault is configured. The
+   * tracking runtime resolves `conn://` credentials through it.
+   */
+  readonly adPlatformConnections?: ConnectionsForDelivery;
+  /**
+   * Lead Site Part D1 (Task 4): re-syncs a shop's tracking destinations after a connection is saved. Handed to
+   * the admin API (`adPlatformDeliverySync`) so saving a connection reaches the registry.
+   */
+  readonly adPlatformDeliverySync?: DeliverySyncPort;
   /**
    * WP-14 T14.4: Licensing's REAL `PaymentsPort` — Morbeh charging a merchant through MORBEH'S OWN
    * PSP account (`PLATFORM_BILLING_STRIPE_*`), as a caller of the same `PaymentProvider` port
@@ -441,6 +483,21 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
           }),
         ]
       : [];
+  const adPlatformCredentialVault: CredentialVaultPort | undefined =
+    config.AD_PLATFORM_CREDENTIALS_KEK_REF !== undefined
+      ? buildAdPlatformCredentialVault(config.AD_PLATFORM_CREDENTIALS_KEK_REF)
+      : undefined;
+
+  const adPlatformDelivery =
+    adPlatformCredentialVault === undefined
+      ? undefined
+      : buildAdPlatformDelivery({
+          prisma,
+          vault: adPlatformCredentialVault,
+          clock,
+          idGenerator,
+          ruleSetKey: config.TRACKING_RULE_SET_KEY,
+        });
 
   const platformBillingPayments = buildPlatformBillingPayments(config);
   const platformBillingStoredMethod = buildPlatformBillingStoredMethod(
@@ -477,6 +534,7 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
     accessControl,
     ...(staffTokenIssuer === undefined ? {} : { staffTokenIssuer }),
     rateLimiter: new RedisRateLimiter(redis.client),
+    leadEmissionLedger: new RedisClaimLedger(redis.client),
     idempotencyKeys: new RedisIdempotencyKeyStore(redis.client),
     distributedLock: new RedisDistributedLock(redis.client),
     health,
@@ -498,6 +556,13 @@ export function buildRuntimeCore(config: RuntimeConfig): RuntimeCore {
           ? undefined
           : envelopeCarrierVault,
     }),
+    ...(adPlatformCredentialVault === undefined ? {} : { adPlatformCredentialVault }),
+    ...(adPlatformDelivery === undefined
+      ? {}
+      : {
+          adPlatformConnections: adPlatformDelivery.connections,
+          adPlatformDeliverySync: adPlatformDelivery.sync,
+        }),
     platformBillingPayments,
     platformBillingStoredMethod,
     licensing,
@@ -587,6 +652,20 @@ function buildCarrierCredentialVault(
 }
 
 /**
+ * The real ad platform credential vault (Lead Site Part D1), built exactly like
+ * `buildCarrierCredentialVault`: `@platform/secrets`' envelope encryption over `@platform/security`'s
+ * `NodeCrypto`, the data key wrapped under a KEK derived from `kekRef`, under its OWN alias. The stored
+ * row does NOT carry the key reference (O15, envelope v2): with `NodeCrypto` it IS the key material, so
+ * the cipher opens only with the keys of this trusted alias registry.
+ */
+export function buildAdPlatformCredentialVault(kekRef: string): CredentialVaultPort {
+  const alias = "ad-platform-credentials";
+  const aliases = new KeyAliasRegistry();
+  aliases.set(alias, kekRef);
+  return new EnvelopeCredentialVault(new EnvelopeCipher(new NodeCrypto(), aliases), alias);
+}
+
+/**
  * O15: the targets of the boot-time re-seal, one per sealed-credential table, each only while the
  * matching `*_PREVIOUS` key is set. The billing card tokens are sealed with the payments vault, so
  * they ride along with payments. `undefined` when no rotation is under way.
@@ -613,6 +692,56 @@ export function buildCredentialResealPlan(deps: {
     });
   }
   return targets.length === 0 ? undefined : { targets };
+}
+
+/**
+ * Lead Site Part D1 (Task 4): the delivery side of the ad platform connections. The runtime builds its OWN
+ * ad-platforms instance over the same tables and the same real vault (stateless; no `deliverySync`, so there
+ * is no cycle with the admin's instance that triggers the sync) and derives from it the connection reader the
+ * tracking runtime resolves `conn://` credentials through and the `AdPlatformDeliverySync` the admin calls
+ * after a connection is saved.
+ */
+export function buildAdPlatformDelivery(input: {
+  readonly prisma: Database;
+  readonly vault: CredentialVaultPort;
+  readonly clock: Clock;
+  readonly idGenerator: IdGenerator;
+  readonly ruleSetKey: string;
+}): { readonly connections: ConnectionsForDelivery; readonly sync: DeliverySyncPort } {
+  const connections = connectionsForDelivery(
+    wireAdPlatforms({
+      prisma: input.prisma,
+      vault: input.vault,
+      clock: input.clock,
+      idGenerator: input.idGenerator,
+    }).internal,
+  );
+  return {
+    connections,
+    sync: new AdPlatformDeliverySync({
+      store: new PrismaTrackingRegistryStore(input.prisma, input.idGenerator),
+      connections,
+      siteTypeOf: prismaSiteTypeOf(input.prisma),
+      clock: input.clock,
+      ruleSetKey: input.ruleSetKey,
+    }),
+  };
+}
+
+/**
+ * The shop's site type from its own settings row (tenancy owns the table; the default for a shop that never
+ * saved settings is `store`, as `StoreSettings.defaults()`). A value that is not a site type is corrupt data:
+ * it throws rather than guessing which events the shop may receive.
+ */
+export function prismaSiteTypeOf(prisma: Database): (tenantId: string) => Promise<SiteType> {
+  return async (tenantId) => {
+    const row = await runReadScoped(prisma, tenantId, (client) =>
+      client.storeSettings.findFirst({ where: { tenantId }, select: { siteType: true } }),
+    );
+    if (row === null) return "store";
+    if (row.siteType === "store" || row.siteType === "lead_site") return row.siteType;
+    throw new Error("store settings site type is not a site type");
+  };
 }
 
 /**
@@ -880,6 +1009,164 @@ export function buildPaymentCapturedRuntime(
 }
 
 /**
+ * What the tracking consumer and the delivery-retry sweeper (P1-D2) share, built once per core: the
+ * lazily-built per-tenant runtimes (registry, hot-reload watcher, circuit-breaker and token-bucket state,
+ * credential resolution) and the durable retry queue. One set of runtimes, not two, so a retry is sent by
+ * the SAME adapters and judged by the SAME breaker state as a first send.
+ */
+interface TrackingTenantParts {
+  readonly consumerGroup: string;
+  readonly deadLetters: PrismaDeadLetterStore;
+  readonly retryQueue: PrismaDeliveryRetryQueue;
+  readonly profiles: PrismaTrackingProfileStore;
+  readonly settings: TrackingSettingsService;
+  readonly tenantRuntimes: TenantRuntimes<TrackingRuntime>;
+}
+
+const trackingTenantPartsByCore = new WeakMap<RuntimeCore, TrackingTenantParts>();
+
+function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
+  const existing = trackingTenantPartsByCore.get(core);
+  if (existing !== undefined) return existing;
+
+  const registryStore = new PrismaTrackingRegistryStore(core.prisma, core.idGenerator);
+
+  const consumerGroup = "tracking.ingest";
+  const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
+  const retryQueue = new PrismaDeliveryRetryQueue(core.prisma, core.idGenerator);
+  const profiles = new PrismaTrackingProfileStore(core.prisma, core.idGenerator);
+  const secrets = createSecretProvider();
+  // P2-D1: the per-store consent policy every event is stamped with (30 s cache, unreadable => notice_only).
+  const settings = new TrackingSettingsService({
+    store: new PrismaTrackingStoreSettingsStore(core.prisma),
+    clock: core.clock,
+    onError: (cause) =>
+      core.logger.warn(
+        "tracking: store settings unreadable, consent policy falls back to notice_only",
+        {
+          error: cause instanceof Error ? cause.name : "unknown",
+        },
+      ),
+  });
+
+  // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
+  // first event that names the tenant (the envelope's tenant — never a deployment default). The old
+  // shape loaded a single tenant's registry at boot and routed every tenant's events through it.
+  //
+  // P2-D2: a tenant with no registry definitions (no ad platform connected) loads an EMPTY snapshot — its
+  // events update the visitor profile and nothing else — and its watcher keeps polling, so the first
+  // connection save is picked up within one poll interval.
+  // P2-D7: a store's national phone numbers are made E.164 with the calling code of its currency's market (read once
+  // per tenant runtime; a failed read means Egypt's code, never a dropped phone).
+  const callingCodeOf = prismaStoreCallingCodeOf(core.prisma, (cause) =>
+    core.logger.warn("tracking: store currency unreadable, phone country code falls back to 20", {
+      error: cause instanceof Error ? cause.name : "unknown",
+    }),
+  );
+  const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
+    const defaultCountryCode = await callingCodeOf(tenantId);
+    const snapshot = await loadTrackingRegistry(registryStore, tenantId);
+    const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
+    const watcher = new TrackingRegistryWatcher({
+      handle,
+      store: registryStore,
+      tenantId,
+      logger: core.logger,
+      intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
+    });
+    watcher.start();
+    const runtime = wireTrackingRuntime({
+      db: core.prisma,
+      idGenerator: core.idGenerator,
+      secrets,
+      registry: handle,
+      ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
+      clock: core.clock,
+      processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
+      deadLetters,
+      logger: core.logger,
+      retryQueue,
+      profiles,
+      consentPolicy: settings,
+      defaultCountryCode,
+      ...(core.adPlatformConnections === undefined
+        ? {}
+        : { connectionCredentials: core.adPlatformConnections }),
+    });
+    return { runtime, stop: () => watcher.stop() };
+  });
+
+  const parts: TrackingTenantParts = {
+    consumerGroup,
+    deadLetters,
+    retryQueue,
+    profiles,
+    settings,
+    tenantRuntimes,
+  };
+  trackingTenantPartsByCore.set(core, parts);
+  return parts;
+}
+
+/** Records redacted per transaction, and how long one retention pass may run. */
+const RETENTION_BATCH = 100;
+const RETENTION_BUDGET_MS = 4 * 60_000;
+
+/**
+ * Tracking P1-D10: one pass of the privacy retention — deletes anonymous visitor profiles past their 400 days and
+ * removes the IP and user agent from event records older than 90 days. Returns `null` when tracking ingest is
+ * off (no profile or record is written then, so there is nothing to retain). The caller owns the schedule and the
+ * single-flight lock (`startTrackingRetention`); this is just the work.
+ */
+export function buildTrackingRetention(
+  core: RuntimeCore,
+): (() => Promise<TrackingRetentionReport>) | null {
+  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+  const { profiles } = trackingTenantParts(core);
+  const events = new PrismaEventNetworkRedaction(core.prisma);
+  const snapshots = new PrismaAttributionSnapshotStore(core.prisma);
+  return () =>
+    runTrackingRetention({
+      profiles,
+      events,
+      // P2-D8: IP/UA of an order's attribution snapshot after 90 days, the row after 400.
+      snapshots,
+      clock: core.clock,
+      batchSize: RETENTION_BATCH,
+      budgetMs: RETENTION_BUDGET_MS,
+    });
+}
+
+/** Entries claimed per round trip, how long a claim is reserved, and how long one pass may run. */
+const RETRY_SWEEP_BATCH = 25;
+const RETRY_SWEEP_LEASE_MS = 10 * 60_000;
+const RETRY_SWEEP_BUDGET_MS = 4 * 60_000;
+
+/**
+ * Tracking P1-D2: one pass of the durable per-destination retry — claims due rows from
+ * `tracking.delivery_retries` and re-delivers each with its original event id through the tenant's own
+ * tracking runtime. Returns `null` when tracking ingest is off (nothing is ever parked then), so an
+ * unseeded deployment never reads the table. The caller owns the schedule and the single-flight lock
+ * (`startDeliveryRetrySweep`); this is just the work.
+ */
+export function buildDeliveryRetrySweep(
+  core: RuntimeCore,
+): (() => Promise<RetrySweepReport>) | null {
+  if (!core.config.TRACKING_INGEST_ENABLED) return null;
+  const { retryQueue, tenantRuntimes } = trackingTenantParts(core);
+  return () =>
+    sweepDeliveryRetries({
+      queue: retryQueue,
+      runtimeFor: async (tenantId) => (await tenantRuntimes.for(tenantId)).retry(),
+      clock: core.clock,
+      batchSize: RETRY_SWEEP_BATCH,
+      leaseMs: RETRY_SWEEP_LEASE_MS,
+      budgetMs: RETRY_SWEEP_BUDGET_MS,
+      random: Math.random,
+    });
+}
+
+/**
  * Tracking ingest slice (P1.3, investigation C-07): the consumer of
  * `tracking.event.captured.v1` — the one thing that was missing for the tracking platform to
  * function. The collector published to that topic and **nothing subscribed**, so every beacon was
@@ -906,45 +1193,8 @@ export function buildTrackingIngestRuntime(
 ): KafkaConsumerRuntime<TrackingCapturedPayload> | null {
   if (!core.config.TRACKING_INGEST_ENABLED) return null;
 
-  const registryStore = new PrismaTrackingRegistryStore(core.prisma, core.idGenerator);
-
-  const consumerGroup = "tracking.ingest";
+  const { consumerGroup, deadLetters, tenantRuntimes } = trackingTenantParts(core);
   const producer = new KafkaMessageProducer(core.kafka);
-  const deadLetters = new PrismaDeadLetterStore(core.prisma, consumerGroup, core.idGenerator);
-  const secrets = createSecretProvider();
-
-  // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
-  // first event that names the tenant (the envelope's tenant — never a deployment default). The old
-  // shape loaded a single tenant's registry at boot and routed every tenant's events through it.
-  //
-  // `loadTrackingRegistry` still throws on an empty registry, so a tenant with no definitions fails
-  // its event loudly (retry → DLQ) instead of being forwarded nowhere. The trade against the old
-  // boot-time load: a tenant whose registry is unseeded is now discovered on its first event, not
-  // at process start — the process no longer knows which tenants to check.
-  const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
-    const snapshot = await loadTrackingRegistry(registryStore, tenantId);
-    const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
-    const watcher = new TrackingRegistryWatcher({
-      handle,
-      store: registryStore,
-      tenantId,
-      logger: core.logger,
-      intervalMs: core.config.TRACKING_REGISTRY_POLL_MS,
-    });
-    watcher.start();
-    const runtime = wireTrackingRuntime({
-      db: core.prisma,
-      idGenerator: core.idGenerator,
-      secrets,
-      registry: handle,
-      ruleSetKey: core.config.TRACKING_RULE_SET_KEY,
-      clock: core.clock,
-      processed: new PrismaProcessedEventStore(core.prisma, consumerGroup),
-      deadLetters,
-      logger: core.logger,
-    });
-    return { runtime, stop: () => watcher.stop() };
-  });
 
   return new KafkaConsumerRuntime({
     kafka: core.kafka,

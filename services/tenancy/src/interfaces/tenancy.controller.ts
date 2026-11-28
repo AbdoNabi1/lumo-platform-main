@@ -9,6 +9,7 @@ import type {
   GetPublicStore,
   DismissSetupGuide,
   GetStoreSettings,
+  SettleSignupSiteType,
   UpdateStoreSettings,
 } from "../application/store-settings.use-cases";
 import type {
@@ -20,7 +21,7 @@ import type {
   ReserveStaffEmailInput,
 } from "../application/staff-directory.use-cases";
 import type { StaffDirectoryEntryInput, StaffDirectoryEntryView } from "../domain/staff-directory";
-import type { StoreSettingsInput } from "../domain/store-settings";
+import type { SiteType, StoreSettingsInput } from "../domain/store-settings";
 import type {
   AddCustomDomain,
   AddCustomDomainInput,
@@ -72,6 +73,7 @@ export interface TenancyControllerDeps {
   readonly getStoreSettings: GetStoreSettings;
   readonly updateStoreSettings: UpdateStoreSettings;
   readonly dismissSetupGuide: DismissSetupGuide;
+  readonly settleSignupSiteType: SettleSignupSiteType;
   readonly getPublicStore: GetPublicStore;
   readonly recordPendingOwner: RecordPendingOwner;
   readonly activateDirectoryEntry: ActivateDirectoryEntry;
@@ -114,6 +116,11 @@ export class TenancyController {
     input: StoreSettingsInput,
   ): Promise<ControllerResponse> {
     return present(await this.deps.updateStoreSettings.execute({ tenantId, ...input }), 200);
+  }
+
+  /** In-process only (the sign-up orchestrator); no HTTP route registers it. */
+  async settleSignupSiteType(tenantId: string, siteType: SiteType): Promise<ControllerResponse> {
+    return present(await this.deps.settleSignupSiteType.execute({ tenantId, siteType }), 200);
   }
 
   async dismissSetupGuide(tenantId: string): Promise<ControllerResponse> {

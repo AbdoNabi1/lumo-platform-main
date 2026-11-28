@@ -16,6 +16,7 @@ export const en = {
     customers: "Customers",
     segments: "Segments",
     reviews: "Reviews",
+    leads: "Leads",
     notifications: "Notifications",
     locales: "Locales",
     translationSets: "Translation sets",
@@ -2329,6 +2330,9 @@ export const en = {
     domainsBody: "Your store's web address and any domains you've connected.",
     billingTitle: "Plan and billing",
     billingBody: "Your Morbeh plan, payment method and bills.",
+    adPlatformsTitle: "Ad platforms",
+    adPlatformsBody:
+      "Connect Meta, TikTok, Snapchat and Google so your site's events reach each platform.",
   },
   /** Shopify parity Wave 1a — the Settings sub-navigation (Shopify's 19 entries, in its order). */
   settingsNav: {
@@ -2350,6 +2354,7 @@ export const en = {
     apps: "Apps and sales channels",
     domains: "Domains",
     customerEvents: "Customer events",
+    adPlatforms: "Ad platforms",
     notifications: "Notifications",
     customData: "Metafields and metaobjects",
     languages: "Languages",
@@ -2465,6 +2470,74 @@ export const en = {
     noEmailAccountWarning:
       "Customers can't sign up by email until you connect your store's email account in Notifications.",
     noEmailAccountLink: "Open Notifications",
+  },
+  /** Lead site D1 - Settings → Ad platforms: one card per platform (ids, token, switch, status). */
+  adPlatformsSettings: {
+    title: "Ad platforms",
+    subtitle:
+      "Connect Meta, TikTok, Snapchat and Google so your site's events reach each platform.",
+    back: "Back to settings",
+    loadError: "Couldn't load your ad platforms. Try again.",
+    unauthorized: "Sign in to manage ad platforms.",
+    siteTypeLead: "Your lead site sends Page view, Lead and Contact events.",
+    siteTypeStore:
+      "Your store sends commerce events: Page view, View item, Add to cart, Begin checkout and Purchase.",
+    statusLive: "Live",
+    statusIncomplete: "Incomplete",
+    statusOff: "Off",
+    enabled: "Send events to this platform",
+    pixelId: "Pixel ID",
+    pixelCode: "Pixel code",
+    measurementId: "Measurement ID",
+    conversionId: "Conversion ID",
+    labelLead: "Lead conversion label",
+    labelContact: "Contact conversion label",
+    labelPurchase: "Purchase conversion label",
+    token: "Access token",
+    tokenSaved: "Token ending in {last4}",
+    tokenKeep: "Leave empty to keep the saved token",
+    tokenNone:
+      "No token saved yet. Add one to send events from our server as well as from the browser.",
+    removeToken: "Remove token",
+    removeTitle: "Remove the saved token?",
+    removeBody:
+      "Events stop going from our server to this platform until you save a new token. This can't be undone.",
+    removeCancel: "Cancel",
+    removeConfirm: "Remove token",
+    removing: "Removing…",
+    testEventCode: "Test event code",
+    testEventCodeHint: "From the platform's test events tool. Leave empty when you're not testing.",
+    googleNote:
+      "Sending from our server to Google Ads comes in a later step; for now it works from the browser only.",
+    save: "Save",
+    saving: "Saving…",
+    saved: "Saved",
+    unsaved: "Unsaved changes",
+    conflict: "Someone else changed this. Reload the page to see the latest version.",
+    fieldInvalid: "Check this value.",
+    tokenInvalid: "A token is 10 to 1024 characters: letters, digits and . _ ~ + / = : | - only.",
+    unavailable: "Not available yet: this server isn't set up to store tokens.",
+    testEventButton: "Send test event",
+    testEventSending: "Sending…",
+    testSavedCodeWarning:
+      "A test code is saved. While it is set, all live events from your store go to {platform}'s Test Events and don't count for your ads. Clear the code and save when you're done testing.",
+    testSentCode:
+      "Test event sent. In {platform} Events Manager, open Test events to see it. It can take a minute to appear.",
+    testSentCheck:
+      "{platform} accepted the test event. It isn't counted in your reports: this only checks the connection.",
+    testProblems: "{platform} found problems with the test event:",
+    testRejectedToken: "{platform} didn't accept your token. Check the token and save it again.",
+    testRejectedStatus:
+      "{platform} refused the test event (status {status}). Check your ids and token.",
+    testRejectedNoAnswer: "Couldn't reach {platform}. Try again in a minute.",
+    testNotConnected: "Turn this platform on and save its ids and token first.",
+    testCodeRequired:
+      "Enter a test code first. In {platform} Events Manager, open Test events and copy the code shown there.",
+    testNotSupported:
+      "{platform} has no test mode for server events, so a test event can't be sent. After a real order, check your pixel's activity in {platform} Events Manager.",
+    testInvalidCode: "A test code has letters, digits, _ and - only, up to 64 characters.",
+    testRateLimited: "Too many tests. Wait a minute and try again.",
+    testUnavailable: "Test events aren't available right now. Try again later.",
   },
   /** Wave 2b - Settings → Notifications: sender email, customer templates, staff recipients. */
   notificationSettings: {
@@ -5385,6 +5458,8 @@ export const en = {
       testimonials: "Quotes from happy customers.",
       features: "Badges like cash on delivery and easy returns.",
       whatsapp_cta: "A button that opens a WhatsApp chat with you.",
+      lead_form:
+        "A form that collects a visitor's name and phone (and optionally email and message) into your Leads inbox",
     },
     /** Save codes for a section's fields, shown beside the field. */
     errors: {
@@ -5432,6 +5507,10 @@ export const en = {
       title: "Title",
       phone: "WhatsApp number",
       message: "Prefilled message",
+      submitLabel: "Submit button text",
+      successMessage: "Success message",
+      showEmail: "Ask for email",
+      showMessage: "Ask for a message",
       /** The number box beside a slider: "{label} value". */
       valueOf: "{label} value",
     },
@@ -5930,6 +6009,93 @@ export const en = {
     message: "Only the store owner can open this page.",
   },
   /** Generic, form-agnostic messages `toFormState` (`lib/api/mutation.ts`) renders from a `MutationResult`. Every write form shares these. */
+  /**
+   * The Leads inbox (`app/leads`) — people who left their details in a lead site's form. Statuses
+   * mirror `@platform/leads` (`LEAD_STATUSES`); the merchant may move a lead to any of them.
+   */
+  leadsPage: {
+    title: "Leads",
+    subtitle: "Customers who left their details in your site's form",
+    searchLabel: "Search leads",
+    searchPlaceholder: "Search by name, phone or email",
+    statusFilterLabel: "Status",
+    allStatuses: "All",
+    columns: {
+      date: "Date",
+      name: "Name",
+      phone: "Phone",
+      email: "Email",
+      message: "Message",
+      status: "Status",
+    },
+    previous: "Previous",
+    next: "Next",
+    empty: "No leads yet. When someone fills in the form on your website, they'll show up here.",
+    emptyFiltered: "No leads match this search or filter.",
+    error: "Couldn't load leads. Try refreshing the page.",
+    unauthorized: "Sign in to view leads.",
+    exportCsv: "Export CSV",
+  },
+  leadStatus: {
+    new: "New",
+    contacted: "Contacted",
+    qualified: "Qualified",
+    converted: "Converted",
+    rejected: "Rejected",
+    spam: "Spam",
+  },
+  leadTrackingStatus: {
+    pending: "Waiting to send",
+    suppressed: "Not sent (same session)",
+    skipped_spam: "Not sent (spam)",
+    sent: "Sent",
+    failed: "Failed to send",
+  },
+  leadDetail: {
+    heading: "Lead details",
+    adPlatformsTitle: "Ad platforms",
+    phoneE164: "Phone (international)",
+    trackingStatus: "Sending status",
+    eventId: "Event ID",
+    back: "Back to leads",
+    name: "Name",
+    phone: "Phone",
+    email: "Email",
+    message: "Message",
+    noMessage: "No message",
+    notProvided: "Not provided",
+    pageUrl: "Page the form was sent from",
+    referrer: "Came from",
+    form: "Form",
+    created: "Received",
+    statusTitle: "Status",
+    statusLabel: "Lead status",
+    save: "Save",
+    saving: "Saving…",
+    saved: "Status updated.",
+    readOnly: "You can view leads but can't change their status.",
+    notFound: "This lead doesn't exist or you don't have access to it.",
+    error: "Couldn't load this lead. Try refreshing the page.",
+    unauthorized: "Sign in to view this lead.",
+  },
+  leadsExport: {
+    columns: {
+      date: "Date",
+      name: "Name",
+      phone: "Phone",
+      email: "Email",
+      message: "Message",
+      status: "Status",
+      form: "Form",
+      pageUrl: "Page URL",
+    },
+    errors: {
+      forbidden: "You don't have permission to export leads.",
+      invalid: "That status filter isn't valid. Pick one from the list and export again.",
+      too_many: "More than 5,000 leads match. Filter by status and export again.",
+      failed: "Couldn't export the leads. Try again.",
+    },
+  },
   formErrors: {
     unauthorized: "Sign in to continue.",
     forbidden: "Your account doesn't have permission to do this.",

@@ -72,6 +72,9 @@ importers:
 
   apps/admin:
     dependencies:
+      '@platform/ad-platforms':
+        specifier: workspace:*
+        version: link:../../services/ad-platforms
       '@platform/analytics':
         specifier: workspace:*
         version: link:../../services/analytics
@@ -144,6 +147,9 @@ importers:
       '@platform/inventory':
         specifier: workspace:*
         version: link:../../services/inventory
+      '@platform/leads':
+        specifier: workspace:*
+        version: link:../../services/leads
       '@platform/licensing':
         specifier: workspace:*
         version: link:../../services/licensing
@@ -216,6 +222,9 @@ importers:
       '@platform/theme':
         specifier: workspace:*
         version: link:../../services/theme
+      '@platform/tracking':
+        specifier: workspace:*
+        version: link:../../packages/tracking
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -441,6 +450,9 @@ importers:
       '@opentelemetry/api':
         specifier: ^1.9.0
         version: 1.9.1
+      '@platform/ad-platforms':
+        specifier: workspace:*
+        version: link:../../services/ad-platforms
       '@platform/admin':
         specifier: workspace:*
         version: link:../admin
@@ -1985,6 +1997,52 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
 
+  services/ad-platforms:
+    dependencies:
+      '@platform/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@platform/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@platform/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+      '@prisma/client':
+        specifier: ^6.5.0
+        version: 6.19.3(prisma@6.19.3(magicast@0.3.5)(typescript@5.9.3))(typescript@5.9.3)
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
   services/analytics:
     dependencies:
       '@clickhouse/client':
@@ -2889,6 +2947,52 @@ importers:
       '@platform/repository':
         specifier: workspace:*
         version: link:../../packages/repository
+      '@platform/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      '@platform/utils':
+        specifier: workspace:*
+        version: link:../../packages/utils
+    devDependencies:
+      '@platform/eslint-config':
+        specifier: workspace:*
+        version: link:../../packages/eslint-config
+      '@platform/tsconfig':
+        specifier: workspace:*
+        version: link:../../packages/tsconfig
+      '@vitest/coverage-v8':
+        specifier: ^2.1.4
+        version: 2.1.9(vitest@2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0))
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.4(jiti@2.7.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)(terser@5.48.0)
+
+  services/leads:
+    dependencies:
+      '@platform/application':
+        specifier: workspace:*
+        version: link:../../packages/application
+      '@platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@platform/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@platform/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@platform/repository':
+        specifier: workspace:*
+        version: link:../../packages/repository
+      '@platform/tracking':
+        specifier: workspace:*
+        version: link:../../packages/tracking
       '@platform/types':
         specifier: workspace:*
         version: link:../../packages/types

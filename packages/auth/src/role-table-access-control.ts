@@ -28,6 +28,8 @@ const SHOP_RESOURCES = [
   "notifications",
   // Project 4: online_store_admin (publish, lock) is deliberately NOT here — admin only.
   "online_store",
+  // Lead Site Part C: the leads inbox (read, change status, export CSV rows).
+  "leads",
 ] as const;
 
 /** Read-only extras a viewer and operator may see (dashboards), never change. */

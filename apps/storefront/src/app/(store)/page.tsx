@@ -2,7 +2,12 @@ import { Sections } from "@/components/sections/sections";
 import { AvailabilityBook } from "@/lib/catalog";
 import { getHomepage } from "@/lib/homepage";
 import { dictionaryFor } from "@/lib/i18n";
-import { getPreviewToken, getRequestLocale, getRequestShell } from "@/lib/request-locale";
+import {
+  getPreviewToken,
+  getRequestLocale,
+  getRequestPublicStore,
+  getRequestShell,
+} from "@/lib/request-locale";
 import { currentShopId } from "@/lib/runtime-api";
 import { loadSectionData } from "@/lib/section-data";
 
@@ -11,13 +16,17 @@ import { loadSectionData } from "@/lib/section-data";
  * default layout (newest products, then all collections), which `getHomepage` supplies. The token
  * is passed on only when the Runtime itself called this shell a preview (`getHomepage` then reads
  * the draft, uncached). The availability book is loaded here, per request, outside any cache.
+ * The shop's site type decides which sections show (a lead site: the lead form, no shelves); a
+ * failed read of it is treated as a store.
  */
 export default async function Home() {
-  const [locale, shell, token] = await Promise.all([
+  const [locale, shell, token, publicStore] = await Promise.all([
     getRequestLocale(),
     getRequestShell(),
     getPreviewToken(),
+    getRequestPublicStore(),
   ]);
+  const siteType = publicStore?.siteType ?? "store";
   const t = dictionaryFor(locale);
   const storeName = shell.storeName.trim();
   const previewToken = token !== null && shell.mode === "preview" ? token : null;
@@ -45,6 +54,7 @@ export default async function Home() {
         previewToken={previewToken}
         mode={home.mode}
         eagerHeroId={eagerHeroId}
+        siteType={siteType}
       />
     </main>
   );

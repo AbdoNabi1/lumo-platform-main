@@ -20,28 +20,19 @@ export interface HashPort {
 /**
  * Which natural key identifies "the same occurrence" for an event. Chosen per event because the
  * right key differs: an order id is stable and authoritative, whereas a page view has no natural
- * key and must fall back to a time bucket.
+ * key and is keyed by its own event id (P2-D10).
  */
 export type NaturalKeyStrategy =
   | { readonly kind: "order"; readonly orderId: string }
   | { readonly kind: "cart_line"; readonly cartLineId: string }
   | { readonly kind: "checkout"; readonly checkoutId: string }
   | { readonly kind: "refund"; readonly refundId: string }
-  | { readonly kind: "explicit"; readonly key: string }
-  | { readonly kind: "session_minute"; readonly sessionId: string };
+  | { readonly kind: "explicit"; readonly key: string };
 
 /** Dedup window in days — matches the platform conversions-API windows (doc 16 §4). */
 export const DEDUP_WINDOW_DAYS = 7;
 
-/**
- * Truncates an instant to a one-minute bucket. Only used by the `session_minute` strategy, where
- * two emitters of the same view will agree to the minute but not to the millisecond.
- */
-export function minuteBucket(occurredAt: Date): string {
-  return occurredAt.toISOString().slice(0, 16);
-}
-
-function naturalKeyOf(strategy: NaturalKeyStrategy, occurredAt: Date): string {
+function naturalKeyOf(strategy: NaturalKeyStrategy): string {
   switch (strategy.kind) {
     case "order":
       return `order:${strategy.orderId}`;
@@ -53,8 +44,6 @@ function naturalKeyOf(strategy: NaturalKeyStrategy, occurredAt: Date): string {
       return `refund:${strategy.refundId}`;
     case "explicit":
       return `explicit:${strategy.key}`;
-    case "session_minute":
-      return `session:${strategy.sessionId}:${minuteBucket(occurredAt)}`;
   }
 }
 
@@ -68,13 +57,14 @@ export function dedupKeyMaterial(input: {
   readonly eventName: string;
   readonly eventVersion: number;
   readonly strategy: NaturalKeyStrategy;
+  /** Kept for callers; no strategy buckets by time any more (P2-D10), so it no longer affects the key. */
   readonly occurredAt: Date;
 }): string {
   return [
     input.tenantId,
     input.eventName,
     `v${String(input.eventVersion)}`,
-    naturalKeyOf(input.strategy, input.occurredAt),
+    naturalKeyOf(input.strategy),
   ].join("|");
 }
 

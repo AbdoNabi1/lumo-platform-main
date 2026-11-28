@@ -84,6 +84,8 @@ model StoreSettings {
   timezone              String    @default("Africa/Cairo")
   weightUnit            String    @default("kg") @map("weight_unit") // kg | g | lb | oz (CHECK + domain-enforced)
   setupGuideDismissedAt DateTime? @map("setup_guide_dismissed_at")
+  siteType              String    @default("store") @map("site_type") // store | lead_site (CHECK; written only by settling at sign-up)
+  siteTypeSettledAt     DateTime? @map("site_type_settled_at")
   updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@map("store_settings")

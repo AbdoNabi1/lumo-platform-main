@@ -11,6 +11,7 @@ import {
   GiftIcon,
   HouseIcon,
   ImageIcon,
+  InboxIcon,
   LandmarkIcon,
   LanguagesIcon,
   LayersIcon,
@@ -129,6 +130,7 @@ export const PRIMARY_NAV: readonly NavItem[] = [
       },
     ],
   },
+  { id: "leads", label: (t) => t.nav.leads, href: "/leads", Icon: InboxIcon },
   {
     id: "marketing",
     label: (t) => t.nav.growth,

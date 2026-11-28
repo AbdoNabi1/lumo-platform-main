@@ -1,0 +1,650 @@
+import type { Database } from "@platform/db";
+import { beforeEach, describe, expect, it } from "vitest";
+import { leadOf, leadProps } from "../testing/fixtures";
+import { PrismaLeadRepository } from "./prisma-lead-repository";
+import type { LeadRow } from "./rows";
+
+beforeEach(() => {
+  expect.hasAssertions();
+});
+
+interface Call {
+  model: string;
+  method: string;
+  args: unknown;
+}
+
+const METHOD_DEFAULTS: Record<string, unknown> = {
+  create: null,
+  findFirst: null,
+  updateMany: { count: 0 },
+  findMany: [],
+};
+
+/**
+ * A recording stand-in for the Prisma client (NOT `createFakePrisma`: that fake rejects `OR`, has no
+ * `contains`/`mode` and ignores `orderBy`, so it cannot prove list/search semantics). It records every
+ * delegate call and every `$executeRaw` (as `{ model: "$raw", method: "executeRaw", args: <tenant id> }`),
+ * `$transaction(fn)` runs `fn` with the same client, and each delegate method returns the next queued
+ * value from `results["<model>.<method>"]` (else a default by method kind).
+ */
+function recordingPrisma(results: Partial<Record<string, unknown[]>> = {}) {
+  const calls: Call[] = [];
+  const queues = new Map<string, unknown[]>(
+    Object.entries(results).map(([key, values]) => [key, [...(values ?? [])]]),
+  );
+  const delegate = (model: string) =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method: string) => (args: unknown) => {
+          calls.push({ model, method, args });
+          const queue = queues.get(`${model}.${method}`);
+          if (queue !== undefined && queue.length > 0) {
+            const next = queue.shift();
+            if (next instanceof Error) return Promise.reject(next);
+            return Promise.resolve(next);
+          }
+          return Promise.resolve(METHOD_DEFAULTS[method] ?? null);
+        },
+      },
+    );
+  const client: Record<string, unknown> = {
+    lead: delegate("lead"),
+    $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      // a set_config of the tenant records the tenant id; the sweep switch records its SQL text
+      calls.push({
+        model: "$raw",
+        method: "executeRaw",
+        args: values.length > 0 ? values[0] : strings.join("?"),
+      });
+      return Promise.resolve(1);
+    },
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      calls.push({
+        model: "$raw",
+        method: "queryRaw",
+        args: { sql: strings.join("?").replace(/\s+/g, " ").trim(), values },
+      });
+      const queue = queues.get("$queryRaw");
+      return Promise.resolve(queue !== undefined && queue.length > 0 ? queue.shift() : []);
+    },
+    $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(client),
+  };
+  return { prisma: client as unknown as Database, calls };
+}
+
+const id = (n: number): string => `01930000-0000-7000-8000-${String(n).padStart(12, "0")}`;
+const NOW = new Date("2026-11-22T10:00:00.000Z");
+
+function rowOf(over: Partial<LeadRow> = {}): LeadRow {
+  const p = leadProps({ id: id(1) });
+  return {
+    id: p.id,
+    tenantId: "t-1",
+    formId: p.formId,
+    name: p.name,
+    phone: p.phone,
+    phoneE164: p.phoneE164,
+    email: p.email,
+    message: p.message,
+    status: p.status,
+    trackingStatus: p.trackingStatus,
+    eventId: p.eventId,
+    sessionId: p.sessionId,
+    submissionKey: p.submissionKey,
+    spamReason: p.spamReason,
+    attribution: p.attribution,
+    version: p.version,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+    ...over,
+  };
+}
+
+/** Every query is preceded by the set_config call for the same tenant, and names the tenant in `where`. */
+function expectTenantScoped(calls: Call[], tenantId: string): void {
+  const queries = calls.filter((c) => c.model !== "$raw");
+  expect(queries.length).toBeGreaterThan(0);
+  calls.forEach((call, index) => {
+    if (call.model === "$raw") return;
+    const prev = calls[index - 1];
+    expect(prev).toEqual({ model: "$raw", method: "executeRaw", args: tenantId });
+    if (call.method !== "create") {
+      expect((call.args as { where: { tenantId: string } }).where.tenantId).toBe(tenantId);
+    } else {
+      expect((call.args as { data: { tenantId: string } }).data.tenantId).toBe(tenantId);
+    }
+  });
+}
+
+function p2002(target: unknown): Error {
+  return Object.assign(new Error("Unique constraint failed"), {
+    code: "P2002",
+    meta: { target },
+  });
+}
+
+describe("PrismaLeadRepository.insert", () => {
+  it("creates the row inside a tenant transaction, with the tenant id from the argument", async () => {
+    const { prisma, calls } = recordingPrisma();
+    const repo = new PrismaLeadRepository({ prisma });
+    const lead = leadOf({
+      id: id(1),
+      submissionKey: "key-insert-01",
+      message: "hello",
+      attribution: {
+        pageUrl: "https://shop.example/",
+        referrer: null,
+        ip: "203.0.113.9",
+        userAgent: "ua",
+        cookies: { fbp: "fb.1.2.3" },
+      },
+    });
+    expect(await repo.insert("t-1", lead)).toBe("inserted");
+    expect(calls).toEqual([
+      { model: "$raw", method: "executeRaw", args: "t-1" },
+      {
+        model: "lead",
+        method: "create",
+        args: {
+          data: {
+            id: id(1),
+            tenantId: "t-1",
+            formId: lead.props.formId,
+            name: lead.props.name,
+            phone: lead.props.phone,
+            phoneE164: lead.props.phoneE164,
+            email: lead.props.email,
+            message: "hello",
+            status: "new",
+            trackingStatus: "pending",
+            eventId: lead.props.eventId,
+            sessionId: "s-1",
+            submissionKey: "key-insert-01",
+            spamReason: null,
+            attribution: lead.props.attribution,
+            version: 0,
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        },
+      },
+    ]);
+    expectTenantScoped(calls, "t-1");
+  });
+
+  it("answers duplicate for a P2002 on the (tenant, submission key) unique index", async () => {
+    for (const target of [["tenant_id", "submission_key"], "leads_tenant_id_submission_key_key"]) {
+      const { prisma } = recordingPrisma({ "lead.create": [p2002(target)] });
+      expect(await new PrismaLeadRepository({ prisma }).insert("t-1", leadOf())).toBe("duplicate");
+    }
+  });
+
+  it("rethrows a P2002 on any other constraint (a primary-key clash is a bug, not a retry)", async () => {
+    const { prisma } = recordingPrisma({ "lead.create": [p2002(["id"])] });
+    await expect(new PrismaLeadRepository({ prisma }).insert("t-1", leadOf())).rejects.toThrow(
+      /Unique constraint/,
+    );
+  });
+
+  it("rethrows any non-unique error", async () => {
+    const { prisma } = recordingPrisma({ "lead.create": [new Error("connection lost")] });
+    await expect(new PrismaLeadRepository({ prisma }).insert("t-1", leadOf())).rejects.toThrow(
+      "connection lost",
+    );
+  });
+});
+
+describe("PrismaLeadRepository.get / findBySubmissionKey", () => {
+  it("get reads by id and tenant, after set_config, and maps every field back (attribution included)", async () => {
+    const attribution = {
+      pageUrl: "https://shop.example/",
+      referrer: "https://google.com/",
+      ip: "203.0.113.9",
+      userAgent: "ua",
+      cookies: { fbp: "fb.1.2.3", ga: "GA1.2.3" },
+    };
+    const row = rowOf({
+      message: "hi",
+      spamReason: "honeypot",
+      status: "spam",
+      trackingStatus: "skipped_spam",
+      version: 2,
+      attribution,
+    });
+    const { prisma, calls } = recordingPrisma({ "lead.findFirst": [row] });
+    const lead = await new PrismaLeadRepository({ prisma }).get("t-1", id(1));
+    expect(calls).toEqual([
+      { model: "$raw", method: "executeRaw", args: "t-1" },
+      { model: "lead", method: "findFirst", args: { where: { id: id(1), tenantId: "t-1" } } },
+    ]);
+    expect(lead?.props).toEqual({
+      id: id(1),
+      formId: row.formId,
+      name: row.name,
+      phone: row.phone,
+      phoneE164: row.phoneE164,
+      email: row.email,
+      message: "hi",
+      status: "spam",
+      trackingStatus: "skipped_spam",
+      eventId: row.eventId,
+      sessionId: row.sessionId,
+      submissionKey: row.submissionKey,
+      spamReason: "honeypot",
+      attribution,
+      version: 2,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+  });
+
+  it("get returns null when the row is absent (another tenant's row is never selected)", async () => {
+    const { prisma, calls } = recordingPrisma();
+    expect(await new PrismaLeadRepository({ prisma }).get("t-2", id(1))).toBeNull();
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-2" });
+    expect(calls[1]?.args).toEqual({ where: { id: id(1), tenantId: "t-2" } });
+  });
+
+  it("get with a malformed id is null without touching the database (a uuid column would throw)", async () => {
+    const { prisma, calls } = recordingPrisma();
+    expect(await new PrismaLeadRepository({ prisma }).get("t-1", "not-a-uuid")).toBeNull();
+    expect(calls).toEqual([]);
+  });
+
+  it("findBySubmissionKey reads by tenant and key after set_config", async () => {
+    const { prisma, calls } = recordingPrisma({
+      "lead.findFirst": [rowOf({ submissionKey: "key-find-0001" })],
+    });
+    const lead = await new PrismaLeadRepository({ prisma }).findBySubmissionKey(
+      "t-1",
+      "key-find-0001",
+    );
+    expect(lead?.props.submissionKey).toBe("key-find-0001");
+    expect(calls).toEqual([
+      { model: "$raw", method: "executeRaw", args: "t-1" },
+      {
+        model: "lead",
+        method: "findFirst",
+        args: { where: { tenantId: "t-1", submissionKey: "key-find-0001" } },
+      },
+    ]);
+  });
+
+  it("findBySubmissionKey is null when nothing matches", async () => {
+    const { prisma } = recordingPrisma();
+    expect(await new PrismaLeadRepository({ prisma }).findBySubmissionKey("t-1", "k")).toBeNull();
+  });
+});
+
+describe("PrismaLeadRepository mapper", () => {
+  it("throws on an unknown status, tracking status or spam reason, naming the column", async () => {
+    const cases: [Partial<LeadRow>, RegExp][] = [
+      [{ status: "x" }, /leads\.status is not valid: x/],
+      [{ trackingStatus: "y" }, /leads\.tracking_status is not valid: y/],
+      [{ spamReason: "z" }, /leads\.spam_reason is not valid: z/],
+    ];
+    for (const [over, message] of cases) {
+      const { prisma } = recordingPrisma({ "lead.findFirst": [rowOf(over)] });
+      await expect(new PrismaLeadRepository({ prisma }).get("t-1", id(1))).rejects.toThrow(message);
+    }
+  });
+
+  it("round-trips the visitor id, click ids and UTM labels (P2-D8) and keeps a row without them exactly as it was", async () => {
+    const attribution = {
+      pageUrl: "https://shop.example/",
+      referrer: null,
+      ip: "203.0.113.9",
+      userAgent: "ua",
+      cookies: { fbp: "fb.1.2.3" },
+      visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+      clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-11-23T09:00:00.000Z" }],
+      utm: { source: "facebook", campaign: "eid" },
+    };
+    const newer = recordingPrisma({ "lead.findFirst": [rowOf({ attribution })] });
+    expect(
+      (await new PrismaLeadRepository({ prisma: newer.prisma }).get("t-1", id(1)))?.props
+        .attribution,
+    ).toEqual(attribution);
+
+    // a row written before these fields existed: no new key appears
+    const oldAttribution = {
+      pageUrl: "https://shop.example/",
+      referrer: null,
+      ip: null,
+      userAgent: null,
+      cookies: { ga: "GA1.2.3" },
+    };
+    const older = recordingPrisma({ "lead.findFirst": [rowOf({ attribution: oldAttribution })] });
+    expect(
+      (await new PrismaLeadRepository({ prisma: older.prisma }).get("t-1", id(1)))?.props
+        .attribution,
+    ).toStrictEqual(oldAttribution);
+  });
+
+  it("reads malformed visitor fields as absent instead of failing (hand-edited or future documents)", async () => {
+    const { prisma } = recordingPrisma({
+      "lead.findFirst": [
+        rowOf({
+          attribution: {
+            pageUrl: null,
+            cookies: {},
+            visitorId: 42,
+            clickIds: [
+              { name: "gclid" },
+              "x",
+              { name: "ttclid", value: "v", capturedAt: "2026-11-23T09:00:00.000Z" },
+            ],
+            utm: { source: 1, medium: "email", junk: "y" },
+          } as unknown as LeadRow["attribution"],
+        }),
+      ],
+    });
+    const lead = await new PrismaLeadRepository({ prisma }).get("t-1", id(1));
+    expect(lead?.props.attribution).toEqual({
+      pageUrl: null,
+      referrer: null,
+      ip: null,
+      userAgent: null,
+      cookies: {},
+      clickIds: [{ name: "ttclid", value: "v", capturedAt: "2026-11-23T09:00:00.000Z" }],
+      utm: { medium: "email" },
+    });
+  });
+
+  it("reads a malformed attribution document as empty attribution instead of failing", async () => {
+    const { prisma } = recordingPrisma({
+      "lead.findFirst": [rowOf({ attribution: "nope" as unknown as LeadRow["attribution"] })],
+    });
+    const lead = await new PrismaLeadRepository({ prisma }).get("t-1", id(1));
+    expect(lead?.props.attribution).toEqual({
+      pageUrl: null,
+      referrer: null,
+      ip: null,
+      userAgent: null,
+      cookies: {},
+    });
+  });
+});
+
+describe("PrismaLeadRepository.updateStatus", () => {
+  it("updates only the matching version, setting status, version and updatedAt; count 1 is true", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 1 }] });
+    const at = new Date("2026-11-23T00:00:00.000Z");
+    const next = leadOf({ id: id(1) }).withStatus("contacted", at);
+    expect(await new PrismaLeadRepository({ prisma }).updateStatus("t-1", next)).toBe(true);
+    expect(calls).toEqual([
+      { model: "$raw", method: "executeRaw", args: "t-1" },
+      {
+        model: "lead",
+        method: "updateMany",
+        args: {
+          where: { id: id(1), tenantId: "t-1", version: 0 },
+          data: { status: "contacted", version: 1, updatedAt: at },
+        },
+      },
+    ]);
+  });
+
+  it("is false for a stale version (count 0)", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 0 }] });
+    const stale = leadOf({ id: id(1), version: 4 }).withStatus("qualified", NOW);
+    expect(await new PrismaLeadRepository({ prisma }).updateStatus("t-1", stale)).toBe(false);
+    expect((calls[1]?.args as { where: { version: number } }).where.version).toBe(4);
+  });
+
+  it("is false without touching the database for a malformed id", async () => {
+    const { prisma, calls } = recordingPrisma();
+    const next = leadOf({ id: "nope" }).withStatus("contacted", NOW);
+    expect(await new PrismaLeadRepository({ prisma }).updateStatus("t-1", next)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("PrismaLeadRepository.markPendingIfSuppressed", () => {
+  it("conditionally flips suppressed to pending for the tenant, key and session; count 1 is true", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 1 }] });
+    expect(
+      await new PrismaLeadRepository({ prisma }).markPendingIfSuppressed(
+        "t-1",
+        "key-mark-0001",
+        "s-1",
+      ),
+    ).toBe(true);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    const update = calls[1] as Call;
+    expect(update.model).toBe("lead");
+    expect(update.method).toBe("updateMany");
+    const args = update.args as {
+      where: unknown;
+      data: { trackingStatus: string; version: { increment: number }; updatedAt: unknown };
+    };
+    expect(args.where).toEqual({
+      tenantId: "t-1",
+      submissionKey: "key-mark-0001",
+      sessionId: "s-1",
+      trackingStatus: "suppressed",
+    });
+    expect(args.data.trackingStatus).toBe("pending");
+    expect(args.data.version).toEqual({ increment: 1 });
+    expect(args.data.updatedAt).toBeInstanceOf(Date);
+    expectTenantScoped(calls, "t-1");
+  });
+
+  it("is false when no suppressed row matched (count 0)", async () => {
+    const { prisma } = recordingPrisma({ "lead.updateMany": [{ count: 0 }] });
+    expect(
+      await new PrismaLeadRepository({ prisma }).markPendingIfSuppressed(
+        "t-1",
+        "key-mark-0002",
+        "s-1",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("PrismaLeadRepository.list", () => {
+  const listCall = (calls: Call[]): Call => {
+    const call = calls.find((c) => c.model === "lead");
+    if (call === undefined) throw new Error("no lead query recorded");
+    return call;
+  };
+
+  it("lists newest first with take first + 1, scoped to the tenant", async () => {
+    const { prisma, calls } = recordingPrisma({
+      "lead.findMany": [[rowOf({ id: id(3) }), rowOf({ id: id(2) })]],
+    });
+    const page = await new PrismaLeadRepository({ prisma }).list("t-1", { first: 2 });
+    expect(page.map((l) => l.props.id)).toEqual([id(3), id(2)]);
+    expect(calls).toEqual([
+      { model: "$raw", method: "executeRaw", args: "t-1" },
+      {
+        model: "lead",
+        method: "findMany",
+        args: { where: { tenantId: "t-1" }, orderBy: { id: "desc" }, take: 3 },
+      },
+    ]);
+    expectTenantScoped(calls, "t-1");
+  });
+
+  it("applies the cursor as id < after", async () => {
+    const { prisma, calls } = recordingPrisma();
+    await new PrismaLeadRepository({ prisma }).list("t-1", { first: 10, after: id(3) });
+    expect(listCall(calls).args).toEqual({
+      where: { tenantId: "t-1", id: { lt: id(3) } },
+      orderBy: { id: "desc" },
+      take: 11,
+    });
+  });
+
+  it("answers an empty page without a query for a malformed cursor", async () => {
+    const { prisma, calls } = recordingPrisma();
+    expect(
+      await new PrismaLeadRepository({ prisma }).list("t-1", { first: 10, after: "zz" }),
+    ).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("filters by status and by the createdAt range (inclusive both ends)", async () => {
+    const { prisma, calls } = recordingPrisma();
+    const from = new Date("2026-11-05T00:00:00.000Z");
+    const to = new Date("2026-11-15T00:00:00.000Z");
+    const repo = new PrismaLeadRepository({ prisma });
+    await repo.list("t-1", { first: 5, status: "spam", createdFrom: from, createdTo: to });
+    await repo.list("t-1", { first: 5, createdFrom: from });
+    await repo.list("t-1", { first: 5, createdTo: to });
+    const queries = calls.filter((c) => c.model === "lead").map((c) => c.args);
+    expect(queries).toEqual([
+      {
+        where: { tenantId: "t-1", status: "spam", createdAt: { gte: from, lte: to } },
+        orderBy: { id: "desc" },
+        take: 6,
+      },
+      { where: { tenantId: "t-1", createdAt: { gte: from } }, orderBy: { id: "desc" }, take: 6 },
+      { where: { tenantId: "t-1", createdAt: { lte: to } }, orderBy: { id: "desc" }, take: 6 },
+    ]);
+  });
+
+  it("searches name and email case-insensitively, and phone digits only from three digits up", async () => {
+    const { prisma, calls } = recordingPrisma();
+    const repo = new PrismaLeadRepository({ prisma });
+    await repo.list("t-1", { first: 5, search: "  Ahmed " });
+    await repo.list("t-1", { first: 5, search: "+20 101" });
+    await repo.list("t-1", { first: 5, search: "١٢٣٤" });
+    await repo.list("t-1", { first: 5, search: "12" });
+    await repo.list("t-1", { first: 5, search: "   " });
+    const wheres = calls
+      .filter((c) => c.model === "lead")
+      .map((c) => (c.args as { where: unknown }).where);
+    expect(wheres).toEqual([
+      {
+        tenantId: "t-1",
+        OR: [
+          { name: { contains: "Ahmed", mode: "insensitive" } },
+          { email: { contains: "Ahmed", mode: "insensitive" } },
+        ],
+      },
+      {
+        tenantId: "t-1",
+        OR: [
+          { name: { contains: "+20 101", mode: "insensitive" } },
+          { email: { contains: "+20 101", mode: "insensitive" } },
+          { phoneE164: { contains: "20101" } },
+        ],
+      },
+      {
+        tenantId: "t-1",
+        OR: [
+          { name: { contains: "١٢٣٤", mode: "insensitive" } },
+          { email: { contains: "١٢٣٤", mode: "insensitive" } },
+          { phoneE164: { contains: "1234" } },
+        ],
+      },
+      {
+        tenantId: "t-1",
+        OR: [
+          { name: { contains: "12", mode: "insensitive" } },
+          { email: { contains: "12", mode: "insensitive" } },
+        ],
+      },
+      { tenantId: "t-1" },
+    ]);
+  });
+
+  it("combines every filter in one where, never dropping the tenant", async () => {
+    const { prisma, calls } = recordingPrisma();
+    const at = new Date("2026-11-10T00:00:00.000Z");
+    await new PrismaLeadRepository({ prisma }).list("t-9", {
+      first: 20,
+      after: id(7),
+      status: "new",
+      search: "bot",
+      createdFrom: at,
+    });
+    expect(listCall(calls).args).toEqual({
+      where: {
+        tenantId: "t-9",
+        id: { lt: id(7) },
+        status: "new",
+        createdAt: { gte: at },
+        OR: [
+          { name: { contains: "bot", mode: "insensitive" } },
+          { email: { contains: "bot", mode: "insensitive" } },
+        ],
+      },
+      orderBy: { id: "desc" },
+      take: 21,
+    });
+    expectTenantScoped(calls, "t-9");
+  });
+});
+
+describe("PrismaLeadRepository pending tracking (P2-D9)", () => {
+  const CUTOFF = new Date("2026-11-22T10:00:00.000Z");
+
+  it("the cross-tenant scan sets only the sweep switch, then reads tenant ids of pending leads before the cutoff", async () => {
+    const { prisma, calls } = recordingPrisma({
+      $queryRaw: [[{ tenant_id: "t-9" }, { tenant_id: "t-2" }]],
+    });
+    const tenants = await new PrismaLeadRepository({ prisma }).listTenantsWithPendingTracking(
+      CUTOFF,
+      50,
+    );
+    expect(tenants).toEqual(["t-9", "t-2"]);
+    expect(calls).toHaveLength(2);
+    expect(String(calls[0]?.args)).toContain("app.tracking_sweep");
+    expect(String(calls[0]?.args)).not.toContain("app.tenant_id");
+    const query = calls[1]?.args as { sql: string; values: unknown[] };
+    expect(query.sql).toContain('FROM "leads"."leads"');
+    expect(query.sql).toContain("tracking_status = 'pending'");
+    expect(query.sql).toContain("GROUP BY tenant_id");
+    // nothing but tenant ids leaves the query: never a name, phone or e-mail
+    expect(query.sql).toMatch(/^SELECT tenant_id FROM/);
+    expect(query.values).toEqual([CUTOFF.toISOString(), 50]);
+  });
+
+  it("lists pending leads of ONE tenant, oldest first, after set_config of that tenant", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.findMany": [[rowOf({ id: id(1) })]] });
+    const rows = await new PrismaLeadRepository({ prisma }).listPendingTracking("t-1", {
+      createdBefore: CUTOFF,
+      limit: 25,
+    });
+    expect(rows.map((lead) => lead.props.id)).toEqual([id(1)]);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    expect(calls[1]).toEqual({
+      model: "lead",
+      method: "findMany",
+      args: {
+        where: { tenantId: "t-1", trackingStatus: "pending", createdAt: { lt: CUTOFF } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: 25,
+      },
+    });
+  });
+
+  it("markTracking updates only a pending row of that tenant and id; the version is untouched", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 1 }, { count: 0 }] });
+    const repo = new PrismaLeadRepository({ prisma });
+    expect(await repo.markTracking("t-1", id(1), "sent", CUTOFF)).toBe(true);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    expect(calls[1]).toEqual({
+      model: "lead",
+      method: "updateMany",
+      args: {
+        where: { tenantId: "t-1", id: id(1), trackingStatus: "pending" },
+        data: { trackingStatus: "sent", updatedAt: CUTOFF },
+      },
+    });
+    expect(await repo.markTracking("t-1", id(1), "failed", CUTOFF)).toBe(false);
+  });
+
+  it("markTracking with a malformed id touches nothing (a uuid column would throw)", async () => {
+    const { prisma, calls } = recordingPrisma();
+    expect(
+      await new PrismaLeadRepository({ prisma }).markTracking("t-1", "nope", "sent", CUTOFF),
+    ).toBe(false);
+    expect(calls).toEqual([]);
+  });
+});

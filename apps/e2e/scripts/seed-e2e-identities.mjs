@@ -86,6 +86,7 @@ const READ_PERMISSIONS = [
   "analytics:read",
   "finance:read",
   "inventory:read",
+  "leads:read",
 ];
 
 // Exactly what `operator-create-product.spec.ts` exercises against the real backend —
@@ -108,6 +109,10 @@ const ONLINE_STORE_ADMIN_PERMISSIONS = [
   "online_store_admin:update_access",
 ];
 
+// The leads inbox (`apps/admin/src/http/leads-routes.ts`): operators change a lead's status and export
+// the rows; every role reads (viewer gets `leads:read` through READ_PERMISSIONS).
+const LEADS_OPERATOR_PERMISSIONS = ["leads:read", "leads:update", "leads:export"];
+
 /** @typedef {readonly [email: string, role: "viewer" | "operator" | "admin", extraPermissions: readonly string[]]} SeedIdentity */
 
 /** One seed row per `ROUTE_ROLE_REQUIREMENTS` role, extra Keto permissions beyond READ_PERMISSIONS. */
@@ -116,12 +121,20 @@ const IDENTITIES = /** @type {readonly SeedIdentity[]} */ ([
   [
     "e2e-operator@morbeh.local",
     "operator",
-    [...OPERATOR_WRITE_PERMISSIONS, ...ONLINE_STORE_OPERATOR_PERMISSIONS],
+    [
+      ...OPERATOR_WRITE_PERMISSIONS,
+      ...ONLINE_STORE_OPERATOR_PERMISSIONS,
+      ...LEADS_OPERATOR_PERMISSIONS,
+    ],
   ],
   [
     "e2e-admin@morbeh.local",
     "admin",
-    [...OPERATOR_WRITE_PERMISSIONS, ...ONLINE_STORE_ADMIN_PERMISSIONS],
+    [
+      ...OPERATOR_WRITE_PERMISSIONS,
+      ...ONLINE_STORE_ADMIN_PERMISSIONS,
+      ...LEADS_OPERATOR_PERMISSIONS,
+    ],
   ],
 ]);
 

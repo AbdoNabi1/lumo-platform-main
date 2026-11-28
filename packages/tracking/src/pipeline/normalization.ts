@@ -28,12 +28,39 @@ export function normalizeEmail(email: string | undefined): string | undefined {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cleaned) ? cleaned : undefined;
 }
 
+/** Maps Arabic-Indic (U+0660–U+0669) and Persian (U+06F0–U+06F9) digits to `0-9`; leaves everything else. */
+export function toLatinDigits(value: string): string {
+  return value.replace(/[\u0660-\u0669\u06F0-\u06F9]/g, (ch) => {
+    const code = ch.charCodeAt(0);
+    return String(code >= 0x06f0 ? code - 0x06f0 : code - 0x0660);
+  });
+}
+
+/**
+ * Valid national-number lengths (digits after the country code) for the markets we serve:
+ * EG landline 9 / mobile 10, SA 9, UAE landline 8 / mobile 9.
+ */
+export const NATIONAL_NUMBER_LENGTHS: Readonly<Record<string, readonly number[]>> = {
+  "20": [9, 10],
+  "966": [9],
+  "971": [8, 9],
+};
+
+/** International form: digits only, no leading `0`, 8–15 digits long. */
+function internationalFromDigits(digits: string): string | undefined {
+  if (digits === "" || digits.startsWith("0")) return undefined;
+  return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : undefined;
+}
+
 /**
  * E.164: a leading `+` followed by country code and subscriber number, no separators.
  *
  * A national number cannot be normalized without knowing its country, so `defaultCountryCode` must
  * be supplied to upgrade one. Without it a national number is **dropped rather than guessed** — a
  * wrong country code produces a confident match against the wrong person.
+ *
+ * Arabic and Persian digits are converted first. A number that already carries its country code
+ * (`201012345678`, `00201012345678`) is never given it twice.
  */
 export function normalizePhone(
   phone: string | undefined,
@@ -42,29 +69,47 @@ export function normalizePhone(
   const cleaned = clean(phone);
   if (cleaned === undefined) return undefined;
 
-  const hadPlus = cleaned.startsWith("+");
-  const digits = cleaned.replace(/\D/g, "");
+  const latin = toLatinDigits(cleaned);
+  const digits = latin.replace(/\D/g, "");
+
+  if (latin.startsWith("+")) return internationalFromDigits(digits);
+  if (digits.startsWith("00")) return internationalFromDigits(digits.slice(2));
+
+  const cc =
+    defaultCountryCode === undefined ? "" : toLatinDigits(defaultCountryCode).replace(/\D/g, "");
+  if (cc === "" || cc.startsWith("0")) return undefined;
   if (digits === "") return undefined;
 
-  if (hadPlus) {
-    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : undefined;
+  const lengths = NATIONAL_NUMBER_LENGTHS[cc];
+  if (
+    lengths !== undefined &&
+    digits.startsWith(cc) &&
+    lengths.includes(digits.length - cc.length)
+  ) {
+    return `+${digits}`;
   }
-
-  const cc = defaultCountryCode?.replace(/\D/g, "");
-  if (cc === undefined || cc === "") return undefined;
 
   // Strip a national trunk prefix ("0") before prepending the country code.
   const national = digits.replace(/^0+/, "");
   if (national === "") return undefined;
-
-  const e164 = `+${cc}${national}`;
-  return e164.length >= 9 && e164.length <= 16 ? e164 : undefined;
+  if (lengths !== undefined) {
+    if (!lengths.includes(national.length)) return undefined;
+  } else {
+    const total = cc.length + national.length;
+    if (total < 8 || total > 15) return undefined;
+  }
+  return `+${cc}${national}`;
 }
 
-/** Lowercase, punctuation and spacing removed — the form Meta/TikTok/Snap all specify. */
+/**
+ * Lowercase, punctuation and spacing removed — the form Meta/TikTok/Snap all specify. The Arabic
+ * tatweel (U+0640, a letter-modifier that survives `\p{L}`) is removed; diacritics are marks and
+ * already fall to the punctuation rule.
+ */
 export function normalizeName(name: string | undefined): string | undefined {
   const cleaned = clean(name)
     ?.toLowerCase()
+    .replace(/\u0640/g, "")
     .replace(/[^\p{L}\p{N}]/gu, "");
   return cleaned === undefined || cleaned === "" ? undefined : cleaned;
 }

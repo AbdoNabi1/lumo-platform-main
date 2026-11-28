@@ -75,6 +75,24 @@ export const en = {
     opensInNewTab: "Opens in a new tab",
     whatsappDefault: "Message us on WhatsApp",
   },
+  /** Lead form section (Lead Site Part C, Task 6). */
+  leadForm: {
+    name: "Name",
+    phone: "Phone number",
+    email: "Email (optional)",
+    message: "Your message (optional)",
+    /** The label of the hidden trap field; only a bot reads it. */
+    honeypotLabel: "Website",
+    /** The button label when the merchant left it empty. */
+    submitDefault: "Send",
+    successDefault: "Thanks! We got your details and will be in touch soon",
+    validation: "Check these details: {fields}",
+    errors: {
+      rateLimited: "You've sent a lot in a short time. Try again in a little while",
+      unavailable: "The form isn't available right now",
+      network: "Connection problem. Try again",
+    },
+  },
   product: {
     unavailable: "This product isn't available right now.",
     notFoundTitle: "Product not found",

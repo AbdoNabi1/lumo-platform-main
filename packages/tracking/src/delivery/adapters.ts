@@ -48,6 +48,96 @@ export function isRetryableStatus(status: number): boolean {
   return status === 408 || status === 429 || status >= 500;
 }
 
+const REDACTED = "[redacted]";
+const MAX_VENDOR_RESPONSE_DEPTH = 8;
+const MAX_VENDOR_RESPONSE_BYTES = 16 * 1024;
+
+/** Every spelling a secret can take on its way through a URL, an error message or a JSON body. */
+function secretNeedles(secret: string): readonly string[] {
+  const forms = new Set([secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]);
+  // Longest first, so a form that contains another is replaced whole.
+  return [...forms].filter((form) => form !== "").sort((a, b) => b.length - a.length);
+}
+
+function redactString(value: string, needles: readonly string[]): string {
+  let out = value;
+  for (const needle of needles) out = out.split(needle).join(REDACTED);
+  return out;
+}
+
+/**
+ * Walks the **decoded** value and replaces every occurrence of each needle in strings, array items
+ * and object keys and values. It never does string replacement over serialized JSON — that would
+ * miss a secret split across an escape and could corrupt the structure.
+ */
+export function redactSecrets(value: unknown, needles: readonly string[]): unknown {
+  const active = needles.filter((needle) => needle !== "");
+  if (active.length === 0) return value;
+
+  const walk = (node: unknown, depth: number): unknown => {
+    if (typeof node === "string") return redactString(node, active);
+    if (depth > MAX_VENDOR_RESPONSE_DEPTH + 1) return REDACTED;
+    if (Array.isArray(node)) return node.map((item) => walk(item, depth + 1));
+    if (typeof node === "object" && node !== null) {
+      const out: Record<string, unknown> = {};
+      for (const [key, inner] of Object.entries(node)) {
+        out[redactString(key, active)] = walk(inner, depth + 1);
+      }
+      return out;
+    }
+    return node;
+  };
+
+  return walk(value, 1);
+}
+
+/** Nesting depth of a decoded value; stops counting once it passes `limit`. */
+function exceedsDepth(node: unknown, limit: number, depth = 1): boolean {
+  if (typeof node !== "object" || node === null) return false;
+  if (depth > limit) return true;
+  const children = Array.isArray(node) ? node : Object.values(node);
+  return children.some((child) => exceedsDepth(child, limit, depth + 1));
+}
+
+/**
+ * The vendor body that may be recorded: redacted, and dropped entirely (fail closed) when it is too
+ * deep or too large to have been inspected with confidence.
+ */
+function safeVendorResponse(
+  body: Readonly<Record<string, unknown>>,
+  needles: readonly string[],
+): Readonly<Record<string, unknown>> | undefined {
+  if (needles.length === 0) return body;
+  if (exceedsDepth(body, MAX_VENDOR_RESPONSE_DEPTH)) return undefined;
+
+  const redacted = redactSecrets(body, needles) as Readonly<Record<string, unknown>>;
+  // Bytes, not UTF-16 code units: a multibyte body is larger on the wire than `.length` says.
+  const bytes = new TextEncoder().encode(JSON.stringify(redacted)).length;
+  return bytes > MAX_VENDOR_RESPONSE_BYTES ? undefined : redacted;
+}
+
+/**
+ * Recorded text for a failed attempt. When a credential was used nothing is derived from vendor or
+ * transport text — it can carry the credential in a spelling no needle anticipates (JSON escapes,
+ * encodings) — so only fixed, trusted diagnostics are kept. Vendor detail stays available through
+ * the recursively sanitized decoded `vendorResponse`.
+ */
+function trustedHttpError(status: number): string {
+  return `vendor responded ${String(status)}`;
+}
+
+function trustedTransportError(error: unknown, credential: string): string {
+  const name = error instanceof Error ? error.name : "";
+  const safe = /^[A-Za-z]{1,40}$/.test(name) && !name.includes(credential) ? name : "Error";
+  return `transport error (${safe})`;
+}
+
+/** Appends `param=<secret>` to a URL; the result is local to the send and never recorded. */
+function withQueryCredential(url: string, param: string, secret: string): string {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}${param}=${encodeURIComponent(secret)}`;
+}
+
 export interface HttpJsonAdapterDeps {
   readonly http: HttpTransportPort;
   readonly credentials?: CredentialResolverPort;
@@ -88,6 +178,8 @@ export class HttpJsonAdapter implements DestinationAdapter {
     };
 
     let credential: string | undefined;
+    // The endpoint descriptor is never mutated: the authenticated URL exists only in this scope.
+    let url = request.endpoint.url;
 
     if (request.endpoint.credentialRef !== undefined) {
       const resolved = await this.deps.credentials?.resolve(request.endpoint.credentialRef);
@@ -103,8 +195,18 @@ export class HttpJsonAdapter implements DestinationAdapter {
         };
       }
       credential = resolved;
-      headers.authorization = `Bearer ${resolved}`;
+
+      const auth = request.endpoint.auth;
+      if (auth?.kind === "query") {
+        url = withQueryCredential(url, auth.param, resolved);
+      } else if (auth?.kind === "header") {
+        headers[auth.name] = resolved;
+      } else {
+        headers.authorization = `Bearer ${resolved}`;
+      }
     }
+
+    const needles = credential === undefined ? [] : secretNeedles(credential);
 
     // The transport envelope is minted here, per attempt — never read from storage. This is what
     // makes "historical business payload, freshly generated transport envelope" structural.
@@ -120,7 +222,7 @@ export class HttpJsonAdapter implements DestinationAdapter {
 
     try {
       const response = await this.deps.http.send({
-        url: request.endpoint.url,
+        url,
         method: request.endpoint.method,
         headers,
         body: JSON.stringify(request.payload),
@@ -129,20 +231,35 @@ export class HttpJsonAdapter implements DestinationAdapter {
 
       const ok = response.status >= 200 && response.status < 300;
 
+      const vendorResponse =
+        response.body === undefined ? undefined : safeVendorResponse(response.body, needles);
+
       return {
         ok,
         statusCode: response.status,
         retryable: !ok && isRetryableStatus(response.status),
-        ...(ok ? {} : { error: response.error ?? `status ${String(response.status)}` }),
+        ...(ok
+          ? {}
+          : {
+              error:
+                credential === undefined
+                  ? (response.error ?? `status ${String(response.status)}`)
+                  : trustedHttpError(response.status),
+            }),
         latencyMs: clock() - startedAt,
-        ...(response.body === undefined ? {} : { vendorResponse: response.body }),
+        ...(vendorResponse === undefined ? {} : { vendorResponse }),
       };
     } catch (error) {
       // A transport-level throw (DNS, socket, timeout) is transient by nature.
       return {
         ok: false,
         retryable: true,
-        error: error instanceof Error ? error.message : "transport error",
+        error:
+          credential !== undefined
+            ? trustedTransportError(error, credential)
+            : error instanceof Error
+              ? error.message
+              : "transport error",
         latencyMs: clock() - startedAt,
       };
     }

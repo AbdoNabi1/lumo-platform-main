@@ -34,6 +34,7 @@
  *   mid-event is invisible to it.
  */
 
+import type { ConnectionsForDelivery } from "@platform/ad-platforms";
 import type { IdGenerator } from "@platform/contracts";
 import type { Database } from "@platform/db";
 import type { SecretProvider } from "@platform/secrets";
@@ -43,10 +44,18 @@ import {
   HttpJsonAdapter,
   InMemoryDestinationState,
   type AdapterRegistryPort,
+  type ConsentPolicyPort,
+  type CredentialResolverPort,
+  type DeliveryRetryQueuePort,
   type IngestRuntimeDeps,
+  type ProfileEnricherPort,
   type RecordingRuntimeDeps,
+  type RetryTenantRuntime,
+  type TrackingProfileStore,
+  TrackingProfileService,
 } from "@platform/tracking";
 
+import { ConnectionCredentialResolver } from "./connection-credential-resolver";
 import { PrismaEventRecordStore } from "./prisma-event-record-store";
 import type { TrackingRegistryHandle } from "./tracking-registry-handle";
 import {
@@ -88,6 +97,34 @@ export interface TrackingRuntimeInput {
     }): Promise<void>;
   };
   readonly logger: Logger;
+  /**
+   * Lead Site Part D1: the sealed ad platform connections, so `conn://<tenantId>/<platform>` credential
+   * references (the per-shop destinations the connections create) resolve at send time. Absent ⇒ such a
+   * reference resolves to nothing (a permanent "credential unresolved" failure), never to a stub.
+   */
+  readonly connectionCredentials?: Pick<ConnectionsForDelivery, "openSecret">;
+  /**
+   * Tracking P1-D2: where a delivery that failed transiently is parked for the worker's retry sweeper.
+   * Absent ⇒ an exhausted delivery is dead-lettered as it was before the durable queue existed.
+   */
+  readonly retryQueue?: DeliveryRetryQueuePort;
+  /**
+   * Tracking P1-D4: where visitor profiles live. When present, every ingested event is merged with its visitor's
+   * profile BEFORE routing and delivery (click ids, browser ids, IP/UA, hashes the event lacks) and then recorded
+   * into it. Absent ⇒ events are forwarded exactly as they arrived.
+   */
+  readonly profiles?: TrackingProfileStore;
+  /**
+   * Tracking P2-D1: the store consent policy. When present, every ingested event is stamped with the consent its
+   * store forwards under (`notice_only` by default) right after completion. Absent => consent is left as it arrived.
+   */
+  readonly consentPolicy?: ConsentPolicyPort;
+  /**
+   * Tracking P2-D7: the calling code (digits, no `+`) of the store's market, from its currency (EGP 20, SAR 966, ...).
+   * Without it a national phone number (`01012345678`, how an order keeps it) cannot be made E.164, so it is dropped
+   * from the vendor payloads and from the profile match. Applied to both the recording pipeline and the profile step.
+   */
+  readonly defaultCountryCode?: string;
 }
 
 export interface TrackingRuntime {
@@ -100,6 +137,12 @@ export interface TrackingRuntime {
    * exists to prevent.
    */
   ingest(): IngestRuntimeDeps;
+  /**
+   * What the delivery-retry sweeper (P1-D2) needs for this tenant, bound to the registry snapshot current
+   * at the moment of the call — the retry analogue of {@link TrackingRuntime.ingest}, sharing its
+   * process-lifetime circuit-breaker and token-bucket state, adapters and credential resolution.
+   */
+  retry(): RetryTenantRuntime;
   readonly store: PrismaEventRecordStore;
   readonly credentials: SecretCredentialResolver;
   readonly registry: TrackingRegistryHandle;
@@ -155,9 +198,19 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     input.clock.now().getTime(),
   );
 
+  // `conn://` references open from the sealed ad platform vault; every other reference (`vault://…`) goes to
+  // the secret provider exactly as before.
+  const adapterCredentials: CredentialResolverPort =
+    input.connectionCredentials === undefined
+      ? credentials
+      : new ConnectionCredentialResolver({
+          connections: input.connectionCredentials,
+          fallback: credentials,
+        });
+
   const httpAdapter = new HttpJsonAdapter({
     http: new FetchHttpTransport(),
-    credentials,
+    credentials: adapterCredentials,
     envelopes,
     now: () => input.clock.now().getTime(),
   });
@@ -179,6 +232,25 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
   // every bucket on every event — both protections would read as configured and enforce nothing.
   const destinationState = new InMemoryDestinationState();
 
+  // The profile step is stateless apart from its store, so one instance serves every event. A failure inside it
+  // never stops an event (the service returns the event unchanged); it is logged by NAME only — a profile row
+  // is hashes and ids, and an error message could echo one.
+  const profiles: ProfileEnricherPort | undefined =
+    input.profiles === undefined
+      ? undefined
+      : new TrackingProfileService({
+          store: input.profiles,
+          hasher,
+          clock: input.clock,
+          ...(input.defaultCountryCode === undefined
+            ? {}
+            : { defaultCountryCode: input.defaultCountryCode }),
+          onError: (error) =>
+            input.logger.warn("tracking profile step failed; event delivered unchanged", {
+              error: error instanceof Error ? error.name : "unknown",
+            }),
+        });
+
   /** Binds the registry-derived ports to one snapshot, for one unit of work. */
   const recordingFor = (snapshot: TrackingRegistrySnapshot): RecordingRuntimeDeps => ({
     delivery: {
@@ -191,6 +263,9 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     },
     records: store,
     hasher,
+    ...(input.defaultCountryCode === undefined
+      ? {}
+      : { defaultCountryCode: input.defaultCountryCode }),
     // Destination and mapping versions come from the same snapshot that served the definitions, so
     // the version pinned onto a record is always the version that produced its payload. This is the
     // invariant that pinning protects: reading versions from a snapshot that had been swapped since
@@ -198,6 +273,10 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     versions: snapshot,
     destinationState,
     clock: input.clock,
+    // Jitter for the first durable retry slot, so a vendor outage's failures do not return in lockstep.
+    ...(input.retryQueue === undefined
+      ? {}
+      : { retryQueue: input.retryQueue, random: Math.random }),
   });
 
   return {
@@ -211,6 +290,17 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
         ruleSetKey: input.ruleSetKey,
         hasher,
         clock: input.clock,
+        ...(profiles === undefined ? {} : { profiles }),
+        ...(input.consentPolicy === undefined ? {} : { consentPolicy: input.consentPolicy }),
+      };
+    },
+    retry: (): RetryTenantRuntime => {
+      const snapshot = input.registry.current();
+      return {
+        delivery: recordingFor(snapshot).delivery,
+        destinations: snapshot,
+        destinationState,
+        records: store,
       };
     },
     store,

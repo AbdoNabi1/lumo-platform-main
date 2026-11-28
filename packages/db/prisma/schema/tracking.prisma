@@ -90,6 +90,10 @@ model TrackingEventRecord {
   state     String
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Tracking P1-D10: set once the IP and user agent inside this record (and its revisions) were nulled
+  // after the 90-day retention. The only column of this table that is ever updated, and only by that job.
+  networkRedactedAt DateTime? @map("network_redacted_at")
+
   revisions TrackingEventRevision[]
 
   // One record per event: a duplicate `event_id` must be REJECTED, never overwrite. `event_id` is
@@ -100,6 +104,7 @@ model TrackingEventRecord {
   @@index([tenantId, eventName, capturedAt])
   @@index([tenantId, state])
   @@index([tenantId, dedupId])
+  @@index([tenantId, networkRedactedAt, capturedAt], map: "tracking_event_records_redaction_scan_idx")
   @@map("tracking_event_records")
   @@schema("tracking")
 }
@@ -127,5 +132,197 @@ model TrackingEventRevision {
   @@unique([tenantId, eventId, revisionSeq])
   @@index([tenantId, eventId])
   @@map("tracking_event_revisions")
+  @@schema("tracking")
+}
+
+// Ad platform connections (services/ad-platforms, Lead Site Part D1): one row per shop and platform
+// (meta | tiktok | snap | ga4 | google_ads). `public_config` holds the browser-safe ids; `sealed_secret`
+// is the envelope-sealed vendor token (never plaintext, never returned by any API) and `secret_last4`
+// its masked tail. Tenant-scoped with RLS; `version` is the optimistic-concurrency counter.
+model AdPlatformConnection {
+  id            String   @id @db.Uuid
+  tenantId      String   @map("tenant_id")
+  platform      String
+  enabled       Boolean  @default(false)
+  publicConfig  Json?    @map("public_config")
+  sealedSecret  String?  @map("sealed_secret")
+  secretLast4   String?  @map("secret_last4")
+  testEventCode String?  @map("test_event_code")
+  version       Int      @default(1)
+  createdAt     DateTime @map("created_at")
+  updatedAt     DateTime @map("updated_at")
+
+  @@unique([tenantId, platform])
+  @@map("ad_platform_connections")
+  @@schema("tracking")
+}
+
+// Tracking P1-D2: one row per (tenant, event, destination) whose vendor call failed in a way that may still
+// succeed. The worker's sweeper claims due rows (next_retry_at), re-delivers the SAME event id and settles
+// the row. window_expires_at is the event time + the vendor's accepted age (GA4 72 h; Meta, TikTok, Snap
+// 7 days minus 1 h): past it, or on a permanent refusal, the row is dead-lettered with a reason, never sent.
+// An operational queue beside the append-only event records: ids, counters, timestamps, a short error text.
+model TrackingDeliveryRetry {
+  id               String    @id @db.Uuid
+  tenantId         String    @map("tenant_id")
+  eventId          String    @map("event_id")
+  destination      String
+  platform         String
+  status           String    @default("pending") // pending | delivered | dead_lettered
+  attempts         Int       @default(1)
+  eventTimestamp   DateTime  @map("event_timestamp")
+  windowExpiresAt  DateTime  @map("window_expires_at")
+  nextRetryAt      DateTime  @map("next_retry_at")
+  lastError        String?   @map("last_error")
+  deadLetterReason String?   @map("dead_letter_reason")
+  createdAt        DateTime  @map("created_at")
+  updatedAt        DateTime  @map("updated_at")
+  settledAt        DateTime? @map("settled_at")
+
+  @@unique([tenantId, eventId, destination])
+  @@index([status, nextRetryAt])
+  @@map("delivery_retries")
+  @@schema("tracking")
+}
+
+// Tracking P1-D4: the visitor/customer profile that completes later server events (the Enricher + cookie vault
+// of a Stape-style server). HASHES ONLY — never a raw email, phone or name. One row per (tenant, visitor id);
+// several cookies of one person are folded into one row by identity resolution (customer id, email hash, phone
+// hash, visitor cookie, in that order), and every absorbed cookie id stays behind as a data-free TOMBSTONE
+// (`merged_into` set, every other column empty) so the old cookie keeps resolving to the surviving profile.
+//
+// Retention (owner 2026-11-27): an anonymous profile (`customer_id` null) is deleted 400 days after it was last
+// seen (`expires_at`); a customer's profiles and their tombstones are erased with the customer. `version` is an
+// optimistic lock: two events for one visitor processed at once must not overwrite each other's click ids.
+model TrackingProfile {
+  id         String  @id @db.Uuid
+  tenantId   String  @map("tenant_id")
+  visitorId  String  @map("visitor_id")
+  mergedInto String? @map("merged_into")
+  customerId String? @map("customer_id")
+
+  // Per-platform hash sets (sha256 hex): the email in the form each platform wants, phone with / without "+".
+  emailStd    String? @map("email_std")
+  emailGads   String? @map("email_gads")
+  emailGa4    String? @map("email_ga4")
+  phoneDigits String? @map("phone_digits")
+  phoneE164   String? @map("phone_e164")
+  fn          String?
+  ln          String?
+  ct          String?
+  st          String?
+  country     String?
+  externalId  String? @map("external_id") // hash
+
+  // Click ids by registry name: { ttclid: { value, capturedAt }, ... }. Not truncated (ttclid can be 1000 chars).
+  clickIds Json @default("{}") @map("click_ids")
+
+  fbp           String?   @map("fbp")
+  fbc           String?   @map("fbc")
+  fbcCapturedAt DateTime? @map("fbc_captured_at")
+  ttp           String?   @map("ttp")
+  scid          String?   @map("scid")
+  gaClientId    String?   @map("ga_client_id")
+  gaSessionId   String?   @map("ga_session_id")
+
+  lastIp        String?  @map("last_ip")
+  lastUserAgent String?  @map("last_user_agent")
+  lastPageUrl   String?  @map("last_page_url")
+  lastSeenAt    DateTime @map("last_seen_at")
+
+  // Filled by the edge-enrichment step (P1 T4); nullable until then.
+  geoCountry    String? @map("geo_country")
+  geoRegion     String? @map("geo_region")
+  geoCity       String? @map("geo_city")
+  aiSource      String? @map("ai_source")
+  botScore      Int?    @map("bot_score")
+  fingerprintId String? @map("fingerprint_id")
+
+  // The last landing touch: { utmSource, utmMedium, utmCampaign, utmContent, utmTerm, referrer, pageUrl, at }.
+  landingTouch Json? @map("landing_touch")
+
+  leadIds  String[] @default([]) @map("lead_ids")
+  orderIds String[] @default([]) @map("order_ids")
+
+  version   Int      @default(0)
+  createdAt DateTime @map("created_at")
+  updatedAt DateTime @map("updated_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@unique([tenantId, visitorId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, emailStd])
+  @@index([tenantId, phoneE164])
+  @@index([tenantId, mergedInto])
+  @@index([tenantId, expiresAt])
+  @@index([tenantId, fingerprintId])
+  @@map("tracking_profiles")
+  @@schema("tracking")
+}
+
+// Tracking P1-D9: addresses and ranges a merchant asked the store to ignore (their office, a staff phone, a known
+// scraper). MANUAL only — nothing inserts a row automatically (carrier-grade NAT shares one address between many
+// real shoppers). `cidr` is one canonical spelling, at least IPv4 /16 or IPv6 /32 wide; the runtime's collect route
+// skips an ordinary event from a listed address and never an order or a lead.
+model TrackingBlockedIp {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  cidr      String
+  note      String?
+  createdAt DateTime @map("created_at")
+  createdBy String?  @map("created_by")
+
+  @@unique([tenantId, cidr])
+  @@index([tenantId, createdAt])
+  @@map("blocked_ips")
+  @@schema("tracking")
+}
+
+// Tracking P2-D1: per-store tracking settings. One row per tenant, created on the first save; a tenant with NO row has
+// the defaults (consent `notice_only`, cookie notice shown). `consentPolicy` is `notice_only` | `opt_in` (CHECK in the
+// migration); the server stamps consent from it on every event. `version` is the optimistic-lock counter the admin page
+// sends back as `expectedVersion` (the first save creates version 1).
+model TrackingStoreSettings {
+  tenantId            String   @id @map("tenant_id")
+  consentPolicy       String   @default("notice_only") @map("consent_policy")
+  cookieNoticeEnabled Boolean  @default(true) @map("cookie_notice_enabled")
+  version             Int      @default(1)
+  updatedAt           DateTime @map("updated_at")
+
+  @@map("store_tracking_settings")
+  @@schema("tracking")
+}
+
+// Tracking P2-D8: what the visitor's browser carried when they placed an order (visitor id, click ids with their
+// capture time, browser ids, IP, user agent, page, UTM), written ONCE by the checkout `complete` route before the order
+// exists, so the later server-side Purchase can name the visitor. Keyed by what it describes: `subjectKind` is
+// `checkout` (`subjectRef` = the checkout session id = the order's `checkout_ref`) or `lead` (reserved; leads keep
+// `leads.attribution`). First write wins. IP and user agent are nulled after 90 days (`networkRedactedAt` marks it),
+// the row is deleted after 400 (measured from `capturedAt`).
+model TrackingAttributionSnapshot {
+  tenantId    String @map("tenant_id")
+  subjectKind String @map("subject_kind")
+  subjectRef  String @map("subject_ref")
+
+  visitorId String? @map("visitor_id")
+  sessionId String? @map("session_id")
+  ip        String?
+  userAgent String? @map("user_agent")
+  pageUrl   String? @map("page_url")
+  referrer  String?
+
+  // { fbp, fbc, ttp, scid, ga }, only the keys that were present.
+  cookies Json @default("{}")
+  // [{ name, value, capturedAt }], one per registry name, already validated against the platform window.
+  clickIds Json @default("[]") @map("click_ids")
+  // { source, medium, campaign, content, term }, only the keys that were present.
+  utm Json @default("{}")
+
+  capturedAt        DateTime  @map("captured_at")
+  networkRedactedAt DateTime? @map("network_redacted_at")
+
+  @@id([tenantId, subjectKind, subjectRef])
+  @@index([tenantId, capturedAt])
+  @@map("attribution_snapshots")
   @@schema("tracking")
 }

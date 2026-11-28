@@ -318,7 +318,7 @@ async function signUpStore(storeName: string, email: string, target = app): Prom
   const res = await publicPost(
     "/public/merchant-signup",
     PLATFORM,
-    { storeName, email, password: PASSWORD, country: "EG" },
+    { storeName, email, password: PASSWORD, country: "EG", siteType: "store" },
     target,
   );
   expect(res.statusCode).toBe(201);

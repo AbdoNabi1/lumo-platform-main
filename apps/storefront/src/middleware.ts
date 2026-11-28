@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextFetchEvent, type NextRequest } from "next/server";
 import { ACCESS_COOKIE, verifyAccessCookie } from "./lib/access-cookie";
 import {
   createAccessReader,
@@ -6,6 +6,7 @@ import {
   fetchAccessFromRuntime,
   fetchPreviewValidity,
 } from "./lib/access-cache";
+import { applyEdgeCapture } from "./lib/edge-identity";
 import { LOCKED_REACHABLE_ROUTES, LOCKED_VIEW_HEADER, reachWhileLocked } from "./lib/locked-routes";
 import { RETURN_PATH_HEADER, safeReturnTo, stripNextInternals } from "./lib/return-to";
 import {
@@ -16,6 +17,7 @@ import {
   normalizeHost,
 } from "./lib/shop-host";
 import { storefrontSecrets } from "./lib/storefront-env";
+import { withVisitorSession } from "./lib/visitor-session";
 
 const RUNTIME_API_URL = process.env.RUNTIME_API_URL ?? "http://localhost:3080";
 const DEFAULT_SHOP_ID = process.env.TENANT_DEFAULT_ID ?? "tenant-local";
@@ -94,7 +96,16 @@ const hasUnlockCookie = (request: NextRequest, shopId: string, accessVersion: nu
 
 const unavailable = () => gated(text(503, "Temporarily unavailable / غير متاح مؤقتاً"));
 
-export async function middleware(request: NextRequest): Promise<NextResponse> {
+/**
+ * What `route` learned that edge capture (P1-D5) needs: the shop it resolved and whether the response is an
+ * ordinary live page — not a refusal, a redirect to the gate, the gate itself, or a staff preview.
+ */
+interface CaptureScope {
+  shopId: string;
+  capture: boolean;
+}
+
+async function route(request: NextRequest, scope: CaptureScope): Promise<NextResponse> {
   const headers = new Headers(request.headers);
   headers.delete(SHOP_ID_HEADER); // never trust a client-sent shop id
   headers.delete(PREVIEW_HEADER); // nor a client-sent preview token header
@@ -123,6 +134,7 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     headers.set(SHOP_ID_HEADER, shop.shopId);
     shopId = shop.shopId;
   }
+  scope.shopId = shopId;
 
   // 2. Preview is view-only: every non-read request that carries ?preview= is refused (Ruling 15).
   const isRead = request.method === "GET" || request.method === "HEAD";
@@ -134,6 +146,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     isRead && previewParam !== null && PREVIEW_SHAPE.test(previewParam) ? previewParam : null;
   const pass = (forwardToken: string | null) => {
     if (forwardToken !== null) headers.set(PREVIEW_HEADER, forwardToken);
+    // A staff preview is never visitor traffic: no cookies, no touch (P1-D9 excludes it too).
+    scope.capture = forwardToken === null;
     return framing(NextResponse.next({ request: { headers } }), forwardToken !== null);
   };
 
@@ -188,6 +202,29 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const target = new URL("/password", request.url);
   target.searchParams.set("return_to", returnPath);
   return gated(NextResponse.redirect(target, 302));
+}
+
+/**
+ * Every response, whichever early return made it (page, redirect to the gate, refusal text), carries the
+ * visitor's first-party session cookie (Part C, D1): this is the one place it is stamped.
+ */
+export async function middleware(
+  request: NextRequest,
+  event?: NextFetchEvent,
+): Promise<NextResponse> {
+  const scope: CaptureScope = { shopId: DEFAULT_SHOP_ID, capture: false };
+  const response = withVisitorSession(request, await route(request, scope));
+  // Tracking P1-D5: the master cookie, click ids and the one background touch. No network call is awaited
+  // here; the touch runs after the response through `waitUntil`.
+  if (scope.capture) {
+    applyEdgeCapture({
+      request,
+      response,
+      shopId: scope.shopId,
+      ...(event === undefined ? {} : { waitUntil: (promise) => event.waitUntil(promise) }),
+    });
+  }
+  return response;
 }
 
 export const config = {

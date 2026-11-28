@@ -297,6 +297,7 @@ async function signUpStore(storeName: string, email: string): Promise<Store> {
     email,
     password: PASSWORD,
     country: "EG",
+    siteType: "store",
   });
   expect(res.statusCode).toBe(201);
   const out = res.json() as { tenantId: string; accessToken: string };
@@ -655,6 +656,7 @@ describe("self-service two-step: /auth/staff/two-step", () => {
             email: "owner@delta.test",
             password: PASSWORD,
             country: "EG",
+            siteType: "store",
           },
           bare.app,
         );

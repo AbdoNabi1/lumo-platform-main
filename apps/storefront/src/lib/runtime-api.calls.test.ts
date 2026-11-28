@@ -178,11 +178,33 @@ describe("cursor-paged reads", () => {
 });
 
 describe("store facts", () => {
-  it("getPublicStore keeps only name and currency", async () => {
-    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP", secret: "x" }));
+  it("getPublicStore keeps only name, currency and siteType", async () => {
+    fetchMock.mockResolvedValue(
+      json({ name: "Shop", currency: "EGP", siteType: "lead_site", extra: 1 }),
+    );
 
-    expect(await api.getPublicStore()).toEqual({ name: "Shop", currency: "EGP" });
+    expect(await api.getPublicStore()).toEqual({
+      name: "Shop",
+      currency: "EGP",
+      siteType: "lead_site",
+    });
     expect(lastCall().url.pathname).toBe("/api/v1/public/store");
+  });
+
+  it("getPublicStore reads an absent siteType (an older runtime) as a store", async () => {
+    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP" }));
+
+    expect(await api.getPublicStore()).toEqual({
+      name: "Shop",
+      currency: "EGP",
+      siteType: "store",
+    });
+  });
+
+  it("getPublicStore returns null for a siteType it does not know", async () => {
+    fetchMock.mockResolvedValue(json({ name: "Shop", currency: "EGP", siteType: "x" }));
+
+    expect(await api.getPublicStore()).toBeNull();
   });
 
   it("getPublicStore returns null for a malformed body or a failure", async () => {
@@ -426,6 +448,25 @@ describe("checkout", () => {
     expect(body).toEqual({ sessionRef: "s", idempotencyKey: "idem-1" });
   });
 
+  it("completeCheckout adds the attribution snapshot to the body only when one is given (P2-D8)", async () => {
+    fetchMock.mockResolvedValue(json({ id: "co-1", status: "completed" }));
+    const tracking = {
+      visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+      ip: "203.0.113.9",
+      clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-12-01T09:00:00.000Z" }],
+    };
+
+    await api.completeCheckout("co-1", "s", "idem-1", undefined, tracking);
+    expect(lastCall().body).toEqual({ sessionRef: "s", idempotencyKey: "idem-1", tracking });
+    expect(lastCall().headers).not.toHaveProperty("x-customer-session");
+
+    await api.completeCheckout("co-1", "s", "idem-2", "sess-1", tracking);
+    expect(lastCall().headers["x-customer-session"]).toBe("sess-1");
+
+    await api.completeCheckout("co-1", "s", "idem-3");
+    expect(lastCall().body).toEqual({ sessionRef: "s", idempotencyKey: "idem-3" });
+  });
+
   it("generateCheckoutPaymentIntentRequest GETs with the cart session header", async () => {
     fetchMock.mockResolvedValue(json({ amountMinor: 1000 }));
 
@@ -600,5 +641,74 @@ describe("loyalty and reviews", () => {
     expect(lastCall().body).toEqual(input);
     expect(lastCall().headers["x-customer-session"]).toBe("sid");
     expect(lastCall().headers["Idempotency-Key"]).toBe("idem-6");
+  });
+});
+
+describe("lead submission", () => {
+  const body = {
+    formId: "section-1",
+    name: "Mona",
+    phone: "01001234567",
+    sessionId: "sid-1",
+    sessionAlreadyEmitted: false,
+    spamSignals: { honeypot: false, elapsedMs: 5000 },
+    context: { pageUrl: null, referrer: null, ip: null, userAgent: null, cookies: {} },
+  };
+
+  it("createLead posts the body to the public leads route with the tenant and the Idempotency-Key", async () => {
+    const created = { leadId: "lead-1", eventId: "lead_lead-1", emission: "emit" };
+    fetchMock.mockResolvedValue(json(created, 201));
+
+    expect(await api.createLead(body, "submit-key-0001")).toEqual({ status: 201, body: created });
+    const { url, init, headers, body: sent } = lastCall();
+    expect(url.pathname).toBe("/api/v1/public/leads");
+    expect(init.method).toBe("POST");
+    expect(sent).toEqual(body);
+    expect(headers["x-tenant-id"]).toEqual(expect.any(String));
+    expect(headers["content-type"]).toBe("application/json");
+    expect(headers["Idempotency-Key"]).toBe("submit-key-0001");
+  });
+
+  it("createLead hands back an error envelope untouched and maps an unreachable runtime to status 0", async () => {
+    const envelope = { code: "VALIDATION", fields: [{ field: "phone", message: "bad" }] };
+    fetchMock.mockResolvedValueOnce(json(envelope, 422));
+    expect(await api.createLead(body, "submit-key-0001")).toEqual({ status: 422, body: envelope });
+
+    fetchMock.mockRejectedValueOnce(new Error("down"));
+    expect(await api.createLead(body, "submit-key-0001")).toEqual({ status: 0, body: null });
+  });
+
+  it("isCreateLeadResult accepts only the route's 201 body", () => {
+    expect(api.isCreateLeadResult({ leadId: "l", eventId: "lead_l", emission: "emit" })).toBe(true);
+    expect(api.isCreateLeadResult({ leadId: "l", eventId: "lead_l", emission: "suppressed" })).toBe(
+      true,
+    );
+    expect(api.isCreateLeadResult({ leadId: "l", eventId: "lead_l", emission: "spam" })).toBe(true);
+    expect(api.isCreateLeadResult({ leadId: "l", eventId: "lead_l", emission: "pending" })).toBe(
+      false,
+    );
+    expect(api.isCreateLeadResult({ leadId: "", eventId: "lead_l", emission: "emit" })).toBe(false);
+    expect(api.isCreateLeadResult({ leadId: "l", emission: "emit" })).toBe(false);
+    expect(api.isCreateLeadResult(null)).toBe(false);
+    expect(api.isCreateLeadResult("emit")).toBe(false);
+  });
+
+  it("validationFieldsOf reads fields[].field strings from an error envelope, else []", () => {
+    expect(
+      api.validationFieldsOf({
+        code: "VALIDATION",
+        fields: [
+          { field: "phone", message: "x" },
+          { field: "email" },
+          { message: "y" },
+          { field: 3 },
+          null,
+        ],
+      }),
+    ).toEqual(["phone", "email"]);
+    expect(api.validationFieldsOf({ fields: "phone" })).toEqual([]);
+    expect(api.validationFieldsOf({})).toEqual([]);
+    expect(api.validationFieldsOf(null)).toEqual([]);
+    expect(api.validationFieldsOf(undefined)).toEqual([]);
   });
 });
