@@ -2019,9 +2019,12 @@ describe("leads.leads tracking sweep — migration matches the Prisma model (P2-
     "utf-8",
   ).replace(/\r\n/g, "\n");
 
-  it("is hand-written with CRLF line endings, like its neighbours", () => {
-    expect(sweepSql).toContain("\r\n");
-    expect(sweepSql.replace(/\r\n/g, "")).not.toMatch(/\n/);
+  it("is hand-written: it opens with its own explanation, switches row security off and back on", () => {
+    // (line endings are not asserted: the working tree is CRLF on Windows, the repository normalises to LF)
+    expect(sweep.startsWith("-- Tracking P2-D9")).toBe(true);
+    expect(sweep).toContain("NOT applied by the agent");
+    expect(sweep).toContain("SET row_security = off;");
+    expect(sweep.trimEnd().endsWith("RESET row_security;")).toBe(true);
   });
 
   it("creates the (tenant, tracking status, created at) index the model declares, tenant first", () => {
