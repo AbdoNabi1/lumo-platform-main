@@ -372,11 +372,21 @@ export class PrismaTrackingProfileStore implements TrackingProfileStore, Expired
 
   deleteExpiredAnonymous(tenantId: string, now: Date): Promise<number> {
     return runInTenantTransaction(this.db, tenantId, async (tx) => {
-      // Anonymous = no customer. A customer's profile is erased with the customer, not by the clock.
-      const deleted = await tx.trackingProfile.deleteMany({
-        where: { tenantId, customerId: null, expiresAt: { lt: now } },
-      });
-      return deleted.count;
+      // Anonymous = no customer on the row AND, for a tombstone, none on the profile it points at: a
+      // customer's profile and the cookie ids that resolve to it are erased with the customer
+      // (`eraseCustomer`), never by the clock. The tenant scan below applies the same rule.
+      return tx.$executeRaw`
+        DELETE FROM "tracking"."tracking_profiles" AS p
+        WHERE p.tenant_id = ${tenantId}
+          AND p.customer_id IS NULL
+          AND p.expires_at < ${now.toISOString()}::timestamp
+          AND NOT EXISTS (
+            SELECT 1 FROM "tracking"."tracking_profiles" AS s
+            WHERE s.tenant_id = p.tenant_id
+              AND s.visitor_id = p.merged_into
+              AND s.merged_into IS NULL
+              AND s.customer_id IS NOT NULL
+          )`;
     });
   }
 
@@ -386,9 +396,17 @@ export class PrismaTrackingProfileStore implements TrackingProfileStore, Expired
       await tx.$executeRaw`SELECT set_config('app.retention_scan', 'on', true)`;
       return tx.$queryRaw<{ tenant_id: string }[]>`
         SELECT DISTINCT tenant_id
-        FROM "tracking"."tracking_profiles"
-        WHERE customer_id IS NULL AND expires_at < ${now.toISOString()}::timestamp
-        ORDER BY tenant_id
+        FROM "tracking"."tracking_profiles" AS p
+        WHERE p.customer_id IS NULL
+          AND p.expires_at < ${now.toISOString()}::timestamp
+          AND NOT EXISTS (
+            SELECT 1 FROM "tracking"."tracking_profiles" AS s
+            WHERE s.tenant_id = p.tenant_id
+              AND s.visitor_id = p.merged_into
+              AND s.merged_into IS NULL
+              AND s.customer_id IS NOT NULL
+          )
+        ORDER BY p.tenant_id
         LIMIT ${TENANT_SCAN_LIMIT}`;
     });
     return rows.map((row) => row.tenant_id);

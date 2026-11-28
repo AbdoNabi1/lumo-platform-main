@@ -35,7 +35,8 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 /** `STOREFRONT_TRUSTED_PROXIES`: a whole number 0–8; unset, blank or malformed ⇒ the Railway default. */
 export function trustedProxyCount(env: Env = process.env): number {
-  const raw = env[TRUSTED_PROXIES_ENV]?.trim();
+  // Literal key (not the constant): scripts/ops/check-env-docs.mjs finds env reads by their quoted name.
+  const raw = env["STOREFRONT_TRUSTED_PROXIES"]?.trim();
   if (raw === undefined || raw === "" || !/^\d{1,2}$/u.test(raw)) return DEFAULT_TRUSTED_PROXIES;
   return Math.min(Number(raw), MAX_TRUSTED_PROXIES);
 }

@@ -185,16 +185,21 @@ describe("PrismaTrackingProfileStore — tenancy", () => {
     expect(sql).not.toMatch(/DELETE|UPDATE/u);
   });
 
-  it("expiry deletes only anonymous profiles of ONE tenant", async () => {
-    const { db, calls } = fakeDb({ deleteMany: () => ({ count: 4 }) });
+  it("expiry deletes only anonymous profiles of ONE tenant, sparing a customer's cookie tombstones", async () => {
+    const { db, calls } = fakeDb();
     const now = new Date("2026-11-27T10:00:00.000Z");
 
-    expect(await store(db).deleteExpiredAnonymous("t-1", now)).toBe(4);
-    expect((calls[1]?.args as { where: unknown }).where).toEqual({
-      tenantId: "t-1",
-      customerId: null,
-      expiresAt: { lt: now },
-    });
+    expect(await store(db).deleteExpiredAnonymous("t-1", now)).toBe(1); // the fake's $executeRaw count
+    const raw = calls.find(
+      (c) => c.op === "raw" && /DELETE/u.test((c.args as { sql: string }).sql),
+    );
+    const { sql, values } = raw?.args as { sql: string; values: unknown[] };
+    expect(values).toEqual(["t-1", now.toISOString()]);
+    expect(sql).toMatch(/p\.tenant_id = \?/u);
+    expect(sql).toMatch(/p\.customer_id IS NULL/u);
+    expect(sql).toMatch(/p\.expires_at < \?::timestamp/u);
+    // a tombstone whose survivor carries a customer is not the clock's to delete
+    expect(sql).toMatch(/NOT EXISTS[\s\S]*s\.customer_id IS NOT NULL/u);
   });
 
   it("erasing a customer deletes their profiles and the cookies pointing at them, scoped to the tenant", async () => {

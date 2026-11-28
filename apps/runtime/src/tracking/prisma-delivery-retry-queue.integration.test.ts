@@ -80,18 +80,22 @@ describe.runIf(Boolean(databaseUrl))("tracking.delivery_retries (integration)", 
       const queue = new PrismaDeliveryRetryQueue(prisma, idGenerator);
       await queue.schedule(entry(tenantId, 1), T0);
 
-      const first = await queue.claimDue({ limit: 10, now: T0, leaseMs: 10 * MINUTE });
+      // The claim is global (oldest due rows of ANY tenant first, capped at `limit`) and the database is
+      // shared with the test above, whose 50 rows come due again at T0 + 10 min with the very same lease
+      // time as this row. A small limit would let them take every slot, so the limit leaves room for all.
+      const limit = 1_000;
+      const first = await queue.claimDue({ limit, now: T0, leaseMs: 10 * MINUTE });
       expect(first.filter((claimed) => claimed.tenantId === tenantId)).toHaveLength(1);
 
       const during = await queue.claimDue({
-        limit: 10,
+        limit,
         now: new Date(T0.getTime() + 5 * MINUTE),
         leaseMs: 10 * MINUTE,
       });
       expect(during.filter((claimed) => claimed.tenantId === tenantId)).toHaveLength(0);
 
       const after = await queue.claimDue({
-        limit: 10,
+        limit,
         now: new Date(T0.getTime() + 11 * MINUTE),
         leaseMs: 10 * MINUTE,
       });

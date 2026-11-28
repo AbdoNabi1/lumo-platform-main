@@ -199,4 +199,28 @@ describe("InMemoryTrackingProfileStore", () => {
     // the customer's expired profile is not the job's business, so only t-2 still has work
     expect(await store.tenantsWithExpiredProfiles(NOW)).toEqual(["t-2"]);
   });
+
+  it("a customer's cookie tombstones outlive their expiry date; an anonymous profile's do not", async () => {
+    const store = new InMemoryTrackingProfileStore();
+    const expired = { expiresAt: "2026-11-01T00:00:00.000Z" };
+    await store.persist({
+      profile: profile("t-1", "v-customer", { ...expired, customerId: "c-1" }),
+      aliases: ["v-customer-b"],
+      absorbed: [],
+    });
+    await store.persist({
+      profile: profile("t-1", "v-anon", expired),
+      aliases: ["v-anon-b"],
+      absorbed: [],
+    });
+
+    expect(await store.tenantsWithExpiredProfiles(NOW)).toEqual(["t-1"]);
+    expect(await store.deleteExpiredAnonymous("t-1", NOW)).toBe(2); // v-anon and v-anon-b
+    expect([...store.aliases("t-1").keys()]).toEqual(["v-customer-b"]);
+    expect(await store.tenantsWithExpiredProfiles(NOW)).toEqual([]);
+
+    // erasing the customer takes the profile and the cookie with it
+    expect(await store.eraseCustomer("t-1", "c-1")).toBe(2);
+    expect(store.aliases("t-1").size).toBe(0);
+  });
 });

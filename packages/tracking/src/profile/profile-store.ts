@@ -36,7 +36,7 @@ export interface TrackingProfileStore {
   persist(change: ProfileChange): Promise<boolean>;
   /** Deletes every profile of the customer and every cookie id that resolved to one. Returns rows deleted. */
   eraseCustomer(tenantId: string, customerId: string): Promise<number>;
-  /** Deletes anonymous profiles (and tombstones) whose `expiresAt` is before `now`. Returns rows deleted. */
+  /** Deletes anonymous profiles (and tombstones of anonymous ones) whose `expiresAt` is before `now`. Returns rows deleted. */
   deleteExpiredAnonymous(tenantId: string, now: Date): Promise<number>;
 }
 
@@ -195,14 +195,25 @@ export class InMemoryTrackingProfileStore implements TrackingProfileStore, Expir
     return Promise.resolve(deleted);
   }
 
+  /**
+   * Expired AND anonymous: no customer on the row, and — for a tombstone — none on the profile it points at.
+   * A customer's cookie ids stay resolvable until the customer is erased (`eraseCustomer`), not until the clock.
+   */
+  private isExpiredAnonymous(row: StoredRow, now: Date): boolean {
+    if (!isAnonymousProfile(row.profile) || Date.parse(row.profile.expiresAt) >= now.getTime()) {
+      return false;
+    }
+    if (row.mergedInto === undefined) return true;
+    const survivor = this.rows.get(keyOf(row.profile.tenantId, row.mergedInto));
+    return survivor === undefined || isAnonymousProfile(survivor.profile);
+  }
+
   deleteExpiredAnonymous(tenantId: string, now: Date): Promise<number> {
     let deleted = 0;
     for (const [key, row] of [...this.rows.entries()]) {
-      if (row.profile.tenantId !== tenantId || !isAnonymousProfile(row.profile)) continue;
-      if (Date.parse(row.profile.expiresAt) < now.getTime()) {
-        this.rows.delete(key);
-        deleted += 1;
-      }
+      if (row.profile.tenantId !== tenantId || !this.isExpiredAnonymous(row, now)) continue;
+      this.rows.delete(key);
+      deleted += 1;
     }
     return Promise.resolve(deleted);
   }
@@ -210,9 +221,7 @@ export class InMemoryTrackingProfileStore implements TrackingProfileStore, Expir
   tenantsWithExpiredProfiles(now: Date): Promise<readonly string[]> {
     const tenants = new Set<string>();
     for (const row of this.rows.values()) {
-      if (isAnonymousProfile(row.profile) && Date.parse(row.profile.expiresAt) < now.getTime()) {
-        tenants.add(row.profile.tenantId);
-      }
+      if (this.isExpiredAnonymous(row, now)) tenants.add(row.profile.tenantId);
     }
     return Promise.resolve([...tenants].sort());
   }
