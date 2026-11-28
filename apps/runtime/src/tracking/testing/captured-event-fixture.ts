@@ -5,10 +5,19 @@ import { collect, TRACKING_CAPTURED_TOPIC, TRACKING_CAPTURED_VERSION } from "@pl
 import type { TrackingCapturedPayload } from "../tracking-ingest";
 
 export const FIXTURE_NOW = new Date("2026-11-27T12:00:00.000Z");
-const clock: Clock = { now: () => FIXTURE_NOW };
 
-/** The record the capture route would hand its sink, built with the same calls the route makes. */
-export function routeRecord(tenantId: string, eventId: string, messageId: string): PublishRecord {
+/**
+ * The record the capture route would hand its sink, built with the same calls the route makes. `at` is the event time;
+ * a test whose consumer runs on the REAL clock (the Postgres integration test) must pass `new Date()`: an event older
+ * than the 24 h clock-skew window is refused at ingest, so a fixed time stops working a day after it was written.
+ */
+export function routeRecord(
+  tenantId: string,
+  eventId: string,
+  messageId: string,
+  at: Date = FIXTURE_NOW,
+): PublishRecord {
+  const clock: Clock = { now: () => at };
   const outcome = collect(
     {
       body: {
@@ -17,7 +26,7 @@ export function routeRecord(tenantId: string, eventId: string, messageId: string
           eventId,
           eventName: "page_view",
           eventVersion: 1,
-          timestamp: FIXTURE_NOW.toISOString(),
+          timestamp: at.toISOString(),
           environment: "production",
           consent: { analytics: true, marketing: false, personalization: false },
           properties: {},
@@ -41,7 +50,7 @@ export function routeRecord(tenantId: string, eventId: string, messageId: string
     eventVersion: TRACKING_CAPTURED_VERSION,
     aggregateId: eventId,
     aggregateType: "tracking_event",
-    occurredAt: FIXTURE_NOW.toISOString(),
+    occurredAt: at.toISOString(),
     correlationId: eventId,
     causationId: eventId,
     tenantId,

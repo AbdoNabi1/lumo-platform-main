@@ -69,7 +69,8 @@ describe.runIf(Boolean(databaseUrl))("tracking over the Postgres outbox (integra
 
       // The capture route's append, then the worker's relay pass.
       await new PrismaOutboxEventPublisher(prisma).publish(
-        routeRecord(tenantId, eventId, messageId),
+        // The consumer runs on the real clock: a fixed fixture time ages out of the 24 h skew window.
+        routeRecord(tenantId, eventId, messageId, new Date()),
       );
       const relay = new OutboxDeliveryRelay({
         queue: new PrismaOutboxDeliveryQueue(prisma),
