@@ -1869,10 +1869,137 @@ describe("tracking.store_tracking_settings — migration matches the Prisma mode
     expect(settingsSql.match(/CREATE TABLE/g)).toHaveLength(1);
   });
 
-  it("is the only migration at 20261208000000, and the newest", () => {
+  it("is the only migration at 20261208000000", () => {
     expect(dirs.filter((dir) => dir.startsWith("20261208000000"))).toEqual([
       "20261208000000_tracking_store_settings",
     ]);
-    expect(dirs.at(-1)).toBe("20261208000000_tracking_store_settings");
+  });
+});
+
+/**
+ * Tracking P2-D8: `tracking.attribution_snapshots`, hand-written and applied by the owner before the release whose
+ * checkout route writes it. A model without its migration would make every `complete` call fail its (swallowed)
+ * snapshot write while the in-memory tests stayed green and every Purchase would go out with no visitor; a tenant
+ * table without a forced, tenant-scoped policy would let one merchant read another's visitor IPs and click ids; a
+ * missing retention policy would keep IPs forever.
+ */
+describe("tracking.attribution_snapshots — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const snapshotSql = readFileSync(
+    join(migrationsDir, "20261209000000_tracking_attribution_snapshots", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingAttributionSnapshot")).toEqual(
+      expect.arrayContaining([
+        "tenant_id",
+        "subject_kind",
+        "subject_ref",
+        "visitor_id",
+        "ip",
+        "user_agent",
+        "click_ids",
+        "captured_at",
+        "network_redacted_at",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "attribution_snapshots", snapshotSql);
+    for (const column of modelColumns("TrackingAttributionSnapshot")) {
+      expect(actual.has(column), `expected "tracking"."attribution_snapshots"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is keyed (tenant, kind, ref) so a second write for a subject is a conflict, tenant first", () => {
+    expect(snapshotSql).toContain(
+      'CONSTRAINT "attribution_snapshots_pkey" PRIMARY KEY ("tenant_id", "subject_kind", "subject_ref")',
+    );
+    expect(schema).toMatch(
+      /model TrackingAttributionSnapshot \{[\s\S]*@@id\(\[tenantId, subjectKind, subjectRef\]\)/,
+    );
+    expect(schema).toContain('@@map("attribution_snapshots")');
+    expect(snapshotSql).toContain(
+      'CREATE INDEX "attribution_snapshots_tenant_id_captured_at_idx" ON "tracking"."attribution_snapshots" ("tenant_id", "captured_at")',
+    );
+    expect(schema).toContain("@@index([tenantId, capturedAt])");
+  });
+
+  it("limits the subject kind to checkout and lead", () => {
+    expect(snapshotSql).toContain(`CHECK ("subject_kind" IN ('checkout', 'lead'))`);
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(snapshotSql).toContain(
+      'ALTER TABLE "tracking"."attribution_snapshots" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(snapshotSql).toContain(
+      'ALTER TABLE "tracking"."attribution_snapshots" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(snapshotSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."attribution_snapshots" FOR ALL',
+    );
+    expect(snapshotSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(snapshotSql).toContain(
+      "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))",
+    );
+  });
+
+  it("the only cross-tenant read is the retention scan, behind its explicit switch, and SELECT only", () => {
+    expect(snapshotSql).toContain(
+      "CREATE POLICY retention_scan_read ON \"tracking\".\"attribution_snapshots\" FOR SELECT\n  USING (current_setting('app.retention_scan', true) = 'on');",
+    );
+    expect(snapshotSql).not.toMatch(/USING \(true\)/);
+    expect(snapshotSql.match(/CREATE POLICY/g)).toHaveLength(2);
+  });
+
+  it("holds the network columns the retention nulls, and no contact data", () => {
+    expect(snapshotSql).toContain('"ip"                  TEXT,');
+    expect(snapshotSql).toContain('"user_agent"          TEXT,');
+    expect(snapshotSql).toContain('"network_redacted_at" TIMESTAMP(3)');
+    const columns = modelColumns("TrackingAttributionSnapshot");
+    for (const forbidden of ["email", "phone", "name", "address"]) {
+      expect(columns.filter((column) => column.includes(forbidden))).toEqual([]);
+    }
+  });
+
+  it("is additive: one new table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(snapshotSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(snapshotSql).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(snapshotSql.match(/CREATE TABLE/g)).toHaveLength(1);
+    expect(snapshotSql).not.toMatch(
+      /ALTER TABLE "tracking"\."(?!attribution_snapshots)\w+" (ADD|DROP)/,
+    );
+  });
+
+  it("is the only migration at 20261209000000, and sorts after the settings migration", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261209000000"))).toEqual([
+      "20261209000000_tracking_attribution_snapshots",
+    ]);
+    expect(dirs.indexOf("20261209000000_tracking_attribution_snapshots")).toBeGreaterThan(
+      dirs.indexOf("20261208000000_tracking_store_settings"),
+    );
   });
 });

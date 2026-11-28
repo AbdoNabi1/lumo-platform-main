@@ -7,7 +7,9 @@ export {
   LEAD_STATUSES,
   LEAD_TRACKING_STATUSES,
   type LeadAttribution,
+  type LeadClickId,
   type LeadProps,
+  type LeadUtm,
   type LeadStatus,
   type LeadTrackingStatus,
 } from "./domain/lead";

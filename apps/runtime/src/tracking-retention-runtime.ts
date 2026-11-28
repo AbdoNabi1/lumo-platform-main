@@ -13,7 +13,8 @@ export const TRACKING_RETENTION_LOCK_KEY = "tracking-retention";
 
 /**
  * Tracking P1-D10: the worker's timer for the privacy retention — anonymous visitor profiles deleted 400 days
- * after they were last seen, and the IP and user agent removed from event records older than 90 days. It runs in
+ * after they were last seen, and the IP and user agent removed from event records older than 90 days. Since P2-D8 the same pass nulls the IP and
+ * user agent of an order's attribution snapshot after 90 days and deletes the snapshot after 400. It runs in
  * the WORKER rather than the scheduler process because the worker is the process every deployment has (the
  * Railway guide does not deploy the scheduler), and a privacy promise must not depend on an optional process.
  *
@@ -40,7 +41,13 @@ export function startTrackingRetention(
       if (handle === null) return; // another worker is on it
       try {
         const report = await run();
-        if (report.profilesDeleted > 0 || report.eventsRedacted > 0 || report.errored > 0) {
+        if (
+          report.profilesDeleted > 0 ||
+          report.eventsRedacted > 0 ||
+          report.snapshotsRedacted > 0 ||
+          report.snapshotsDeleted > 0 ||
+          report.errored > 0
+        ) {
           core.logger.info("tracking retention pass", { ...report });
         }
       } finally {

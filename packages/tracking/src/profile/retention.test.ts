@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import {
+  InMemoryAttributionSnapshotStore,
+  recordAttributionSnapshot,
+} from "../business/attribution-snapshot";
 import { createProfile } from "./profile-merge";
 import { InMemoryTrackingProfileStore } from "./profile-store";
 import {
@@ -144,6 +148,8 @@ describe("runTrackingRetention", () => {
     expect(report).toEqual({
       profilesDeleted: 1,
       eventsRedacted: 460,
+      snapshotsRedacted: 0,
+      snapshotsDeleted: 0,
       tenantsVisited: 2,
       errored: 0,
     });
@@ -196,6 +202,92 @@ describe("runTrackingRetention", () => {
     });
     expect(report.eventsRedacted).toBeLessThan(10_000);
     expect(report.eventsRedacted).toBeGreaterThan(0);
+  });
+});
+
+describe("runTrackingRetention: attribution snapshots (P2-D8)", () => {
+  const emptyEvents: EventNetworkRedactionPort = {
+    tenantsWithUnredactedEvents: () => Promise.resolve([]),
+    redactBatch: () => Promise.resolve(0),
+  };
+  const put = (
+    store: InMemoryAttributionSnapshotStore,
+    tenantId: string,
+    ref: string,
+    ageDays: number,
+  ) =>
+    recordAttributionSnapshot({
+      store,
+      now: new Date(NOW.getTime() - ageDays * DAY),
+      tenantId,
+      subjectKind: "checkout",
+      subjectRef: ref,
+      input: {
+        visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+        ip: "203.0.113.9",
+        userAgent: "UA",
+      },
+    });
+
+  it("nulls IP and user agent after 90 days, deletes after 400, per tenant, and reports both counts", async () => {
+    const snapshots = new InMemoryAttributionSnapshotStore();
+    await put(snapshots, "t-1", "fresh", 10);
+    await put(snapshots, "t-1", "old", 120);
+    await put(snapshots, "t-2", "old", 91);
+    await put(snapshots, "t-2", "gone", 401);
+
+    const report = await runTrackingRetention({
+      profiles: new InMemoryTrackingProfileStore(),
+      events: emptyEvents,
+      snapshots,
+      clock: { now: () => NOW },
+      batchSize: 1,
+    });
+
+    expect(report).toEqual({
+      profilesDeleted: 0,
+      eventsRedacted: 0,
+      snapshotsRedacted: 2,
+      snapshotsDeleted: 1,
+      tenantsVisited: 2,
+      errored: 0,
+    });
+    expect(await snapshots.find("t-1", "checkout", "old")).toEqual({
+      visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+    });
+    expect(await snapshots.find("t-1", "checkout", "fresh")).toMatchObject({ ip: "203.0.113.9" });
+    expect(await snapshots.find("t-2", "checkout", "gone")).toBeNull();
+    // a second pass finds nothing to do
+    const again = await runTrackingRetention({
+      profiles: new InMemoryTrackingProfileStore(),
+      events: emptyEvents,
+      snapshots,
+      clock: { now: () => NOW },
+    });
+    expect(again).toMatchObject({ snapshotsRedacted: 0, snapshotsDeleted: 0, tenantsVisited: 0 });
+  });
+
+  it("a failing snapshot tenant is counted and does not stop the next; absent port leaves snapshots alone", async () => {
+    const snapshots = {
+      tenantsWithSnapshotWork: () => Promise.resolve(["t-bad", "t-good"]),
+      redactNetworkBatch: (tenantId: string) =>
+        tenantId === "t-bad" ? Promise.reject(new Error("boom")) : Promise.resolve(2),
+      deleteExpiredBatch: () => Promise.resolve(0),
+    };
+    const report = await runTrackingRetention({
+      profiles: new InMemoryTrackingProfileStore(),
+      events: emptyEvents,
+      snapshots,
+      clock: { now: () => NOW },
+    });
+    expect(report).toMatchObject({ snapshotsRedacted: 2, errored: 1, tenantsVisited: 2 });
+
+    const without = await runTrackingRetention({
+      profiles: new InMemoryTrackingProfileStore(),
+      events: emptyEvents,
+      clock: { now: () => NOW },
+    });
+    expect(without).toMatchObject({ snapshotsRedacted: 0, snapshotsDeleted: 0 });
   });
 });
 

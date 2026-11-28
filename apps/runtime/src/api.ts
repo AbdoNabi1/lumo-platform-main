@@ -26,6 +26,7 @@ import {
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
 import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
+import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
 import { buildTrackingCollectWiring } from "./tracking/tracking-collect-enrichment";
 import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
@@ -664,6 +665,10 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     trackingBlocklist: trackingCollect.blockedIps,
     trackingBlockedIps: trackingCollect.blockedIps,
     trackingSettings: trackingCollect.settings,
+    // P2-D8: only where the tracking tables exist (the same switch as the ingest and the retention pass).
+    ...(runtime.config.TRACKING_INGEST_ENABLED
+      ? { trackingAttributionSnapshots: new PrismaAttributionSnapshotStore(runtime.prisma) }
+      : {}),
     ...(runtime.config.TRACKING_EDGE_SECRET === undefined
       ? {}
       : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),

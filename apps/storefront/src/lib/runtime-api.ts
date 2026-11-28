@@ -925,6 +925,54 @@ export interface CreateLeadBody {
       readonly scid?: string;
       readonly ga?: string;
     };
+    /** `_mb_id`, the master visitor cookie (Tracking P2-D8). Omitted when absent or malformed. */
+    readonly visitorId?: string;
+    /** Latest click per platform from the HttpOnly `_mb_clk` jar, inside each platform's window. */
+    readonly clickIds?: readonly {
+      readonly name: string;
+      readonly value: string;
+      readonly capturedAt: string;
+    }[];
+    /** UTM labels of the page the form sits on (from the referer's query). */
+    readonly utm?: {
+      readonly source?: string;
+      readonly medium?: string;
+      readonly campaign?: string;
+      readonly content?: string;
+      readonly term?: string;
+    };
+  };
+}
+
+/**
+ * What the visitor's browser carried when they placed an order (Tracking P2-D8): the optional `tracking` object of
+ * `POST /public/checkouts/:id/complete`, exactly the strict zod body of `apps/admin/src/http/public-checkout-tracking.ts`.
+ * Built ONLY by `lib/tracking-snapshot.ts` from the server-side cookie jar and request headers.
+ */
+export interface CheckoutTracking {
+  readonly visitorId?: string;
+  readonly sessionId?: string;
+  readonly ip?: string;
+  readonly userAgent?: string;
+  readonly pageUrl?: string;
+  readonly cookies?: {
+    readonly fbp?: string;
+    readonly fbc?: string;
+    readonly ttp?: string;
+    readonly scid?: string;
+    readonly ga?: string;
+  };
+  readonly clickIds?: readonly {
+    readonly name: string;
+    readonly value: string;
+    readonly capturedAt: string;
+  }[];
+  readonly utm?: {
+    readonly source?: string;
+    readonly medium?: string;
+    readonly campaign?: string;
+    readonly content?: string;
+    readonly term?: string;
   };
 }
 
@@ -1314,10 +1362,11 @@ export function completeCheckout(
   sessionRef: string,
   idempotencyKey: string,
   customerSessionId?: string,
+  tracking?: CheckoutTracking,
 ): Promise<CheckoutResult> {
   return postItem<CheckoutSessionSummary>(
     `/api/v1/public/checkouts/${encodeURIComponent(checkoutSessionId)}/complete`,
-    { sessionRef, idempotencyKey },
+    { sessionRef, idempotencyKey, ...(tracking === undefined ? {} : { tracking }) },
     { "Idempotency-Key": idempotencyKey, ...customerSessionHeader(customerSessionId) },
   );
 }

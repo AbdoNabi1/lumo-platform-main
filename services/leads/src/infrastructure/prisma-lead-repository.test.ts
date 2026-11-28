@@ -277,6 +277,68 @@ describe("PrismaLeadRepository mapper", () => {
     }
   });
 
+  it("round-trips the visitor id, click ids and UTM labels (P2-D8) and keeps a row without them exactly as it was", async () => {
+    const attribution = {
+      pageUrl: "https://shop.example/",
+      referrer: null,
+      ip: "203.0.113.9",
+      userAgent: "ua",
+      cookies: { fbp: "fb.1.2.3" },
+      visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+      clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-11-23T09:00:00.000Z" }],
+      utm: { source: "facebook", campaign: "eid" },
+    };
+    const newer = recordingPrisma({ "lead.findFirst": [rowOf({ attribution })] });
+    expect(
+      (await new PrismaLeadRepository({ prisma: newer.prisma }).get("t-1", id(1)))?.props
+        .attribution,
+    ).toEqual(attribution);
+
+    // a row written before these fields existed: no new key appears
+    const oldAttribution = {
+      pageUrl: "https://shop.example/",
+      referrer: null,
+      ip: null,
+      userAgent: null,
+      cookies: { ga: "GA1.2.3" },
+    };
+    const older = recordingPrisma({ "lead.findFirst": [rowOf({ attribution: oldAttribution })] });
+    expect(
+      (await new PrismaLeadRepository({ prisma: older.prisma }).get("t-1", id(1)))?.props
+        .attribution,
+    ).toStrictEqual(oldAttribution);
+  });
+
+  it("reads malformed visitor fields as absent instead of failing (hand-edited or future documents)", async () => {
+    const { prisma } = recordingPrisma({
+      "lead.findFirst": [
+        rowOf({
+          attribution: {
+            pageUrl: null,
+            cookies: {},
+            visitorId: 42,
+            clickIds: [
+              { name: "gclid" },
+              "x",
+              { name: "ttclid", value: "v", capturedAt: "2026-11-23T09:00:00.000Z" },
+            ],
+            utm: { source: 1, medium: "email", junk: "y" },
+          } as unknown as LeadRow["attribution"],
+        }),
+      ],
+    });
+    const lead = await new PrismaLeadRepository({ prisma }).get("t-1", id(1));
+    expect(lead?.props.attribution).toEqual({
+      pageUrl: null,
+      referrer: null,
+      ip: null,
+      userAgent: null,
+      cookies: {},
+      clickIds: [{ name: "ttclid", value: "v", capturedAt: "2026-11-23T09:00:00.000Z" }],
+      utm: { medium: "email" },
+    });
+  });
+
   it("reads a malformed attribution document as empty attribution instead of failing", async () => {
     const { prisma } = recordingPrisma({
       "lead.findFirst": [rowOf({ attribution: "nope" as unknown as LeadRow["attribution"] })],

@@ -118,6 +118,7 @@ import {
 import { TenantRuntimes } from "./tracking/tenant-runtimes";
 import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-tracking-runtime";
 import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue";
+import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
 import { PrismaEventNetworkRedaction } from "./tracking/prisma-event-network-redaction";
 import { PrismaTrackingProfileStore } from "./tracking/prisma-tracking-profile-store";
 import { PrismaTrackingStoreSettingsStore } from "./tracking/prisma-tracking-store-settings";
@@ -1123,10 +1124,13 @@ export function buildTrackingRetention(
   if (!core.config.TRACKING_INGEST_ENABLED) return null;
   const { profiles } = trackingTenantParts(core);
   const events = new PrismaEventNetworkRedaction(core.prisma);
+  const snapshots = new PrismaAttributionSnapshotStore(core.prisma);
   return () =>
     runTrackingRetention({
       profiles,
       events,
+      // P2-D8: IP/UA of an order's attribution snapshot after 90 days, the row after 400.
+      snapshots,
       clock: core.clock,
       batchSize: RETENTION_BATCH,
       budgetMs: RETENTION_BUDGET_MS,

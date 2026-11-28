@@ -56,6 +56,10 @@ export const MASTER_COOKIE = "_mb_id";
 export const MASTER_TTL_SECONDS = 400 * 24 * 60 * 60;
 
 const MASTER_ID = /^[A-Za-z0-9_-]{16,48}$/u;
+/** True for a well-formed `_mb_id` value (what the server reads back from the cookie jar). */
+export function isMasterId(value: string | undefined): value is string {
+  return value !== undefined && MASTER_ID.test(value);
+}
 /** Every cookie the runtime may ask us to restore; anything else in its answer is ignored. */
 export const RESTORABLE_COOKIES: ReadonlySet<string> = new Set([
   "_fbp",

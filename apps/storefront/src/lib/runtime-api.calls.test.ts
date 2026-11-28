@@ -448,6 +448,25 @@ describe("checkout", () => {
     expect(body).toEqual({ sessionRef: "s", idempotencyKey: "idem-1" });
   });
 
+  it("completeCheckout adds the attribution snapshot to the body only when one is given (P2-D8)", async () => {
+    fetchMock.mockResolvedValue(json({ id: "co-1", status: "completed" }));
+    const tracking = {
+      visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+      ip: "203.0.113.9",
+      clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-12-01T09:00:00.000Z" }],
+    };
+
+    await api.completeCheckout("co-1", "s", "idem-1", undefined, tracking);
+    expect(lastCall().body).toEqual({ sessionRef: "s", idempotencyKey: "idem-1", tracking });
+    expect(lastCall().headers).not.toHaveProperty("x-customer-session");
+
+    await api.completeCheckout("co-1", "s", "idem-2", "sess-1", tracking);
+    expect(lastCall().headers["x-customer-session"]).toBe("sess-1");
+
+    await api.completeCheckout("co-1", "s", "idem-3");
+    expect(lastCall().body).toEqual({ sessionRef: "s", idempotencyKey: "idem-3" });
+  });
+
   it("generateCheckoutPaymentIntentRequest GETs with the cart session header", async () => {
     fetchMock.mockResolvedValue(json({ amountMinor: 1000 }));
 

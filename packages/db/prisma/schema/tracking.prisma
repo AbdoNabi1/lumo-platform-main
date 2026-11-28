@@ -292,3 +292,37 @@ model TrackingStoreSettings {
   @@map("store_tracking_settings")
   @@schema("tracking")
 }
+
+// Tracking P2-D8: what the visitor's browser carried when they placed an order (visitor id, click ids with their
+// capture time, browser ids, IP, user agent, page, UTM), written ONCE by the checkout `complete` route before the order
+// exists, so the later server-side Purchase can name the visitor. Keyed by what it describes: `subjectKind` is
+// `checkout` (`subjectRef` = the checkout session id = the order's `checkout_ref`) or `lead` (reserved; leads keep
+// `leads.attribution`). First write wins. IP and user agent are nulled after 90 days (`networkRedactedAt` marks it),
+// the row is deleted after 400 (measured from `capturedAt`).
+model TrackingAttributionSnapshot {
+  tenantId    String @map("tenant_id")
+  subjectKind String @map("subject_kind")
+  subjectRef  String @map("subject_ref")
+
+  visitorId String? @map("visitor_id")
+  sessionId String? @map("session_id")
+  ip        String?
+  userAgent String? @map("user_agent")
+  pageUrl   String? @map("page_url")
+  referrer  String?
+
+  // { fbp, fbc, ttp, scid, ga }, only the keys that were present.
+  cookies Json @default("{}")
+  // [{ name, value, capturedAt }], one per registry name, already validated against the platform window.
+  clickIds Json @default("[]") @map("click_ids")
+  // { source, medium, campaign, content, term }, only the keys that were present.
+  utm Json @default("{}")
+
+  capturedAt        DateTime  @map("captured_at")
+  networkRedactedAt DateTime? @map("network_redacted_at")
+
+  @@id([tenantId, subjectKind, subjectRef])
+  @@index([tenantId, capturedAt])
+  @@map("attribution_snapshots")
+  @@schema("tracking")
+}

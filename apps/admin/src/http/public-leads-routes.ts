@@ -6,6 +6,7 @@ import {
   type RouteDefinition,
   type TransportResponse,
 } from "@platform/http";
+import { sanitizeAttributionSnapshot } from "@platform/tracking";
 import { logger, ValidationError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
 import { rateLimited } from "./rate-limited-response";
@@ -42,6 +43,31 @@ const submitLeadBody = z
             ga: z.string().max(512).optional(),
           })
           .strict(),
+        // Tracking P2-D8: forwarded by the storefront server from its own cookie jar (`_mb_id`, the HttpOnly
+        // `_mb_clk`) and the page URL. Optional, strict, capped; an older storefront simply omits them.
+        visitorId: z.string().max(48).optional(),
+        clickIds: z
+          .array(
+            z
+              .object({
+                name: z.string().max(32),
+                value: z.string().max(1000),
+                capturedAt: z.string().max(40),
+              })
+              .strict(),
+          )
+          .max(10)
+          .optional(),
+        utm: z
+          .object({
+            source: z.string().max(200).optional(),
+            medium: z.string().max(200).optional(),
+            campaign: z.string().max(200).optional(),
+            content: z.string().max(200).optional(),
+            term: z.string().max(200).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict(),
   })
@@ -114,6 +140,39 @@ async function refuseSubmission(
   return consume(limiter, context, `rl:${tenantId}:leads:ip:${visitorIp}`, VISITOR_LIMIT);
 }
 
+/**
+ * The visitor id, click ids and UTM labels the lead keeps (P2-D8), through the same sanitiser the checkout snapshot
+ * uses: a malformed id, a click id of an unknown platform, a value outside its shape or past its attribution window
+ * is dropped here (it would be dead weight on the lead), never turned into a 422 that costs the shop the lead.
+ */
+function visitorAttributionOf(body: SubmitLeadBody): {
+  readonly visitorId?: string;
+  readonly clickIds?: readonly { name: string; value: string; capturedAt: string }[];
+  readonly utm?: {
+    source?: string;
+    medium?: string;
+    campaign?: string;
+    content?: string;
+    term?: string;
+  };
+} {
+  const { visitorId, clickIds, utm } = body.context;
+  const kept = sanitizeAttributionSnapshot({ visitorId, clickIds, utm }, new Date());
+  return {
+    ...(kept?.visitorId === undefined ? {} : { visitorId: kept.visitorId }),
+    ...(kept?.clickIds === undefined
+      ? {}
+      : {
+          clickIds: kept.clickIds.map((c) => ({
+            name: c.name,
+            value: c.value,
+            capturedAt: c.capturedAt,
+          })),
+        }),
+    ...(kept?.utm === undefined ? {} : { utm: kept.utm }),
+  };
+}
+
 function inputOf(body: SubmitLeadBody, tenantId: string, submissionKey: string) {
   const { cookies } = body.context;
   return {
@@ -139,6 +198,7 @@ function inputOf(body: SubmitLeadBody, tenantId: string, submissionKey: string) 
         ...(cookies.scid === undefined ? {} : { scid: cookies.scid }),
         ...(cookies.ga === undefined ? {} : { ga: cookies.ga }),
       },
+      ...visitorAttributionOf(body),
     },
   };
 }

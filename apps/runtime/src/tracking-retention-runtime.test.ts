@@ -33,12 +33,16 @@ function fakeCore(overrides: { lockAcquire?: ReturnType<typeof vi.fn>; intervalM
 const REPORT: TrackingRetentionReport = {
   profilesDeleted: 4,
   eventsRedacted: 120,
+  snapshotsRedacted: 0,
+  snapshotsDeleted: 0,
   tenantsVisited: 2,
   errored: 0,
 };
 const EMPTY: TrackingRetentionReport = {
   profilesDeleted: 0,
   eventsRedacted: 0,
+  snapshotsRedacted: 0,
+  snapshotsDeleted: 0,
   tenantsVisited: 0,
   errored: 0,
 };
@@ -77,6 +81,23 @@ describe("tracking retention runtime (P1-D10)", () => {
 
     expect(info).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith("tracking retention pass", { ...REPORT });
+    handle.stop();
+  });
+
+  it("a pass that only cleaned attribution snapshots is still logged (counts only)", async () => {
+    const { core, info } = fakeCore();
+    const onlySnapshots: TrackingRetentionReport = {
+      ...EMPTY,
+      snapshotsRedacted: 3,
+      snapshotsDeleted: 1,
+      tenantsVisited: 1,
+    };
+    const run = vi.fn().mockResolvedValue(onlySnapshots);
+    const handle = startTrackingRetention(core, run);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(info).toHaveBeenCalledWith("tracking retention pass", { ...onlySnapshots });
     handle.stop();
   });
 

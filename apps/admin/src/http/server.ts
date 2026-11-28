@@ -13,6 +13,7 @@ import {
 } from "@platform/http";
 import type { FastifyInstance } from "fastify";
 import type {
+  AttributionSnapshotStore,
   BlockedIpService,
   CollectEnricher,
   TrackingSettingsService,
@@ -25,6 +26,7 @@ import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
+import { checkoutSnapshotRecorder } from "./public-checkout-tracking";
 import type {
   TrackingCookieKeeper,
   TrackingEventSink,
@@ -88,6 +90,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly trackingBlockedIps?: BlockedIpService;
   /** Per-store tracking settings (P2-D1): the admin API, the public notice switch. Absent ⇒ those routes are not mounted. */
   readonly trackingSettings?: TrackingSettingsService;
+  /** Where an order's attribution snapshot is kept (P2-D8). Absent ⇒ the checkout `tracking` object is ignored. */
+  readonly trackingAttributionSnapshots?: AttributionSnapshotStore;
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -223,6 +227,14 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
         ? {}
         : { trackingBlockedIps: deps.trackingBlockedIps }),
       ...(deps.trackingSettings === undefined ? {} : { trackingSettings: deps.trackingSettings }),
+      ...(deps.trackingAttributionSnapshots === undefined
+        ? {}
+        : {
+            trackingAttributionSnapshots: checkoutSnapshotRecorder(
+              deps.trackingAttributionSnapshots,
+              deps.clock,
+            ),
+          }),
       trackingEdge: {
         secret: deps.trackingEdgeSecret,
         sink: deps.trackingEventSink,

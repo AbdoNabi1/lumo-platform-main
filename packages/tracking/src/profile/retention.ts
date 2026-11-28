@@ -19,6 +19,11 @@
  * WHAT was sent and for whom, minus the two fields that identify a device and a network.
  */
 
+import {
+  SNAPSHOT_NETWORK_RETENTION_DAYS,
+  SNAPSHOT_RETENTION_DAYS,
+  type AttributionSnapshotRetentionPort,
+} from "../business/attribution-snapshot";
 import type { ExpiredProfileScan, TrackingProfileStore } from "./profile-store";
 
 const ENVELOPE_NETWORK_KEYS = ["clientIpAddress", "clientUserAgent"] as const;
@@ -106,9 +111,18 @@ export interface EventNetworkRedactionPort {
 export interface TrackingRetentionDeps {
   readonly profiles: Pick<TrackingProfileStore, "deleteExpiredAnonymous"> & ExpiredProfileScan;
   readonly events: EventNetworkRedactionPort;
+  /**
+   * The attribution snapshots of orders (P2-D8): IP and user agent nulled after 90 days, the row deleted after 400.
+   * Absent ⇒ the pass leaves them alone (a deployment that does not write snapshots).
+   */
+  readonly snapshots?: AttributionSnapshotRetentionPort;
   readonly clock: { now(): Date };
   /** Event-record retention in days for IP and user agent (default 90). */
   readonly eventNetworkRetentionDays?: number;
+  /** Days after which a snapshot's IP and user agent are removed (default 90). */
+  readonly snapshotNetworkRetentionDays?: number;
+  /** Days after which a snapshot row is deleted (default 400). */
+  readonly snapshotRetentionDays?: number;
   /** Records redacted per round trip. */
   readonly batchSize?: number;
   /** Stop starting new batches after this long; the next pass continues. */
@@ -118,6 +132,10 @@ export interface TrackingRetentionDeps {
 export interface TrackingRetentionReport {
   readonly profilesDeleted: number;
   readonly eventsRedacted: number;
+  /** Attribution snapshots whose IP and user agent were nulled (P2-D8). */
+  readonly snapshotsRedacted: number;
+  /** Attribution snapshots deleted after their 400 days (P2-D8). */
+  readonly snapshotsDeleted: number;
   readonly tenantsVisited: number;
   readonly errored: number;
 }
@@ -141,6 +159,8 @@ export async function runTrackingRetention(
 
   let profilesDeleted = 0;
   let eventsRedacted = 0;
+  let snapshotsRedacted = 0;
+  let snapshotsDeleted = 0;
   let errored = 0;
   const tenants = new Set<string>();
 
@@ -181,7 +201,52 @@ export async function runTrackingRetention(
     errored += 1;
   }
 
-  return { profilesDeleted, eventsRedacted, tenantsVisited: tenants.size, errored };
+  if (deps.snapshots !== undefined) {
+    const snapshots = deps.snapshots;
+    const networkCutoff = new Date(
+      startedAt.getTime() -
+        (deps.snapshotNetworkRetentionDays ?? SNAPSHOT_NETWORK_RETENTION_DAYS) * DAY_MS,
+    );
+    const deleteCutoff = new Date(
+      startedAt.getTime() - (deps.snapshotRetentionDays ?? SNAPSHOT_RETENTION_DAYS) * DAY_MS,
+    );
+    try {
+      for (const tenantId of await snapshots.tenantsWithSnapshotWork(networkCutoff, deleteCutoff)) {
+        if (outOfBudget()) break;
+        tenants.add(tenantId);
+        try {
+          while (!outOfBudget()) {
+            const done = await snapshots.deleteExpiredBatch(tenantId, deleteCutoff, batchSize);
+            snapshotsDeleted += done;
+            if (done < batchSize) break;
+          }
+          while (!outOfBudget()) {
+            const done = await snapshots.redactNetworkBatch(
+              tenantId,
+              networkCutoff,
+              batchSize,
+              deps.clock.now(),
+            );
+            snapshotsRedacted += done;
+            if (done < batchSize) break;
+          }
+        } catch {
+          errored += 1;
+        }
+      }
+    } catch {
+      errored += 1;
+    }
+  }
+
+  return {
+    profilesDeleted,
+    eventsRedacted,
+    snapshotsRedacted,
+    snapshotsDeleted,
+    tenantsVisited: tenants.size,
+    errored,
+  };
 }
 
 /**

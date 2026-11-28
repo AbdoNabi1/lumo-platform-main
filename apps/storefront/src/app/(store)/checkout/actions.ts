@@ -8,6 +8,7 @@ import {
   GUEST_SESSION_COOKIE,
 } from "@/lib/cart";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-session";
+import { readTrackingSnapshot } from "@/lib/tracking-snapshot";
 import {
   applyCheckoutDiscountCode,
   completeCheckout as completeCheckoutApi,
@@ -476,10 +477,22 @@ export async function completeCheckout(checkoutSessionId: string): Promise<Check
 
   const idempotencyKey = crypto.randomUUID();
   const customerSession = await customerSessionId();
+  // Tracking P2-D8: the attribution snapshot comes from the server-side cookie jar and request headers ONLY — this
+  // action takes no tracking argument, so nothing a client sends can name the visitor or their click ids. A request
+  // that carried nothing (or a failed read) completes exactly as before.
+  const tracking = await readTrackingSnapshot();
   const response =
-    customerSession === undefined
-      ? await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey)
-      : await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey, customerSession);
+    tracking !== undefined
+      ? await completeCheckoutApi(
+          checkoutSessionId,
+          sessionRef,
+          idempotencyKey,
+          customerSession,
+          tracking,
+        )
+      : customerSession === undefined
+        ? await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey)
+        : await completeCheckoutApi(checkoutSessionId, sessionRef, idempotencyKey, customerSession);
   if (response.status < 200 || response.status >= 300) {
     // Plan 2B-3: the API refuses a completion whose stock is not there with a 409 whose message
     // starts `OUT_OF_STOCK:` — a different outcome from "the session can no longer be modified".

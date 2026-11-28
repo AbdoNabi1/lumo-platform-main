@@ -8,6 +8,7 @@ import {
   validationFieldsOf,
   type CreateLeadBody,
 } from "@/lib/runtime-api";
+import { trackingSnapshotFrom } from "@/lib/tracking-snapshot";
 import {
   isSessionId,
   LEAD_SENT_COOKIE,
@@ -89,6 +90,10 @@ export async function submitLead(input: LeadFormInput): Promise<LeadSubmissionRe
     if (value !== undefined && value !== "" && value.length <= MAX_TEXT) attribution[key] = value;
   }
 
+  // Tracking P2-D8: the visitor id (`_mb_id`), the click ids of the HttpOnly `_mb_clk` jar and the page's UTM labels,
+  // read from the server-side jar — never from the form input — so a lead can be joined to its visitor profile.
+  const visitor = trackingSnapshotFrom(jar, requestHeaders, Date.now());
+
   const email = optional(input.email);
   const message = optional(input.message);
   const body: CreateLeadBody = {
@@ -115,6 +120,9 @@ export async function submitLead(input: LeadFormInput): Promise<LeadSubmissionRe
       ip: trustedClientIp(requestHeaders),
       userAgent: requestHeaders.get("user-agent")?.slice(0, MAX_TEXT) ?? null,
       cookies: attribution,
+      ...(visitor?.visitorId === undefined ? {} : { visitorId: visitor.visitorId }),
+      ...(visitor?.clickIds === undefined ? {} : { clickIds: visitor.clickIds }),
+      ...(visitor?.utm === undefined ? {} : { utm: visitor.utm }),
     },
   };
 

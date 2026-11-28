@@ -89,6 +89,31 @@ export function describeLeadUseCases(makeRepo: () => LeadRepository): void {
       expect(stored?.props.attribution.cookies.fbp).toBe("fb.1.123.456");
     });
 
+    it("keeps the visitor id, click ids and UTM labels on the lead (P2-D8); a lead without them reads as before", async () => {
+      const s = setup();
+      const withVisitor = await submitOk(s, {
+        submissionKey: "visitor-key-0001",
+        context: {
+          ...validInput().context,
+          visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+          clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-11-23T09:00:00.000Z" }],
+          utm: { source: "facebook", campaign: "eid" },
+        },
+      });
+      const stored = await s.leads.get("t-1", withVisitor.leadId);
+      expect(stored?.props.attribution).toMatchObject({
+        visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+        clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-11-23T09:00:00.000Z" }],
+        utm: { source: "facebook", campaign: "eid" },
+      });
+
+      const plain = await submitOk(s, { submissionKey: "visitor-key-0002", sessionId: "s-9" });
+      const old = await s.leads.get("t-1", plain.leadId);
+      expect(old?.props.attribution).not.toHaveProperty("visitorId");
+      expect(old?.props.attribution).not.toHaveProperty("clickIds");
+      expect(old?.props.attribution).not.toHaveProperty("utm");
+    });
+
     it("stores blank email and message as null", async () => {
       const s = setup();
       const out = await submitOk(s, { email: "   ", message: "  " });

@@ -50,7 +50,7 @@ data:
   # instead of only in source. Default ON since Tracking P2-D2 (zero merchant setup): a store with no
   # ad platform connected has an empty registry, which is valid (profile update only, nothing recorded
   # or sent). Prerequisites: 1) the topic exists (bootstrap-topics.sh), 2) migrations through
-  # 20261208000000 are applied BEFORE the release. Set "false" to stop the consumer.
+  # 20261209000000 are applied BEFORE the release. Set "false" to stop the consumer.
   TRACKING_INGEST_ENABLED: "true"
   TRACKING_RULE_SET_KEY: "tracking.routing.default"
   TRACKING_REGISTRY_POLL_MS: "30000"

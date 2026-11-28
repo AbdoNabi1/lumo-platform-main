@@ -22,6 +22,22 @@ export const LEAD_TRACKING_STATUSES = [
 ] as const;
 export type LeadTrackingStatus = (typeof LEAD_TRACKING_STATUSES)[number];
 
+/** One captured advertising click id, with the instant it was captured (its platform window is judged from it). */
+export interface LeadClickId {
+  readonly name: string;
+  readonly value: string;
+  /** ISO-8601 UTC instant. */
+  readonly capturedAt: string;
+}
+
+export interface LeadUtm {
+  readonly source?: string;
+  readonly medium?: string;
+  readonly campaign?: string;
+  readonly content?: string;
+  readonly term?: string;
+}
+
 export interface LeadAttribution {
   readonly pageUrl: string | null;
   readonly referrer: string | null;
@@ -34,6 +50,14 @@ export interface LeadAttribution {
     readonly scid?: string;
     readonly ga?: string;
   };
+  /**
+   * Tracking P2-D8: the visitor's master cookie id, their latest click per platform and the page's UTM labels, so the
+   * lead event can be joined to the visitor profile. All optional: rows written before this field existed (and
+   * submissions from an older storefront) have none and still read.
+   */
+  readonly visitorId?: string;
+  readonly clickIds?: readonly LeadClickId[];
+  readonly utm?: LeadUtm;
 }
 
 export interface LeadProps {

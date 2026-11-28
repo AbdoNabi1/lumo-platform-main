@@ -103,6 +103,9 @@ describe.runIf(Boolean(databaseUrl))("PrismaLeadRepository against a real databa
         ip: "203.0.113.9",
         userAgent: "ua",
         cookies: { fbp: "fb.1.2.3" },
+        visitorId: "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b",
+        clickIds: [{ name: "gclid", value: "abc", capturedAt: "2026-11-23T09:00:00.000Z" }],
+        utm: { source: "facebook" },
       },
     });
     expect(await repo.insert(a, lead)).toBe("inserted");

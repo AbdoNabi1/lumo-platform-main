@@ -330,3 +330,99 @@ describe("POST /public/leads — shop facts unavailable (finding 2)", () => {
     expect(await leadCount(app)).toBe(0);
   });
 });
+
+describe("POST /public/leads — visitor attribution carried over (Tracking P2-D8)", () => {
+  const VISITOR = "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b";
+  const daysAgo = (days: number): string =>
+    new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  /** The route's own handler with a recording `submit`, so the use-case input is visible. */
+  async function submittedContext(context: Record<string, unknown>) {
+    const submit = vi.fn().mockResolvedValue({ status: 201, body: {} });
+    const admin = { publicReads: { leads: { submit } } } as unknown as WiredAdmin;
+    const [route] = publicLeadsRoutes(admin, {
+      consume: () => Promise.resolve({ allowed: true, remaining: 9, retryAfterMs: 0 }),
+    });
+    const body = leadBody({ context: { ...(leadBody().context as object), ...context } });
+    await route!.handle({
+      body,
+      params: {},
+      query: {},
+      context: {
+        tenantId: "t-1",
+        requestId: "r",
+        correlationId: "c",
+        headers: { "idempotency-key": freshKey() },
+        principal: { id: "public", kind: "anonymous", roles: [] },
+      },
+    } as never);
+    expect(submit).toHaveBeenCalledTimes(1);
+    return (submit.mock.calls[0]?.[0] as { context: Record<string, unknown> }).context;
+  }
+
+  it("forwards the visitor id, the click ids inside their window and the UTM labels", async () => {
+    const context = await submittedContext({
+      visitorId: VISITOR,
+      clickIds: [
+        { name: "gclid", value: "Cj0KCQ-abc", capturedAt: daysAgo(2) },
+        { name: "scclid", value: "snap-old", capturedAt: daysAgo(40) },
+        { name: "mystery", value: "x", capturedAt: daysAgo(1) },
+      ],
+      utm: { source: "facebook", campaign: "eid" },
+    });
+    expect(context["visitorId"]).toBe(VISITOR);
+    expect(context["clickIds"]).toEqual([
+      { name: "gclid", value: "Cj0KCQ-abc", capturedAt: expect.any(String) as string },
+    ]);
+    expect(context["utm"]).toEqual({ source: "facebook", campaign: "eid" });
+  });
+
+  it("an old body (no visitor fields) reaches the use case with exactly the old context shape", async () => {
+    const context = await submittedContext({});
+    expect(Object.keys(context).sort()).toEqual(
+      ["cookies", "ip", "pageUrl", "referrer", "userAgent"].sort(),
+    );
+  });
+
+  it("drops a malformed visitor id instead of failing the lead", async () => {
+    const context = await submittedContext({ visitorId: "short" });
+    expect(context).not.toHaveProperty("visitorId");
+  });
+
+  it("over HTTP: the new fields are accepted; unknown keys, oversize values and 11 click ids are 422", async () => {
+    const { app } = await boot();
+    const base = leadBody().context as Record<string, unknown>;
+    const ok = await submitLead(
+      app,
+      leadBody({
+        context: {
+          ...base,
+          visitorId: VISITOR,
+          clickIds: [{ name: "gclid", value: "abc", capturedAt: daysAgo(1) }],
+          utm: { source: "facebook" },
+        },
+      }),
+    );
+    expect(ok.statusCode).toBe(201);
+
+    const refused: Record<string, unknown>[] = [
+      { visitorId: "v".repeat(49) },
+      { utm: { source: "s".repeat(201) } },
+      { utm: { source: "x", junk: "y" } },
+      { junk: 1 },
+      {
+        clickIds: Array.from({ length: 11 }, () => ({
+          name: "gclid",
+          value: "v",
+          capturedAt: daysAgo(1),
+        })),
+      },
+      { clickIds: [{ name: "gclid", value: "v".repeat(1001), capturedAt: daysAgo(1) }] },
+      { clickIds: [{ name: "gclid", value: "v", capturedAt: daysAgo(1), extra: 1 }] },
+    ];
+    for (const extra of refused) {
+      const res = await submitLead(app, leadBody({ context: { ...base, ...extra } }));
+      expect(res.statusCode).toBe(422);
+    }
+  });
+});

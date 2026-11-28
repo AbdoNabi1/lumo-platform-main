@@ -3,11 +3,14 @@ import {
   LEAD_STATUSES,
   LEAD_TRACKING_STATUSES,
   type LeadAttribution,
+  type LeadClickId,
   type LeadProps,
+  type LeadUtm,
 } from "../domain/lead";
 import { json, type LeadRow } from "./rows";
 
 const COOKIE_KEYS = ["fbp", "fbc", "ttp", "scid", "ga"] as const;
+const UTM_KEYS = ["source", "medium", "campaign", "content", "term"] as const;
 const SPAM_REASONS = ["honeypot", "too_fast"] as const;
 
 function oneOf<T extends string>(values: readonly T[], column: string, value: string): T {
@@ -18,7 +21,38 @@ function oneOf<T extends string>(values: readonly T[], column: string, value: st
 
 const textOrNull = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
-/** Tolerant read of the stored attribution document: only string values survive. */
+function clickIdsOf(value: unknown): readonly LeadClickId[] {
+  if (!Array.isArray(value)) return [];
+  const out: LeadClickId[] = [];
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { name, value: clickValue, capturedAt } = entry as Record<string, unknown>;
+    if (
+      typeof name === "string" &&
+      typeof clickValue === "string" &&
+      typeof capturedAt === "string"
+    ) {
+      out.push({ name, value: clickValue, capturedAt });
+    }
+  }
+  return out;
+}
+
+function utmOf(value: unknown): LeadUtm {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const raw = value as Record<string, unknown>;
+  const utm: Record<string, string> = {};
+  for (const key of UTM_KEYS) {
+    const entry = raw[key];
+    if (typeof entry === "string") utm[key] = entry;
+  }
+  return utm;
+}
+
+/**
+ * Tolerant read of the stored attribution document: only string values survive. The visitor id, click ids and UTM
+ * labels (Tracking P2-D8) are carried only when present, so a row written before they existed reads exactly as it did.
+ */
 function attributionOf(value: unknown): LeadAttribution {
   const raw =
     typeof value === "object" && value !== null && !Array.isArray(value)
@@ -33,12 +67,18 @@ function attributionOf(value: unknown): LeadAttribution {
     const cookie = rawCookies[key];
     if (typeof cookie === "string") cookies[key] = cookie;
   }
+  const visitorId = textOrNull(raw["visitorId"]);
+  const clickIds = clickIdsOf(raw["clickIds"]);
+  const utm = utmOf(raw["utm"]);
   return {
     pageUrl: textOrNull(raw["pageUrl"]),
     referrer: textOrNull(raw["referrer"]),
     ip: textOrNull(raw["ip"]),
     userAgent: textOrNull(raw["userAgent"]),
     cookies,
+    ...(visitorId === null || visitorId === "" ? {} : { visitorId }),
+    ...(clickIds.length === 0 ? {} : { clickIds }),
+    ...(Object.keys(utm).length === 0 ? {} : { utm }),
   };
 }
 

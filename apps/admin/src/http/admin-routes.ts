@@ -92,6 +92,7 @@ import { staffAccountRoutes } from "./staff-account-routes";
 import { publicCartRoutes } from "./public-cart-routes";
 import { publicCheckoutLinkRoutes } from "./public-checkout-link-routes";
 import { publicCheckoutRoutes } from "./public-checkout-routes";
+import type { CheckoutSnapshotRecorder } from "./public-checkout-tracking";
 import { publicAdPlatformsRoutes } from "./public-ad-platforms-routes";
 import { publicLeadsRoutes } from "./public-leads-routes";
 import { publicTrackingRoutes, type PublicTrackingRouteDeps } from "./public-tracking-routes";
@@ -1034,6 +1035,8 @@ export function adminRoutes(
     readonly trackingBlockedIps?: BlockedIpService;
     /** Tracking P2-D1: Settings → Tracking → consent policy and cookie notice. Absent ⇒ the routes are not mounted. */
     readonly trackingSettings?: TrackingSettingsService;
+    /** Tracking P2-D8: keeps the attribution snapshot of a checkout. Absent ⇒ the `tracking` object is ignored. */
+    readonly trackingAttributionSnapshots?: CheckoutSnapshotRecorder;
   } = {},
 ): readonly RouteDefinition[] {
   // Under TENANT_MODE=multi a merchant's own owner holds `admin` (`*:*` in the role table), so a
@@ -2387,7 +2390,12 @@ export function adminRoutes(
     ...staffAccountRoutes(admin, options.rateLimiter),
     ...publicCatalogRoutes(admin),
     ...publicCartRoutes(admin),
-    ...publicCheckoutRoutes(admin),
+    ...publicCheckoutRoutes(
+      admin,
+      options.trackingAttributionSnapshots === undefined
+        ? {}
+        : { attributionSnapshots: options.trackingAttributionSnapshots },
+    ),
     ...publicCheckoutLinkRoutes(admin),
     ...publicShippingRoutes(admin),
     ...publicOnlineStoreRoutes(admin, options.rateLimiter),

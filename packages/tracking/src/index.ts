@@ -746,6 +746,21 @@ export type {
 export { cancelledEnvelope, deliveredEnvelope, purchaseEnvelope } from "./business/order-events";
 export { leadEnvelope } from "./business/lead-event";
 export { contentIdOf } from "./business/content-id";
+export {
+  InMemoryAttributionSnapshotStore,
+  SNAPSHOT_NETWORK_RETENTION_DAYS,
+  SNAPSHOT_RETENTION_DAYS,
+  recordAttributionSnapshot,
+  sanitizeAttributionSnapshot,
+} from "./business/attribution-snapshot";
+export type {
+  AttributionSnapshotInput,
+  AttributionSnapshotRetentionPort,
+  AttributionSnapshotStore,
+  AttributionSnapshotWrite,
+  AttributionSubjectKind,
+  RecordAttributionSnapshotDeps,
+} from "./business/attribution-snapshot";
 export { businessValueMinor } from "./business/value";
 export type { OrderValueTotals } from "./business/value";
 export { businessMessageId } from "./business/event-uuid";

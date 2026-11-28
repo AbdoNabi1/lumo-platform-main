@@ -149,10 +149,58 @@ describe("submitLead request", () => {
             scid: "scid-1",
             ga: "GA1.1.1.2",
           },
+          // P2-D8: the referer carries a utm label; the visitor id and click ids are absent from this jar
+          utm: { source: "ad" },
         },
       },
       KEY,
     );
+  });
+
+  it("forwards the visitor id, the click jar and the page's UTM labels from the server-side jar (P2-D8)", async () => {
+    const VISITOR = "0b9f4c1e-3d2a-4f55-8a77-1c2d3e4f5a6b";
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    jar.set("_mb_id", { value: VISITOR, expiresAt: 1e12 });
+    jar.set("_mb_clk", {
+      value: JSON.stringify({ gclid: { v: "Cj0KCQ-abc", t: Date.now() - 2 * 86_400_000 } }),
+      expiresAt: 1e12,
+    });
+    requestHeaders.set("referer", "https://shop.example/?utm_source=ad&utm_campaign=eid");
+
+    await submitLead(input);
+
+    const context = sentBody().context as Record<string, unknown>;
+    expect(context["visitorId"]).toBe(VISITOR);
+    expect(context["clickIds"]).toEqual([
+      { name: "gclid", value: "Cj0KCQ-abc", capturedAt: expect.any(String) as string },
+    ]);
+    expect(context["utm"]).toEqual({ source: "ad", campaign: "eid" });
+  });
+
+  it("leaves a malformed _mb_id and a stale click out, and the old keys unchanged", async () => {
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    jar.set("_mb_id", { value: "nope", expiresAt: 1e12 });
+    jar.set("_mb_clk", {
+      value: JSON.stringify({ scclid: { v: "stale", t: Date.now() - 60 * 86_400_000 } }),
+      expiresAt: 1e12,
+    });
+
+    await submitLead(input);
+
+    const context = sentBody().context as Record<string, unknown>;
+    expect(context).not.toHaveProperty("visitorId");
+    expect(context).not.toHaveProperty("clickIds");
+    expect(context).not.toHaveProperty("utm");
+  });
+
+  it("takes nothing about the visitor from the form input", async () => {
+    jar.set("morbeh_sid", { value: "sid-1", expiresAt: 1e12 });
+    await submitLead({
+      ...input,
+      visitorId: "evil-visitor-id-0000",
+      clickIds: [{ name: "gclid", value: "evil", capturedAt: new Date().toISOString() }],
+    } as typeof input);
+    expect(JSON.stringify(sentBody())).not.toContain("evil");
   });
 
   it("uses the submission key as the Idempotency-Key and mints nothing itself", async () => {
