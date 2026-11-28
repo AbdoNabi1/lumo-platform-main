@@ -252,6 +252,8 @@ export type RenderOutcome =
 export interface RenderExtras {
   readonly envelope: EnrichedEnvelope;
   readonly keys: PlatformMatchKeys;
+  /** The instant the payload is built (epoch ms); vendors that refuse old events (GA4, 72 h) judge age against it. */
+  readonly nowMs?: number;
 }
 
 /**
@@ -281,7 +283,7 @@ export function renderPayload(
 
     const built = buildVendorPayload(
       destination.builderKey,
-      vendorEventInputFrom(extras.envelope, extras.keys),
+      vendorEventInputFrom(extras.envelope, extras.keys, extras.nowMs),
       destination.vendorTarget,
     );
     return built.ok

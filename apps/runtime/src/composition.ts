@@ -121,6 +121,7 @@ import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue
 import { PrismaEventNetworkRedaction } from "./tracking/prisma-event-network-redaction";
 import { PrismaTrackingProfileStore } from "./tracking/prisma-tracking-profile-store";
 import { PrismaTrackingStoreSettingsStore } from "./tracking/prisma-tracking-store-settings";
+import { prismaStoreCallingCodeOf } from "./tracking/prisma-store-calling-code";
 import {
   runTrackingRetention,
   sweepDeliveryRetries,
@@ -1054,7 +1055,15 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
   // P2-D2: a tenant with no registry definitions (no ad platform connected) loads an EMPTY snapshot — its
   // events update the visitor profile and nothing else — and its watcher keeps polling, so the first
   // connection save is picked up within one poll interval.
+  // P2-D7: a store's national phone numbers are made E.164 with the calling code of its currency's market (read once
+  // per tenant runtime; a failed read means Egypt's code, never a dropped phone).
+  const callingCodeOf = prismaStoreCallingCodeOf(core.prisma, (cause) =>
+    core.logger.warn("tracking: store currency unreadable, phone country code falls back to 20", {
+      error: cause instanceof Error ? cause.name : "unknown",
+    }),
+  );
   const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
+    const defaultCountryCode = await callingCodeOf(tenantId);
     const snapshot = await loadTrackingRegistry(registryStore, tenantId);
     const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
     const watcher = new TrackingRegistryWatcher({
@@ -1078,6 +1087,7 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
       retryQueue,
       profiles,
       consentPolicy: settings,
+      defaultCountryCode,
       ...(core.adPlatformConnections === undefined
         ? {}
         : { connectionCredentials: core.adPlatformConnections }),

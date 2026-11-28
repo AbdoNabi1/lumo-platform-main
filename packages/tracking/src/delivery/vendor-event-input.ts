@@ -9,12 +9,19 @@
 import { isClickIdValidAt, isFbcValidAt } from "../envelope/click-ids";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import { deriveNumItems } from "../envelope/payload";
+import { syntheticGaClientId } from "../business/ga4-client-id";
 import type { PlatformMatchKeys } from "../pipeline/platform-identity";
+import { visitorIdOf } from "../profile/profile-envelope";
 
 export interface VendorEventInput {
   readonly eventName: string;
   readonly eventId: string;
   readonly eventTimeMs: number;
+  /**
+   * The instant the request is being built, for a vendor that refuses old events (GA4: 72 h). Absent => no age check
+   * (a caller that does not know the time must not invent one).
+   */
+  readonly nowMs?: number;
   readonly sourceUrl: string | null;
   readonly referrer: string | null;
   readonly ip: string | null;
@@ -61,10 +68,19 @@ function nonEmpty(value: string | undefined): string | null {
  *
  * Click ids are found by their canonical key: `ttclid`, and Snap's `scclid` (whose landing-URL
  * parameter is `ScCid` — see `click-ids.ts`).
+ *
+ * `nowMs` is the instant the vendor request is built (the delivery runtime's clock); it is what GA4's 72-hour window
+ * is judged against.
+ *
+ * GA4 client id (P2-D7): the visitor's real `_ga` client id when the envelope carries one (its own, or the profile's).
+ * A SERVER event without one gets a deterministic synthetic id seeded by the visitor id, else by its business id, so a
+ * server-only purchase still reaches GA4 without splitting one visitor into many. Browser events never get one: a
+ * guessed id would only add a ghost user next to the real one the page's own tag reports.
  */
 export function vendorEventInputFrom(
   envelope: EnrichedEnvelope,
   keys: PlatformMatchKeys,
+  nowMs?: number,
 ): VendorEventInput {
   const page = envelope.context.page;
   const technical = envelope.context.technical;
@@ -97,10 +113,18 @@ export function vendorEventInputFrom(
   const grants = envelope.consent.grants;
   const marketing = envelope.consent.marketing;
 
+  const realGaClientId = nonEmpty(browserIds?.gaClientId);
+  const gaClientId =
+    realGaClientId ??
+    (envelope.eventOrigin === "server"
+      ? syntheticGaClientId(visitorIdOf(envelope) ?? envelope.dedupId)
+      : null);
+
   return {
     eventName: envelope.eventName,
     eventId: envelope.dedupId,
     eventTimeMs: envelope.eventTimestampMs,
+    ...(nowMs === undefined ? {} : { nowMs }),
     sourceUrl: nonEmpty(page?.eventSourceUrl) ?? nonEmpty(page?.url),
     referrer: nonEmpty(page?.referrer),
     ip: nonEmpty(technical?.clientIpAddress),
@@ -114,7 +138,7 @@ export function vendorEventInputFrom(
       fbc: nonEmpty(usableFbc),
       ttp: nonEmpty(browserIds?.ttp),
       scid: nonEmpty(browserIds?.scid),
-      gaClientId: nonEmpty(browserIds?.gaClientId),
+      gaClientId,
       gaSessionId: nonEmpty(browserIds?.gaSessionId),
       ttclid: nonEmpty(clickIds.find((click) => click.name === "ttclid")?.value),
       scClickId: nonEmpty(clickIds.find((click) => click.name === "scclid")?.value),

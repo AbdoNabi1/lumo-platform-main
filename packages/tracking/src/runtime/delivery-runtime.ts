@@ -313,7 +313,7 @@ export async function receiveAndDeliver(
 
   for (const routed of input.routing.routed) {
     const builderKey = routed.destination.builderKey;
-    let extras: { envelope: EnrichedEnvelope; keys: PlatformMatchKeys } | undefined;
+    let extras: { envelope: EnrichedEnvelope; keys: PlatformMatchKeys; nowMs: number } | undefined;
 
     if (builderKey !== undefined) {
       let keys = keysByBuilder.get(builderKey);
@@ -326,7 +326,7 @@ export async function receiveAndDeliver(
         keys = withProfileKeys(own, input.profileMatchKeys?.[platform]);
         keysByBuilder.set(builderKey, keys);
       }
-      extras = { envelope, keys };
+      extras = { envelope, keys, nowMs: deps.clock.now().getTime() };
     }
 
     const rendered = renderPayload(deps.delivery, routed.destination, routingContext, extras);

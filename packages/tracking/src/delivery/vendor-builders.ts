@@ -236,9 +236,18 @@ function buildSnap(
   });
 }
 
+/**
+ * GA4's Measurement Protocol drops an event whose `timestamp_micros` is more than 72 hours old, and answers 2xx
+ * anyway: the request would "succeed" and count nothing. Refusing here records it as blocked, with the reason.
+ */
+export const GA4_MAX_EVENT_AGE_MS = 72 * 60 * 60 * 1000;
+
 function buildGa4(name: string, input: VendorEventInput): BuildResult {
   const { keys, browser, commerce } = input;
 
+  if (input.nowMs !== undefined && input.nowMs - input.eventTimeMs > GA4_MAX_EVENT_AGE_MS) {
+    return refuse("ga4 window passed");
+  }
   if (browser.gaClientId === null) return refuse("ga4 client_id unavailable");
 
   return ok({

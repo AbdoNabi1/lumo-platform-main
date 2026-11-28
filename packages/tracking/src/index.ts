@@ -170,6 +170,7 @@ export {
 // --- Pipeline: validation (failing events are never delivered) ------------
 export type { ValidationRule, ValidationViolation, ValidationResult } from "./pipeline/validation";
 export {
+  MAX_BUSINESS_EVENT_AGE_MS,
   MAX_CLOCK_SKEW_MS,
   MAX_FUTURE_SKEW_MS,
   validateEnvelope,
@@ -370,7 +371,7 @@ export {
 export type { VendorEventInput } from "./delivery/vendor-event-input";
 export { vendorEventInputFrom, gaClientIdFromCookie } from "./delivery/vendor-event-input";
 export type { VendorTarget, BuildResult } from "./delivery/vendor-builders";
-export { buildVendorPayload } from "./delivery/vendor-builders";
+export { buildVendorPayload, GA4_MAX_EVENT_AGE_MS } from "./delivery/vendor-builders";
 
 // --- Delivery: business payload vs transport envelope ---------------------
 export type {
@@ -728,3 +729,30 @@ export type {
   TrackingSettingsUpdate,
   TrackingStoreSettings,
 } from "./settings/store-settings";
+
+// --- Business events: orders and leads to server-side conversions (P2 Task 2) ---
+// Read models are plain data: the runtime adapters (orders reader, lead emitter) return them, the mappers consume them.
+export type {
+  BusinessAttributionSnapshot,
+  BusinessEventContext,
+  LeadTrackingReadModel,
+  OrderTrackingCustomer,
+  OrderTrackingLine,
+  OrderTrackingReadModel,
+  OrderTrackingShipping,
+  OrderTrackingTotals,
+  SnapshotClickId,
+  TransitionEventContext,
+} from "./business/order-read-model";
+export { cancelledEnvelope, deliveredEnvelope, purchaseEnvelope } from "./business/order-events";
+export { leadEnvelope } from "./business/lead-event";
+export { contentIdOf } from "./business/content-id";
+export { businessValueMinor } from "./business/value";
+export type { OrderValueTotals } from "./business/value";
+export { businessMessageId } from "./business/event-uuid";
+export { syntheticGaClientId } from "./business/ga4-client-id";
+export {
+  callingCodeForCurrency,
+  CURRENCY_CALLING_CODES,
+  DEFAULT_CALLING_CODE,
+} from "./business/calling-code";

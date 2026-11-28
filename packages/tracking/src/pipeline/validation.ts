@@ -11,6 +11,7 @@
 
 import type { TrackingEnvelope, TrackingEnvironment } from "../envelope/envelope";
 import { isCurrencyCode } from "../envelope/payload";
+import { BUSINESS_CONVERSION_EVENTS } from "../enrichment/business-conversion";
 
 /** Which check failed, for grouping in diagnostics and for routing to the right owner. */
 export type ValidationRule =
@@ -42,6 +43,19 @@ export type ValidationResult =
  * attribution windows.
  */
 export const MAX_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How old a SERVER-origin business event (purchase, lead, delivery, cancellation) may be at ingest (P2-D7). Its time
+ * is not a client clock: it is the moment the order was placed or the lead submitted, and the event may be consumed
+ * late (a worker outage, a retried publish). Meta, TikTok and Snap accept events up to 7 days old; GA4 is stricter
+ * and refuses at the builder (72 h).
+ */
+export const MAX_BUSINESS_EVENT_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** True for the events the 7-day window applies to: server-origin AND one of the business conversions. */
+function isServerBusinessEvent(envelope: TrackingEnvelope): boolean {
+  return envelope.eventOrigin === "server" && BUSINESS_CONVERSION_EVENTS.has(envelope.eventName);
+}
 
 /**
  * How far in the future a timestamp may sit. Tighter than the past tolerance because a future
@@ -94,7 +108,9 @@ export function validateEnvelope(
     const skew = parsed - now.getTime();
     if (skew > MAX_FUTURE_SKEW_MS) {
       violations.push(violation("timestamp", "timestamp", "timestamp is in the future"));
-    } else if (-skew > MAX_CLOCK_SKEW_MS) {
+    } else if (
+      -skew > (isServerBusinessEvent(envelope) ? MAX_BUSINESS_EVENT_AGE_MS : MAX_CLOCK_SKEW_MS)
+    ) {
       violations.push(
         violation("timestamp", "timestamp", "timestamp exceeds the accepted clock skew"),
       );

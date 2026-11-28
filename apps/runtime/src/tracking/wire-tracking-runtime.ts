@@ -119,6 +119,12 @@ export interface TrackingRuntimeInput {
    * store forwards under (`notice_only` by default) right after completion. Absent => consent is left as it arrived.
    */
   readonly consentPolicy?: ConsentPolicyPort;
+  /**
+   * Tracking P2-D7: the calling code (digits, no `+`) of the store's market, from its currency (EGP 20, SAR 966, ...).
+   * Without it a national phone number (`01012345678`, how an order keeps it) cannot be made E.164, so it is dropped
+   * from the vendor payloads and from the profile match. Applied to both the recording pipeline and the profile step.
+   */
+  readonly defaultCountryCode?: string;
 }
 
 export interface TrackingRuntime {
@@ -236,6 +242,9 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
           store: input.profiles,
           hasher,
           clock: input.clock,
+          ...(input.defaultCountryCode === undefined
+            ? {}
+            : { defaultCountryCode: input.defaultCountryCode }),
           onError: (error) =>
             input.logger.warn("tracking profile step failed; event delivered unchanged", {
               error: error instanceof Error ? error.name : "unknown",
@@ -254,6 +263,9 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
     },
     records: store,
     hasher,
+    ...(input.defaultCountryCode === undefined
+      ? {}
+      : { defaultCountryCode: input.defaultCountryCode }),
     // Destination and mapping versions come from the same snapshot that served the definitions, so
     // the version pinned onto a record is always the version that produced its payload. This is the
     // invariant that pinning protects: reading versions from a snapshot that had been swapped since
