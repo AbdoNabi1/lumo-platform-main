@@ -45,6 +45,15 @@ vi.mock("./tracking-retention-runtime", () => ({
   },
 }));
 
+/** The order events the tracking business consumers turn into server Purchase / Delivered / Cancelled events. */
+const TRACKING_BUSINESS_TOPICS = [
+  "orders.order.created.v1",
+  "orders.order.placed.v1",
+  "orders.order.cancelled.v1",
+  "fulfillment.order.returned.v1",
+  "fulfillment.order.delivered.v1",
+];
+
 const BASE_ENV = {
   DATABASE_URL: "postgresql://lumo:lumo@localhost:5432/lumo",
   REDIS_URL: "redis://localhost:6379",
@@ -177,6 +186,8 @@ describe("startWorker under EVENT_TRANSPORT=postgres", () => {
 
     expect(deliveryStarts).toEqual([]);
     expect(started).toContain("orders.order.paid.v1");
+    // Tracking P2-D3: ingest is on by default, so the five order consumers subscribe too.
+    expect(started).toEqual(expect.arrayContaining(TRACKING_BUSINESS_TOPICS));
     expect(supervisor.status().every((status) => status.running)).toBe(true);
     await supervisor.stopAll();
   });
@@ -196,6 +207,38 @@ describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres
     // the tracking consumer reaches the delivery loop too, so the sweeper's parked rows have a producer
     expect(deliveryStarts[0]?.consumers.map((c) => c.consumerGroup)).toContain("tracking.ingest");
     expect(brokerCalls).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("hands the delivery loop the five order consumers of the tracking revenue path (P2-D3)", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+
+    const handedOver = deliveryStarts[0]?.consumers.map((c) => `${c.consumerGroup}@${c.topic}`);
+    expect(handedOver).toEqual(
+      expect.arrayContaining([
+        "tracking.business.order-created@orders.order.created.v1",
+        "tracking.business.order-placed@orders.order.placed.v1",
+        "tracking.business.order-cancelled@orders.order.cancelled.v1",
+        "tracking.business.fulfillment-returned@fulfillment.order.returned.v1",
+        "tracking.business.fulfillment-delivered@fulfillment.order.delivered.v1",
+      ]),
+    );
+    // each is a real direct consumer (asDirectConsumers refused none), and the broker is untouched
+    expect(handedOver).toHaveLength(supervisor.status().length);
+    expect(brokerCalls).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("registers no order consumer when tracking ingest is off (same gate as the ingest consumer)", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+
+    const groups = deliveryStarts[0]?.consumers.map((c) => c.consumerGroup) ?? [];
+    expect(groups.filter((group) => group.startsWith("tracking."))).toEqual([]);
     await supervisor.stopAll();
   });
 

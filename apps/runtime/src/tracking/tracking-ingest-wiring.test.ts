@@ -51,6 +51,7 @@ describe("tracking ingest wiring (C-07)", () => {
       accepted: 0,
       refused: 0,
       unrouted: 0,
+      duplicates: 0,
       deadLettered: 0,
       deliveredTargets: 0,
     });

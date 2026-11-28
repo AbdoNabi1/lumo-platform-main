@@ -71,6 +71,8 @@ export interface IngestCounters {
   readonly refused: number;
   /** Events of a store with nothing to send to (P2-D2): profile updated, nothing recorded, nothing delivered. */
   readonly unrouted: number;
+  /** Business events whose record was already appended (a redelivery after a crash): success, nothing redone. */
+  readonly duplicates: number;
   readonly deadLettered: number;
   readonly deliveredTargets: number;
 }
@@ -83,6 +85,7 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
   private accepted = 0;
   private refused = 0;
   private unrouted = 0;
+  private duplicates = 0;
   private deadLettered = 0;
   private deliveredTargets = 0;
 
@@ -119,6 +122,7 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
       accepted: this.accepted,
       refused: this.refused,
       unrouted: this.unrouted,
+      duplicates: this.duplicates,
       deadLettered: this.deadLettered,
       deliveredTargets: this.deliveredTargets,
     };
@@ -150,9 +154,25 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
     }
 
     // Pinned once, here, for the whole event.
-    const outcome = await ingestTrackingEvent(await this.deps.ingest(tenantId), {
-      envelope: event.payload.envelope,
-    });
+    let outcome: IngestOutcome;
+    try {
+      outcome = await ingestTrackingEvent(await this.deps.ingest(tenantId), {
+        envelope: event.payload.envelope,
+      });
+    } catch (cause) {
+      // P2-D5: a server business event (`ord_/dlv_/cnl_/lead_`) has a derived, stable event id, so the record's unique
+      // key `(tenant, event id)` refusing a second append means the first attempt already recorded it (it crashed
+      // before the ack). That is "already done", not a fault: retrying would only loop into the dead letters.
+      if (isDuplicateBusinessRecord(cause, event.payload.envelope)) {
+        this.duplicates += 1;
+        this.deps.logger.info("tracking business event already recorded", {
+          messageId: event.messageId,
+          tenantId,
+        });
+        return;
+      }
+      throw cause;
+    }
 
     if (outcome.status === "accepted") {
       this.accepted += 1;
@@ -226,6 +246,20 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
 
     this.deps.logger.warn("tracking event refused", { messageId: event.messageId, reason });
   }
+}
+
+const BUSINESS_DEDUP_ID = /^(ord|dlv|cnl|lead)_/u;
+
+/**
+ * True when `cause` is the database's unique-violation (Prisma `P2002`) on the record append of a SERVER business
+ * event. Anything else — another error code, a browser event, a business id claimed by a browser — is not.
+ */
+function isDuplicateBusinessRecord(cause: unknown, envelope: unknown): boolean {
+  if (typeof cause !== "object" || cause === null) return false;
+  if ((cause as { code?: unknown }).code !== "P2002") return false;
+  if (typeof envelope !== "object" || envelope === null) return false;
+  const { eventOrigin, dedupId } = envelope as { eventOrigin?: unknown; dedupId?: unknown };
+  return eventOrigin === "server" && typeof dedupId === "string" && BUSINESS_DEDUP_ID.test(dedupId);
 }
 
 /** Renders a refusal as a stable, greppable string. */

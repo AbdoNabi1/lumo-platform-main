@@ -618,15 +618,16 @@ transaction as the change, and a **worker** delivers those rows to the consumers
 Without a worker none of that happens: the rows accumulate in the outbox and nothing reads them.
 Concretely, these do not run today:
 
-| Consumer (topic)                                  | What it does                                                              |
-| ------------------------------------------------- | ------------------------------------------------------------------------- |
-| `payments.payment_intent.captured.v1`             | marks the order paid; Finance posts the fee entry                         |
-| `payments.payment_intent.refunded.v1`             | Finance posts the contra entry                                            |
-| `orders.order.paid.v1` (four consumers)           | ledger entry, loyalty points, customer profile, confirmation notification |
-| `licensing.subscription.*` (three dunning events) | opens the dunning notification record                                     |
-| `platform.usage.recorded.v1`                      | counts usage into Licensing's usage counters (G-79)                       |
-| `identity.user.*`, `identity.membership.created`  | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
-| `tracking.event.captured.v1`                      | tracking ingest — on by default; skipped if `TRACKING_INGEST_ENABLED=off` |
+| Consumer (topic)                                                                        | What it does                                                              |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `payments.payment_intent.captured.v1`                                                   | marks the order paid; Finance posts the fee entry                         |
+| `payments.payment_intent.refunded.v1`                                                   | Finance posts the contra entry                                            |
+| `orders.order.paid.v1` (four consumers)                                                 | ledger entry, loyalty points, customer profile, confirmation notification |
+| `licensing.subscription.*` (three dunning events)                                       | opens the dunning notification record                                     |
+| `platform.usage.recorded.v1`                                                            | counts usage into Licensing's usage counters (G-79)                       |
+| `identity.user.*`, `identity.membership.created`                                        | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
+| `tracking.event.captured.v1`                                                            | tracking ingest — on by default; skipped if `TRACKING_INGEST_ENABLED=off` |
+| `orders.order.created/placed/cancelled`, `fulfillment.order.delivered/returned` (`.v1`) | server Purchase / Delivered / Cancelled tracking events (same switch)     |
 
 The worker can get the rows to its consumers in one of two ways, chosen by `EVENT_TRANSPORT`:
 

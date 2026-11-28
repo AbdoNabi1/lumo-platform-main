@@ -13,6 +13,7 @@ import {
 import { buildDunningNotificationsConsumerRuntimes } from "./consumers/dunning-notifications.consumers";
 import { buildFinanceSettlementConsumerRuntimes } from "./consumers/finance-settlement.consumers";
 import { buildOrdersPaidConsumerRuntimes } from "./consumers/orders-paid.consumers";
+import { buildTrackingBusinessConsumerRuntimes } from "./consumers/tracking-business.consumers";
 import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startDeliveryRetrySweep } from "./delivery-retry-runtime";
@@ -149,6 +150,13 @@ export async function startWorker(
   // empty registry, which is valid); `buildTrackingIngestRuntime` returns null when it is off.
   const trackingIngest = buildTrackingIngestRuntime(runtime);
   if (trackingIngest !== null) register(trackingIngest);
+
+  // Tracking P2-D3/D6: the order events that become server Purchase / Delivered / Cancelled tracking events
+  // (`tracking.event.captured.v1` through the outbox, so they run through the ingest consumer above). Same gate as
+  // the ingest consumer: an empty list when `TRACKING_INGEST_ENABLED` is off.
+  for (const consumerRuntime of buildTrackingBusinessConsumerRuntimes(runtime, runtime.metrics)) {
+    register(consumerRuntime);
+  }
 
   // H-04: bootstrapSecurity + the three principal-provisioning consumers (security-provisioning.
   // consumers.ts) had zero callers — the Security principal/role store was never populated from

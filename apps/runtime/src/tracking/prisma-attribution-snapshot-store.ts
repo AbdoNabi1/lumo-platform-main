@@ -29,7 +29,7 @@ const BATCH_TIMEOUT_MS = 60_000;
 const COOKIE_KEYS = ["fbp", "fbc", "ttp", "scid", "ga"] as const;
 const UTM_KEYS = ["source", "medium", "campaign", "content", "term"] as const;
 
-interface SnapshotRow {
+export interface SnapshotRow {
   readonly visitorId: string | null;
   readonly sessionId: string | null;
   readonly ip: string | null;
@@ -75,7 +75,7 @@ function clickIdsOf(value: unknown): readonly SnapshotClickId[] {
 }
 
 /** Row → the plain read-model snapshot. Tolerant: a hand-edited JSON column yields fewer fields, never a throw. */
-function toSnapshot(row: SnapshotRow): BusinessAttributionSnapshot {
+export function toSnapshot(row: SnapshotRow): BusinessAttributionSnapshot {
   const cookies = stringMap(row.cookies, COOKIE_KEYS);
   const utm = stringMap(row.utm, UTM_KEYS);
   const clickIds = clickIdsOf(row.clickIds);

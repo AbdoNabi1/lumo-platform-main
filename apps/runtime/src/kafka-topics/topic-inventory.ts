@@ -123,13 +123,18 @@ export const TOPICS_OUTSIDE_TRANSLATORS: Readonly<Record<string, string>> = {
  * These — and only these — get `.retry` and `.dlq` companions.
  */
 export const WORKER_CONSUMED_TOPICS: readonly string[] = [
+  "fulfillment.order.delivered.v1",
+  "fulfillment.order.returned.v1",
   "identity.membership.created.v1",
   "identity.user.created.v1",
   "identity.user.deactivated.v1",
   "licensing.subscription.dunning_exhausted.v1",
   "licensing.subscription.entered_grace.v1",
   "licensing.subscription.recovered_from_grace.v1",
+  "orders.order.cancelled.v1",
+  "orders.order.created.v1",
   "orders.order.paid.v1",
+  "orders.order.placed.v1",
   "payments.payment_intent.captured.v1",
   "payments.payment_intent.refunded.v1",
   "platform.usage.recorded.v1",
