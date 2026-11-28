@@ -21,7 +21,10 @@ beforeEach(() => {
 });
 
 const MINUTE = 60_000;
-const BASE = new Date("2026-11-22T10:00:00.000Z");
+// Far in the future on purpose: the shared use-case suite (prisma-lead-repository.integration.test.ts) runs on the same
+// database in a parallel worker and its sweeper passes scan EVERY tenant's pending leads older than its own (2026) cut-offs;
+// leads created here must never fall inside them, or that suite would settle this file's leads under its feet.
+const BASE = new Date("2036-01-01T10:00:00.000Z");
 const LEADS_TABLE = [{ schema: "leads", table: "leads" }] as const;
 
 describe.runIf(Boolean(databaseUrl))("pending lead tracking (integration)", () => {
