@@ -197,6 +197,8 @@ describe("wireTrackingCollect", () => {
     const wired = wireTrackingCollect({ ...deps, secret: undefined });
     expect(wired.enricher).toBeUndefined();
     expect(wired.blockedIps).toBeDefined();
+    // P2-D1: the per-store settings service the admin routes and the public notice switch read
+    expect(wired.settings).toBeDefined();
   });
 
   it("with the secret it stamps bot score and the per-store cookieless id", async () => {

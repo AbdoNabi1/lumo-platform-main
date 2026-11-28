@@ -44,6 +44,7 @@ import {
   HttpJsonAdapter,
   InMemoryDestinationState,
   type AdapterRegistryPort,
+  type ConsentPolicyPort,
   type CredentialResolverPort,
   type DeliveryRetryQueuePort,
   type IngestRuntimeDeps,
@@ -113,6 +114,11 @@ export interface TrackingRuntimeInput {
    * into it. Absent ⇒ events are forwarded exactly as they arrived.
    */
   readonly profiles?: TrackingProfileStore;
+  /**
+   * Tracking P2-D1: the store consent policy. When present, every ingested event is stamped with the consent its
+   * store forwards under (`notice_only` by default) right after completion. Absent => consent is left as it arrived.
+   */
+  readonly consentPolicy?: ConsentPolicyPort;
 }
 
 export interface TrackingRuntime {
@@ -273,6 +279,7 @@ export function wireTrackingRuntime(input: TrackingRuntimeInput): TrackingRuntim
         hasher,
         clock: input.clock,
         ...(profiles === undefined ? {} : { profiles }),
+        ...(input.consentPolicy === undefined ? {} : { consentPolicy: input.consentPolicy }),
       };
     },
     retry: (): RetryTenantRuntime => {

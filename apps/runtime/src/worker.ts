@@ -145,8 +145,8 @@ export async function startWorker(
 
   // C-07: the consumer of `tracking.event.captured.v1`. Until this line the collector published to
   // that topic and nothing subscribed — every beacon was accepted, written to Kafka and aged out
-  // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default off) because the registry must be
-  // seeded first; `buildTrackingIngestRuntime` returns null when it is off.
+  // unprocessed. Config-gated (`TRACKING_INGEST_ENABLED`, default on since P2-D2: an unconnected store has an
+  // empty registry, which is valid); `buildTrackingIngestRuntime` returns null when it is off.
   const trackingIngest = buildTrackingIngestRuntime(runtime);
   if (trackingIngest !== null) register(trackingIngest);
 

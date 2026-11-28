@@ -335,25 +335,17 @@ function composeEnvelope(input: ComposeInput): TrackingEnvelope {
 }
 
 /**
- * Reads the consent block, **failing closed**.
+ * The consent a collected event carries into ingest, **failing closed** (P2-D1).
  *
- * An absent or malformed consent block means "no consent granted", never "consent assumed". D-077
- * makes consent mandatory and fail-closed, and this is the point where a permissive default would be
- * easiest to introduce and hardest to notice: every event would still flow, and the only symptom
- * would be forwarding data the visitor declined.
+ * The browser's own consent block is NOT trusted: whatever a beacon claims, the snapshot here is "nothing granted".
+ * The store's consent policy decides what an event is forwarded under, once, server-side, in `ingestTrackingEvent`:
+ * `notice_only` (the default) stamps the notice-only grant there; `opt_in` keeps this deny until a signed consent
+ * decision reaches the collector — none exists yet, so an `opt_in` store forwards nothing to marketing destinations.
+ * Trusting a body `true` would let any visitor, or a script that can reach the signed storefront path, grant
+ * marketing consent to itself in a store that asked for opt-in.
  */
-function resolveConsent(raw: unknown): ConsentSnapshot {
-  const consent = asRecord(raw);
-  if (consent === undefined) {
-    return { analytics: false, marketing: false, personalization: false };
-  }
-
-  return {
-    ...consent,
-    analytics: consent["analytics"] === true,
-    marketing: consent["marketing"] === true,
-    personalization: consent["personalization"] === true,
-  };
+function resolveConsent(_raw: unknown): ConsentSnapshot {
+  return { analytics: false, marketing: false, personalization: false };
 }
 
 /** `_fbc` is derived only when Meta's pixel has not already set it — see `deriveFbc`. */

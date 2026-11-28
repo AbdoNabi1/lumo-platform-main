@@ -384,22 +384,19 @@ export function ruleSetRegistryOf(snapshot: TrackingRegistrySnapshot): RuleSetRe
 /**
  * Loads the registry for a tenant.
  *
- * **Fails when the registry is empty.** An empty registry is not a neutral starting state: every
- * event would route nowhere, `receiveAndDeliver` would record each one with no destinations, and
- * the platform would report perfect health while forwarding nothing at all. That failure is silent
- * and can run for weeks. Refusing to start is loud and takes minutes to fix.
+ * **An empty registry is a valid state** (Tracking P2-D2, zero merchant setup). A store that has not connected an ad
+ * platform has no definitions at all: its snapshot has no destination and no rule set, `ingestTrackingEvent` answers
+ * `unrouted` (visitor profile updated, nothing recorded, nothing sent), and the registry watcher keeps polling, so
+ * the first connection save — which writes the destinations and the rule set — is picked up within one poll
+ * interval. The old behaviour (throw, retry, dead-letter every event of every unconnected store) was a boot-time
+ * safety net for a seeded-registry deployment that no longer exists; `TrackingRegistryHandle` documents why a
+ * failed *reload* still keeps the previous snapshot serving.
  */
 export async function loadTrackingRegistry(
   store: PrismaTrackingRegistryStore,
   tenantId: string,
 ): Promise<TrackingRegistrySnapshot> {
   const rows = await store.loadAll(tenantId);
-  if (rows.length === 0) {
-    throw new Error(
-      `tracking: no registry definitions for tenant "${tenantId}" — seed the registry before ` +
-        `starting ingest, or every event will be captured and forwarded nowhere`,
-    );
-  }
   return new TrackingRegistrySnapshot(rows);
 }
 

@@ -120,9 +120,11 @@ import { wireTrackingRuntime, type TrackingRuntime } from "./tracking/wire-track
 import { PrismaDeliveryRetryQueue } from "./tracking/prisma-delivery-retry-queue";
 import { PrismaEventNetworkRedaction } from "./tracking/prisma-event-network-redaction";
 import { PrismaTrackingProfileStore } from "./tracking/prisma-tracking-profile-store";
+import { PrismaTrackingStoreSettingsStore } from "./tracking/prisma-tracking-store-settings";
 import {
   runTrackingRetention,
   sweepDeliveryRetries,
+  TrackingSettingsService,
   type RetrySweepReport,
   type TrackingRetentionReport,
 } from "@platform/tracking";
@@ -1015,6 +1017,7 @@ interface TrackingTenantParts {
   readonly deadLetters: PrismaDeadLetterStore;
   readonly retryQueue: PrismaDeliveryRetryQueue;
   readonly profiles: PrismaTrackingProfileStore;
+  readonly settings: TrackingSettingsService;
   readonly tenantRuntimes: TenantRuntimes<TrackingRuntime>;
 }
 
@@ -1031,15 +1034,26 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
   const retryQueue = new PrismaDeliveryRetryQueue(core.prisma, core.idGenerator);
   const profiles = new PrismaTrackingProfileStore(core.prisma, core.idGenerator);
   const secrets = createSecretProvider();
+  // P2-D1: the per-store consent policy every event is stamped with (30 s cache, unreadable => notice_only).
+  const settings = new TrackingSettingsService({
+    store: new PrismaTrackingStoreSettingsStore(core.prisma),
+    clock: core.clock,
+    onError: (cause) =>
+      core.logger.warn(
+        "tracking: store settings unreadable, consent policy falls back to notice_only",
+        {
+          error: cause instanceof Error ? cause.name : "unknown",
+        },
+      ),
+  });
 
   // G-64: one registry, one hot-reload watcher and one ingest engine PER TENANT, built lazily on the
   // first event that names the tenant (the envelope's tenant — never a deployment default). The old
   // shape loaded a single tenant's registry at boot and routed every tenant's events through it.
   //
-  // `loadTrackingRegistry` still throws on an empty registry, so a tenant with no definitions fails
-  // its event loudly (retry → DLQ) instead of being forwarded nowhere. The trade against the old
-  // boot-time load: a tenant whose registry is unseeded is now discovered on its first event, not
-  // at process start — the process no longer knows which tenants to check.
+  // P2-D2: a tenant with no registry definitions (no ad platform connected) loads an EMPTY snapshot — its
+  // events update the visitor profile and nothing else — and its watcher keeps polling, so the first
+  // connection save is picked up within one poll interval.
   const tenantRuntimes = new TenantRuntimes<TrackingRuntime>(async (tenantId) => {
     const snapshot = await loadTrackingRegistry(registryStore, tenantId);
     const handle = new TrackingRegistryHandle(snapshot, await registryStore.signal(tenantId));
@@ -1063,6 +1077,7 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
       logger: core.logger,
       retryQueue,
       profiles,
+      consentPolicy: settings,
       ...(core.adPlatformConnections === undefined
         ? {}
         : { connectionCredentials: core.adPlatformConnections }),
@@ -1075,6 +1090,7 @@ function trackingTenantParts(core: RuntimeCore): TrackingTenantParts {
     deadLetters,
     retryQueue,
     profiles,
+    settings,
     tenantRuntimes,
   };
   trackingTenantPartsByCore.set(core, parts);

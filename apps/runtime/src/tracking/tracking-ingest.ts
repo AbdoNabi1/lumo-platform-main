@@ -69,6 +69,8 @@ export interface IngestCounters {
   readonly received: number;
   readonly accepted: number;
   readonly refused: number;
+  /** Events of a store with nothing to send to (P2-D2): profile updated, nothing recorded, nothing delivered. */
+  readonly unrouted: number;
   readonly deadLettered: number;
   readonly deliveredTargets: number;
 }
@@ -80,6 +82,7 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
   private received = 0;
   private accepted = 0;
   private refused = 0;
+  private unrouted = 0;
   private deadLettered = 0;
   private deliveredTargets = 0;
 
@@ -115,6 +118,7 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
       received: this.received,
       accepted: this.accepted,
       refused: this.refused,
+      unrouted: this.unrouted,
       deadLettered: this.deadLettered,
       deliveredTargets: this.deliveredTargets,
     };
@@ -163,6 +167,23 @@ export class TrackingIngestHandler implements EventHandler<TrackingCapturedPaylo
         excluded: outcome.routing.excluded.length,
         renderFailures: outcome.delivery.renderFailures.length,
       });
+      return;
+    }
+
+    if (outcome.status === "unrouted") {
+      // P2-D2: a store with nothing connected. Success: acked, no record, no retry, no dead letter. Silent for the
+      // normal case (no destination at all — it would be one line per event for every unconnected store); a store that
+      // HAS destinations but no rule set is a configuration fault worth a line.
+      this.unrouted += 1;
+      if (outcome.reason === "no_rule_set") {
+        this.deps.logger.warn(
+          "tracking ingest: destinations exist but the routing rule set is missing",
+          {
+            messageId: event.messageId,
+            tenantId,
+          },
+        );
+      }
       return;
     }
 

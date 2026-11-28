@@ -277,3 +277,18 @@ model TrackingBlockedIp {
   @@map("blocked_ips")
   @@schema("tracking")
 }
+
+// Tracking P2-D1: per-store tracking settings. One row per tenant, created on the first save; a tenant with NO row has
+// the defaults (consent `notice_only`, cookie notice shown). `consentPolicy` is `notice_only` | `opt_in` (CHECK in the
+// migration); the server stamps consent from it on every event. `version` is the optimistic-lock counter the admin page
+// sends back as `expectedVersion` (the first save creates version 1).
+model TrackingStoreSettings {
+  tenantId            String   @id @map("tenant_id")
+  consentPolicy       String   @default("notice_only") @map("consent_policy")
+  cookieNoticeEnabled Boolean  @default(true) @map("cookie_notice_enabled")
+  version             Int      @default(1)
+  updatedAt           DateTime @map("updated_at")
+
+  @@map("store_tracking_settings")
+  @@schema("tracking")
+}

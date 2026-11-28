@@ -86,11 +86,15 @@ export type {
   ConsentDenial,
   ConsentDecision,
   ConsentSnapshot,
+  ConsentPolicy,
 } from "./envelope/consent";
 export {
   CONSENT_CATEGORIES,
+  CONSENT_POLICIES,
   CONSENT_REQUIREMENTS,
+  DEFAULT_CONSENT_POLICY,
   DENY_ALL_CONSENT,
+  applyConsentPolicy,
   evaluateConsent,
 } from "./envelope/consent";
 
@@ -521,6 +525,7 @@ export type {
   IngestOutcome,
   IngestRuntimeDeps,
   IngestInput,
+  UnroutedReason,
 } from "./runtime/ingest-runtime";
 export {
   PERMANENT_INGEST_REFUSALS,
@@ -706,3 +711,20 @@ export type {
   BlockedIpServiceDeps,
   BlockedIpStore,
 } from "./blocking/blocked-ips";
+
+// --- Per-store tracking settings: consent policy, cookie notice (P2-D1) ---
+export {
+  InMemoryTrackingSettingsStore,
+  SETTINGS_CACHE_TTL_MS,
+  TrackingSettingsService,
+  defaultTrackingSettings,
+} from "./settings/store-settings";
+export type {
+  ConsentPolicyPort,
+  TrackingSettingsInput,
+  TrackingSettingsSave,
+  TrackingSettingsServiceDeps,
+  TrackingSettingsStore,
+  TrackingSettingsUpdate,
+  TrackingStoreSettings,
+} from "./settings/store-settings";

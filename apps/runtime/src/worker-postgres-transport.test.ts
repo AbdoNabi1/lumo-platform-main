@@ -200,9 +200,10 @@ describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres
   });
 
   it("does not start (and never reads the table) when tracking ingest is off", async () => {
-    const { core } = coreWithoutBroker(POSTGRES_ENV);
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
 
-    const supervisor = await startWorker(loadRuntimeConfig(POSTGRES_ENV), core);
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
 
     expect(retrySweepStarts).toEqual([]);
     await supervisor.stopAll();
@@ -245,10 +246,25 @@ describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres
   });
 
   it("does not start the retention pass (and never reads the tables) when tracking ingest is off", async () => {
-    const { core } = coreWithoutBroker(POSTGRES_ENV);
-    const supervisor = await startWorker(loadRuntimeConfig(POSTGRES_ENV), core);
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
     expect(retentionStarts).toEqual([]);
     await supervisor.stopAll();
+  });
+
+  it("config: tracking ingest is ON by default (P2-D2, zero setup) and `off` / `false` turn it off", () => {
+    expect(loadRuntimeConfig(BASE_ENV).TRACKING_INGEST_ENABLED).toBe(true);
+    for (const value of ["off", "false", "OFF"]) {
+      expect(
+        loadRuntimeConfig({ ...BASE_ENV, TRACKING_INGEST_ENABLED: value }).TRACKING_INGEST_ENABLED,
+      ).toBe(false);
+    }
+    for (const value of ["on", "true", "ON"]) {
+      expect(
+        loadRuntimeConfig({ ...BASE_ENV, TRACKING_INGEST_ENABLED: value }).TRACKING_INGEST_ENABLED,
+      ).toBe(true);
+    }
   });
 
   it("config: the sweep interval defaults to a minute and refuses a busy loop", () => {

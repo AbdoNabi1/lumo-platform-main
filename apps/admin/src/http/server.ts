@@ -12,7 +12,11 @@ import {
   type TenantResolver,
 } from "@platform/http";
 import type { FastifyInstance } from "fastify";
-import type { BlockedIpService, CollectEnricher } from "@platform/tracking";
+import type {
+  BlockedIpService,
+  CollectEnricher,
+  TrackingSettingsService,
+} from "@platform/tracking";
 import { logger } from "@platform/utils";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
@@ -82,6 +86,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly trackingBlocklist?: TrackingIpBlocklist;
   /** The same list as the admin API manages it (P1-D9). Absent ⇒ the `/tracking/blocked-ips` routes are not mounted. */
   readonly trackingBlockedIps?: BlockedIpService;
+  /** Per-store tracking settings (P2-D1): the admin API, the public notice switch. Absent ⇒ those routes are not mounted. */
+  readonly trackingSettings?: TrackingSettingsService;
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -216,6 +222,7 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
       ...(deps.trackingBlockedIps === undefined
         ? {}
         : { trackingBlockedIps: deps.trackingBlockedIps }),
+      ...(deps.trackingSettings === undefined ? {} : { trackingSettings: deps.trackingSettings }),
       trackingEdge: {
         secret: deps.trackingEdgeSecret,
         sink: deps.trackingEventSink,

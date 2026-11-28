@@ -54,8 +54,11 @@ const noBrokerPublisher = {
   },
 };
 
-/** An ingest engine over in-memory ports: no destinations, so the event is recorded and routed nowhere. */
-function ingestDeps(records: EventRecordWriterPort): IngestRuntimeDeps {
+/**
+ * An ingest engine over in-memory ports. By default one destination exists but no rule routes to it, so the event is
+ * recorded and routed nowhere; `connected: false` is a store with NOTHING connected (P2-D2): no destination at all.
+ */
+function ingestDeps(records: EventRecordWriterPort, connected = true): IngestRuntimeDeps {
   const recording: RecordingRuntimeDeps = {
     delivery: {} as RecordingRuntimeDeps["delivery"],
     records,
@@ -70,7 +73,11 @@ function ingestDeps(records: EventRecordWriterPort): IngestRuntimeDeps {
   };
   return {
     recording,
-    destinations: { resolve: () => null, resolveVersion: () => null, listActive: () => [] },
+    destinations: {
+      resolve: () => null,
+      resolveVersion: () => null,
+      listActive: () => (connected ? [{ key: "meta.capi" } as never] : []),
+    },
     ruleSets: {
       resolve: () => ({
         id: "tracking.routing.default",
@@ -87,7 +94,7 @@ function ingestDeps(records: EventRecordWriterPort): IngestRuntimeDeps {
   };
 }
 
-function stack() {
+function stack(options: { connected?: boolean } = {}) {
   const appended: EventRecord[] = [];
   const records: EventRecordWriterPort = {
     append: async (record) => {
@@ -97,7 +104,7 @@ function stack() {
   };
   const deadLetters = new InMemoryDeadLetterStore();
   const handler = new TrackingIngestHandler({
-    ingest: async () => ingestDeps(records),
+    ingest: async () => ingestDeps(records, options.connected ?? true),
     deadLetters,
     logger: silentLogger,
     clock,
@@ -179,6 +186,26 @@ describe("tracking events over the Postgres outbox transport (P1-D1)", () => {
       "shop-1:evt-0003",
       "shop-2:evt-0004",
     ]);
+  });
+
+  it("a store with nothing connected: the row is delivered (acked), nothing is recorded, nothing dead-lettered (P2-D2)", async () => {
+    const { appended, deadLetters, handler, queue, relay } = stack({ connected: false });
+    queue.enqueue([
+      toEntry(routeRecord("shop-1", "evt-0006", "0192f0aa-0000-7000-8000-000000000006")),
+    ]);
+
+    const report = await relay.drainOnce();
+
+    expect(report).toMatchObject({ delivered: 1, deferred: 0, deadLettered: 0 });
+    expect(appended).toEqual([]);
+    expect(handler.counters()).toMatchObject({
+      received: 1,
+      accepted: 0,
+      refused: 0,
+      unrouted: 1,
+      deadLettered: 0,
+    });
+    expect(deadLetters.snapshot()).toEqual([]);
   });
 
   it("a malformed event is dead-lettered by the consumer, not retried forever", async () => {

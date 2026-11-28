@@ -36,6 +36,11 @@
 
 import type { DestinationRegistryPort } from "../delivery/destination";
 import { route, type RoutingDecision, type RuleSetRegistryPort } from "../delivery/router";
+import {
+  applyConsentPolicy,
+  DEFAULT_CONSENT_POLICY,
+  type ConsentPolicy,
+} from "../envelope/consent";
 import type { EnrichedEnvelope, TrackingEnvelope } from "../envelope/envelope";
 import { deriveDedupId, type HashPort, type NaturalKeyStrategy } from "../ids/dedup-id";
 import type { AttributionSnapshot } from "../pipeline/attribution";
@@ -47,6 +52,7 @@ import {
   validateEnvelope,
   type ValidationViolation,
 } from "../pipeline/validation";
+import type { ConsentPolicyPort } from "../settings/store-settings";
 import {
   receiveAndDeliver,
   type RecordingRuntimeDeps,
@@ -93,7 +99,17 @@ export type IngestOutcome =
       readonly delivery: ReceiveEventOutput;
       readonly routing: RoutingDecision;
     }
+  /**
+   * Tracking P2-D2: the store has nothing to send to (no active destination — a store that never connected an ad
+   * platform — or, defensively, no routing rule set). The visitor profile was updated as for any event; NO event
+   * record was appended and nothing was delivered, so a store with no connections adds nothing to the database. This
+   * is a success, never a refusal: nothing is retried and nothing reaches the dead letters.
+   */
+  | { readonly status: "unrouted"; readonly reason: UnroutedReason }
   | { readonly status: "refused"; readonly refusal: IngestRefusal };
+
+/** `no_destinations`: no active destination. `no_rule_set`: destinations exist but the configured rule set does not. */
+export type UnroutedReason = "no_destinations" | "no_rule_set";
 
 export interface IngestRuntimeDeps {
   /** Everything `receiveAndDeliver` needs. Passed through untouched — this module adds no stage. */
@@ -111,6 +127,13 @@ export interface IngestRuntimeDeps {
    * arrived. A profile failure never stops an event: the enricher returns the event unchanged.
    */
   readonly profiles?: ProfileEnricherPort;
+  /**
+   * Tracking P2-D1: the store's consent policy. When present, the consent an event is forwarded under is STAMPED here,
+   * right after completion and before the profile merge, from the store's policy (`notice_only` ⇒ granted under the
+   * notice; `opt_in` ⇒ as it arrived, fail-closed) — whatever the browser claimed. Absent ⇒ consent is left as it
+   * arrived. A policy that cannot be read is `notice_only` (fail open), never a refusal.
+   */
+  readonly consentPolicy?: ConsentPolicyPort;
 }
 
 export interface IngestInput {
@@ -200,6 +223,15 @@ async function enrich(
   };
 }
 
+/** Reads the policy; an unreadable one is the default (fail open — see `TrackingSettingsService`). */
+async function consentPolicyOf(port: ConsentPolicyPort, tenantId: string): Promise<ConsentPolicy> {
+  try {
+    return await port.consentPolicyFor(tenantId);
+  } catch {
+    return DEFAULT_CONSENT_POLICY;
+  }
+}
+
 /**
  * Validates → completes → routes → records → delivers.
  *
@@ -222,8 +254,23 @@ export async function ingestTrackingEvent(
     };
   }
 
-  const completed = await enrich(input.envelope, deps);
-  if ("refusal" in completed) return { status: "refused", refusal: completed.refusal };
+  const enrichedEnvelope = await enrich(input.envelope, deps);
+  if ("refusal" in enrichedEnvelope)
+    return { status: "refused", refusal: enrichedEnvelope.refusal };
+
+  // The ONE place consent is decided (P2-D1). The router, the delivery pipeline and replay keep their fail-closed
+  // gates untouched: they judge the snapshot stamped here.
+  const completed: EnrichedEnvelope =
+    deps.consentPolicy === undefined
+      ? enrichedEnvelope
+      : {
+          ...enrichedEnvelope,
+          consent: applyConsentPolicy(
+            enrichedEnvelope.consent,
+            await consentPolicyOf(deps.consentPolicy, enrichedEnvelope.tenancy.tenantId),
+            now,
+          ),
+        };
 
   // Merge-then-enrich BEFORE routing and delivery: the routing context, the recorded envelope and the vendor
   // payloads are all built from the completed event, so a later server event is indistinguishable, to every
@@ -250,13 +297,14 @@ export async function ingestTrackingEvent(
     };
   }
 
+  // P2-D2 (zero setup): a store with nothing connected has no destination and may have no rule set. The event's only
+  // effect is the visitor profile, already updated above; recording it would fill the database for a store that
+  // forwards nothing, and refusing it would send every event of an unconnected store to retry and the dead letters.
   const ruleSet = deps.ruleSets.resolve(deps.ruleSetKey);
-  if (ruleSet === null) {
-    return {
-      status: "refused",
-      refusal: { code: "rule_set_unavailable", ruleSetKey: deps.ruleSetKey },
-    };
+  if (deps.destinations.listActive().length === 0) {
+    return { status: "unrouted", reason: "no_destinations" };
   }
+  if (ruleSet === null) return { status: "unrouted", reason: "no_rule_set" };
 
   const routing = route({ envelope: enriched, ruleSet, destinations: deps.destinations });
 

@@ -62,6 +62,13 @@ export function fakeTrackingDb(): FakeTrackingDb {
     trackingRegistryEntry: {
       findMany: ({ where }: { where: Row }) => Promise.resolve(read(entries, where)),
       count: ({ where }: { where: Row }) => Promise.resolve(read(entries, where).length),
+      // `PrismaTrackingRegistryStore.signal` asks for the newest row's `registeredAt`.
+      findFirst: ({ where }: { where: Row }) => {
+        const newest = [...read(entries, where)].sort(
+          (a, b) => b.registeredAt.getTime() - a.registeredAt.getTime(),
+        )[0];
+        return Promise.resolve(newest === undefined ? null : { registeredAt: newest.registeredAt });
+      },
     },
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => {
       const staged: FakeEntry[] = [];

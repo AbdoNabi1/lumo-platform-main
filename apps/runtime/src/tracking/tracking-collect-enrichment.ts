@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import type { Clock, IdGenerator, RateLimiter } from "@platform/contracts";
 import {
   BlockedIpService,
+  TrackingSettingsService,
   UNKNOWN_GEO,
   createCollectEnricher,
   createMmdbGeoLookup,
@@ -26,6 +27,7 @@ import { logger } from "@platform/utils";
 import type { Database } from "@platform/db";
 import type { RuntimeCore } from "../composition";
 import { PrismaBlockedIpStore } from "./prisma-blocked-ip-store";
+import { PrismaTrackingStoreSettingsStore } from "./prisma-tracking-store-settings";
 
 /** More events than a person can produce from one browser in a minute. */
 export const VISITOR_BURST_LIMIT = 90;
@@ -103,6 +105,8 @@ export interface TrackingCollectWiring {
   readonly enricher: CollectEnricher | undefined;
   /** One service: the admin routes edit it, the collect route reads it, so an edit takes effect at once. */
   readonly blockedIps: BlockedIpService;
+  /** P2-D1: per-store consent policy and cookie notice, as the admin routes and the public notice switch read them. */
+  readonly settings: TrackingSettingsService;
 }
 
 export function wireTrackingCollect(deps: TrackingCollectDeps): TrackingCollectWiring {
@@ -112,6 +116,14 @@ export function wireTrackingCollect(deps: TrackingCollectDeps): TrackingCollectW
     idGenerator: deps.idGenerator,
     onError: (cause) =>
       logger.warn("tracking: excluded IP list unreadable, nothing is blocked", {
+        error: cause instanceof Error ? cause.name : "unknown",
+      }),
+  });
+  const settings = new TrackingSettingsService({
+    store: new PrismaTrackingStoreSettingsStore(deps.prisma),
+    clock: deps.clock,
+    onError: (cause) =>
+      logger.warn("tracking: store settings unreadable, defaults apply", {
         error: cause instanceof Error ? cause.name : "unknown",
       }),
   });
@@ -128,7 +140,7 @@ export function wireTrackingCollect(deps: TrackingCollectDeps): TrackingCollectW
               error: cause instanceof Error ? cause.name : "unknown",
             }),
         });
-  return { enricher, blockedIps };
+  return { enricher, blockedIps, settings };
 }
 
 /** Convenience for `api.ts`. */

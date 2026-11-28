@@ -663,6 +663,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
       : { trackingEnricher: trackingCollect.enricher }),
     trackingBlocklist: trackingCollect.blockedIps,
     trackingBlockedIps: trackingCollect.blockedIps,
+    trackingSettings: trackingCollect.settings,
     ...(runtime.config.TRACKING_EDGE_SECRET === undefined
       ? {}
       : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),

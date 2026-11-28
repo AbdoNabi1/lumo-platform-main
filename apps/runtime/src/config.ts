@@ -289,20 +289,22 @@ const schema = z
 
     // ── Tracking ingest (P1.3 / C-07) ──
     /**
-     * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `off`: the collector
-     * publishes regardless, and a runtime whose tracking registry has not been seeded would refuse
-     * every event at `loadTrackingRegistry` rather than start. Turn on once the registry is seeded.
+     * Mounts the `tracking.event.captured.v1` consumer in the worker. Default `on` (Tracking P2-D2, zero merchant
+     * setup): a store that has connected nothing has an EMPTY registry, which is a valid state - its events update
+     * the visitor profile and nothing else (no record, no delivery, no retry), and the first connection save is picked
+     * up by the registry watcher. Set `off` to stop the consumer (the collector still publishes; the outbox marks
+     * those rows delivered unprocessed).
      */
     TRACKING_INGEST_ENABLED: z
       .string()
-      .default("off")
+      .default("on")
       .transform((v) => v.toLowerCase() === "on" || v.toLowerCase() === "true"),
     /**
      * Registry key of the routing rule set the ingest pipeline resolves against. Configuration,
-     * never a compiled-in default (`IngestRuntimeDeps.ruleSetKey`) — a wrong key refuses every event
-     * with `rule_set_unavailable` rather than silently routing to nothing. The default matches
-     * `DEFAULT_RULE_SET_KEY` in `tracking/tracking-registry-seed.ts`, so a seeded registry works
-     * without extra configuration.
+     * never a compiled-in default (`IngestRuntimeDeps.ruleSetKey`). A store whose registry has destinations but not
+     * this rule set (a wrong key) forwards nothing and logs a warning per event (P2-D2: never a retry or a dead
+     * letter). The default matches `DEFAULT_RULE_SET_KEY` in `tracking/tracking-registry-seed.ts` and what the ad
+     * platform connections write.
      */
     TRACKING_RULE_SET_KEY: z.string().default("tracking.routing.default"),
     /** Registry hot-reload poll interval (`TrackingRegistryWatcher`). */

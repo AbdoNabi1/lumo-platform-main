@@ -1763,10 +1763,116 @@ describe("tracking.blocked_ips — migration matches the Prisma model", () => {
     expect(blockedSql).not.toMatch(/\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/i);
   });
 
-  it("is the only migration at 20261207000000, and the newest", () => {
+  it("is the only migration at 20261207000000", () => {
     expect(dirs.filter((dir) => dir.startsWith("20261207000000"))).toEqual([
       "20261207000000_tracking_blocked_ips",
     ]);
-    expect(dirs.at(-1)).toBe("20261207000000_tracking_blocked_ips");
+  });
+});
+
+/**
+ * Tracking P2-D1: `tracking.store_tracking_settings`, hand-written and applied by the owner before the release whose
+ * runtime reads it. A model without its migration would 500 the settings routes and, because the ingest runtime reads
+ * the policy for every event, fall back to the default policy for every store in a deployment while the in-memory
+ * tests stayed green; a tenant table without a forced, tenant-scoped policy would let one merchant read (or write)
+ * another's consent policy.
+ */
+describe("tracking.store_tracking_settings — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  // hand-written files are CRLF in a Windows working tree: compare on LF
+  const settingsSql = readFileSync(
+    join(migrationsDir, "20261208000000_tracking_store_settings", "migration.sql"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  function modelColumns(model: string): string[] {
+    const start = schema.indexOf(`model ${model} {`);
+    const body = start < 0 ? "" : schema.slice(start, schema.indexOf("\n}", start));
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingStoreSettings")).toEqual(
+      expect.arrayContaining([
+        "tenant_id",
+        "consent_policy",
+        "cookie_notice_enabled",
+        "version",
+        "updated_at",
+      ]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "store_tracking_settings", settingsSql);
+    for (const column of modelColumns("TrackingStoreSettings")) {
+      expect(actual.has(column), `expected "tracking"."store_tracking_settings"."${column}"`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("is keyed by the tenant: one row per store, tenant id as the primary key", () => {
+    expect(settingsSql).toContain(
+      'CONSTRAINT "store_tracking_settings_pkey" PRIMARY KEY ("tenant_id")',
+    );
+    expect(schema).toMatch(
+      /model TrackingStoreSettings \{\s+tenantId\s+String\s+@id @map\("tenant_id"\)/,
+    );
+    expect(schema).toContain('@@map("store_tracking_settings")');
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(settingsSql).toContain(
+      'ALTER TABLE "tracking"."store_tracking_settings" ENABLE ROW LEVEL SECURITY;',
+    );
+    expect(settingsSql).toContain(
+      'ALTER TABLE "tracking"."store_tracking_settings" FORCE ROW LEVEL SECURITY;',
+    );
+    expect(settingsSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."store_tracking_settings" FOR ALL',
+    );
+    expect(settingsSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(settingsSql).toContain(
+      "WITH CHECK (tenant_id = current_setting('app.tenant_id', true))",
+    );
+    // never an open read policy on a tenant's settings
+    expect(settingsSql).not.toMatch(/USING \(true\)/);
+  });
+
+  it("defaults to today's behaviour (notice_only, notice shown) and refuses any other policy", () => {
+    expect(settingsSql).toContain(
+      `"consent_policy"        TEXT         NOT NULL DEFAULT 'notice_only'`,
+    );
+    expect(settingsSql).toContain(`CHECK ("consent_policy" IN ('notice_only', 'opt_in'))`);
+    expect(settingsSql).toContain(`"cookie_notice_enabled" BOOLEAN      NOT NULL DEFAULT true`);
+    expect(schema).toContain('@default("notice_only") @map("consent_policy")');
+    expect(schema).toContain('@default(true) @map("cookie_notice_enabled")');
+  });
+
+  it("is additive: one new table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(settingsSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(settingsSql).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(settingsSql.match(/CREATE TABLE/g)).toHaveLength(1);
+  });
+
+  it("is the only migration at 20261208000000, and the newest", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261208000000"))).toEqual([
+      "20261208000000_tracking_store_settings",
+    ]);
+    expect(dirs.at(-1)).toBe("20261208000000_tracking_store_settings");
   });
 });

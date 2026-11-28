@@ -111,6 +111,16 @@ describe("Collector — parse, validate, resolve, publish once", () => {
     });
   });
 
+  it("does NOT trust a body that claims consent: true flags are ignored, the store's policy decides at ingest (P2-D1)", () => {
+    const out = accepted(collect(request(), deps()));
+
+    expect(out.envelope.consent).toEqual({
+      analytics: false,
+      marketing: false,
+      personalization: false,
+    });
+  });
+
   it("treats a non-boolean consent value as NOT granted", () => {
     const req = request();
     (req.body as { event: Record<string, unknown> }).event["consent"] = {

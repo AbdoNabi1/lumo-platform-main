@@ -478,7 +478,8 @@ refused). Nothing is captured until **the same random value is set on both servi
 
 Events then travel over whichever transport is configured (`EVENT_TRANSPORT`): under `postgres` the API
 appends each one to `platform.outbox` and the worker's relay hands it to the tracking ingest consumer, which
-needs `TRACKING_INGEST_ENABLED=true` and a seeded tracking registry (§8). Rotate the secret by setting a new
+is on by default (`TRACKING_INGEST_ENABLED`; set `off` to stop it) and needs no registry seeding: a store with no ad
+platform connected has an empty registry and its events only update the visitor profile. Rotate the secret by setting a new
 value on both services in the same deploy window; requests signed with the old one fail with 401 until both
 have restarted.
 
@@ -625,7 +626,7 @@ Concretely, these do not run today:
 | `licensing.subscription.*` (three dunning events) | opens the dunning notification record                                     |
 | `platform.usage.recorded.v1`                      | counts usage into Licensing's usage counters (G-79)                       |
 | `identity.user.*`, `identity.membership.created`  | principal provisioning — only if `SECURITY_PRINCIPAL_PROVISIONING` is on  |
-| `tracking.event.captured.v1`                      | tracking ingest — only if `TRACKING_INGEST_ENABLED` is on                 |
+| `tracking.event.captured.v1`                      | tracking ingest — on by default; skipped if `TRACKING_INGEST_ENABLED=off` |
 
 The worker can get the rows to its consumers in one of two ways, chosen by `EVENT_TRANSPORT`:
 
@@ -720,8 +721,8 @@ environment is a boot failure waiting to happen rather than a shortcut.
 | `OUTBOX_RELAY_ENABLED` | `true`                 | required with `postgres`, or the config refuses to load     |
 
 `KAFKA_BROKERS` is not needed. `REDIS_URL` still is: the delivery loop takes a Redis lock so two
-workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**, and do not set
-`TRACKING_INGEST_ENABLED=true` until the tracking registry is seeded. Tracking ingest works under this
+workers never drain the outbox at once. **Never set `TENANT_MODE=multi`**. Tracking ingest is on by default (`TRACKING_INGEST_ENABLED`, no registry
+seeding needed — Tracking P2-D2) and works under this
 transport (`runtime-api` appends events to the outbox; see §4g).
 
 How it behaves (`apps/runtime/src/outbox-delivery-runtime.ts`): every `OUTBOX_RELAY_INTERVAL_MS`
