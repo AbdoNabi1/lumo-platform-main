@@ -1,6 +1,10 @@
 import { runInTenantTransaction, runReadScoped, type Database } from "@platform/db";
 import type { Lead } from "../domain/lead";
-import type { LeadListQuery, LeadRepository } from "../domain/lead-repository";
+import type {
+  LeadListQuery,
+  LeadRepository,
+  PendingTrackingQuery,
+} from "../domain/lead-repository";
 import { MIN_PHONE_SEARCH_DIGITS, toLatinDigits } from "../domain/lead-search";
 import { leadToRowData, rowToLead } from "./lead.mapper";
 import { isSubmissionKeyViolation, isUuid } from "./rows";
@@ -59,6 +63,60 @@ export class PrismaLeadRepository implements LeadRepository {
       tx.lead.updateMany({
         where: { tenantId, submissionKey, sessionId, trackingStatus: "suppressed" },
         data: { trackingStatus: "pending", version: { increment: 1 }, updatedAt: new Date() },
+      }),
+    );
+    return result.count === 1;
+  }
+
+  /**
+   * The sweeper's cross-tenant read (P2-D9): ONE short read-only transaction behind the explicit `app.tracking_sweep`
+   * switch (migration `20261210000000_leads_tracking_pending`: a second SELECT policy, open only while the switch is on
+   * and only for `pending` rows). It selects tenant ids and nothing else; every row it leads to is read and written in
+   * that tenant's own scope.
+   */
+  async listTenantsWithPendingTracking(
+    createdBefore: Date,
+    limit: number,
+  ): Promise<readonly string[]> {
+    const cutoff = createdBefore.toISOString();
+    const rows = await this.deps.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.tracking_sweep', 'on', true)`;
+      return tx.$queryRaw<{ tenant_id: string }[]>`
+        SELECT tenant_id
+        FROM "leads"."leads"
+        WHERE tracking_status = 'pending' AND created_at < ${cutoff}::timestamp
+        GROUP BY tenant_id
+        ORDER BY MIN(created_at) ASC, tenant_id ASC
+        LIMIT ${limit}`;
+    });
+    return rows.map((row) => row.tenant_id);
+  }
+
+  async listPendingTracking(
+    tenantId: string,
+    query: PendingTrackingQuery,
+  ): Promise<readonly Lead[]> {
+    const rows = await runReadScoped(this.deps.prisma, tenantId, (tx) =>
+      tx.lead.findMany({
+        where: { tenantId, trackingStatus: "pending", createdAt: { lt: query.createdBefore } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: query.limit,
+      }),
+    );
+    return rows.map(rowToLead);
+  }
+
+  async markTracking(
+    tenantId: string,
+    id: string,
+    to: "sent" | "failed",
+    at: Date,
+  ): Promise<boolean> {
+    if (!isUuid(id)) return false;
+    const result = await runInTenantTransaction(this.deps.prisma, tenantId, (tx) =>
+      tx.lead.updateMany({
+        where: { tenantId, id, trackingStatus: "pending" },
+        data: { trackingStatus: to, updatedAt: at },
       }),
     );
     return result.count === 1;

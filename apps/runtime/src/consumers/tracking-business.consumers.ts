@@ -35,7 +35,6 @@
 import { PrismaOutboxEventPublisher } from "@platform/db";
 import {
   readEnvelopeTenant,
-  topicFor,
   type EventSerializer,
   type IntegrationEvent,
 } from "@platform/domain-events";
@@ -51,10 +50,7 @@ import {
   deliveredEnvelope,
   MAX_BUSINESS_EVENT_AGE_MS,
   purchaseEnvelope,
-  TRACKING_CAPTURED_TOPIC,
-  TRACKING_CAPTURED_VERSION,
   type OrderTrackingReadModel,
-  type TrackingCapturedEventPayload,
   type TrackingEnvelope,
 } from "@platform/tracking";
 
@@ -72,6 +68,13 @@ import {
   PrismaStoreUrlResolver,
   type StoreUrlResolver,
 } from "../tracking/prisma-store-url-resolver";
+import {
+  publishTrackingEnvelope,
+  StoreUrlUnavailableError,
+} from "../tracking/publish-tracking-envelope";
+
+// Kept here so the consumers' callers and tests keep their import path; the class lives with the shared publisher.
+export { StoreUrlUnavailableError };
 
 export const ORDERS_ORDER_CREATED = "orders.order.created";
 export const ORDERS_ORDER_PLACED = "orders.order.placed";
@@ -123,14 +126,6 @@ export class OrderNotVisibleError extends Error {
   constructor(orderId: string) {
     super(`tracking business: order ${orderId} is not visible yet`);
     this.name = "OrderNotVisibleError";
-  }
-}
-
-/** No address names the store: thrown so the event is retried instead of sent without a source url. */
-export class StoreUrlUnavailableError extends Error {
-  constructor() {
-    super("tracking business: no domain or storefront url names the store");
-    this.name = "StoreUrlUnavailableError";
   }
 }
 
@@ -266,40 +261,12 @@ export class TrackingBusinessConsumer implements EventHandler<unknown> {
     tenantId: string,
     envelope: TrackingEnvelope,
   ): Promise<void> {
-    // The envelope's own id is already the UUID derived from the tenant and the business id (P2-D5): the outbox row id
-    // and the consumer inbox key. The same order event twice is the same row.
-    const messageId = envelope.eventId;
-    const payload: TrackingCapturedEventPayload = { envelope };
-    const serialized = this.deps.serializer.serialize({
-      messageId,
-      type: TRACKING_CAPTURED_TOPIC,
-      eventVersion: TRACKING_CAPTURED_VERSION,
-      aggregateId: envelope.eventId,
-      aggregateType: "tracking_event",
-      occurredAt: envelope.timestamp,
+    await publishTrackingEnvelope(this.deps, {
+      tenantId,
+      envelope,
+      producer: PRODUCER,
       correlationId: source.correlationId,
       causationId: source.messageId,
-      tenantId,
-      producer: PRODUCER,
-      payload,
-      metadata: {},
-    });
-    await this.deps.publisher.publish({
-      topic: topicFor(TRACKING_CAPTURED_TOPIC, TRACKING_CAPTURED_VERSION),
-      // Partitioned by tenant, like every tracking event.
-      key: tenantId,
-      value: serialized.data,
-      headers: {
-        messageId,
-        type: TRACKING_CAPTURED_TOPIC,
-        eventVersion: String(TRACKING_CAPTURED_VERSION),
-        contentType: serialized.contentType,
-        "content-type": serialized.contentType,
-        correlationId: source.correlationId,
-        causationId: source.messageId,
-        tenantId,
-        producer: PRODUCER,
-      },
     });
   }
 }

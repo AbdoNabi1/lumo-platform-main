@@ -13,9 +13,23 @@ export {
   type LeadStatus,
   type LeadTrackingStatus,
 } from "./domain/lead";
-export type { LeadListQuery, LeadRepository } from "./domain/lead-repository";
+export type { LeadListQuery, LeadRepository, PendingTrackingQuery } from "./domain/lead-repository";
+export { PrismaLeadRepository } from "./infrastructure/prisma-lead-repository";
+export {
+  LEAD_TRACKING_MAX_AGE_MS,
+  LEAD_TRACKING_MIN_AGE_MS,
+  SweepPendingLeadTracking,
+  type LeadTrackingSweepDeps,
+  type LeadTrackingSweepReport,
+} from "./application/lead-tracking-sweep";
 export { leadMatchesSearch, toLatinDigits } from "./domain/lead-search";
-export type { LeadEmissionLedgerPort, ShopFactsPort, SiteType } from "./application/ports";
+export type {
+  LeadEmissionLedgerPort,
+  LeadTrackingPort,
+  LeadTrackingSubject,
+  ShopFactsPort,
+  SiteType,
+} from "./application/ports";
 export {
   CURRENCY_CALLING_CODE,
   MIN_FILL_MS,

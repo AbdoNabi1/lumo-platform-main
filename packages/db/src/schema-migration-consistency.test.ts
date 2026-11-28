@@ -2003,3 +2003,62 @@ describe("tracking.attribution_snapshots — migration matches the Prisma model"
     );
   });
 });
+
+describe("leads.leads tracking sweep — migration matches the Prisma model (P2-D9)", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const sweepSql = readFileSync(
+    join(migrationsDir, "20261210000000_leads_tracking_pending", "migration.sql"),
+    "utf-8",
+  );
+  const sweep = sweepSql.replace(/\r\n/g, "\n");
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "leads.prisma"),
+    "utf-8",
+  ).replace(/\r\n/g, "\n");
+
+  it("is hand-written with CRLF line endings, like its neighbours", () => {
+    expect(sweepSql).toContain("\r\n");
+    expect(sweepSql.replace(/\r\n/g, "")).not.toMatch(/\n/);
+  });
+
+  it("creates the (tenant, tracking status, created at) index the model declares, tenant first", () => {
+    expect(sweep).toContain(
+      'CREATE INDEX "leads_tenant_id_tracking_status_created_at_idx" ON "leads"."leads" ("tenant_id", "tracking_status", "created_at");',
+    );
+    expect(schema).toContain("@@index([tenantId, trackingStatus, createdAt])");
+  });
+
+  it("keeps the table RLS-enabled and forced", () => {
+    expect(sweep).toContain('ALTER TABLE "leads"."leads" ENABLE ROW LEVEL SECURITY;');
+    expect(sweep).toContain('ALTER TABLE "leads"."leads" FORCE ROW LEVEL SECURITY;');
+  });
+
+  it("the only cross-tenant read is the sweep scan: SELECT only, pending rows only, behind its explicit switch", () => {
+    expect(sweep).toContain(
+      "CREATE POLICY tracking_sweep_read ON \"leads\".\"leads\" FOR SELECT\n  USING (current_setting('app.tracking_sweep', true) = 'on' AND tracking_status = 'pending');",
+    );
+    expect(sweep).not.toMatch(/USING \(true\)/);
+    expect(sweep.match(/CREATE POLICY/g)).toHaveLength(1);
+    // no write policy, no widening of tenant_isolation
+    expect(sweep).not.toMatch(/FOR (ALL|INSERT|UPDATE|DELETE)/);
+  });
+
+  it("is additive: no column, no table, nothing dropped or rewritten (the policy DROP is the idempotent re-create)", () => {
+    expect(sweep).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(sweep).not.toMatch(/\b(UPDATE|DELETE|TRUNCATE)\b/i);
+    expect(sweep).not.toMatch(/CREATE TABLE|ADD COLUMN|ALTER COLUMN/i);
+    expect(sweep.match(/CREATE (UNIQUE )?INDEX/g)).toHaveLength(1);
+  });
+
+  it("is the only migration at 20261210000000 and sorts after the snapshot migration", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261210000000"))).toEqual([
+      "20261210000000_leads_tracking_pending",
+    ]);
+    expect(dirs.indexOf("20261210000000_leads_tracking_pending")).toBeGreaterThan(
+      dirs.indexOf("20261209000000_tracking_attribution_snapshots"),
+    );
+  });
+});

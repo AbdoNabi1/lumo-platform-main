@@ -26,6 +26,7 @@ import {
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
 import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
+import { buildLeadTrackingEmitter } from "./tracking/lead-tracking-wiring";
 import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
 import { buildTrackingCollectWiring } from "./tracking/tracking-collect-enrichment";
 import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
@@ -602,6 +603,7 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   const telemetry = startRuntimeTelemetry(config, "api");
 
   const trackingCookieKeeper = buildTrackingCookieKeeper(runtime);
+  const leadTracking = buildLeadTrackingEmitter(runtime);
   // P1-D8 / D9: collect-time enrichment and the store's excluded-address list (one service for the admin routes
   // and the collect route, so an edit applies at once).
   const trackingCollect = buildTrackingCollectWiring(runtime);
@@ -620,6 +622,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     authenticator: runtime.authenticator,
     rateLimiter: runtime.rateLimiter,
     leadEmissionLedger: runtime.leadEmissionLedger,
+    // P2-D9: a saved lead is sent as a server `form_submitted` event through the outbox (the worker's sweeper re-sends
+    // any that could not be). Only while tracking ingest is on, like every other tracking write.
+    ...(leadTracking === null ? {} : { leadTracking }),
     idempotencyKeys: runtime.idempotencyKeys,
     responseCache: runtime.redis.cache,
     health: runtime.health,

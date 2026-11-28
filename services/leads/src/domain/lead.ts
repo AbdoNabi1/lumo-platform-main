@@ -93,6 +93,16 @@ export class Lead {
     return new Lead(props);
   }
 
+  /**
+   * The tracking outcome (`sent` / `failed`) of a pending lead: a copy with `updatedAt = at`. `version` does not move:
+   * it guards edits made by people (`ChangeLeadStatus`), and the machine finishing a send must not make a staff
+   * member's open lead look "changed by someone else".
+   */
+  withTracking(trackingStatus: LeadTrackingStatus, at: Date): Lead {
+    if (trackingStatus === this.props.trackingStatus) return this;
+    return new Lead({ ...this.props, trackingStatus, updatedAt: at });
+  }
+
   /** Same status → this instance; otherwise a copy with the new status, `version + 1`, `updatedAt = at`. */
   withStatus(status: LeadStatus, at: Date): Lead {
     if (status === this.props.status) return this;

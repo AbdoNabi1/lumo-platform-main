@@ -7,6 +7,13 @@ export { OrdersAdminController } from "./interfaces/orders.admin-controller";
 export { CustomersAdminController } from "./interfaces/customers.admin-controller";
 export { PricingAdminController } from "./interfaces/pricing.admin-controller";
 export { createAdminHttpApi, type AdminHttpDeps } from "./http/server";
+// Tracking P2-D9: the lead tracking sweeper pass the worker schedules, and the port the request path emits through.
+export { createLeadTrackingSweep, type LeadTrackingSweepDeps } from "./lead-tracking-sweep";
+export type {
+  LeadTrackingPort,
+  LeadTrackingSubject,
+  LeadTrackingSweepReport,
+} from "@platform/leads";
 export type { SignupEmailPort } from "./interfaces/signup-email.port";
 export { LoggingSignupEmailAdapter } from "./infrastructure/logging-signup-email-adapter";
 // Plan 1C: the platform's one email sender, with a Resend adapter and a logging fallback.

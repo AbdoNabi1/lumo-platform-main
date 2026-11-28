@@ -11,6 +11,7 @@ import type {
   RateLimiter,
 } from "@platform/contracts";
 import { JsonEventSerializer } from "@platform/domain-events";
+import type { LeadTrackingPort } from "@platform/leads";
 import type { LeadEmissionLedgerPort } from "@platform/tracking";
 import { tenancyShopFacts } from "../../infrastructure/cross-context/leads-shop-facts.adapter";
 import { InMemoryAuditTrail } from "../../infrastructure/in-memory-audit-trail";
@@ -31,6 +32,8 @@ export interface LeadsAppOptions {
    * `tenancyShopFacts` adapter, so the route's 503 is the adapter's `UNAVAILABLE`.
    */
   readonly shopFactsFail?: "reject" | "non-200";
+  /** Tracking P2-D9: where a saved lead is sent as a server event. Absent ⇒ none (the lead stays pending). */
+  readonly leadTracking?: LeadTrackingPort;
 }
 
 export interface LeadsApp {
@@ -128,6 +131,7 @@ export async function buildLeadsApp(options: LeadsAppOptions = {}): Promise<Lead
     responseCache,
     leadEmissionLedger: recordingLedger(claims),
     leadsShopFacts: tenancyShopFacts(getPublicStore),
+    ...(options.leadTracking === undefined ? {} : { leadTracking: options.leadTracking }),
   });
   return { app, claims, shopReads };
 }

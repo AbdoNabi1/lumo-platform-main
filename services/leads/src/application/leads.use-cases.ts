@@ -14,6 +14,7 @@ import {
   ConcurrencyError,
   type DomainError,
   type FieldIssue,
+  type Logger,
   NotFoundError,
   ValidationError,
 } from "@platform/utils";
@@ -25,7 +26,8 @@ import {
   type LeadTrackingStatus,
 } from "../domain/lead";
 import type { LeadListQuery, LeadRepository } from "../domain/lead-repository";
-import type { ShopFactsPort } from "./ports";
+import { trackingSubjectOf } from "./lead-tracking";
+import type { LeadTrackingPort, ShopFactsPort } from "./ports";
 
 export const MIN_FILL_MS = 3000;
 export const CURRENCY_CALLING_CODE: Readonly<Record<string, string>> = {
@@ -118,6 +120,14 @@ export interface SubmitLeadDeps {
   readonly shop: ShopFactsPort;
   readonly clock: Clock;
   readonly idGenerator: IdGenerator;
+  /**
+   * Tracking P2-D9: sends a saved lead to the tracking pipeline. Absent (tests, dev, tracking ingest off) => the lead
+   * simply stays `pending`. A failure here NEVER fails the submit: the lead is already saved, the visitor gets their
+   * answer, and the sweeper (`SweepPendingLeadTracking`) re-sends whatever is still `pending`.
+   */
+  readonly tracking?: LeadTrackingPort;
+  /** Error NAMES only; never lead data. */
+  readonly logger?: Logger;
 }
 
 interface ValidLead {
@@ -182,41 +192,71 @@ export class SubmitLead implements UseCase<SubmitLeadInput, SubmitLeadOutput, Do
 
     // 6. one write
     const at = this.deps.clock.now();
-    const inserted = await this.deps.leads.insert(
-      tenantId,
-      Lead.restore({
-        id,
-        formId: input.formId,
-        ...validated.value,
-        status,
-        trackingStatus,
-        eventId,
-        sessionId: input.sessionId,
-        submissionKey: input.submissionKey,
-        spamReason,
-        attribution: input.context,
-        version: 0,
-        createdAt: at,
-        updatedAt: at,
-      }),
-    );
+    const lead = Lead.restore({
+      id,
+      formId: input.formId,
+      ...validated.value,
+      status,
+      trackingStatus,
+      eventId,
+      sessionId: input.sessionId,
+      submissionKey: input.submissionKey,
+      spamReason,
+      attribution: input.context,
+      version: 0,
+      createdAt: at,
+      updatedAt: at,
+    });
+    const inserted = await this.deps.leads.insert(tenantId, lead);
     if (inserted === "duplicate") {
       // a concurrent attempt with the same key won the race. If THIS attempt won the session claim
       // but the loser inserted first (row stored as suppressed), upgrade it to pending so the
       // session's only emission is not lost. The ledger is never called again.
-      if (emission === "emit") {
-        await this.deps.leads.markPendingIfSuppressed(
+      const upgraded =
+        emission === "emit" &&
+        (await this.deps.leads.markPendingIfSuppressed(
           tenantId,
           input.submissionKey,
           input.sessionId,
-        );
-      }
+        ));
       const winner = await this.deps.leads.findBySubmissionKey(tenantId, input.submissionKey);
       if (winner === null)
         throw new Error("lead insert reported a duplicate key but no row exists");
+      // The loser inserted first and stored the row as suppressed, so nobody has emitted it: that is now this attempt's
+      // job. Every other duplicate answer (the row is the winner's own, already emitting) emits nothing.
+      if (upgraded) await this.emitTracking(tenantId, winner);
       return ok(resultOf(winner));
     }
+    // Only a lead this attempt decided to emit; spam and suppressed rows never reach the tracking port.
+    if (emission === "emit") await this.emitTracking(tenantId, lead);
     return ok({ leadId: id, eventId, emission });
+  }
+
+  /**
+   * Hands one saved lead to the tracking port and, once it is out, marks it `sent`. Any failure leaves the lead `pending`
+   * for the sweeper and is swallowed here: the visitor's submit already succeeded.
+   */
+  private async emitTracking(tenantId: string, lead: Lead): Promise<void> {
+    const { tracking, logger } = this.deps;
+    if (tracking === undefined) return;
+    try {
+      await tracking.emit(trackingSubjectOf(tenantId, lead));
+    } catch (error) {
+      logger?.warn("lead tracking: emit failed, the lead stays pending for the sweeper", {
+        error: error instanceof Error ? error.name : "unknown",
+      });
+      return;
+    }
+    try {
+      await this.deps.leads.markTracking(tenantId, lead.props.id, "sent", this.deps.clock.now());
+    } catch (error) {
+      logger?.warn(
+        "lead tracking: could not mark the lead sent, the sweeper re-sends the same event",
+        {
+          error: error instanceof Error ? error.name : "unknown",
+        },
+      );
+    }
   }
 }
 

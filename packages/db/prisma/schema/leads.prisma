@@ -31,6 +31,8 @@ model Lead {
   @@unique([tenantId, submissionKey])
   @@index([tenantId, id(sort: Desc)])
   @@index([tenantId, status, id(sort: Desc)])
+  /// The tracking sweeper (P2-D9): one tenant's pending leads, oldest first.
+  @@index([tenantId, trackingStatus, createdAt])
   @@map("leads")
   @@schema("leads")
 }

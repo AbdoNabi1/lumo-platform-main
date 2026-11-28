@@ -59,7 +59,12 @@ import {
   type CredentialVaultPort,
   type DeliverySyncPort,
 } from "@platform/ad-platforms";
-import { wireLeads, type LeadsController, type ShopFactsPort } from "@platform/leads";
+import {
+  wireLeads,
+  type LeadsController,
+  type LeadTrackingPort,
+  type ShopFactsPort,
+} from "@platform/leads";
 import {
   wireLicensing,
   type FinanceLedgerPort,
@@ -634,6 +639,11 @@ export interface AdminWiringDeps {
    * tenancy-backed adapter. Route tests inject one that rejects or answers a fixed site type.
    */
   readonly leadsShopFacts?: ShopFactsPort;
+  /**
+   * Tracking P2-D9: sends a saved lead to the tracking pipeline as a server `form_submitted` event. Production passes
+   * the outbox adapter (`apps/runtime`, only while `TRACKING_INGEST_ENABLED`); absent ⇒ leads stay `pending`.
+   */
+  readonly leadTracking?: LeadTrackingPort;
 }
 
 export interface WiredAdmin {
@@ -1571,6 +1581,8 @@ export function wireAdmin(deps: AdminWiringDeps): WiredAdmin {
       tenancyShopFacts((tenantId) => tenancy.tenancy.getPublicStore(tenantId)),
     ...(deps.leadEmissionLedger === undefined ? {} : { ledger: deps.leadEmissionLedger }),
     ...(deps.prisma === undefined ? {} : { prisma: deps.prisma }),
+    ...(deps.leadTracking === undefined ? {} : { tracking: deps.leadTracking }),
+    logger: adminLogger,
   });
 
   // Lead Site Part D1. Only `controller` leaves this block: `internal` (opened secrets) is the delivery

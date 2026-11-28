@@ -19,6 +19,7 @@ import type { Logger } from "@platform/utils";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { FIXTURE_NOW, toEntry } from "../tracking/testing/captured-event-fixture";
+import { OutboxLeadTrackingEmitter } from "../tracking/lead-tracking-emitter";
 import { TrackingIngestHandler } from "../tracking/tracking-ingest";
 import {
   FULFILLMENT_ORDER_DELIVERED,
@@ -163,6 +164,19 @@ function stack(
   });
 
   let rowCounter = 0;
+  const publisher = {
+    publish: (record: Parameters<typeof toEntry>[0]): Promise<void> => {
+      // a fresh outbox row each time the producer runs; the SAME message id (that is the inbox key)
+      rowCounter += 1;
+      queue.enqueue([
+        {
+          ...toEntry(record),
+          id: `0192f0aa-0000-7000-8000-${String(rowCounter).padStart(12, "0")}`,
+        },
+      ]);
+      return Promise.resolve();
+    },
+  };
   const handlers = trackingBusinessHandlers({
     reader: { read: () => Promise.resolve(options.order === undefined ? order() : options.order) },
     storeUrls: { storeUrlOf: () => Promise.resolve("https://shop.example/") },
@@ -178,19 +192,7 @@ function stack(
           ),
         ),
     },
-    publisher: {
-      publish: (record) => {
-        // a fresh outbox row each time the producer runs; the SAME message id (that is the inbox key)
-        rowCounter += 1;
-        queue.enqueue([
-          {
-            ...toEntry(record),
-            id: `0192f0aa-0000-7000-8000-${String(rowCounter).padStart(12, "0")}`,
-          },
-        ]);
-        return Promise.resolve();
-      },
-    },
+    publisher,
     serializer: new JsonEventSerializer(),
     clock,
     logger: silentLogger,
@@ -201,7 +203,7 @@ function stack(
     await entry.handler.handle(event);
     await relay.drainOnce();
   };
-  return { appended, deadLetters, ingest, queue, relay, run, handlers };
+  return { appended, deadLetters, ingest, queue, relay, run, handlers, publisher };
 }
 
 const bus = (
@@ -349,5 +351,78 @@ describe("ingest of a business event (P2-D5 and the 7-day window)", () => {
     expect(appended).toEqual([]);
     expect(ingest.counters()).toMatchObject({ refused: 1, deadLettered: 1 });
     expect(deadLetters.snapshot()).toHaveLength(1);
+  });
+});
+
+describe("lead events -> tracking records through the real ingest consumer (P2-D9)", () => {
+  const LEAD_ID = "0193a1b2-0000-7000-8000-0000000000ee";
+  const lead = {
+    tenantId: TENANT,
+    leadId: LEAD_ID,
+    name: "Mona Said",
+    phone: "01012345678",
+    phoneE164: "+" + "201012345678",
+    email: "mona@example.com",
+    sessionId: "session-0001",
+    submittedAt: new Date("2026-11-27T11:55:00.000Z"),
+    attribution: {
+      pageUrl: "https://shop.example/book",
+      referrer: null,
+      ip: "203.0.113.7",
+      userAgent: "Mozilla/5.0",
+      cookies: {},
+    },
+  };
+  const emitterOver = (publisher: { publish: (record: never) => Promise<void> }) =>
+    new OutboxLeadTrackingEmitter({
+      storeUrls: { storeUrlOf: () => Promise.resolve("https://shop.example/") },
+      publisher: publisher as never,
+      serializer: new JsonEventSerializer(),
+      clock,
+    });
+
+  it("a lead becomes one form_submitted record with the lead_ id; sending it again records nothing new", async () => {
+    const { appended, relay, publisher } = stack();
+    const emitter = emitterOver(publisher as never);
+    await emitter.emit(lead);
+    await relay.drainOnce();
+    expect(appended).toHaveLength(1);
+    expect(appended[0]).toMatchObject({
+      tenantId: TENANT,
+      eventName: "form_submitted",
+      dedupId: `lead_${LEAD_ID}`,
+    });
+    expect((appended[0]?.envelope as { eventOrigin?: string }).eventOrigin).toBe("server");
+
+    // the request path and a sweeper pass (or a second sweeper) both send the same lead: still one record
+    await emitter.emit(lead);
+    await relay.drainOnce();
+    expect(appended).toHaveLength(1);
+  });
+
+  it("an outbox failure at submit time, then the sweeper's send: the lead is recorded once", async () => {
+    const { appended, relay, publisher } = stack();
+    let down = true;
+    const flaky = {
+      publish: (record: never): Promise<void> =>
+        down ? Promise.reject(new Error("outbox unavailable")) : publisher.publish(record),
+    };
+    const emitter = emitterOver(flaky);
+    await expect(emitter.emit(lead)).rejects.toThrow("outbox unavailable");
+    await relay.drainOnce();
+    expect(appended).toEqual([]);
+
+    down = false;
+    await emitter.emit(lead);
+    await relay.drainOnce();
+    expect(appended.map((record) => record.dedupId)).toEqual([`lead_${LEAD_ID}`]);
+  });
+
+  it("the free-text message is nowhere in the stored record", async () => {
+    const { appended, relay, publisher } = stack();
+    await emitterOver(publisher as never).emit({ ...lead, message: "my private words" } as never);
+    await relay.drainOnce();
+    const text = JSON.stringify(appended);
+    expect(text).not.toContain("my private words");
   });
 });

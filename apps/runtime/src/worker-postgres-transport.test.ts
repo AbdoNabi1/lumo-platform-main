@@ -36,6 +36,15 @@ vi.mock("./delivery-retry-runtime", () => ({
   },
 }));
 
+const leadSweepStarts: { sweep: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
+vi.mock("./lead-tracking-sweep-runtime", () => ({
+  startLeadTrackingSweep: (_core: RuntimeCore, sweep: () => Promise<unknown>) => {
+    const start = { sweep, stop: vi.fn() };
+    leadSweepStarts.push(start);
+    return { stop: start.stop };
+  },
+}));
+
 const retentionStarts: { run: () => Promise<unknown>; stop: ReturnType<typeof vi.fn> }[] = [];
 vi.mock("./tracking-retention-runtime", () => ({
   startTrackingRetention: (_core: RuntimeCore, run: () => Promise<unknown>) => {
@@ -113,6 +122,7 @@ afterEach(() => {
   deliveryStarts.length = 0;
   retrySweepStarts.length = 0;
   retentionStarts.length = 0;
+  leadSweepStarts.length = 0;
 });
 
 describe("startWorker under EVENT_TRANSPORT=postgres", () => {
@@ -293,6 +303,34 @@ describe("tracking delivery retry sweeper (P1-D2) under EVENT_TRANSPORT=postgres
     const { core } = coreWithoutBroker(OFF_ENV);
     const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
     expect(retentionStarts).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  it("starts the lead tracking sweeper with the worker when tracking ingest is on, and stops it with it (P2-D9)", async () => {
+    const { core, brokerCalls } = coreWithoutBroker(TRACKING_ENV);
+    const handlers = new Map<string, () => void>();
+    const once = vi.spyOn(process, "once").mockImplementation(((event: string, fn: () => void) => {
+      handlers.set(event, fn);
+      return process;
+    }) as never);
+    try {
+      const supervisor = await startWorker(loadRuntimeConfig(TRACKING_ENV), core);
+      expect(leadSweepStarts).toHaveLength(1);
+      expect(typeof leadSweepStarts[0]?.sweep).toBe("function");
+      expect(brokerCalls).toEqual([]);
+      handlers.get("SIGTERM")?.();
+      await vi.waitFor(() => expect(leadSweepStarts[0]?.stop).toHaveBeenCalledTimes(1));
+      await supervisor.stopAll();
+    } finally {
+      once.mockRestore();
+    }
+  });
+
+  it("does not start the lead sweeper (and never reads the leads table) when tracking ingest is off", async () => {
+    const OFF_ENV = { ...POSTGRES_ENV, TRACKING_INGEST_ENABLED: "off" } as NodeJS.ProcessEnv;
+    const { core } = coreWithoutBroker(OFF_ENV);
+    const supervisor = await startWorker(loadRuntimeConfig(OFF_ENV), core);
+    expect(leadSweepStarts).toEqual([]);
     await supervisor.stopAll();
   });
 

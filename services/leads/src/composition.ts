@@ -8,7 +8,8 @@ import {
   ListLeads,
   SubmitLead,
 } from "./application/leads.use-cases";
-import type { ShopFactsPort } from "./application/ports";
+import type { Logger } from "@platform/utils";
+import type { LeadTrackingPort, ShopFactsPort } from "./application/ports";
 import type { LeadRepository } from "./domain/lead-repository";
 import { InMemoryLeadRepository } from "./infrastructure/in-memory-lead-repository";
 import { PrismaLeadRepository } from "./infrastructure/prisma-lead-repository";
@@ -24,6 +25,12 @@ export interface LeadsWiringDeps {
    * Production persistence. Present ⇒ the Prisma repository; absent ⇒ in-memory. ADR-0014: the repository built here is a tenant-agnostic singleton.
    */
   readonly prisma?: Database;
+  /**
+   * Tracking P2-D9: where a saved lead is sent as a server event (`apps/runtime` builds the adapter: envelope + outbox).
+   * Absent ⇒ leads stay `pending` (tests, dev, tracking ingest off).
+   */
+  readonly tracking?: LeadTrackingPort;
+  readonly logger?: Logger;
 }
 
 export interface WiredLeads {
@@ -42,6 +49,8 @@ function buildController(leads: LeadRepository, deps: LeadsWiringDeps): LeadsCon
       shop: deps.shop,
       clock: deps.clock,
       idGenerator: deps.idGenerator,
+      ...(deps.tracking === undefined ? {} : { tracking: deps.tracking }),
+      ...(deps.logger === undefined ? {} : { logger: deps.logger }),
     }),
     listLeads: new ListLeads({ leads }),
     getLead: new GetLead({ leads }),

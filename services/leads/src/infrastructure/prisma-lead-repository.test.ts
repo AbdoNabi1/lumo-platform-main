@@ -51,9 +51,23 @@ function recordingPrisma(results: Partial<Record<string, unknown[]>> = {}) {
     );
   const client: Record<string, unknown> = {
     lead: delegate("lead"),
-    $executeRaw: (_strings: TemplateStringsArray, ...values: unknown[]) => {
-      calls.push({ model: "$raw", method: "executeRaw", args: values[0] });
+    $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      // a set_config of the tenant records the tenant id; the sweep switch records its SQL text
+      calls.push({
+        model: "$raw",
+        method: "executeRaw",
+        args: values.length > 0 ? values[0] : strings.join("?"),
+      });
       return Promise.resolve(1);
+    },
+    $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => {
+      calls.push({
+        model: "$raw",
+        method: "queryRaw",
+        args: { sql: strings.join("?").replace(/\s+/g, " ").trim(), values },
+      });
+      const queue = queues.get("$queryRaw");
+      return Promise.resolve(queue !== undefined && queue.length > 0 ? queue.shift() : []);
     },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(client),
   };
@@ -564,5 +578,73 @@ describe("PrismaLeadRepository.list", () => {
       take: 21,
     });
     expectTenantScoped(calls, "t-9");
+  });
+});
+
+describe("PrismaLeadRepository pending tracking (P2-D9)", () => {
+  const CUTOFF = new Date("2026-11-22T10:00:00.000Z");
+
+  it("the cross-tenant scan sets only the sweep switch, then reads tenant ids of pending leads before the cutoff", async () => {
+    const { prisma, calls } = recordingPrisma({
+      $queryRaw: [[{ tenant_id: "t-9" }, { tenant_id: "t-2" }]],
+    });
+    const tenants = await new PrismaLeadRepository({ prisma }).listTenantsWithPendingTracking(
+      CUTOFF,
+      50,
+    );
+    expect(tenants).toEqual(["t-9", "t-2"]);
+    expect(calls).toHaveLength(2);
+    expect(String(calls[0]?.args)).toContain("app.tracking_sweep");
+    expect(String(calls[0]?.args)).not.toContain("app.tenant_id");
+    const query = calls[1]?.args as { sql: string; values: unknown[] };
+    expect(query.sql).toContain('FROM "leads"."leads"');
+    expect(query.sql).toContain("tracking_status = 'pending'");
+    expect(query.sql).toContain("GROUP BY tenant_id");
+    // nothing but tenant ids leaves the query: never a name, phone or e-mail
+    expect(query.sql).toMatch(/^SELECT tenant_id FROM/);
+    expect(query.values).toEqual([CUTOFF.toISOString(), 50]);
+  });
+
+  it("lists pending leads of ONE tenant, oldest first, after set_config of that tenant", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.findMany": [[rowOf({ id: id(1) })]] });
+    const rows = await new PrismaLeadRepository({ prisma }).listPendingTracking("t-1", {
+      createdBefore: CUTOFF,
+      limit: 25,
+    });
+    expect(rows.map((lead) => lead.props.id)).toEqual([id(1)]);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    expect(calls[1]).toEqual({
+      model: "lead",
+      method: "findMany",
+      args: {
+        where: { tenantId: "t-1", trackingStatus: "pending", createdAt: { lt: CUTOFF } },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        take: 25,
+      },
+    });
+  });
+
+  it("markTracking updates only a pending row of that tenant and id; the version is untouched", async () => {
+    const { prisma, calls } = recordingPrisma({ "lead.updateMany": [{ count: 1 }, { count: 0 }] });
+    const repo = new PrismaLeadRepository({ prisma });
+    expect(await repo.markTracking("t-1", id(1), "sent", CUTOFF)).toBe(true);
+    expect(calls[0]).toEqual({ model: "$raw", method: "executeRaw", args: "t-1" });
+    expect(calls[1]).toEqual({
+      model: "lead",
+      method: "updateMany",
+      args: {
+        where: { tenantId: "t-1", id: id(1), trackingStatus: "pending" },
+        data: { trackingStatus: "sent", updatedAt: CUTOFF },
+      },
+    });
+    expect(await repo.markTracking("t-1", id(1), "failed", CUTOFF)).toBe(false);
+  });
+
+  it("markTracking with a malformed id touches nothing (a uuid column would throw)", async () => {
+    const { prisma, calls } = recordingPrisma();
+    expect(
+      await new PrismaLeadRepository({ prisma }).markTracking("t-1", "nope", "sent", CUTOFF),
+    ).toBe(false);
+    expect(calls).toEqual([]);
   });
 });

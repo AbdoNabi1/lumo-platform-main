@@ -1,6 +1,10 @@
 import { Lead } from "../domain/lead";
 import { leadMatchesSearch } from "../domain/lead-search";
-import type { LeadListQuery, LeadRepository } from "../domain/lead-repository";
+import type {
+  LeadListQuery,
+  LeadRepository,
+  PendingTrackingQuery,
+} from "../domain/lead-repository";
 
 /**
  * In-memory `LeadRepository`, keyed by `(tenantId, id)` so a cross-tenant leak is visible to every
@@ -60,6 +64,53 @@ export class InMemoryLeadRepository implements LeadRepository {
         updatedAt: new Date(),
       }),
     );
+    return Promise.resolve(true);
+  }
+
+  listTenantsWithPendingTracking(createdBefore: Date, limit: number): Promise<readonly string[]> {
+    const oldest = new Map<string, number>();
+    for (const [key, lead] of this.store) {
+      if (lead.props.trackingStatus !== "pending") continue;
+      const created = lead.props.createdAt.getTime();
+      if (created >= createdBefore.getTime()) continue;
+      const tenantId = key.slice(0, key.indexOf("\u0000"));
+      const known = oldest.get(tenantId);
+      if (known === undefined || created < known) oldest.set(tenantId, created);
+    }
+    return Promise.resolve(
+      [...oldest.entries()]
+        .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1))
+        .slice(0, limit)
+        .map(([tenantId]) => tenantId),
+    );
+  }
+
+  listPendingTracking(tenantId: string, query: PendingTrackingQuery): Promise<readonly Lead[]> {
+    const prefix = `${tenantId}\u0000`;
+    const rows = [...this.store.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, lead]) => lead)
+      .filter(
+        (lead) =>
+          lead.props.trackingStatus === "pending" &&
+          lead.props.createdAt.getTime() < query.createdBefore.getTime(),
+      )
+      .sort(
+        (a, b) =>
+          a.props.createdAt.getTime() - b.props.createdAt.getTime() ||
+          (a.props.id < b.props.id ? -1 : a.props.id > b.props.id ? 1 : 0),
+      );
+    return Promise.resolve(rows.slice(0, query.limit));
+  }
+
+  markTracking(tenantId: string, id: string, to: "sent" | "failed", at: Date): Promise<boolean> {
+    // synchronous check-and-set: concurrent callers cannot both settle the row
+    const key = InMemoryLeadRepository.key(tenantId, id);
+    const stored = this.store.get(key);
+    if (stored === undefined || stored.props.trackingStatus !== "pending") {
+      return Promise.resolve(false);
+    }
+    this.store.set(key, stored.withTracking(to, at));
     return Promise.resolve(true);
   }
 

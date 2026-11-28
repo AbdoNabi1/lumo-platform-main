@@ -17,8 +17,10 @@ import { buildTrackingBusinessConsumerRuntimes } from "./consumers/tracking-busi
 import { buildUsageRecordedConsumerRuntimes } from "./consumers/usage-recorded.consumers";
 import { assertWorkerTenantModeSupported } from "./tenant-mode-guard";
 import { startDeliveryRetrySweep } from "./delivery-retry-runtime";
+import { startLeadTrackingSweep } from "./lead-tracking-sweep-runtime";
 import { startTrackingRetention } from "./tracking-retention-runtime";
 import { startHealthServer } from "./health-server";
+import { buildLeadTrackingSweep } from "./tracking/lead-tracking-wiring";
 import { startOutboxDelivery } from "./outbox-delivery-runtime";
 import { startOutboxRelay } from "./outbox-relay-runtime";
 import { wireSecurityProvisioning } from "./security/wire-security-provisioning";
@@ -205,6 +207,12 @@ export async function startWorker(
   const retentionHandle =
     retentionRun === null ? null : startTrackingRetention(runtime, retentionRun);
 
+  // Tracking P2-D9: the lead sweeper. A lead whose server event could not be handed over at submit time stays `pending`;
+  // this re-sends those older than two minutes (and marks the ones older than seven days failed). Database-only like
+  // the sweeps above, so it starts under both transports; `null` when tracking ingest is off (no lead is emitted then).
+  const leadSweep = buildLeadTrackingSweep(runtime);
+  const leadSweepHandle = leadSweep === null ? null : startLeadTrackingSweep(runtime, leadSweep);
+
   // F5/F3: the worker serves no business traffic, so it has no Fastify server — but its k8s manifest
   // probes /healthz + /readyz and Prometheus scrapes /metrics on the same port (21-deployment-worker
   // .yaml). Without this surface the pod never becomes ready and liveness eventually kills it, and the
@@ -222,6 +230,7 @@ export async function startWorker(
     health.close();
     retryHandle?.stop();
     retentionHandle?.stop();
+    leadSweepHandle?.stop();
     await stopDelivery();
     await supervisor.stopAll();
     await runtime.redis.disconnect();

@@ -426,3 +426,73 @@ describe("POST /public/leads — visitor attribution carried over (Tracking P2-D
     }
   });
 });
+
+describe("POST /public/leads — server tracking event (Tracking P2-D9)", () => {
+  function recordingPort() {
+    const emitted: { tenantId: string; leadId: string }[] = [];
+    const subjects: unknown[] = [];
+    let fail = false;
+    return {
+      emitted,
+      subjects,
+      failNext: () => {
+        fail = true;
+      },
+      port: {
+        emit: (subject: { tenantId: string; leadId: string }) => {
+          if (fail) {
+            fail = false;
+            return Promise.reject(new Error("outbox unavailable"));
+          }
+          emitted.push({ tenantId: subject.tenantId, leadId: subject.leadId });
+          subjects.push(subject);
+          return Promise.resolve();
+        },
+      },
+    };
+  }
+
+  it("hands the saved lead to the tracking port under the request's tenant, once, without the message", async () => {
+    const tracking = recordingPort();
+    const { app } = await boot({ leadTracking: tracking.port });
+    const res = await submitLead(app, leadBody({ message: "my private words" }));
+    expect(res.statusCode).toBe(201);
+    const body = res.json() as { leadId: string; emission: string };
+    expect(body.emission).toBe("emit");
+    expect(tracking.emitted).toEqual([{ tenantId: "t-1", leadId: body.leadId }]);
+    expect(JSON.stringify(tracking.subjects)).not.toContain("my private words");
+  });
+
+  it("a replay of the same Idempotency-Key and a same-session second lead send nothing more", async () => {
+    const tracking = recordingPort();
+    const { app } = await boot({ leadTracking: tracking.port });
+    const key = freshKey();
+    await submitLead(app, leadBody(), { key });
+    await submitLead(app, leadBody(), { key });
+    await submitLead(app, leadBody({ name: "Second Visitor" }));
+    expect(tracking.emitted).toHaveLength(1);
+  });
+
+  it("a tracking failure never fails the visitor's submit (201, the lead is saved)", async () => {
+    const tracking = recordingPort();
+    tracking.failNext();
+    const { app } = await boot({ leadTracking: tracking.port });
+    const res = await submitLead(app);
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { emission: string }).emission).toBe("emit");
+    expect(await leadCount(app)).toBe(1);
+    expect(tracking.emitted).toHaveLength(0);
+  });
+
+  it("spam is saved but never sent", async () => {
+    const tracking = recordingPort();
+    const { app } = await boot({ leadTracking: tracking.port });
+    const res = await submitLead(
+      app,
+      leadBody({ spamSignals: { honeypot: true, elapsedMs: 8_000 } }),
+    );
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { emission: string }).emission).toBe("spam");
+    expect(tracking.emitted).toHaveLength(0);
+  });
+});
