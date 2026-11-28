@@ -12,6 +12,8 @@
 
 import { evaluateRuleSet, type RuleSet, type RuleSetEvaluation } from "@platform/rules";
 
+import { BOT_SKIP_THRESHOLD } from "../enrichment/bot-score";
+import { isBusinessConversion } from "../enrichment/business-conversion";
 import { evaluateConsent, type ConsentDenial } from "../envelope/consent";
 import type { EnrichedEnvelope } from "../envelope/envelope";
 import {
@@ -32,7 +34,13 @@ export type RoutingExclusionReason =
   | { readonly code: "not_registered" }
   | { readonly code: "disabled" }
   | { readonly code: "consent_denied"; readonly denial: ConsentDenial }
-  | { readonly code: "rule_not_matched" };
+  | { readonly code: "rule_not_matched" }
+  /**
+   * Tracking P1-D8: the event looks like a bot (score at or above {@link BOT_SKIP_THRESHOLD}). The event is still
+   * recorded and visible in the inspector; it is just not sent to a destination. Never applied to a real order or
+   * lead (`isBusinessConversion`).
+   */
+  | { readonly code: "bot"; readonly score: number };
 
 export interface RoutedDestination {
   readonly destination: DestinationDefinition;
@@ -76,6 +84,14 @@ export function route(input: RouteInput): RoutingDecision {
   const excluded: ExcludedDestination[] = [];
   const seen = new Set<DestinationKey>();
 
+  // A bot's page views are not conversions to report to an ad platform. Judged once per event, exempting the
+  // business itself; an unscored event (no `botScore`) is never treated as a bot.
+  const botScore = input.envelope.context.technical?.botScore;
+  const skipAsBot =
+    botScore !== undefined &&
+    botScore >= BOT_SKIP_THRESHOLD &&
+    !isBusinessConversion(input.envelope);
+
   for (const key of evaluation.outcomes) {
     if (seen.has(key)) continue;
     seen.add(key);
@@ -88,6 +104,11 @@ export function route(input: RouteInput): RoutingDecision {
     }
     if (!destination.enabled) {
       excluded.push({ key, reason: { code: "disabled" } });
+      continue;
+    }
+
+    if (skipAsBot) {
+      excluded.push({ key, reason: { code: "bot", score: botScore ?? 0 } });
       continue;
     }
 

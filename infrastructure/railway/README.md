@@ -503,6 +503,25 @@ is the visitor) is right for the normal deployment. Set `2` when a CDN sits in f
 appends the header (the address is then simply not recorded). The lead form uses the same rule. Never set it
 higher than the real chain: a value that is too high selects a value the visitor typed.
 
+### 4i. Collect-time enrichment and excluded addresses (P1-D8 / D9) — one optional file
+
+Nothing to configure for the common case. On every collected event the runtime adds the browser / OS / device
+parsed from the user agent, a bot score (0–100; at 50 or more an ordinary page event is recorded but **not** sent to
+the ad platforms — a real order or lead is never held back), the AI assistant a visit came from (ChatGPT,
+Perplexity, Gemini, Copilot, Claude, …) and a per-store cookieless visitor id (last-resort identity only; it never
+overrides a cookie or a customer). The bot score never looks at the IP address, because one Egyptian mobile carrier
+address is shared by thousands of real shoppers.
+
+- **Country (optional).** Put a MaxMind-format country database (`GeoLite2-Country.mmdb` from a free MaxMind
+  account, or DB-IP Lite) on the runtime API's disk and set `TRACKING_GEO_DB_PATH` to its path. The file is read
+  once at boot; nothing is downloaded at runtime. Unset, missing or corrupt ⇒ country detection is simply off (one
+  warning in the log). Keep the vendor's licence / attribution terms.
+- **Excluded addresses.** `tracking.blocked_ips` (migration `20261207000000_tracking_blocked_ips` — deploy it
+  BEFORE the release that reads it) holds the addresses a merchant asked to ignore, managed through the admin API
+  `GET/POST /tracking/blocked-ips`, `POST /tracking/blocked-ips/exclude-this-device`, `DELETE
+/tracking/blocked-ips/:id` (admin level). It is manual only, never blocks an order or a lead, and an unreadable
+  list blocks nothing. The same migration adds a lookup index on the cookieless id.
+
 ## 5. Deploy order
 
 1. Create the Postgres and Redis plugins first.

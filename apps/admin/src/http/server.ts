@@ -12,6 +12,7 @@ import {
   type TenantResolver,
 } from "@platform/http";
 import type { FastifyInstance } from "fastify";
+import type { BlockedIpService, CollectEnricher } from "@platform/tracking";
 import { logger } from "@platform/utils";
 import { InMemoryAuditTrail } from "../infrastructure/in-memory-audit-trail";
 import { AdminGuard } from "../interfaces/admin-guard";
@@ -20,7 +21,11 @@ import { bootstrapStaffOwner } from "../staff-owner-bootstrap";
 import { assertMultiTenantReady } from "../tenant-mode-guard";
 import { CachedTenantGate } from "../tenant-status-gate";
 import { adminRoutes } from "./admin-routes";
-import type { TrackingCookieKeeper, TrackingEventSink } from "./public-tracking-routes";
+import type {
+  TrackingCookieKeeper,
+  TrackingEventSink,
+  TrackingIpBlocklist,
+} from "./public-tracking-routes";
 
 export interface AdminHttpDeps extends AdminWiringDeps {
   /**
@@ -71,6 +76,12 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly trackingEventSink?: TrackingEventSink;
   /** Tracking P1-D6: restores lost vendor cookies from the visitor profile. Absent ⇒ none are listed. */
   readonly trackingCookieKeeper?: TrackingCookieKeeper;
+  /** Collect-time enrichment (P1-D8): user agent, bot score, geo, AI source, cookieless id. */
+  readonly trackingEnricher?: CollectEnricher;
+  /** The store's manual IP block list as the collect route reads it (P1-D9). */
+  readonly trackingBlocklist?: TrackingIpBlocklist;
+  /** The same list as the admin API manages it (P1-D9). Absent ⇒ the `/tracking/blocked-ips` routes are not mounted. */
+  readonly trackingBlockedIps?: BlockedIpService;
 }
 
 const DEFAULT_TENANT_STATUS_TTL_MS = 10_000;
@@ -202,12 +213,17 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
         ? { platformTenantId }
         : {}),
       rateLimiter: deps.rateLimiter,
+      ...(deps.trackingBlockedIps === undefined
+        ? {}
+        : { trackingBlockedIps: deps.trackingBlockedIps }),
       trackingEdge: {
         secret: deps.trackingEdgeSecret,
         sink: deps.trackingEventSink,
         ...(deps.trackingCookieKeeper === undefined
           ? {}
           : { cookieKeeper: deps.trackingCookieKeeper }),
+        ...(deps.trackingEnricher === undefined ? {} : { enricher: deps.trackingEnricher }),
+        ...(deps.trackingBlocklist === undefined ? {} : { blocklist: deps.trackingBlocklist }),
         serializer: deps.serializer,
         idGenerator: deps.idGenerator,
         clock: deps.clock,

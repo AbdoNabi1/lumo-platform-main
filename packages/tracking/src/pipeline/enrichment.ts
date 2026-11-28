@@ -16,6 +16,7 @@ import type { CapturedClickId, ClickIdName, MetaBrowserIds } from "../envelope/c
 import { isClickIdValidAt } from "../envelope/click-ids";
 import type { PageContext, TrackingContext } from "../envelope/envelope";
 import type { TechnicalContext } from "../envelope/technical-context";
+import { resolveAiSource } from "../enrichment/ai-referrer";
 import { resolveChannel } from "./channel-resolver";
 
 /** Campaign/click state carried forward for a visitor, supplied by the session store. */
@@ -124,6 +125,7 @@ export function enrichAttribution(input: EnrichmentInput): AttributionContext {
     exitPage: firstPresent(input.page?.url, existing?.exitPage),
     channelGroup: resolution.channelGroup,
     trafficSource: firstPresent(existing?.trafficSource, resolution.source),
+    aiSource: firstPresent(existing?.aiSource, resolveAiSource({ utmSource, referrer })?.key),
     campaign: firstPresent(existing?.campaign, utmCampaign),
     journeyId: firstPresent(existing?.journeyId, persisted?.journeyId),
     meta: { ...persisted?.meta, ...existing?.meta },

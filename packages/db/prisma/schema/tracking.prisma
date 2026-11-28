@@ -255,6 +255,25 @@ model TrackingProfile {
   @@index([tenantId, phoneE164])
   @@index([tenantId, mergedInto])
   @@index([tenantId, expiresAt])
+  @@index([tenantId, fingerprintId])
   @@map("tracking_profiles")
+  @@schema("tracking")
+}
+
+// Tracking P1-D9: addresses and ranges a merchant asked the store to ignore (their office, a staff phone, a known
+// scraper). MANUAL only — nothing inserts a row automatically (carrier-grade NAT shares one address between many
+// real shoppers). `cidr` is one canonical spelling, at least IPv4 /16 or IPv6 /32 wide; the runtime's collect route
+// skips an ordinary event from a listed address and never an order or a lead.
+model TrackingBlockedIp {
+  id        String   @id @db.Uuid
+  tenantId  String   @map("tenant_id")
+  cidr      String
+  note      String?
+  createdAt DateTime @map("created_at")
+  createdBy String?  @map("created_by")
+
+  @@unique([tenantId, cidr])
+  @@index([tenantId, createdAt])
+  @@map("blocked_ips")
   @@schema("tracking")
 }

@@ -257,6 +257,22 @@ export class PrismaTrackingProfileStore implements TrackingProfileStore, Expired
     });
   }
 
+  /** The last-resort cookieless-id lookup (P1-D8): at most two live profiles, so the caller can tell "ambiguous". */
+  findByFingerprintId(
+    tenantId: string,
+    fingerprintId: string,
+    notBefore: Date,
+  ): Promise<readonly TrackingProfile[]> {
+    return runInTenantTransaction(this.db, tenantId, async (tx) => {
+      const rows = await tx.trackingProfile.findMany({
+        where: { tenantId, mergedInto: null, fingerprintId, lastSeenAt: { gte: notBefore } },
+        orderBy: [{ lastSeenAt: "desc" }, { visitorId: "asc" }],
+        take: 2,
+      });
+      return rows.map(toProfile);
+    });
+  }
+
   findByVisitorId(tenantId: string, visitorId: string): Promise<TrackingProfile | null> {
     return runInTenantTransaction(this.db, tenantId, async (tx) => {
       const row = await tx.trackingProfile.findFirst({ where: { tenantId, visitorId } });

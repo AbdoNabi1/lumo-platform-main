@@ -106,7 +106,9 @@ export function observationFromEnvelope(
 
   // A landing touch is a visit that CARRIES a campaign signal (UTMs or a click id); an ordinary page view of a
   // returning visitor must not overwrite the campaign that brought them.
+  const aiSource = nonEmpty(attribution?.aiSource);
   const hasCampaignSignal =
+    aiSource !== undefined ||
     utmSource !== undefined ||
     utmMedium !== undefined ||
     utmCampaign !== undefined ||
@@ -120,6 +122,7 @@ export function observationFromEnvelope(
         utmTerm,
         referrer: nonEmpty(page?.referrer) ?? nonEmpty(attribution?.referrer),
         pageUrl: nonEmpty(attribution?.landingPage) ?? pageUrl,
+        aiSource,
         at,
       })
     : undefined;
@@ -132,6 +135,13 @@ export function observationFromEnvelope(
   const customerId = customerIdOf(envelope);
   const ip = nonEmpty(technical?.clientIpAddress);
   const userAgent = nonEmpty(technical?.clientUserAgent);
+  const geo = compact({
+    country: nonEmpty(technical?.countryDetected),
+    region: nonEmpty(technical?.regionDetected),
+    city: nonEmpty(technical?.cityDetected),
+  });
+  const botScore = technical?.botScore;
+  const fingerprintId = nonEmpty(technical?.fingerprintId);
 
   return {
     tenantId: envelope.tenancy.tenantId,
@@ -145,6 +155,9 @@ export function observationFromEnvelope(
     ...(userAgent === undefined ? {} : { userAgent }),
     ...(pageUrl === undefined ? {} : { pageUrl }),
     ...(landing === undefined ? {} : { landing }),
+    ...(Object.keys(geo).length === 0 ? {} : { geo }),
+    ...(botScore === undefined ? {} : { botScore }),
+    ...(fingerprintId === undefined ? {} : { fingerprintId }),
     leadIds,
     orderIds: orderId === undefined ? [] : [orderId],
   };

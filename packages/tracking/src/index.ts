@@ -659,3 +659,50 @@ export {
   restorableCookies,
 } from "./profile/cookie-keeper";
 export type { CookieKeeperInput, CookieKeeperName } from "./profile/cookie-keeper";
+
+// Tracking P1-D8 / D9: collect-time enrichment and the per-store IP block list.
+export { parseUserAgent } from "./enrichment/user-agent";
+export type { BotMarker, BotMarkerKind, UserAgentInfo } from "./enrichment/user-agent";
+export { BOT_REASON_POINTS, BOT_SKIP_THRESHOLD, botBand, scoreBot } from "./enrichment/bot-score";
+export type { BotBand, BotReason, BotScore, BotSignals } from "./enrichment/bot-score";
+export { AI_SOURCES, aiSourceKeyOf, resolveAiSource } from "./enrichment/ai-referrer";
+export type { AiSource, AiSourceSignals } from "./enrichment/ai-referrer";
+export { computeFingerprintId, fingerprintKeyFor } from "./enrichment/fingerprint";
+export type { FingerprintInput, HmacSha256Hex } from "./enrichment/fingerprint";
+export {
+  MmdbFormatError,
+  MmdbGeoLookup,
+  UNKNOWN_GEO,
+  createMmdbGeoLookup,
+} from "./enrichment/geo-mmdb";
+export type { GeoLookupPort, GeoResult } from "./enrichment/geo-mmdb";
+export {
+  compileIpMatcher,
+  formatCidr,
+  isPublicIp,
+  normalizeCidr,
+  parseCidr,
+  parseIp,
+} from "./enrichment/ip-cidr";
+export type { IpMatcher } from "./enrichment/ip-cidr";
+export { BUSINESS_CONVERSION_EVENTS, isBusinessConversion } from "./enrichment/business-conversion";
+export { createCollectEnricher } from "./enrichment/collect-enrichment";
+export type {
+  BurstPort,
+  BurstVerdict,
+  CollectEnricher,
+  CollectEnricherDeps,
+  CollectSignals,
+} from "./enrichment/collect-enrichment";
+export {
+  BlockedIpService,
+  InMemoryBlockedIpStore,
+  MAX_BLOCKED_IPS_PER_STORE,
+  MAX_NOTE_LENGTH,
+} from "./blocking/blocked-ips";
+export type {
+  AddBlockedIpResult,
+  BlockedIpEntry,
+  BlockedIpServiceDeps,
+  BlockedIpStore,
+} from "./blocking/blocked-ips";

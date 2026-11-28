@@ -1684,3 +1684,89 @@ describe("tracking.tracking_profiles — migration matches the Prisma model", ()
     ]);
   });
 });
+
+/**
+ * Tracking P1-D9: the per-store IP block list. A model with no migration behind it would break every read of the
+ * list in a deployment while the in-memory-backed unit tests stayed green; and a tenant table without a forced,
+ * tenant-scoped policy would let one merchant read (or write) another's list.
+ */
+describe("tracking.blocked_ips — migration matches the Prisma model", () => {
+  const dirs = readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const blockedSql = readFileSync(
+    join(migrationsDir, "20261207000000_tracking_blocked_ips", "migration.sql"),
+    "utf-8",
+  );
+  const schema = readFileSync(
+    join(import.meta.dirname, "..", "prisma", "schema", "tracking.prisma"),
+    "utf-8",
+  );
+
+  function modelColumns(model: string): string[] {
+    const body = new RegExp(`model ${model} \\{([\\s\\S]*?)\\n\\}`).exec(schema)?.[1] ?? "";
+    const columns: string[] = [];
+    for (const line of body.split("\n")) {
+      const field = /^\s+(\w+)\s+[A-Za-z]+(\[\])?[?]?(\s|$)/.exec(line);
+      if (field?.[1] === undefined) continue;
+      columns.push(/@map\("(\w+)"\)/.exec(line)?.[1] ?? field[1]);
+    }
+    return columns;
+  }
+
+  it("reads the model's fields (guards the parser above against matching nothing)", () => {
+    expect(modelColumns("TrackingBlockedIp")).toEqual(
+      expect.arrayContaining(["id", "tenant_id", "cidr", "note", "created_at", "created_by"]),
+    );
+  });
+
+  it("every column the model declares is created by the migration", () => {
+    const actual = columnsEverAddedTo("tracking", "blocked_ips", blockedSql);
+    for (const column of modelColumns("TrackingBlockedIp")) {
+      expect(actual.has(column), `expected "tracking"."blocked_ips"."${column}"`).toBe(true);
+    }
+  });
+
+  it("is RLS-enabled AND forced, with a tenant_isolation policy that checks reads and writes", () => {
+    expect(blockedSql).toContain('ALTER TABLE "tracking"."blocked_ips" ENABLE ROW LEVEL SECURITY;');
+    expect(blockedSql).toContain('ALTER TABLE "tracking"."blocked_ips" FORCE ROW LEVEL SECURITY;');
+    expect(blockedSql).toContain(
+      'CREATE POLICY tenant_isolation ON "tracking"."blocked_ips" FOR ALL',
+    );
+    expect(blockedSql).toContain("USING (tenant_id = current_setting('app.tenant_id', true))");
+    expect(blockedSql).toContain("WITH CHECK (tenant_id = current_setting('app.tenant_id', true))");
+    // never an open read policy on a tenant's list
+    expect(blockedSql).not.toMatch(/USING \(true\)/);
+  });
+
+  it("keeps one row per (tenant, range) — a repeat add is a unique-key no-op — and indexes tenant-first", () => {
+    expect(blockedSql).toContain(
+      'CREATE UNIQUE INDEX "blocked_ips_tenant_id_cidr_key" ON "tracking"."blocked_ips" ("tenant_id", "cidr")',
+    );
+    expect(blockedSql).toContain(
+      'CREATE INDEX "blocked_ips_tenant_id_created_at_idx" ON "tracking"."blocked_ips" ("tenant_id", "created_at")',
+    );
+    expect(schema).toMatch(/model TrackingBlockedIp \{[\s\S]*@@unique\(\[tenantId, cidr\]\)/);
+  });
+
+  it("adds the fingerprint lookup index the model declares, and nothing else to the profiles table", () => {
+    expect(blockedSql).toContain(
+      'CREATE INDEX "tracking_profiles_tenant_id_fingerprint_id_idx"\n  ON "tracking"."tracking_profiles" ("tenant_id", "fingerprint_id");',
+    );
+    expect(schema).toContain("@@index([tenantId, fingerprintId])");
+    expect(blockedSql).not.toMatch(/ALTER TABLE "tracking"\."tracking_profiles" (ADD|DROP)/);
+  });
+
+  it("is additive: nothing is dropped or rewritten", () => {
+    expect(blockedSql).not.toMatch(/\bDROP (TABLE|COLUMN|INDEX|SCHEMA)\b/i);
+    expect(blockedSql).not.toMatch(/\bUPDATE\b|\bDELETE\b|\bTRUNCATE\b/i);
+  });
+
+  it("is the only migration at 20261207000000, and the newest", () => {
+    expect(dirs.filter((dir) => dir.startsWith("20261207000000"))).toEqual([
+      "20261207000000_tracking_blocked_ips",
+    ]);
+    expect(dirs.at(-1)).toBe("20261207000000_tracking_blocked_ips");
+  });
+});

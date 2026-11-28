@@ -13,6 +13,7 @@ import {
   type OrderPaymentStatus,
   RefundPolicy,
 } from "@platform/orders";
+import type { BlockedIpService } from "@platform/tracking";
 import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
@@ -57,6 +58,7 @@ import { localizationRoutes } from "./localization-routes";
 import { loyaltyRoutes } from "./loyalty-routes";
 import { mediaLibraryRoutes } from "./media-library-routes";
 import { adPlatformsRoutes } from "./ad-platforms-routes";
+import { blockedIpsRoutes } from "./blocked-ips-routes";
 import { leadsRoutes } from "./leads-routes";
 import { onlineStoreRoutes } from "./online-store-routes";
 import { paymentsRoutes } from "./payments-routes";
@@ -1027,6 +1029,8 @@ export function adminRoutes(
     readonly onTenantLifecycleChange?: (tenantId: string) => void;
     /** Tracking P1-D3: the storefront-signed capture route. Absent ⇒ the route is not mounted. */
     readonly trackingEdge?: PublicTrackingRouteDeps;
+    /** Tracking P1-D9: Settings → Tracking → excluded IP addresses. Absent ⇒ the routes are not mounted. */
+    readonly trackingBlockedIps?: BlockedIpService;
   } = {},
 ): readonly RouteDefinition[] {
   // Under TENANT_MODE=multi a merchant's own owner holds `admin` (`*:*` in the role table), so a
@@ -2396,6 +2400,9 @@ export function adminRoutes(
     ...wishlistRoutes(admin),
     ...leadsRoutes(admin),
     ...adPlatformsRoutes(admin),
+    ...(options.trackingBlockedIps === undefined
+      ? []
+      : blockedIpsRoutes(options.trackingBlockedIps)),
     ...customer360Routes(admin),
   ] as readonly RouteDefinition[];
 }

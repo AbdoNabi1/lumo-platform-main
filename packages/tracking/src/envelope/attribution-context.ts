@@ -22,6 +22,7 @@ export type ChannelGroup =
   | "sms"
   | "push"
   | "influencer"
+  | "ai_assistant"
   | "offline"
   | "internal"
   | "other"
@@ -41,6 +42,7 @@ export const CHANNEL_GROUPS: readonly ChannelGroup[] = [
   "sms",
   "push",
   "influencer",
+  "ai_assistant",
   "offline",
   "internal",
   "other",
@@ -80,6 +82,8 @@ export interface AttributionContext {
   readonly socialSource?: string;
   readonly channelGroup?: ChannelGroup;
   readonly trafficSource?: string;
+  /** The AI assistant the visit came from (`chatgpt`, `perplexity`, `claude`, …); absent for every other traffic. */
+  readonly aiSource?: string;
 
   // Paid-media surface
   readonly campaign?: string;

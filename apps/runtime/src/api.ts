@@ -26,6 +26,7 @@ import {
 } from "./composition";
 import { startCredentialReseal } from "./credential-reseal";
 import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
+import { buildTrackingCollectWiring } from "./tracking/tracking-collect-enrichment";
 import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
 
@@ -600,6 +601,9 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   const telemetry = startRuntimeTelemetry(config, "api");
 
   const trackingCookieKeeper = buildTrackingCookieKeeper(runtime);
+  // P1-D8 / D9: collect-time enrichment and the store's excluded-address list (one service for the admin routes
+  // and the collect route, so an edit applies at once).
+  const trackingCollect = buildTrackingCollectWiring(runtime);
   const app = await createAdminHttpApi({
     ...integrationPorts,
     // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
@@ -654,6 +658,11 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     trackingEventSink: buildTrackingEventSink(runtime),
     // P1-D6 Cookie Keeper: reads the visitor profile, so it exists only while tracking ingest (which writes it) is on.
     ...(trackingCookieKeeper === null ? {} : { trackingCookieKeeper }),
+    ...(trackingCollect.enricher === undefined
+      ? {}
+      : { trackingEnricher: trackingCollect.enricher }),
+    trackingBlocklist: trackingCollect.blockedIps,
+    trackingBlockedIps: trackingCollect.blockedIps,
     ...(runtime.config.TRACKING_EDGE_SECRET === undefined
       ? {}
       : { trackingEdgeSecret: runtime.config.TRACKING_EDGE_SECRET }),

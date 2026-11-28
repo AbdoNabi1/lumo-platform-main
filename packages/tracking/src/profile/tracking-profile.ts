@@ -103,7 +103,7 @@ export interface ProfileLandingTouch {
   readonly utmTerm?: string;
   readonly referrer?: string;
   readonly pageUrl?: string;
-  /** Reserved for the AI-referrer table (P1 T4); never set by this module. */
+  /** The AI assistant this touch came from (`chatgpt`, `perplexity`, …), from the AI-referrer table (P1-D8). */
   readonly aiSource?: string;
   /** ISO-8601 UTC instant of the touch. */
   readonly at: string;
@@ -167,6 +167,11 @@ export interface ProfileLookupKeys {
   readonly emailStd?: string;
   readonly phoneE164?: string;
   readonly visitorId?: string;
+  /**
+   * The cookieless id of the request (P1-D8). The LAST resort: consulted only when the event carries no visitor
+   * cookie and none of the keys above found a profile, and trusted only when exactly one recent profile has it.
+   */
+  readonly fingerprintId?: string;
 }
 
 /**
@@ -186,6 +191,10 @@ export interface ProfileObservation {
   readonly userAgent?: string;
   readonly pageUrl?: string;
   readonly landing?: ProfileLandingTouch;
+  /** Collect-time enrichment (P1-D8). Absent when the event was not enriched (a server-side event). */
+  readonly geo?: ProfileGeo;
+  readonly botScore?: number;
+  readonly fingerprintId?: string;
   readonly leadIds: readonly string[];
   readonly orderIds: readonly string[];
 }

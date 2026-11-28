@@ -241,6 +241,25 @@ describe("the touch event (waitUntil, signed, never blocking)", () => {
     expect(call.body.client.cookies["sessionId"]).toBe(setCookie(response, "morbeh_sid")?.value);
   });
 
+  it("forwards what the bot score reads: Accept-Language, Client Hints and the host; null when the request lacks them", async () => {
+    await visit("/", {
+      headers: {
+        "x-forwarded-for": "203.0.113.7",
+        "accept-language": "ar-EG,ar;q=0.9",
+        "sec-ch-ua": '"Chromium";v="124"',
+      },
+    });
+    expect(collectCalls[0]!.body.client).toMatchObject({
+      acceptLanguage: "ar-EG,ar;q=0.9",
+      secChUa: '"Chromium";v="124"',
+      host: "a.example",
+    });
+
+    collectCalls.length = 0;
+    await visit("/", { headers: { "x-forwarded-for": "203.0.113.8" } });
+    expect(collectCalls[0]!.body.client).toMatchObject({ acceptLanguage: null, secChUa: null });
+  });
+
   it("is signed over `<seconds>.<exact body bytes>` with TRACKING_EDGE_SECRET", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);

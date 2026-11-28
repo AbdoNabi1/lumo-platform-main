@@ -359,6 +359,7 @@ describe("a later server event, completed from the visitor's earlier browser eve
       findByEmailHash: () => Promise.reject(new Error("db down")),
       findByPhoneHash: () => Promise.reject(new Error("db down")),
       findByVisitorId: () => Promise.reject(new Error("db down")),
+      findByFingerprintId: () => Promise.reject(new Error("db down")),
       persist: () => Promise.reject(new Error("db down")),
       eraseCustomer: () => Promise.resolve(0),
       deleteExpiredAnonymous: () => Promise.resolve(0),

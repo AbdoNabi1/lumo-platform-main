@@ -8,9 +8,12 @@ import {
   TRACKING_CAPTURED_TOPIC,
   TRACKING_CAPTURED_VERSION,
   gaClientIdFromCookie,
+  isBusinessConversion,
+  type CollectEnricher,
   type CollectorRefusal,
   type CookieDirective,
   type TrackingCapturedEventPayload,
+  type TrackingEnvelope,
 } from "@platform/tracking";
 import { logger, ValidationError } from "@platform/utils";
 import {
@@ -56,11 +59,23 @@ export type TrackingCookieKeeper = (input: {
   readonly present: ReadonlySet<string>;
 }) => Promise<readonly CookieDirective[]>;
 
+/**
+ * The per-store IP block list as the collect route needs it (P1-D9): `true` skips an ordinary event. Implemented by
+ * `BlockedIpService.isBlocked`, which fails open — an unreadable list blocks nothing.
+ */
+export interface TrackingIpBlocklist {
+  isBlocked(tenantId: string, ip: string | null | undefined): Promise<boolean>;
+}
+
 export interface PublicTrackingRouteDeps {
   /** `TRACKING_EDGE_SECRET`. Absent ⇒ the route answers 503 NOT_CONFIGURED and stores nothing. */
   readonly secret: string | undefined;
   /** Absent (profiles not enabled) ⇒ the response simply lists no cookies. */
   readonly cookieKeeper?: TrackingCookieKeeper;
+  /** Collect-time enrichment (P1-D8): user agent, bot score, geo, AI source, cookieless id. Absent ⇒ events go as built. */
+  readonly enricher?: CollectEnricher;
+  /** The store's manual IP block list (P1-D9). Absent ⇒ nothing is blocked. */
+  readonly blocklist?: TrackingIpBlocklist;
   readonly sink: TrackingEventSink | undefined;
   readonly serializer: EventSerializer;
   readonly idGenerator: IdGenerator;
@@ -112,6 +127,11 @@ const edgeBody = z
         userAgent: z.string().max(512).nullable(),
         pageUrl: z.string().max(2048).nullable(),
         referrer: z.string().max(2048).nullable(),
+        // Headers a real browser always sends (bot score, P1-D8). Optional: an older storefront build omits them,
+        // and the runtime then scores nothing on them rather than reading "absent" as "bot".
+        acceptLanguage: z.string().max(256).nullable().optional(),
+        secChUa: z.string().max(512).nullable().optional(),
+        host: z.string().max(255).nullable().optional(),
         cookies: clientCookies,
       })
       .strict(),
@@ -183,6 +203,34 @@ function withClientContext(body: EdgeBody): Record<string, unknown> {
       },
     },
   };
+}
+
+/** Stamps the collect-time facts on the event; a failing enricher means the event goes out as it was built. */
+async function enrichEnvelope(
+  enricher: CollectEnricher | undefined,
+  tenantId: string,
+  envelope: TrackingEnvelope,
+  body: EdgeBody,
+): Promise<TrackingEnvelope> {
+  if (enricher === undefined) return envelope;
+  try {
+    return await enricher({
+      tenantId,
+      envelope,
+      signals: {
+        ip: body.client.ip,
+        userAgent: body.client.userAgent,
+        acceptLanguage: body.client.acceptLanguage,
+        secChUa: body.client.secChUa,
+        host: body.client.host,
+      },
+    });
+  } catch (cause) {
+    logger.warn("tracking edge: enrichment failed", {
+      error: cause instanceof Error ? cause.name : "unknown",
+    });
+    return envelope;
+  }
 }
 
 async function restoreCookies(
@@ -320,7 +368,26 @@ export function publicTrackingRoutes(deps: PublicTrackingRouteDeps): readonly Ro
           return { status: 422, body: refusalBody(outcome.refusal) };
         }
 
-        const { envelope } = outcome;
+        // The block list (P1-D9): an ordinary event from a listed address is accepted and dropped here — the
+        // storefront is told 202 so it neither retries nor treats it as an error. An order or a lead is never
+        // dropped, whatever the address. The check fails open (service) and so does this wrapper.
+        if (
+          deps.blocklist !== undefined &&
+          body.client.ip !== null &&
+          !isBusinessConversion(outcome.envelope)
+        ) {
+          const blocked = await deps.blocklist
+            .isBlocked(tenantId, body.client.ip)
+            .catch(() => false);
+          if (blocked) {
+            return {
+              status: 202,
+              body: { eventId: outcome.envelope.eventId, skipped: "blocked_ip", cookies: [] },
+            };
+          }
+        }
+
+        const envelope = await enrichEnvelope(deps.enricher, tenantId, outcome.envelope, body);
         const messageId = trackingMessageId(tenantId, envelope.eventId);
         const payload: TrackingCapturedEventPayload = { envelope };
         const serialized = deps.serializer.serialize({

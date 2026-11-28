@@ -12,7 +12,12 @@ import type {
 import { JsonEventSerializer } from "@platform/domain-events";
 import { InMemoryAuditTrail } from "../../infrastructure/in-memory-audit-trail";
 import { createAdminHttpApi } from "../server";
-import type { TrackingCookieKeeper, TrackingEventSink } from "../public-tracking-routes";
+import type { CollectEnricher } from "@platform/tracking";
+import type {
+  TrackingCookieKeeper,
+  TrackingEventSink,
+  TrackingIpBlocklist,
+} from "../public-tracking-routes";
 import { signEdgeRequest } from "../tracking-edge-signature";
 
 /** Low-entropy test value on purpose (secret scanners): not a credential. */
@@ -38,6 +43,10 @@ export interface EdgeAppOptions {
   readonly noSink?: boolean;
   /** Cookie Keeper (P1-D6): what restores lost vendor cookies from the profile. */
   readonly cookieKeeper?: TrackingCookieKeeper;
+  /** Collect-time enrichment (P1-D8). */
+  readonly enricher?: CollectEnricher;
+  /** The store's manual IP block list (P1-D9). */
+  readonly blocklist?: TrackingIpBlocklist;
 }
 
 export async function buildEdgeApp(options: EdgeAppOptions = {}): Promise<EdgeApp> {
@@ -94,6 +103,8 @@ export async function buildEdgeApp(options: EdgeAppOptions = {}): Promise<EdgeAp
     ...(secret === null ? {} : { trackingEdgeSecret: secret }),
     ...(options.noSink === true ? {} : { trackingEventSink: sink }),
     ...(options.cookieKeeper === undefined ? {} : { trackingCookieKeeper: options.cookieKeeper }),
+    ...(options.enricher === undefined ? {} : { trackingEnricher: options.enricher }),
+    ...(options.blocklist === undefined ? {} : { trackingBlocklist: options.blocklist }),
   });
   return { app, published };
 }

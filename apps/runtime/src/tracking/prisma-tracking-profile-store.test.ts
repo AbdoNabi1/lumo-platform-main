@@ -448,3 +448,25 @@ describe("toProfile", () => {
     });
   });
 });
+
+describe("PrismaTrackingProfileStore — cookieless id lookup (P1-D8)", () => {
+  it("asks for live, recent profiles of this tenant only, at most two, newest first", async () => {
+    const { db, calls } = fakeDb({ findMany: () => [row({ fingerprintId: "f".repeat(32) })] });
+    const since = new Date("2026-11-20T00:00:00.000Z");
+    const found = await store(db).findByFingerprintId("t-1", "f".repeat(32), since);
+
+    expect(found.map((profile) => profile.visitorId)).toEqual(["v-1"]);
+    expect(ops(calls)).toEqual(["raw", "findMany"]);
+    expect(calls[0]?.args).toMatchObject({ values: expect.arrayContaining(["t-1"]) });
+    expect(calls[1]?.args).toEqual({
+      where: {
+        tenantId: "t-1",
+        mergedInto: null,
+        fingerprintId: "f".repeat(32),
+        lastSeenAt: { gte: since },
+      },
+      orderBy: [{ lastSeenAt: "desc" }, { visitorId: "asc" }],
+      take: 2,
+    });
+  });
+});

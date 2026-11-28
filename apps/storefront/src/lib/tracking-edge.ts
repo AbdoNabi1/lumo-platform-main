@@ -64,6 +64,14 @@ export interface TrackingClientContext {
   readonly userAgent: string | null;
   readonly pageUrl: string | null;
   readonly referrer: string | null;
+  /**
+   * What a real browser always sends and a crawler or script often does not (P1-D8 bot score). `null` = the header
+   * was looked for and is absent; omitted = this build did not look (the runtime then scores nothing on it).
+   */
+  readonly acceptLanguage?: string | null;
+  readonly secChUa?: string | null;
+  /** The store host the visitor browsed; part of the per-store cookieless id. */
+  readonly host?: string | null;
   readonly cookies: {
     readonly fbp?: string;
     readonly fbc?: string;

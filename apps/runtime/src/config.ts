@@ -313,6 +313,12 @@ const schema = z
      * route answers 503 NOT_CONFIGURED and nothing is collected (fail safe, never a crash).
      */
     TRACKING_EDGE_SECRET: z.string().min(32).optional(),
+    /**
+     * Tracking P1-D8: path of a MaxMind-format country database (`.mmdb`: GeoLite2-Country, DB-IP Lite) the operator
+     * put on disk, for `countryDetected` on collected events. Unset ⇒ geo is off (no failure); a missing or corrupt
+     * file ⇒ geo is off and one warning is logged. Never downloaded at runtime; no licence key in the repository.
+     */
+    TRACKING_GEO_DB_PATH: z.string().min(1).optional(),
     /** Milliseconds between delivery-retry sweeps in the worker (durable per-destination retry, P1-D2). */
     TRACKING_RETRY_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).default(60_000),
     /**

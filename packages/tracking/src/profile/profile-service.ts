@@ -53,6 +53,9 @@ export interface ProfileServiceDeps {
   readonly onError?: (error: unknown) => void;
 }
 
+/** A fingerprint only identifies a profile seen this recently (a phone's address and the cell it sits on drift). */
+export const FINGERPRINT_MATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** How many times a write that lost a race with another worker is re-read and re-applied. */
 const MAX_WRITE_ATTEMPTS = 4;
 
@@ -71,6 +74,7 @@ export async function resolveProfile(
   store: TrackingProfileStore,
   tenantId: string,
   keys: ProfileLookupKeys,
+  now?: Date,
 ): Promise<ProfileResolution> {
   const candidates: TrackingProfile[] = [];
   const consider = (found: TrackingProfile | null): void => {
@@ -92,6 +96,21 @@ export async function resolveProfile(
   if (keys.emailStd !== undefined) consider(await store.findByEmailHash(tenantId, keys.emailStd));
   if (keys.phoneE164 !== undefined) consider(await store.findByPhoneHash(tenantId, keys.phoneE164));
   if (keys.visitorId !== undefined) consider(await store.findByVisitorId(tenantId, keys.visitorId));
+
+  // The cookieless id is the LAST resort (owner Q6): only for an event with no visitor cookie at all (a lead or an
+  // order saved server-side), only when nothing above identified the visitor, and only when it points at exactly
+  // one recently seen profile. Several devices share one fingerprint (same carrier cell, same phone model), so an
+  // ambiguous match is no match — and it never overrides a cookie or a customer.
+  if (
+    candidates.length === 0 &&
+    keys.visitorId === undefined &&
+    keys.fingerprintId !== undefined &&
+    now !== undefined
+  ) {
+    const notBefore = new Date(now.getTime() - FINGERPRINT_MATCH_WINDOW_MS);
+    const matches = await store.findByFingerprintId(tenantId, keys.fingerprintId, notBefore);
+    if (matches.length === 1) consider(matches[0] ?? null);
+  }
 
   let merged: TrackingProfile | null = null;
   const members: TrackingProfile[] = [];
@@ -150,11 +169,19 @@ export class TrackingProfileService implements ProfileEnricherPort {
         ? {}
         : { phoneE164: observation.hashes.phoneE164 }),
       ...(observation.visitorId === undefined ? {} : { visitorId: observation.visitorId }),
+      ...(observation.fingerprintId === undefined
+        ? {}
+        : { fingerprintId: observation.fingerprintId }),
     };
 
     let latest: TrackingProfile | undefined;
     for (let attempt = 1; attempt <= MAX_WRITE_ATTEMPTS; attempt += 1) {
-      const resolution = await resolveProfile(this.deps.store, observation.tenantId, keys);
+      const resolution = await resolveProfile(
+        this.deps.store,
+        observation.tenantId,
+        keys,
+        new Date(observation.at),
+      );
       const base =
         resolution.merged ??
         createProfile({

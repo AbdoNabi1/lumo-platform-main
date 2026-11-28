@@ -157,6 +157,12 @@ export interface EdgeCaptureInput {
   readonly send?: typeof sendTrackingEvent;
 }
 
+/** A request header as the runtime's bot score wants it: trimmed, bounded, `null` when absent. */
+function headerOrNull(request: NextRequest, name: string, max: number): string | null {
+  const value = request.headers.get(name)?.trim();
+  return value === undefined || value === "" ? null : value.slice(0, max);
+}
+
 function cookie(request: NextRequest, name: string): string | undefined {
   const value = request.cookies.get(name)?.value;
   return value === undefined || value === "" ? undefined : value;
@@ -307,6 +313,9 @@ function capture(input: EdgeCaptureInput): void {
         userAgent,
         pageUrl: landing.pageUrl,
         referrer: referrer ?? null,
+        acceptLanguage: headerOrNull(request, "accept-language", 256),
+        secChUa: headerOrNull(request, "sec-ch-ua", 512),
+        host: headerOrNull(request, "host", 255),
         cookies,
       },
     },

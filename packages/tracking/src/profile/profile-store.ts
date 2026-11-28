@@ -29,6 +29,15 @@ export interface TrackingProfileStore {
   /** The profile a cookie id resolves to, following one tombstone hop; `null` when unknown. */
   findByVisitorId(tenantId: string, visitorId: string): Promise<TrackingProfile | null>;
   /**
+   * LIVE profiles whose cookieless id is `fingerprintId` and that were seen at or after `notBefore`, newest first,
+   * at most 2 (the caller only needs to know "none", "one" or "ambiguous"). The last-resort lookup of P1-D8.
+   */
+  findByFingerprintId(
+    tenantId: string,
+    fingerprintId: string,
+    notBefore: Date,
+  ): Promise<readonly TrackingProfile[]>;
+  /**
    * Stores the change atomically. Returns `false` — and changes NOTHING — when another writer got there first
    * (the stored version is not the one the caller read, or a profile it meant to create already exists); the
    * caller re-reads and re-applies.
@@ -102,6 +111,26 @@ export class InMemoryTrackingProfileStore implements TrackingProfileStore, Expir
   findByPhoneHash(tenantId: string, phoneE164: string): Promise<TrackingProfile | null> {
     return Promise.resolve(
       this.live(tenantId, (profile) => profile.hashes.phoneE164 === phoneE164),
+    );
+  }
+
+  findByFingerprintId(
+    tenantId: string,
+    fingerprintId: string,
+    notBefore: Date,
+  ): Promise<readonly TrackingProfile[]> {
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter(
+          (row) =>
+            row.mergedInto === undefined &&
+            row.profile.tenantId === tenantId &&
+            row.profile.fingerprintId === fingerprintId &&
+            Date.parse(row.profile.lastSeenAt) >= notBefore.getTime(),
+        )
+        .map((row) => row.profile)
+        .sort(newestFirst)
+        .slice(0, 2),
     );
   }
 
