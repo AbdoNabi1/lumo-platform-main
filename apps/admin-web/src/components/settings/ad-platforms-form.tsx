@@ -25,6 +25,7 @@ import {
 } from "@/lib/ad-platforms-model";
 import type { Dictionary } from "@/messages/en";
 import { AdPlatformRemoveTokenDialog } from "./ad-platform-remove-token-dialog";
+import { AdPlatformTestCodeWarning, AdPlatformTestEvent } from "./ad-platform-test-event";
 
 const INITIAL_STATE: AdPlatformFormState = { status: "idle" };
 const NO_ERRORS: Readonly<Record<string, string>> = {};
@@ -282,6 +283,18 @@ function AdPlatformCard({ view, t }: { readonly view: ConnectionViewDto; readonl
                 />
               )}
             </Field>
+          )}
+
+          {spec.testEventCode && (saved.testEventCode ?? "") !== "" && (
+            <AdPlatformTestCodeWarning platform={saved.platform} t={t} />
+          )}
+
+          {spec.testEvent && (
+            <AdPlatformTestEvent
+              platform={saved.platform}
+              typedCode={spec.testEventCode ? draft.testEventCode : ""}
+              t={t}
+            />
           )}
 
           {!spec.serverToken && (

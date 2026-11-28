@@ -4,6 +4,7 @@ import {
   type AdPlatformKey,
   type ConnectionViewDto,
   type PublicConfigDto,
+  type TestEventResultDto,
 } from "@/lib/ad-platforms-model";
 import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
 
@@ -14,7 +15,7 @@ import { getAdminApi, mutateAdminApi, type MutationResult } from "./client";
  * so this file stays the one place a server caller looks.
  */
 export { AD_PLATFORM_ORDER };
-export type { AdPlatformKey, ConnectionViewDto };
+export type { AdPlatformKey, ConnectionViewDto, TestEventResultDto };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -137,5 +138,36 @@ export function saveAdPlatform(
       idempotencyKey,
     },
     isConnectionView,
+  );
+}
+
+function isTestEventResult(value: unknown): value is TestEventResultDto {
+  if (!isRecord(value) || !isAdPlatformKey(value["platform"])) return false;
+  const messages = value["messages"];
+  return (
+    (value["status"] === "sent" || value["status"] === "rejected") &&
+    (value["vendorStatus"] === undefined || Number.isInteger(value["vendorStatus"])) &&
+    (messages === undefined ||
+      (Array.isArray(messages) && messages.every((entry) => typeof entry === "string"))) &&
+    typeof value["sentAt"] === "string"
+  );
+}
+
+/**
+ * `POST /ad-platforms/:platform/test-event`: sends one synthetic purchase to the platform. The code is for this
+ * send only (the route never saves it); without one the saved code is used. Not idempotent on purpose: every press
+ * is a new test, so no Idempotency-Key is sent. The body is `{}` or `{ testEventCode }`, nothing else.
+ */
+export function sendAdPlatformTestEvent(
+  platform: AdPlatformKey,
+  testEventCode?: string,
+): Promise<MutationResult<TestEventResultDto>> {
+  return mutateAdminApi(
+    `/api/v1/ad-platforms/${encodeURIComponent(platform)}/test-event`,
+    {
+      method: "POST",
+      body: testEventCode === undefined ? {} : { testEventCode },
+    },
+    isTestEventResult,
   );
 }

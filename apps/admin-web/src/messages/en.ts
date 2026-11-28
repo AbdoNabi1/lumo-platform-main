@@ -2517,6 +2517,27 @@ export const en = {
     fieldInvalid: "Check this value.",
     tokenInvalid: "A token is 10 to 1024 characters: letters, digits and . _ ~ + / = : | - only.",
     unavailable: "Not available yet: this server isn't set up to store tokens.",
+    testEventButton: "Send test event",
+    testEventSending: "Sending…",
+    testSavedCodeWarning:
+      "A test code is saved. While it is set, all live events from your store go to {platform}'s Test Events and don't count for your ads. Clear the code and save when you're done testing.",
+    testSentCode:
+      "Test event sent. In {platform} Events Manager, open Test events to see it. It can take a minute to appear.",
+    testSentCheck:
+      "{platform} accepted the test event. It isn't counted in your reports: this only checks the connection.",
+    testProblems: "{platform} found problems with the test event:",
+    testRejectedToken: "{platform} didn't accept your token. Check the token and save it again.",
+    testRejectedStatus:
+      "{platform} refused the test event (status {status}). Check your ids and token.",
+    testRejectedNoAnswer: "Couldn't reach {platform}. Try again in a minute.",
+    testNotConnected: "Turn this platform on and save its ids and token first.",
+    testCodeRequired:
+      "Enter a test code first. In {platform} Events Manager, open Test events and copy the code shown there.",
+    testNotSupported:
+      "{platform} has no test mode for server events, so a test event can't be sent. After a real order, check your pixel's activity in {platform} Events Manager.",
+    testInvalidCode: "A test code has letters, digits, _ and - only, up to 64 characters.",
+    testRateLimited: "Too many tests. Wait a minute and try again.",
+    testUnavailable: "Test events aren't available right now. Try again later.",
   },
   /** Wave 2b - Settings → Notifications: sender email, customer templates, staff recipients. */
   notificationSettings: {

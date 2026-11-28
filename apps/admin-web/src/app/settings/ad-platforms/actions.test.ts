@@ -1,14 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AdPlatformFormState, ConnectionViewDto } from "@/lib/ad-platforms-model";
+import type {
+  AdPlatformFormState,
+  AdPlatformTestState,
+  ConnectionViewDto,
+} from "@/lib/ad-platforms-model";
 import { en } from "@/messages/en";
 
-const api = vi.hoisted(() => ({ fetchAdPlatforms: vi.fn(), saveAdPlatform: vi.fn() }));
+const api = vi.hoisted(() => ({
+  fetchAdPlatforms: vi.fn(),
+  saveAdPlatform: vi.fn(),
+  sendAdPlatformTestEvent: vi.fn(),
+}));
 const revalidatePath = vi.hoisted(() => vi.fn());
 const revalidateStorefront = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/api/ad-platforms", () => ({
   fetchAdPlatforms: api.fetchAdPlatforms,
   saveAdPlatform: api.saveAdPlatform,
+  sendAdPlatformTestEvent: api.sendAdPlatformTestEvent,
 }));
 vi.mock("@/lib/storefront-revalidate", () => ({ revalidateStorefront }));
 vi.mock("next/cache", () => ({ revalidatePath }));
@@ -16,7 +25,7 @@ vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
-const { saveAdPlatformAction } = await import("./actions");
+const { saveAdPlatformAction, sendAdPlatformTestEventAction } = await import("./actions");
 
 const idle: AdPlatformFormState = { status: "idle" };
 const SECRET = "fake-secret-value-1234";
@@ -62,6 +71,7 @@ beforeEach(() => {
     items: [view({ version: 3, enabled: true })],
   });
   api.saveAdPlatform.mockReset().mockResolvedValue({ outcome: "ok", data: view() });
+  api.sendAdPlatformTestEvent.mockReset();
   revalidatePath.mockReset();
   revalidateStorefront.mockReset().mockResolvedValue(true);
 });
@@ -353,5 +363,133 @@ describe("saveAdPlatformAction", () => {
 
       expect(revalidateStorefront).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("sendAdPlatformTestEventAction", () => {
+  const idleTest: AdPlatformTestState = { status: "idle" };
+  const RESULT = {
+    platform: "meta",
+    status: "sent",
+    vendorStatus: 200,
+    sentAt: "2026-11-28T10:00:00.000Z",
+  } as const;
+
+  function testForm(entries: Record<string, string | undefined>): FormData {
+    const formData = new FormData();
+    for (const [key, value] of Object.entries({ platform: "meta", ...entries })) {
+      if (value !== undefined) formData.append(key, value);
+    }
+    return formData;
+  }
+
+  it("sends one test for the platform with no code when none was typed, and refreshes the page", async () => {
+    expect.hasAssertions();
+    api.sendAdPlatformTestEvent.mockResolvedValue({ outcome: "ok", data: RESULT });
+
+    const state = await sendAdPlatformTestEventAction(idleTest, testForm({}));
+
+    expect(state).toEqual({ status: "done", platform: "meta", result: RESULT });
+    expect(api.sendAdPlatformTestEvent).toHaveBeenCalledWith("meta", undefined);
+    expect(revalidatePath).toHaveBeenCalledWith("/settings/ad-platforms");
+    // A test is not a save: nothing is stored, and the storefront has nothing new to show.
+    expect(api.saveAdPlatform).not.toHaveBeenCalled();
+    expect(revalidateStorefront).not.toHaveBeenCalled();
+  });
+
+  it("passes the typed code (trimmed) for this one test", async () => {
+    expect.hasAssertions();
+    api.sendAdPlatformTestEvent.mockResolvedValue({ outcome: "ok", data: RESULT });
+
+    await sendAdPlatformTestEventAction(idleTest, testForm({ testEventCode: "  TEST_ab-9 " }));
+
+    expect(api.sendAdPlatformTestEvent).toHaveBeenCalledWith("meta", "TEST_ab-9");
+  });
+
+  it("refuses a malformed code, a platform without a test and a missing platform before any request", async () => {
+    expect.hasAssertions();
+
+    expect(
+      await sendAdPlatformTestEventAction(idleTest, testForm({ testEventCode: "has space" })),
+    ).toEqual({ status: "failed", platform: "meta", reason: "invalid_code" });
+    expect(
+      await sendAdPlatformTestEventAction(idleTest, testForm({ testEventCode: "x".repeat(65) })),
+    ).toMatchObject({ status: "failed", reason: "invalid_code" });
+    expect(
+      await sendAdPlatformTestEventAction(idleTest, testForm({ platform: "google_ads" })),
+    ).toMatchObject({ status: "failed", reason: "unexpected" });
+    expect(
+      await sendAdPlatformTestEventAction(idleTest, testForm({ platform: "pinterest" })),
+    ).toMatchObject({ status: "failed", reason: "unexpected" });
+    expect(
+      await sendAdPlatformTestEventAction(idleTest, testForm({ platform: undefined })),
+    ).toMatchObject({ status: "failed", reason: "unexpected" });
+    expect(api.sendAdPlatformTestEvent).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("keeps the vendor answer (rejected, messages) as the result, not as an error", async () => {
+    expect.hasAssertions();
+    const rejected = {
+      platform: "ga4",
+      status: "rejected",
+      vendorStatus: 200,
+      messages: ["events[0].name: bad"],
+      sentAt: RESULT.sentAt,
+    } as const;
+    api.sendAdPlatformTestEvent.mockResolvedValue({ outcome: "ok", data: rejected });
+
+    const state = await sendAdPlatformTestEventAction(idleTest, testForm({ platform: "ga4" }));
+
+    expect(state).toEqual({ status: "done", platform: "ga4", result: rejected });
+  });
+
+  it.each([
+    [{ outcome: "conflict", message: "m", code: "NOT_CONNECTED" }, "not_connected"],
+    [{ outcome: "invalid", message: "m", fields: [], code: "TEST_CODE_REQUIRED" }, "code_required"],
+    [{ outcome: "invalid", message: "m", fields: [], code: "TEST_NOT_SUPPORTED" }, "not_supported"],
+    [
+      {
+        outcome: "invalid",
+        message: "m",
+        fields: [{ field: "testEventCode", message: "x" }],
+        code: "VALIDATION",
+      },
+      "invalid_code",
+    ],
+    [{ outcome: "invalid", message: "m", fields: [], code: "VALIDATION" }, "unexpected"],
+    [{ outcome: "error", message: "m", status: 429, code: "RATE_LIMITED" }, "rate_limited"],
+    [{ outcome: "error", message: "m", status: 503, code: "UNAVAILABLE" }, "unavailable"],
+    [{ outcome: "error", message: "m", status: 503, code: "NOT_CONFIGURED" }, "unavailable"],
+    [{ outcome: "error", message: "network" }, "unexpected"],
+    [{ outcome: "unauthorized" }, "unauthorized"],
+    [{ outcome: "forbidden" }, "forbidden"],
+    [{ outcome: "not_found" }, "unavailable"],
+  ])("maps %j to %s and refreshes the page", async (apiResult, reason) => {
+    expect.hasAssertions();
+    api.sendAdPlatformTestEvent.mockResolvedValue(apiResult);
+
+    const state = await sendAdPlatformTestEventAction(idleTest, testForm({}));
+
+    expect(state).toEqual({ status: "failed", platform: "meta", reason });
+    expect(revalidatePath).toHaveBeenCalledWith("/settings/ad-platforms");
+  });
+
+  it("never puts the API text, a token or the typed code in what it returns", async () => {
+    expect.hasAssertions();
+    api.sendAdPlatformTestEvent.mockResolvedValue({
+      outcome: "invalid",
+      message: `Bearer ${SECRET}`,
+      fields: [],
+      code: "TEST_CODE_REQUIRED",
+    });
+
+    const state = await sendAdPlatformTestEventAction(
+      idleTest,
+      testForm({ testEventCode: "CODE1234" }),
+    );
+
+    expect(JSON.stringify(state)).not.toContain(SECRET);
+    expect(JSON.stringify(state)).not.toContain("CODE1234");
   });
 });

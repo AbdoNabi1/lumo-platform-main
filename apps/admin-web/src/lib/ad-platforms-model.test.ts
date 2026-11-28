@@ -5,6 +5,7 @@ import {
   idValuesOf,
   inputNameForIssue,
   isAdPlatformKey,
+  isValidTestEventCode,
   maskedToken,
   publicConfigFrom,
   samePublicConfig,
@@ -128,5 +129,32 @@ describe("ad platforms model", () => {
   it("masks a token down to its last four", () => {
     expect.hasAssertions();
     expect(maskedToken("1234")).toBe("\u2022\u2022\u2022\u20221234");
+  });
+});
+
+describe("send test event (P2-D11)", () => {
+  it("offers the test on the four server platforms and not on Google Ads", () => {
+    expect.hasAssertions();
+    expect(AD_PLATFORM_ORDER.filter((key) => AD_PLATFORM_SPECS[key].testEvent)).toEqual([
+      "meta",
+      "tiktok",
+      "snap",
+      "ga4",
+    ]);
+    // Only Meta and TikTok have a code to type.
+    expect(AD_PLATFORM_ORDER.filter((key) => AD_PLATFORM_SPECS[key].testEventCode)).toEqual([
+      "meta",
+      "tiktok",
+    ]);
+  });
+
+  it("validates a test code like the API: letters, digits, _ and -, 1 to 64", () => {
+    expect.hasAssertions();
+    for (const good of ["T", "TEST_ab-9", "A".repeat(64)]) {
+      expect(isValidTestEventCode(good)).toBe(true);
+    }
+    for (const bad of ["", " ", "has space", "a.b", "é", "A".repeat(65), "x\n"]) {
+      expect(isValidTestEventCode(bad)).toBe(false);
+    }
   });
 });

@@ -16,6 +16,7 @@ import type {
   AttributionSnapshotStore,
   BlockedIpService,
   CollectEnricher,
+  TestEventService,
   TrackingSettingsService,
 } from "@platform/tracking";
 import { logger } from "@platform/utils";
@@ -90,6 +91,8 @@ export interface AdminHttpDeps extends AdminWiringDeps {
   readonly trackingBlockedIps?: BlockedIpService;
   /** Per-store tracking settings (P2-D1): the admin API, the public notice switch. Absent ⇒ those routes are not mounted. */
   readonly trackingSettings?: TrackingSettingsService;
+  /** P2-D11: the runtime's sender behind `POST /ad-platforms/:platform/test-event`. Absent ⇒ that route answers 503 NOT_CONFIGURED. */
+  readonly adPlatformTestEvents?: TestEventService;
   /** Where an order's attribution snapshot is kept (P2-D8). Absent ⇒ the checkout `tracking` object is ignored. */
   readonly trackingAttributionSnapshots?: AttributionSnapshotStore;
 }
@@ -227,6 +230,9 @@ export async function createAdminHttpApi(deps: AdminHttpDeps): Promise<FastifyIn
         ? {}
         : { trackingBlockedIps: deps.trackingBlockedIps }),
       ...(deps.trackingSettings === undefined ? {} : { trackingSettings: deps.trackingSettings }),
+      ...(deps.adPlatformTestEvents === undefined
+        ? {}
+        : { adPlatformTestEvents: deps.adPlatformTestEvents }),
       ...(deps.trackingAttributionSnapshots === undefined
         ? {}
         : {

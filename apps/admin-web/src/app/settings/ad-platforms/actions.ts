@@ -2,18 +2,26 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
-import { fetchAdPlatforms, saveAdPlatform, type SaveAdPlatformInput } from "@/lib/api/ad-platforms";
+import {
+  fetchAdPlatforms,
+  saveAdPlatform,
+  sendAdPlatformTestEvent,
+  type SaveAdPlatformInput,
+} from "@/lib/api/ad-platforms";
 import type { MutationResult } from "@/lib/api/client";
 import { newIdempotencyKey } from "@/lib/api/mutation";
 import {
   AD_PLATFORM_SPECS,
   inputNameForIssue,
   isAdPlatformKey,
+  isValidTestEventCode,
   publicConfigFrom,
   samePublicConfig,
   type AdPlatformFormState,
   type AdPlatformKey,
+  type AdPlatformTestState,
   type ConnectionViewDto,
+  type TestEventFailure,
 } from "@/lib/ad-platforms-model";
 import { DEFAULT_LOCALE, dictionaryFor, isLocale, LOCALE_COOKIE } from "@/lib/i18n";
 import { revalidateStorefront } from "@/lib/storefront-revalidate";
@@ -135,4 +143,69 @@ export async function saveAdPlatformAction(
     !samePublicConfig(previous.publicConfig, view.publicConfig);
   if (changed) await revalidateStorefront();
   return { status: "success", view };
+}
+
+/** The failures the test route names in `code`; anything else is unexpected (the API's English text is not shown). */
+const TEST_FAILURE_OF_CODE: Readonly<Record<string, TestEventFailure>> = {
+  NOT_CONNECTED: "not_connected",
+  TEST_CODE_REQUIRED: "code_required",
+  TEST_NOT_SUPPORTED: "not_supported",
+  UNAVAILABLE: "unavailable",
+  NOT_CONFIGURED: "unavailable",
+  RATE_LIMITED: "rate_limited",
+};
+
+/**
+ * Settings > Ad platforms: "Send test event" for ONE platform. The only optional input is `testEventCode`, the code
+ * typed in the card (saved or not): it is sent for this one test and never stored by the API; without it the saved
+ * code is used. Nothing here saves a connection or changes the saved code. Every call that reached the API refreshes
+ * the page, so what the card shows is what the API holds. The result carries no token and no payload.
+ */
+export async function sendAdPlatformTestEventAction(
+  _previous: AdPlatformTestState,
+  formData: FormData,
+): Promise<AdPlatformTestState> {
+  const platform = formData.get("platform");
+  if (!isAdPlatformKey(platform) || !AD_PLATFORM_SPECS[platform].testEvent) {
+    return { status: "failed", platform: "meta", reason: "unexpected" };
+  }
+  const typed = text(formData, "testEventCode");
+  if (typed !== "" && !isValidTestEventCode(typed)) {
+    return { status: "failed", platform, reason: "invalid_code" };
+  }
+
+  const result = await sendAdPlatformTestEvent(platform, typed === "" ? undefined : typed);
+  revalidatePath(AD_PLATFORMS_PATH);
+
+  const failed = (reason: TestEventFailure): AdPlatformTestState => ({
+    status: "failed",
+    platform,
+    reason,
+  });
+  switch (result.outcome) {
+    case "ok":
+      return { status: "done", platform, result: result.data };
+    case "unauthorized":
+      return failed("unauthorized");
+    case "forbidden":
+      return failed("forbidden");
+    case "conflict":
+      return failed(TEST_FAILURE_OF_CODE[result.code ?? ""] ?? "unexpected");
+    case "invalid":
+      // 422: a named refusal (code required, not supported) or a body issue on the code itself.
+      return failed(
+        TEST_FAILURE_OF_CODE[result.code ?? ""] ??
+          (result.fields.some((issue) => issue.field === "testEventCode")
+            ? "invalid_code"
+            : "unexpected"),
+      );
+    case "not_found":
+      return failed("unavailable");
+    case "error":
+      return failed(
+        result.status === 429
+          ? "rate_limited"
+          : (TEST_FAILURE_OF_CODE[result.code ?? ""] ?? "unexpected"),
+      );
+  }
 }

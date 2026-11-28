@@ -7,7 +7,8 @@ const { cookiesMock, jwtVerifyMock } = vi.hoisted(() => ({
 vi.mock("next/headers", () => ({ cookies: cookiesMock }));
 vi.mock("jose", () => ({ createRemoteJWKSet: vi.fn(() => ({})), jwtVerify: jwtVerifyMock }));
 
-const { fetchAdPlatforms, saveAdPlatform } = await import("./ad-platforms");
+const { fetchAdPlatforms, saveAdPlatform, sendAdPlatformTestEvent } =
+  await import("./ad-platforms");
 
 const ORDER = ["meta", "tiktok", "snap", "ga4", "google_ads"] as const;
 
@@ -260,5 +261,100 @@ describe("saveAdPlatform", () => {
         )
       ).outcome,
     ).toBe("error");
+  });
+});
+
+describe("sendAdPlatformTestEvent", () => {
+  const RESULT = {
+    platform: "meta",
+    status: "sent",
+    vendorStatus: 200,
+    sentAt: "2026-11-28T10:00:00.000Z",
+  };
+
+  it("POSTs to the platform's test-event route with an empty body, and no Idempotency-Key", async () => {
+    expect.hasAssertions();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, RESULT));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await sendAdPlatformTestEvent("meta");
+
+    expect(result).toEqual({ outcome: "ok", data: RESULT });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toMatch(/\/api\/v1\/ad-platforms\/meta\/test-event$/);
+    expect(init.method).toBe("POST");
+    expect(sentBody(fetchMock)).toEqual({});
+    const sentHeaders = Object.keys(init.headers as Record<string, string>).map((key) =>
+      key.toLowerCase(),
+    );
+    expect(sentHeaders).not.toContain("idempotency-key");
+  });
+
+  it("sends the code, and only the code, when there is one", async () => {
+    expect.hasAssertions();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, RESULT));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await sendAdPlatformTestEvent("tiktok", "TEST4242");
+
+    expect(sentBody(fetchMock)).toEqual({ testEventCode: "TEST4242" });
+  });
+
+  it("accepts GA4's validation messages and a rejected answer without a vendor status", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(200, { ...RESULT, platform: "ga4", status: "rejected", messages: ["a: b"] }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse(200, { platform: "meta", status: "rejected", sentAt: RESULT.sentAt }),
+        ),
+    );
+
+    expect((await sendAdPlatformTestEvent("ga4")).outcome).toBe("ok");
+    expect((await sendAdPlatformTestEvent("meta")).outcome).toBe("ok");
+  });
+
+  it("keeps the named refusals: 409, 422 and 429 carry their code", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(409, { code: "NOT_CONNECTED", message: "x" }))
+        .mockResolvedValueOnce(
+          jsonResponse(422, { code: "TEST_CODE_REQUIRED", message: "x", fields: [] }),
+        )
+        .mockResolvedValueOnce(jsonResponse(429, { code: "RATE_LIMITED", message: "x" })),
+    );
+
+    expect(await sendAdPlatformTestEvent("meta")).toMatchObject({
+      outcome: "conflict",
+      code: "NOT_CONNECTED",
+    });
+    expect(await sendAdPlatformTestEvent("meta")).toMatchObject({
+      outcome: "invalid",
+      code: "TEST_CODE_REQUIRED",
+    });
+    expect(await sendAdPlatformTestEvent("meta")).toMatchObject({
+      outcome: "error",
+      status: 429,
+      code: "RATE_LIMITED",
+    });
+  });
+
+  it("refuses an answer that is not a test result", async () => {
+    expect.hasAssertions();
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(jsonResponse(200, { platform: "meta", status: "maybe", sentAt: "x" })),
+    );
+
+    expect((await sendAdPlatformTestEvent("meta")).outcome).toBe("error");
   });
 });

@@ -275,12 +275,28 @@ describe("Settings > Ad platforms routes (Lead site D1)", () => {
       .filter((capture) => capture.file === "ad-platforms.ts")
       .map((capture) => `${capture.method} ${capture.path}`);
 
-    expect(called).toEqual(["GET /api/v1/ad-platforms", "PUT /api/v1/ad-platforms/PARAM"]);
+    expect(called).toEqual([
+      "GET /api/v1/ad-platforms",
+      "PUT /api/v1/ad-platforms/PARAM",
+      "POST /api/v1/ad-platforms/PARAM/test-event",
+    ]);
     const real = loadRealRoutes().filter((route) => route.path.startsWith("/ad-platforms"));
     expect(real.map((route) => `${route.method} ${route.path}`).sort()).toEqual([
       "GET /ad-platforms",
+      "POST /ad-platforms/:platform/test-event",
       "PUT /ad-platforms/:platform",
     ]);
+  });
+
+  it("the test-event route's strict body declares the one field the page can send (P2-D11)", () => {
+    expect.hasAssertions();
+    const source = readFileSync(path.join(HTTP_DIR, "ad-platforms-routes.ts"), "utf8");
+    const body = /const testEventBody = z([\s\S]*?)\.strict\(\)/.exec(source)?.[1] ?? "";
+
+    expect(body).not.toBe("");
+    expect(body).toMatch(/\btestEventCode:/);
+    // Nothing else: no tenant, no platform, no payload.
+    expect(body.match(/\b\w+:\s*z\./g)).toHaveLength(1);
   });
 
   it("the route's strict save body declares every field a save can send", () => {

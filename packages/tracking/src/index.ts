@@ -770,3 +770,11 @@ export {
   CURRENCY_CALLING_CODES,
   DEFAULT_CALLING_CODE,
 } from "./business/calling-code";
+export { TEST_EVENT_CODE_PATTERN } from "./business/test-event";
+export type {
+  TestEventFailureCode,
+  TestEventOutcome,
+  TestEventRequest,
+  TestEventResult,
+  TestEventService,
+} from "./business/test-event";

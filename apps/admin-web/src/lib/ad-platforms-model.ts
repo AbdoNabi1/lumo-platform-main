@@ -83,6 +83,11 @@ export interface AdPlatformSpec {
   readonly serverToken: boolean;
   /** Only Meta and TikTok have a test-events tool. */
   readonly testEventCode: boolean;
+  /**
+   * "Send test event" is offered: the four platforms the server delivers to. Snapchat is among them on purpose, so
+   * its button can say plainly that Snapchat has no test mode; Google Ads has no server events at all.
+   */
+  readonly testEvent: boolean;
 }
 
 export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> = {
@@ -92,6 +97,7 @@ export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> 
     idInputs: [{ name: "pixelId", inputMode: "numeric", placeholder: "123456789012345" }],
     serverToken: true,
     testEventCode: true,
+    testEvent: true,
   },
   tiktok: {
     key: "tiktok",
@@ -99,6 +105,7 @@ export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> 
     idInputs: [{ name: "pixelCode", inputMode: "text", placeholder: "C1A2B3C4D5E6F7G8H9" }],
     serverToken: true,
     testEventCode: true,
+    testEvent: true,
   },
   snap: {
     key: "snap",
@@ -112,6 +119,7 @@ export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> 
     ],
     serverToken: true,
     testEventCode: false,
+    testEvent: true,
   },
   ga4: {
     key: "ga4",
@@ -119,6 +127,7 @@ export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> 
     idInputs: [{ name: "measurementId", inputMode: "text", placeholder: "G-ABCDE12345" }],
     serverToken: true,
     testEventCode: false,
+    testEvent: true,
   },
   google_ads: {
     key: "google_ads",
@@ -131,6 +140,7 @@ export const AD_PLATFORM_SPECS: Readonly<Record<AdPlatformKey, AdPlatformSpec>> 
     ],
     serverToken: false,
     testEventCode: false,
+    testEvent: false,
   },
 };
 
@@ -241,3 +251,50 @@ export function statusOf(view: ConnectionViewDto): AdPlatformStatus {
 export function maskedToken(last4: string | null): string {
   return `\u2022\u2022\u2022\u2022${last4 ?? ""}`;
 }
+
+// ------------------------------------------------------------------------------------ Send test event (P2-D11)
+
+/** The test code a vendor's Test Events tab prints. The same pattern the API and the saved connection enforce. */
+export const TEST_EVENT_CODE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function isValidTestEventCode(value: string): boolean {
+  return TEST_EVENT_CODE_PATTERN.test(value);
+}
+
+/** `POST /ad-platforms/:platform/test-event` answers 200 with this. Never a token, never the payload. */
+export interface TestEventResultDto {
+  readonly platform: AdPlatformKey;
+  readonly status: "sent" | "rejected";
+  /** The vendor's HTTP status, when it answered. */
+  readonly vendorStatus?: number;
+  /** GA4's validation messages (`fieldPath: description`); absent for the other platforms. */
+  readonly messages?: readonly string[];
+  /** ISO-8601 instant the API made the request. */
+  readonly sentAt: string;
+}
+
+/** Why a test event was not sent, in words the page can localise (the API's English text is not shown). */
+export type TestEventFailure =
+  | "not_connected"
+  | "code_required"
+  | "not_supported"
+  | "invalid_code"
+  | "rate_limited"
+  | "unavailable"
+  | "unauthorized"
+  | "forbidden"
+  | "unexpected";
+
+/** One card's last test: idle until the button is pressed. `platform` says whose result this is. */
+export type AdPlatformTestState =
+  | { readonly status: "idle" }
+  | {
+      readonly status: "done";
+      readonly platform: AdPlatformKey;
+      readonly result: TestEventResultDto;
+    }
+  | {
+      readonly status: "failed";
+      readonly platform: AdPlatformKey;
+      readonly reason: TestEventFailure;
+    };

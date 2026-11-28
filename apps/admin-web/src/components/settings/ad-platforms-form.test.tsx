@@ -10,6 +10,8 @@ const saveAction =
 vi.mock("@/app/settings/ad-platforms/actions", () => ({
   saveAdPlatformAction: (previous: AdPlatformFormState, formData: FormData) =>
     saveAction(previous, formData),
+  // The test-event button has its own suite (ad-platform-test-event.test.tsx); here it only has to exist.
+  sendAdPlatformTestEventAction: () => Promise.resolve({ status: "idle" }),
 }));
 
 const copy = en.adPlatformsSettings;

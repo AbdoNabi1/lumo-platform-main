@@ -11,6 +11,7 @@ import type {
   RateLimiter,
 } from "@platform/contracts";
 import { JsonEventSerializer } from "@platform/domain-events";
+import type { TestEventService } from "@platform/tracking";
 import type {
   AdPlatform,
   CredentialPolicy,
@@ -72,6 +73,10 @@ export interface AdPlatformsAppOptions {
   readonly vault?: CredentialVaultPort | "none";
   readonly credentialPolicy?: CredentialPolicy;
   readonly deliverySync?: DeliverySyncPort;
+  /** P2-D11: the runtime's test event sender. Absent ⇒ the route answers 503 NOT_CONFIGURED. */
+  readonly testEvents?: TestEventService;
+  /** Default: allows everything. */
+  readonly rateLimiter?: RateLimiter;
 }
 
 export interface AdPlatformsApp {
@@ -102,7 +107,7 @@ export async function buildAdPlatformsApp(
       });
     },
   };
-  const rateLimiter: RateLimiter = {
+  const rateLimiter: RateLimiter = options.rateLimiter ?? {
     consume: () => Promise.resolve({ allowed: true, remaining: 99, retryAfterMs: 0 }),
   };
   const sessions = sessionsOf();
@@ -139,6 +144,7 @@ export async function buildAdPlatformsApp(
       ? {}
       : { adPlatformCredentialPolicy: options.credentialPolicy }),
     adPlatformDeliverySync: deliverySync,
+    ...(options.testEvents === undefined ? {} : { adPlatformTestEvents: options.testEvents }),
   });
   return { app, synced };
 }

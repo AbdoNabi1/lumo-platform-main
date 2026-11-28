@@ -13,7 +13,11 @@ import {
   type OrderPaymentStatus,
   RefundPolicy,
 } from "@platform/orders";
-import type { BlockedIpService, TrackingSettingsService } from "@platform/tracking";
+import type {
+  BlockedIpService,
+  TestEventService,
+  TrackingSettingsService,
+} from "@platform/tracking";
 import type { Paginated } from "@platform/types";
 import { UnexpectedError } from "@platform/utils";
 import type { WiredAdmin } from "../composition";
@@ -1035,6 +1039,8 @@ export function adminRoutes(
     readonly trackingBlockedIps?: BlockedIpService;
     /** Tracking P2-D1: Settings → Tracking → consent policy and cookie notice. Absent ⇒ the routes are not mounted. */
     readonly trackingSettings?: TrackingSettingsService;
+    /** Tracking P2-D11: sends one synthetic purchase to an ad platform. Absent ⇒ the route answers 503 NOT_CONFIGURED. */
+    readonly adPlatformTestEvents?: TestEventService;
     /** Tracking P2-D8: keeps the attribution snapshot of a checkout. Absent ⇒ the `tracking` object is ignored. */
     readonly trackingAttributionSnapshots?: CheckoutSnapshotRecorder;
   } = {},
@@ -2410,7 +2416,12 @@ export function adminRoutes(
     ...reportingRoutes(admin),
     ...wishlistRoutes(admin),
     ...leadsRoutes(admin),
-    ...adPlatformsRoutes(admin),
+    ...adPlatformsRoutes(admin, {
+      ...(options.adPlatformTestEvents === undefined
+        ? {}
+        : { service: options.adPlatformTestEvents }),
+      ...(options.rateLimiter === undefined ? {} : { rateLimiter: options.rateLimiter }),
+    }),
     ...(options.trackingBlockedIps === undefined
       ? []
       : blockedIpsRoutes(options.trackingBlockedIps)),

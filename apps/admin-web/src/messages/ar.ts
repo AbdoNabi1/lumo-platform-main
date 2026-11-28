@@ -2409,6 +2409,26 @@ export const ar: Dictionary = {
     fieldInvalid: "راجع القيمة دي.",
     tokenInvalid: "التوكن من 10 لـ 1024 حرف: حروف وأرقام وعلامات . _ ~ + / = : | - بس.",
     unavailable: "مش متاح لسه: السيرفر ده مش جاهز لتخزين التوكنات.",
+    testEventButton: "ابعت حدث تجريبي",
+    testEventSending: "جاري الإرسال…",
+    testSavedCodeWarning:
+      "فيه كود تجريبي محفوظ. طول ما هو موجود، كل أحداث متجرك الحقيقية بتروح لـ Test Events في {platform} ومش بتتحسب في إعلاناتك. امسح الكود واحفظ لما تخلّص تجربة.",
+    testSentCode:
+      "الحدث التجريبي اتبعت. افتح Test events في Events Manager بتاع {platform} عشان تشوفه. ممكن ياخد دقيقة عشان يظهر.",
+    testSentCheck:
+      "{platform} قبل الحدث التجريبي. مش بيتحسب في تقاريرك: ده بس بيتأكد إن الربط شغّال.",
+    testProblems: "{platform} لقى مشاكل في الحدث التجريبي:",
+    testRejectedToken: "{platform} ما قبلش التوكن بتاعك. راجع التوكن واحفظه تاني.",
+    testRejectedStatus: "{platform} رفض الحدث التجريبي (الحالة {status}). راجع المعرّفات والتوكن.",
+    testRejectedNoAnswer: "ماقدرناش نوصل لـ {platform}. جرّب تاني بعد دقيقة.",
+    testNotConnected: "شغّل المنصة دي واحفظ المعرّفات والتوكن بتاعها الأول.",
+    testCodeRequired:
+      "اكتب كود تجريبي الأول. افتح Test events في Events Manager بتاع {platform} وانسخ الكود اللي هيظهرلك.",
+    testNotSupported:
+      "{platform} مفيهوش وضع تجريبي للأحداث من السيرفر، فمش هينفع نبعت حدث تجريبي. بعد أول طلب حقيقي، راجع نشاط البكسل في Events Manager بتاع {platform}.",
+    testInvalidCode: "الكود التجريبي حروف وأرقام و _ و - بس، لحد 64 حرف.",
+    testRateLimited: "تجارب كتير أوي. استنى دقيقة وجرّب تاني.",
+    testUnavailable: "الحدث التجريبي مش متاح دلوقتي. جرّب تاني بعد شوية.",
   },
   /** Wave 2b - Settings → Notifications: sender email, customer templates, staff recipients. */
   notificationSettings: {

@@ -28,6 +28,7 @@ import { startCredentialReseal } from "./credential-reseal";
 import { buildTrackingCookieKeeper } from "./tracking/tracking-cookie-keeper";
 import { buildLeadTrackingEmitter } from "./tracking/lead-tracking-wiring";
 import { PrismaAttributionSnapshotStore } from "./tracking/prisma-attribution-snapshot-store";
+import { buildTestEventSender } from "./tracking/test-event-wiring";
 import { buildTrackingCollectWiring } from "./tracking/tracking-collect-enrichment";
 import { buildTrackingEventSink } from "./tracking/tracking-event-sink";
 import { startRuntimeTelemetry } from "./telemetry";
@@ -607,6 +608,14 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
   // P1-D8 / D9: collect-time enrichment and the store's excluded-address list (one service for the admin routes
   // and the collect route, so an edit applies at once).
   const trackingCollect = buildTrackingCollectWiring(runtime);
+  const trackingTestEvents = buildTestEventSender({
+    connections: runtime.adPlatformConnections,
+    prisma: runtime.prisma,
+    platformTenantId: runtime.platformTenantId,
+    storefrontPublicUrl: runtime.config.STOREFRONT_PUBLIC_URL,
+    clock: runtime.clock,
+    logger: runtime.logger,
+  });
   const app = await createAdminHttpApi({
     ...integrationPorts,
     // Plan 3C: the shop's own shipping zones/rates and tax settings back the checkout, never the
@@ -725,6 +734,8 @@ export async function startApi(config: RuntimeConfig, core?: RuntimeCore): Promi
     ...(runtime.adPlatformDeliverySync === undefined
       ? {}
       : { adPlatformDeliverySync: runtime.adPlatformDeliverySync }),
+    // P2-D11: "send a test event" (Settings > Ad platforms). Present exactly when the connection reader is.
+    ...(trackingTestEvents === undefined ? {} : { adPlatformTestEvents: trackingTestEvents }),
     // WP-14 T14.4: Licensing's REAL collection, through Morbeh's own PSP account. Absent ⇒ Licensing
     // keeps its in-memory stub, which assertProductionLicensingBillingConfigured refuses outside local.
     ...(runtime.platformBillingPayments === undefined
